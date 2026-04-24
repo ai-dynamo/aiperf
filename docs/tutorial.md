@@ -1,14 +1,15 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Profiling with AIPerf
+---
 
 # Profiling with AIPerf
 
 This tutorial will demonstrate how you can use AIPerf to measure the performance of
 models using various inference solutions.
 
-## Profile Qwen3-0.6B using vllm <a id="vllm-qwen3-0.6B">
+## Profile Qwen3-0.6B using vllm <a id="vllm-qwen3-0.6B"></a>
 <!-- setup-vllm-default-openai-endpoint-server -->
 ```bash
 # Pull and run vLLM Docker container:

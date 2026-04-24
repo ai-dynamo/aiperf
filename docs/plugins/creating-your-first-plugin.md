@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Creating Your First AIPerf Plugin
+---
 
 # Creating Your First AIPerf Plugin
 
@@ -233,7 +234,7 @@ You should see both packages listed in the same environment:
 
 ```text
 Name: aiperf
-Version: 0.6.0
+Version: 0.8.0
 Location: ...
 Requires: ...
 Required-by: my-aiperf-plugins

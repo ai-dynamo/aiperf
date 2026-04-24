@@ -303,19 +303,14 @@ retry: 5000"""
         assert hasattr(result, "packets")
         assert isinstance(result.packets, list)
 
-    def test_sse_field_model_validation(self, base_perf_ns: int) -> None:
-        """Test that SSEField models are properly validated."""
+    def test_sse_field_dataclass(self, base_perf_ns: int) -> None:
+        """Test that SSEField dataclass works correctly."""
         result = SSEMessage.parse("data: test_value", base_perf_ns)
 
         field = result.packets[0]
         assert isinstance(field, SSEField)
         assert field.name == SSEFieldType.DATA
         assert field.value == "test_value"
-
-        # Test field serialization/validation
-        field_dict = field.model_dump()
-        assert "name" in field_dict
-        assert "value" in field_dict
 
     @pytest.mark.parametrize(
         "perf_ns_value",
@@ -697,6 +692,126 @@ def create_mock_sse_iterator():
     return _factory
 
 
+@pytest.mark.asyncio
+class TestAsyncSSEStreamReaderParsing:
+    """Tests for SSE stream reader buffer management and delimiter handling."""
+
+    async def test_consumed_offset_avoids_memmove(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """Buffer compaction happens once per chunk, not per message."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b"data: msg1\n\ndata: msg2\n\ndata: msg3\n\n",
+            )
+        )
+        messages = []
+        async for msg in reader:
+            messages.append(msg)
+
+        assert len(messages) == 3
+        assert messages[0].packets[0].value == "msg1"
+        assert messages[1].packets[0].value == "msg2"
+        assert messages[2].packets[0].value == "msg3"
+
+    async def test_lf_delimiter_preferred_over_crlf(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """LF (\\n\\n) is checked before CRLF (\\r\\n\\r\\n)."""
+        reader = AsyncSSEStreamReader(create_mock_sse_iterator(b"data: lf_first\n\n"))
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 1
+        assert messages[0].packets[0].value == "lf_first"
+
+    async def test_crlf_delimiter_still_works(self, create_mock_sse_iterator) -> None:
+        """CRLF (\\r\\n\\r\\n) delimiter is still supported as fallback."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(b"data: crlf_msg\r\n\r\n")
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 1
+        assert messages[0].packets[0].value == "crlf_msg"
+
+    async def test_mixed_delimiters_in_separate_chunks(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """Stream with both LF and CRLF delimiters in separate chunks parses correctly.
+
+        When CRLF and LF appear in the same buffer, the LF-first search may jump
+        past a CRLF delimiter to a later LF. Separate chunks ensure compaction
+        between chunks prevents this.
+        """
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b"data: msg1\n\n",
+                b"data: msg2\r\n\r\n",
+                b"data: msg3\n\n",
+            )
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 3
+        assert messages[0].packets[0].value == "msg1"
+        assert messages[1].packets[0].value == "msg2"
+        assert messages[2].packets[0].value == "msg3"
+
+    async def test_delimiter_spanning_chunks(self, create_mock_sse_iterator) -> None:
+        """Delimiter split across chunk boundaries is detected correctly."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b"data: split",
+                b"\n",
+                b"\n",
+                b"data: next\n\n",
+            )
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 2
+        assert messages[0].packets[0].value == "split"
+        assert messages[1].packets[0].value == "next"
+
+    async def test_empty_messages_skipped(self, create_mock_sse_iterator) -> None:
+        """Empty messages between delimiters are skipped."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b"data: real\n\n\n\ndata: also_real\n\n",
+            )
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 2
+
+    async def test_remaining_data_without_final_delimiter(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """Data remaining after stream ends (no trailing delimiter) is parsed."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(b"data: no_trailing_delim")
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 1
+        assert messages[0].packets[0].value == "no_trailing_delim"
+
+    async def test_many_small_chunks(self, create_mock_sse_iterator) -> None:
+        """Stream delivered byte-by-byte still parses correctly."""
+        full = b"data: byte_by_byte\n\n"
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(*[bytes([b]) for b in full])
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 1
+        assert messages[0].packets[0].value == "byte_by_byte"
+
+    async def test_large_stream_many_messages(self, create_mock_sse_iterator) -> None:
+        """Parsing a large number of messages stays correct (no offset drift)."""
+        count = 500
+        payload = b"".join(f"data: msg{i}\n\n".encode() for i in range(count))
+        reader = AsyncSSEStreamReader(create_mock_sse_iterator(payload))
+        messages = await reader.read_complete_stream()
+        assert len(messages) == count
+        assert messages[0].packets[0].value == "msg0"
+        assert messages[-1].packets[0].value == f"msg{count - 1}"
+
+
+@pytest.mark.asyncio
 class TestAsyncSSEStreamReaderErrorHandling:
     """Test suite for AsyncSSEStreamReader integration with error handling."""
 

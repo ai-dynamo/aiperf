@@ -5,9 +5,9 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from aiperf.common.enums import MediaType
+from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
@@ -136,6 +136,16 @@ class Turn(AIPerfBaseModel):
     max_tokens: int | None = Field(
         default=None, description="Maximum number of tokens to generate for this turn."
     )
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible messages array. "
+        "When set, bypasses normal turn-based message construction in endpoints.",
+    )
+    raw_tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible tool definitions. "
+        "When set alongside raw_messages, injected into the API payload.",
+    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
@@ -159,12 +169,13 @@ class Turn(AIPerfBaseModel):
     def copy_with_stripped_media(self) -> "Turn":
         """Create a copy of this turn with multimodal data replaced by placeholders.
 
-        This preserves text data (needed for tokenization) but replaces potentially
-        large image/audio/video contents with small placeholder strings. This is
+        This preserves text data (needed for tokenization) and raw messages/tools
+        (needed for API payload reconstruction) but replaces potentially large
+        image/audio/video contents with small placeholder strings. This is
         more efficient than a full deep copy followed by stripping.
 
         Returns:
-            A new Turn with stripped multimodal contents.
+            A new Turn with stripped multimodal contents and messages.
         """
         return Turn(
             model=self.model,
@@ -172,6 +183,10 @@ class Turn(AIPerfBaseModel):
             timestamp=self.timestamp,
             delay=self.delay,
             max_tokens=self.max_tokens,
+            raw_messages=list(self.raw_messages)
+            if self.raw_messages is not None
+            else None,
+            raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
             texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
             images=[
                 Image(
@@ -231,6 +246,24 @@ class DatasetMetadata(AIPerfBaseModel):
         default=False,
         description="Whether the dataset has timing data (timestamps/delays in turns).",
     )
+    default_context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Dataset-level default for how prior turns are accumulated. "
+        "Set by the loader based on dataset format semantics. "
+        "Individual conversations can override this via their own context_mode field.",
+    )
+
+    @field_validator("default_context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
 
     @cached_property
     def total_turn_count(self) -> int:
@@ -255,6 +288,24 @@ class Conversation(AIPerfBaseModel):
     session_id: str = Field(
         default="", description="Unique identifier for the conversation."
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="How prior turns are accumulated for this conversation. "
+        "When None, inherits the dataset-level default.",
+    )
+
+    @field_validator("context_mode")
+    @classmethod
+    def _reject_unimplemented_context_mode(
+        cls,
+        v: ConversationContextMode | None,
+    ) -> ConversationContextMode | None:
+        if v == ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES:
+            raise ValueError(
+                f"{ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES} is not yet supported"
+            )
+        return v
+
     turns: list[Turn] = Field(
         default=[], description="List of turns in the conversation."
     )

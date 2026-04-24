@@ -10,10 +10,12 @@ from aiperf.orchestrator.aggregation.confidence import (
     ConfidenceAggregation,
     ConfidenceMetric,
 )
+from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
 
 __all__ = [
     "AggregateResult",
     "AggregationStrategy",
     "ConfidenceAggregation",
     "ConfidenceMetric",
+    "DetailedAggregation",
 ]

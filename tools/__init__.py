@@ -17,7 +17,6 @@ from tools._core import (
     # Constants
     CONSTRAINT_SYMBOLS,
     GENERATED_FILE_HEADER,
-    SPDX_HEADER_MD,
     # Error classes
     CLIExtractionError,
     EnumGenerationError,
@@ -35,6 +34,7 @@ from tools._core import (
     error_console,
     main,
     make_generated_header,
+    md_frontmatter,
     # Text utilities
     normalize_text,
     print_error,
@@ -54,7 +54,7 @@ __all__ = [
     # Constants
     "CONSTRAINT_SYMBOLS",
     "GENERATED_FILE_HEADER",
-    "SPDX_HEADER_MD",
+    "md_frontmatter",
     "make_generated_header",
     # Error classes
     "CLIExtractionError",

@@ -1,13 +1,14 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Migrating from GenAI-Perf
+---
 
 # Migrating from GenAI-Perf
 
 AIPerf is designed to be a drop-in replacement for [GenAI-Perf](https://github.com/triton-inference-server/perf_analyzer/tree/main/genai-perf) _for currently supported features_. Most options from GenAI-Perf map directly to AIPerf options. Options that don't are noted below.
 Some options, primarily for the `analyze` subcommand, are not yet supported; they're planned for future releases.
-<br>
+<br/>
 
 See the [GenAI-Perf vs AIPerf CLI Feature Comparison Matrix](genai-perf-feature-comparison.md) for a detailed comparison of the supported CLI options.
 
@@ -19,7 +20,7 @@ AIPerf provides more-fine grained control of the number of workers issuing reque
 
 To migrate your previous GenAI-Perf commands to AIPerf commands, remove the above options.
 
-<br>
+<br/>
 
 ## Input File Format Changes
 
@@ -31,7 +32,7 @@ The format for the `inputs.json` file, which contains the input prompts used in 
 
 These changes allow AIPerf to better handle conversational workloads and provide more detailed traceability for performance analysis.
 
-<br>
+<br/>
 
 ## Reasoning Tokens and Differences in Metrics
 
@@ -39,7 +40,7 @@ Modern language models with reasoning capabilities such as openai/gpt-oss-120b, 
 
 ### Behavioral Differences
 
-> [!IMPORTANT]
+> [!WARNING]
 > **GenAI-Perf does not parse or process reasoning tokens**. Content in the `reasoning_content` field is ignored, which means GenAI-Perf waits until the first non-reasoning output token is generated before recording the Time to First Token (TTFT).
 
 **AIPerf** fully supports parsing and processing of reasoning tokens. The TTFT metric captures the time to generate the first token of any type, whether it's a reasoning token or an output token. Additionally, AIPerf introduces a new metric: **Time to First Output Token (TTFO)**, which measures the time to the first non-reasoning output token, equivalent to GenAI-Perf's TTFT.

@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Custom Dataset Guide
+---
 
 # Custom Dataset Guide
 
@@ -124,11 +125,37 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 2
 Benchmark Duration: 15.81 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
+
+### Per-Request Output Length
+
+Control the maximum output tokens per request using the `output_length` field:
+
+```bash
+cat > prompts_with_osl.jsonl << 'EOF'
+{"text": "Write a haiku about mountains.", "output_length": 50}
+{"text": "Explain quantum computing in detail.", "output_length": 500}
+{"text": "What is 2+2?", "output_length": 10}
+{"text": "Summarize machine learning."}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --input-file prompts_with_osl.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --osl 200
+```
+
+**Precedence:** Per-line `output_length` takes priority over the global `--osl` flag. Lines without `output_length` fall back to `--osl` if set (200 in this example), or let the server decide the output length.
+
+The `output_length` field also works per-turn in multi_turn datasets.
 
 ---
 
@@ -203,10 +230,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --concurrency 2
 Benchmark Duration: 10.60 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
 **Key Points:**
@@ -298,13 +325,20 @@ CLI Command: aiperf profile --model 'Qwen/Qwen3-0.6B' --endpoint-type 'chat' --i
 --random-seed 42 --url 'localhost:8000'
 Benchmark Duration: 42.74 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
+artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 **Behavior:**
 - Randomly samples 50 requests from 8-entry pool
 - Sampling with replacement (entries can repeat)
 - Use `--random-seed` for reproducibility
+
+---
+
+## Related
+
+- [Multi-Turn Conversations](multi-turn.md) - Multi-turn conversation benchmarking
+- [Conversation Context Mode](../reference/conversation-context-mode.md) - How conversation history accumulates in multi-turn

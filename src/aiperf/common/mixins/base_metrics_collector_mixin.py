@@ -20,6 +20,7 @@ from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
 from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.transports.http_defaults import AioHttpDefaults
 
 
 @dataclass(slots=True)
@@ -251,6 +252,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             connector=self._connector,
             timeout=timeout,
             trace_configs=[trace_config],
+            trust_env=AioHttpDefaults.TRUST_ENV,
         )
 
     def _create_trace_config(self) -> aiohttp.TraceConfig:
@@ -363,7 +365,9 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             connector = create_tcp_connector()
             try:
                 async with aiohttp.ClientSession(
-                    connector=connector, timeout=timeout
+                    connector=connector,
+                    timeout=timeout,
+                    trust_env=AioHttpDefaults.TRUST_ENV,
                 ) as temp_session:
                     return await self._check_reachability_with_session(temp_session)
             finally:

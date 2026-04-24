@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: GPU Telemetry with AIPerf
+---
 
 # GPU Telemetry with AIPerf
 
@@ -43,7 +44,7 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
-> [!IMPORTANT]
+> [!WARNING]
 > **DCGM mode (default):** The default endpoints `http://localhost:9400/metrics` and `http://localhost:9401/metrics` are always attempted for telemetry collection, regardless of whether the `--gpu-telemetry` flag is used. The flag primarily controls whether metrics are displayed on the console and allows you to specify additional custom DCGM exporter endpoints.
 >
 > **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.

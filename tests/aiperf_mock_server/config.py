@@ -34,6 +34,8 @@ class MockServerConfig(BaseSettings):
             self.embedding_per_input_latency = 0.0
             self.ranking_base_latency = 0.0
             self.ranking_per_passage_latency = 0.0
+            self.image_retrieval_base_latency = 0.0
+            self.image_retrieval_per_image_latency = 0.0
         return self
 
     port: Annotated[
@@ -91,6 +93,19 @@ class MockServerConfig(BaseSettings):
         Field(description="Ranking latency per passage (ms)", ge=0.0),
         Parameter(name="--ranking-per-passage-latency"),
     ] = 1.0
+
+    # Image retrieval latency: base + per_image * num_images
+    image_retrieval_base_latency: Annotated[
+        float,
+        Field(description="Image retrieval base latency (ms)", ge=0.0),
+        Parameter(name="--image-retrieval-base-latency"),
+    ] = 10.0
+
+    image_retrieval_per_image_latency: Annotated[
+        float,
+        Field(description="Image retrieval latency per image (ms)", ge=0.0),
+        Parameter(name="--image-retrieval-per-image-latency"),
+    ] = 5.0
 
     log_level: Annotated[
         Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],

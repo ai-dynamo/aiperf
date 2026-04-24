@@ -25,6 +25,14 @@ schema_version: "1.0"
 # Each service runs in a separate process and communicates via ZMQ message bus.
 # =============================================================================
 service:
+  api:
+    class: aiperf.api.api_service:FastAPIService
+    description: |
+      FastAPI-based API service for exposing benchmark metrics and real-time streaming.
+    metadata:
+      required: false
+      auto_start: false
+
   dataset_manager:
     class: aiperf.dataset.dataset_manager:DatasetManager
     description: |
@@ -116,6 +124,45 @@ service:
       auto_start: true
 
 # =============================================================================
+# API Routers
+# =============================================================================
+# API routers provide HTTP/WebSocket endpoints for the FastAPI service.
+# One-to-many mapping: all registered routers are loaded at startup.
+# =============================================================================
+api_router:
+  core:
+    class: aiperf.api.routers.core:CoreRouter
+    description: Config, health, and readiness endpoints.
+
+  # dataset:
+  #   class: aiperf.api.routers.dataset:DatasetRouter
+  #   description: Dataset metadata and file streaming with compression support.
+
+  metrics:
+    class: aiperf.api.routers.metrics:MetricsRouter
+    description: Real-time metrics state and Prometheus/JSON endpoints.
+
+  progress:
+    class: aiperf.api.routers.progress:ProgressRouter
+    description: Benchmark progress tracking and /api/progress endpoint.
+
+  results:
+    class: aiperf.api.routers.results:ResultsRouter
+    description: Final benchmark results and artifact file downloads.
+
+  # static:
+  #   class: aiperf.api.routers.static:StaticRouter
+  #   description: Static HTML file serving for dashboard and index pages.
+
+  # websocket:
+  #   class: aiperf.api.routers.websocket:WebSocketRouter
+  #   description: WebSocket endpoint for real-time ZMQ message streaming.
+
+  workers:
+    class: aiperf.api.routers.workers:WorkersRouter
+    description: Worker health tracking and /api/workers endpoint.
+
+# =============================================================================
 # Service Managers
 # =============================================================================
 # Service managers orchestrate how services are launched and managed.
@@ -180,6 +227,21 @@ endpoint:
       supports_streaming: true
       produces_tokens: true
       tokenizes_input: true
+      metrics_title: LLM Metrics
+
+  responses:
+    class: aiperf.endpoints.openai_responses:ResponsesEndpoint
+    description: |
+      OpenAI Responses API endpoint. Supports multi-modal inputs (text, images,
+      audio) and both streaming and non-streaming responses. Uses
+      /v1/responses path.
+    metadata:
+      endpoint_path: /v1/responses
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_images: true
+      supports_audio: true
       metrics_title: LLM Metrics
 
   chat_embeddings:
@@ -261,7 +323,22 @@ endpoint:
       produces_videos: true
       tokenizes_input: true
       requires_polling: true
+      requires_form_data: true
       metrics_title: Video Generation Metrics
+
+  image_retrieval:
+    class: aiperf.endpoints.nim_image_retrieval:ImageRetrievalEndpoint
+    description: |
+      NIM Image Retrieval endpoint. Sends images to NIM-based image inference
+      services for retrieval tasks such as bounding box detection. Uses /v1/infer path.
+    metadata:
+      endpoint_path: /v1/infer
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      supports_images: true
+      requires_inline_media: true
+      metrics_title: Image Retrieval Metrics
 
   nim_embeddings:
     class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
@@ -359,6 +436,13 @@ dataset_composer:
       Synthetic rankings dataset composer that generates ranking tasks with query
       and passage pairs for ranking model evaluation and benchmarking.
 
+  public:
+    class: aiperf.dataset.composer.public:PublicDatasetComposer
+    description: |
+      Public dataset composer that loads benchmark datasets from remote sources
+      (HuggingFace, URLs) using the plugin-registered public dataset loaders.
+      Handles metadata-driven loader instantiation and turn finalization.
+
 # =============================================================================
 # Custom Dataset Loaders
 # =============================================================================
@@ -366,11 +450,37 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  burst_gpt_trace:
+    class: aiperf.dataset.loader.burst_gpt:BurstGPTTraceDatasetLoader
+    description: |
+      BurstGPT real-world bursty LLM traffic trace from Microsoft Research
+      (https://github.com/HPMLL/BurstGPT). Each row prescribes request/response
+      token counts; session IDs are auto-generated. Prompts are synthesized.
+      Usage: --custom-dataset-type burst_gpt_trace --file burst_gpt.csv
+    metadata:
+      is_trace: true
+
+  bailian_trace:
+    class: aiperf.dataset.loader.bailian_trace:BailianTraceDatasetLoader
+    description: |
+      Alibaba Bailian trace dataset loader for Qwen model serving traces from
+      https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon.
+      Loads JSONL traces with chat_id, parent_chat_id (-1 for root), timestamp
+      (seconds), input/output lengths, turn numbers, and hash_ids for salted
+      SipHash block-based prompt caching (block_size=16). Supports multi-turn
+      conversation chains and fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 16
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
       Mooncake trace dataset loader for loading Alibaba Mooncake trace format with
       timestamp-based replay support. Designed for fixed_schedule timing mode.
+    metadata:
+      is_trace: true
+      default_block_size: 512
 
   multi_turn:
     class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader
@@ -1080,6 +1190,480 @@ communication_client:
     description: |
       ZMQ SUB client for publish-subscribe messaging pattern. Receives broadcasts
       from publishers with topic filtering and subscription management.
+
+# =============================================================================
+# Public Dataset Loaders
+# =============================================================================
+# Public dataset loaders fetch shared benchmark datasets without requiring a
+# local file. Selected via --public-dataset configuration option.
+# =============================================================================
+public_dataset_loader:
+  sharegpt:
+    class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
+    description: |
+      ShareGPT dataset from HuggingFace. Downloads and processes the first
+      prompt/completion pair from each conversation as a single-turn request.
+      Filters entries by sequence length and token counts.
+
+  aimo:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      AIMO NuminaMath-TIR math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-TIR
+      hf_split: train
+      prompt_column: problem
+
+  mmstar:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MMStar multimodal visual QA benchmark from HuggingFace (Lin-Chen).
+      Loads visual questions with images as single-turn requests.
+    metadata:
+      hf_dataset_name: Lin-Chen/MMStar
+      hf_split: val
+      prompt_column: question
+      image_column: image
+
+  mmvu:
+    class: aiperf.dataset.loader.mmvu:MMVUDatasetLoader
+    description: |
+      MMVU expert-level video understanding benchmark from HuggingFace (yale-nlp).
+      Loads video questions with video URLs as single-turn multimodal requests.
+      Prompt combines the question with multiple-choice options (matching vLLM benchmark format).
+    metadata:
+      hf_dataset_name: yale-nlp/MMVU
+      hf_split: validation
+      video_column: video
+
+  vision_arena:
+    class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
+    description: |
+      VisionArena multimodal chat dataset from HuggingFace (lmarena-ai).
+      Loads the first user message and image as a single-turn vision request.
+      Requires HuggingFace authentication.
+    metadata:
+      hf_dataset_name: lmarena-ai/VisionArena-Chat
+      hf_split: train
+      conversation_column: conversation
+      message_content_key: content
+      image_column: images
+      streaming: true
+
+  llava_onevision:
+    class: aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader
+    description: |
+      LLaVA-OneVision multimodal instruction-following dataset from HuggingFace (lmms-lab).
+      Loads the first user message and image as a single-turn vision request.
+    metadata:
+      hf_dataset_name: lmms-lab/LLaVA-OneVision-Data
+      hf_split: train
+      hf_subset: sharegpt4o
+      conversation_column: conversations
+      message_content_key: value
+      image_column: image
+      streaming: true
+
+  # ---------------------------------------------------------------------------
+  # SPEED-Bench: qualitative split (all categories combined)
+  # ---------------------------------------------------------------------------
+  speed_bench_qualitative:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench qualitative split from HuggingFace (nvidia). 880 prompts across
+      11 semantic domains for measuring speculative decoding acceptance rates.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+
+  # ---------------------------------------------------------------------------
+  # SPEED-Bench: qualitative split per category (80 prompts each)
+  # ---------------------------------------------------------------------------
+  speed_bench_coding:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench coding category (80 prompts). Code generation and programming tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: coding
+
+  speed_bench_humanities:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench humanities category (80 prompts). History, philosophy, and liberal arts.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: humanities
+
+  speed_bench_math:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench math category (80 prompts). Mathematical reasoning and computation.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: math
+
+  speed_bench_multilingual:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench multilingual category (80 prompts). Tasks across 23 languages.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: multilingual
+
+  speed_bench_qa:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench QA category (80 prompts). Question answering tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: qa
+
+  speed_bench_rag:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench RAG category (80 prompts). Retrieval-augmented generation tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: rag
+
+  speed_bench_reasoning:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench reasoning category (80 prompts). Logical and analytical reasoning.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: reasoning
+
+  speed_bench_roleplay:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench roleplay category (80 prompts). Creative roleplay and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: roleplay
+
+  speed_bench_stem:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench STEM category (80 prompts). Science, technology, engineering tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: stem
+
+  speed_bench_summarization:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench summarization category (80 prompts). Text summarization tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: summarization
+
+  speed_bench_writing:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench writing category (80 prompts). Creative and technical writing.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      category: writing
+
+  # ---------------------------------------------------------------------------
+  # SPEED-Bench: throughput splits (all entropy tiers combined)
+  # ---------------------------------------------------------------------------
+  speed_bench_throughput_1k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput split at ~1K input tokens from HuggingFace (nvidia).
+      1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+
+  speed_bench_throughput_2k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput split at ~2K input tokens from HuggingFace (nvidia).
+      1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+
+  speed_bench_throughput_8k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput split at ~8K input tokens from HuggingFace (nvidia).
+      1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+
+  speed_bench_throughput_16k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput split at ~16K input tokens from HuggingFace (nvidia).
+      1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+
+  speed_bench_throughput_32k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput split at ~32K input tokens from HuggingFace (nvidia).
+      1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+
+  # ---------------------------------------------------------------------------
+  # SPEED-Bench: throughput per entropy tier (512 prompts each per ISL bucket)
+  # ---------------------------------------------------------------------------
+  speed_bench_throughput_1k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~1K ISL, low entropy tier (512 prompts). Code and sorting tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      category: low_entropy
+
+  speed_bench_throughput_1k_mixed:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~1K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      category: mixed
+
+  speed_bench_throughput_1k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~1K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      category: high_entropy
+
+  speed_bench_throughput_2k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~2K ISL, low entropy tier (512 prompts). Code and sorting tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      category: low_entropy
+
+  speed_bench_throughput_2k_mixed:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~2K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      category: mixed
+
+  speed_bench_throughput_2k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~2K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      category: high_entropy
+
+  speed_bench_throughput_8k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~8K ISL, low entropy tier (512 prompts). Code and sorting tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      category: low_entropy
+
+  speed_bench_throughput_8k_mixed:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~8K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      category: mixed
+
+  speed_bench_throughput_8k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~8K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      category: high_entropy
+
+  speed_bench_throughput_16k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~16K ISL, low entropy tier (512 prompts). Code and sorting tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      category: low_entropy
+
+  speed_bench_throughput_16k_mixed:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~16K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      category: mixed
+
+  speed_bench_throughput_16k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~16K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      category: high_entropy
+
+  speed_bench_throughput_32k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~32K ISL, low entropy tier (512 prompts). Code and sorting tasks.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      category: low_entropy
+
+  speed_bench_throughput_32k_mixed:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~32K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      category: mixed
+
+  speed_bench_throughput_32k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+    description: |
+      SPEED-Bench throughput ~32K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      category: high_entropy
+
+  aimo_aime:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      AIMO validation AIME competition problems from HuggingFace (AI-MO).
+      Loads 90 AIME competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/aimo-validation-aime
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_cot:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath chain-of-thought math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-CoT
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_1_5:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath 1.5 math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-1.5
+      hf_split: train
+      prompt_column: problem
+
+  spec_bench:
+    class: aiperf.dataset.loader.spec_bench:SpecBenchLoader
+    description: |
+      SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
+      Loads single-turn questions for evaluating speculative decoding methods.
+
+  instruct_coder:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      InstructCoder code instruction dataset from HuggingFace (likaixin).
+      Loads code generation instructions as single-turn requests.
+    metadata:
+      hf_dataset_name: likaixin/InstructCoder
+      hf_split: train
+      prompt_column: instruction
+
+  blazedit_5k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~5k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_5k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  blazedit_10k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~10k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_10k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
 
 # =============================================================================
 # ZMQ Proxies

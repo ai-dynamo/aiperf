@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Multi-Turn Conversations
+---
 
 # Multi-Turn Conversations
 
@@ -17,7 +18,7 @@ Multi-turn benchmarking provides several advantages:
 - **Memory and State Management**: Identify issues with conversation state handling
 - **Conversation Flow Analysis**: Measure performance degradation over multiple turns
 
-> [!IMPORTANT]
+> [!WARNING]
 > **Understanding Request Control Options**
 >
 > AIPerf provides different options for controlling the number of requests depending on whether you're running single-turn or multi-turn benchmarks:
@@ -438,4 +439,7 @@ The delays between turns are controlled by:
 - Monitor context window growth in long conversations (turns × output tokens)
 - Consider using `--request-rate` to control conversation start rate for more predictable load
 - Use `--random-seed` for reproducible conversation patterns
+
+**See also:**
+- [Conversation Context Mode](../reference/conversation-context-mode.md) — Control how conversation history accumulates (deltas vs message arrays, with or without pre-canned responses)
 

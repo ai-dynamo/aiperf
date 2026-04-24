@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Warmup Phase Configuration
+---
 
 # Warmup Phase Configuration
 
@@ -414,4 +415,4 @@ aiperf profile \
 
 - [Gradual Ramping](./ramping.md) — Smooth ramp-up for concurrency and rate
 - [Prefill Concurrency](./prefill-concurrency.md) — Memory-safe long-context benchmarking
-- [Timing Modes Reference](../benchmark_modes/timing-modes-reference.md) — Complete CLI compatibility matrix
+- [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) — Complete CLI compatibility matrix

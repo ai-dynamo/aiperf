@@ -305,7 +305,7 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     The server may send non-token data first.
 
     Formula:
-        waiting = response_chunks[0][0] - request_send_end_perf_ns
+        waiting = response_receive_start_perf_ns - request_send_end_perf_ns
     """
 
     tag = "http_req_waiting"
@@ -323,15 +323,13 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     ) -> int:
         trace = _require_trace_data(record)
 
-        # Same logic as TraceDataExport.waiting_ns
         if trace.request_send_end_perf_ns is None:
             raise NoMetricValue("No request send end timestamp")
 
-        if not trace.response_chunks:
-            raise NoMetricValue("No response chunks")
+        if trace.response_receive_start_perf_ns is None:
+            raise NoMetricValue("No response receive start timestamp")
 
-        first_response_ts = trace.response_chunks[0][0]
-        waiting = first_response_ts - trace.request_send_end_perf_ns
+        waiting = trace.response_receive_start_perf_ns - trace.request_send_end_perf_ns
         if waiting < 0:
             raise ValueError("First response is before request send end")
         return waiting
@@ -348,7 +346,7 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
     was received to when the last byte was received.
 
     Formula:
-        receiving = response_chunks[-1][0] - response_chunks[0][0]
+        receiving = response_receive_end_perf_ns - response_receive_start_perf_ns
 
     Note: Returns 0 if response was a single chunk.
     """
@@ -368,15 +366,21 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
     ) -> int:
         trace = _require_trace_data(record)
 
-        # Same logic as TraceDataExport.receiving_ns
-        if not trace.response_chunks:
+        if trace.response_chunks_count == 0:
             raise NoMetricValue("No response chunks")
 
-        # Single chunk - no transfer time
-        if len(trace.response_chunks) == 1:
+        if trace.response_chunks_count == 1:
             return 0
 
-        receiving = trace.response_chunks[-1][0] - trace.response_chunks[0][0]
+        if (
+            trace.response_receive_start_perf_ns is None
+            or trace.response_receive_end_perf_ns is None
+        ):
+            raise NoMetricValue("No response receive timestamps")
+
+        receiving = (
+            trace.response_receive_end_perf_ns - trace.response_receive_start_perf_ns
+        )
         if receiving < 0:
             raise ValueError("Last response chunk is before first chunk")
         return receiving
@@ -462,11 +466,7 @@ class HttpDataSentMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         trace = _require_trace_data(record)
-
-        if not trace.request_chunks:
-            return 0
-
-        return sum(size for _, size in trace.request_chunks)
+        return trace.request_bytes_total
 
 
 class HttpDataReceivedMetric(BaseRecordMetric[int]):
@@ -492,11 +492,7 @@ class HttpDataReceivedMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         trace = _require_trace_data(record)
-
-        if not trace.response_chunks:
-            return 0
-
-        return sum(size for _, size in trace.response_chunks)
+        return trace.response_bytes_total
 
 
 # =============================================================================
@@ -524,7 +520,7 @@ class HttpChunksSentMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         trace = _require_trace_data(record)
-        return len(trace.request_chunks)
+        return trace.request_chunks_count
 
 
 class HttpChunksReceivedMetric(BaseRecordMetric[int]):
@@ -547,7 +543,7 @@ class HttpChunksReceivedMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         trace = _require_trace_data(record)
-        return len(trace.response_chunks)
+        return trace.response_chunks_count
 
 
 # =============================================================================

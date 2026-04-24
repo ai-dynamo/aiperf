@@ -61,12 +61,14 @@ from time import perf_counter_ns, time_ns
 import aiohttp
 
 from aiperf.common.models import AioHttpTraceData
+from aiperf.common.redact import redact_headers
 
 
 def create_aiohttp_trace_config(
     trace_data: AioHttpTraceData,
     on_request_sent_event: asyncio.Event | None = None,
     expected_request_body_size: int | None = None,
+    collect_chunks: bool = False,
 ) -> aiohttp.TraceConfig:
     """Create a TraceConfig for aiohttp that populates AioHttpTraceData with timestamps.
 
@@ -82,6 +84,9 @@ def create_aiohttp_trace_config(
         expected_request_body_size: Expected size of request body in bytes. If provided
             along with on_request_sent_event, the event will be triggered when this
             many bytes have been sent via on_request_chunk_sent.
+        collect_chunks: If True, populate request_chunks/response_chunks lists with
+            per-chunk (timestamp, size) tuples. If False (default), only aggregate
+            metrics (counts, totals, first/last timestamps) are tracked.
 
     Returns:
         A TraceConfig to attach to an aiohttp ClientSession.
@@ -102,9 +107,11 @@ def create_aiohttp_trace_config(
     # Track whether we're awaiting the first response chunk for efficient start time recording
     awaiting_first_chunk = True
 
-    # Cache list.append method to avoid attribute lookup
-    _append_request_chunk = trace_data.request_chunks.append
-    _append_response_chunk = trace_data.response_chunks.append
+    # Cache list.append method to avoid attribute lookup (only when collecting chunks)
+    _append_request_chunk = trace_data.request_chunks.append if collect_chunks else None
+    _append_response_chunk = (
+        trace_data.response_chunks.append if collect_chunks else None
+    )
 
     # ============================================================================
     # CONNECTION POOL EVENTS
@@ -215,7 +222,11 @@ def create_aiohttp_trace_config(
         nonlocal bytes_sent
         perf_ns = _perf_counter_ns()
         chunk_size = len(params.chunk)
-        _append_request_chunk((perf_ns, chunk_size))
+        trace_data.request_send_end_perf_ns = perf_ns
+        trace_data.request_chunks_count += 1
+        trace_data.request_bytes_total += chunk_size
+        if _append_request_chunk is not None:
+            _append_request_chunk((perf_ns, chunk_size))
         bytes_sent += chunk_size
 
         # Trigger event when request body is fully sent
@@ -262,7 +273,7 @@ def create_aiohttp_trace_config(
     ) -> None:
         """Called when request headers finish being sent."""
         trace_data.request_headers_sent_perf_ns = _perf_counter_ns()
-        trace_data.request_headers = dict(params.headers)
+        trace_data.request_headers = redact_headers(dict(params.headers))
 
     # ============================================================================
     # RESPONSE EVENTS
@@ -281,7 +292,10 @@ def create_aiohttp_trace_config(
         nonlocal awaiting_first_chunk
         perf_ns = _perf_counter_ns()
         chunk_size = len(params.chunk)
-        _append_response_chunk((perf_ns, chunk_size))
+        trace_data.response_chunks_count += 1
+        trace_data.response_bytes_total += chunk_size
+        if _append_response_chunk is not None:
+            _append_response_chunk((perf_ns, chunk_size))
 
         # Track start/end timestamps for duration calculations
         # Use boolean flag instead of None check for ~6% performance improvement

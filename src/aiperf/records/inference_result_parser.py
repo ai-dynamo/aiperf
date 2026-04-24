@@ -5,6 +5,7 @@ import time
 from contextlib import suppress
 
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
@@ -143,6 +144,7 @@ class InferenceResultParser(CommunicationMixin):
 
         else:
             try:
+                raw_response_count = len(request_record.responses)
                 record = await self.process_valid_record(request_record)
 
                 # Check if the parsed record is actually valid (e.g., has content responses)
@@ -162,7 +164,7 @@ class InferenceResultParser(CommunicationMixin):
                 else:
                     # Success path: valid record with no errors
                     self.debug(
-                        lambda: f"Received {len(record.request.responses)} response packet(s), token counts: {record.token_counts}"
+                        lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
                     )
                     return record
 
@@ -202,6 +204,11 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         resp = self.endpoint.extract_response_data(request_record)
+
+        # Free the raw responses list after extraction.
+        # Skip when RAW export needs the original responses for serialization.
+        if self.user_config.output.export_level != ExportLevel.RAW:
+            request_record.responses = None
 
         # Compute token counts based on configuration
         if self.user_config.endpoint.use_server_token_count:
@@ -261,7 +268,7 @@ class InferenceResultParser(CommunicationMixin):
         # NOTE: We combine all the prompt texts with a space separator to create a single prompt string.
         # This will get us the most accurate token count for the prompt by avoiding any potential
         # boundary issues that could occur if we were to tokenize each text individually.
-        return self._compute_token_count(tokenizer, prompt_texts, separator=" ")
+        return await self._compute_token_count(tokenizer, prompt_texts, separator=" ")
 
     async def _compute_server_token_counts(
         self, responses: list[ParsedResponse]
@@ -325,7 +332,7 @@ class InferenceResultParser(CommunicationMixin):
 
         return output_texts, reasoning_texts
 
-    def _compute_token_count(
+    async def _compute_token_count(
         self, tokenizer: Tokenizer, texts: list[str], separator: str = ""
     ) -> int | None:
         """Compute the number of tokens in the texts by joining them with an optional separator (default none) and encoding with the tokenizer.
@@ -340,7 +347,9 @@ class InferenceResultParser(CommunicationMixin):
         """
         if not texts:
             return None
-        return len(tokenizer.encode(separator.join(texts)))
+        text = separator.join(texts)
+        tokens = await asyncio.to_thread(tokenizer.encode, text)
+        return len(tokens)
 
     async def _compute_client_side_token_counts(
         self, request_record: RequestRecord, responses: list[ParsedResponse]
@@ -360,8 +369,10 @@ class InferenceResultParser(CommunicationMixin):
         output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(
             responses
         )
-        output_token_count = self._compute_token_count(tokenizer, output_texts)
-        reasoning_token_count = self._compute_token_count(tokenizer, reasoning_texts)
+        output_token_count = await self._compute_token_count(tokenizer, output_texts)
+        reasoning_token_count = await self._compute_token_count(
+            tokenizer, reasoning_texts
+        )
 
         return TokenCounts(
             input=input_token_count,

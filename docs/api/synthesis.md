@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Prefix Synthesis API Reference
+---
 # Prefix Synthesis API Reference
 
 Complete API documentation for the prefix synthesis module.
@@ -556,4 +557,4 @@ except ValueError as e:
 ## See Also
 
 - [Prefix Synthesis Tutorial](../tutorials/prefix-synthesis.md)
-- [Trace Replay](../benchmark_modes/trace_replay.md)
+- [Trace Replay](../benchmark-modes/trace-replay.md)

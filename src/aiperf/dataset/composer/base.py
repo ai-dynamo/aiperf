@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
@@ -16,14 +17,14 @@ from aiperf.dataset.generator.video import VideoGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None, **kwargs):
         self.config = config
+        self.tokenizer = tokenizer
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
-        # Create generators
-        self.prompt_generator = PromptGenerator(
-            config.input.prompt,
-            tokenizer,
+        # Create generators (prompt generator requires a tokenizer)
+        self.prompt_generator: PromptGenerator | None = (
+            PromptGenerator(config.input.prompt, tokenizer) if tokenizer else None
         )
         self.image_generator = ImageGenerator(config.input.image)
         self.audio_generator = AudioGenerator(config.input.audio)
@@ -49,6 +50,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             list[Conversation]: A list of conversation objects.
         """
         ...
+
+    def get_default_context_mode(self) -> ConversationContextMode | None:
+        """Dataset-level default context mode inferred by the composer or its loader.
+
+        Override in subclasses that delegate to a loader with format-specific defaults.
+        Returns None to fall through to the global DELTAS_WITHOUT_RESPONSES default.
+        """
+        return None
 
     # TODO: This can be refactored to be similar to the DatasetSamplingStrategyProtocol in order
     # to allow for more flexible model selection strategies in the future.
@@ -110,9 +119,16 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _set_max_tokens(self, turn: Turn) -> None:
         """Set max_tokens for the turn based on the sequence distribution or output configuration.
 
+        If the turn already has max_tokens set (e.g., from per-line input data),
+        the existing value is preserved. Per-line values take precedence over
+        global --osl and --seq-dist settings.
+
         Args:
             turn: The turn object to finalize.
         """
+        if turn.max_tokens is not None:
+            return
+
         if self._seq_distribution is not None:
             # Use cached sequence distribution to get OSL (ensures ISL/OSL pairing consistency)
             turn_id = id(turn)
@@ -146,7 +162,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
     @property
     def prefix_prompt_enabled(self) -> bool:
-        return self.config.input.prompt.prefix_prompt.length > 0
+        return (
+            self.prompt_generator is not None
+            and self.config.input.prompt.prefix_prompt.length > 0
+        )
 
     def _finalize_conversations(self, conversations: list[Conversation]) -> None:
         """Finalize conversations by adding conversation-level context prompts.
@@ -169,6 +188,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         Args:
             conversations: List of conversations to inject prompts into
         """
+        if self.prompt_generator is None:
+            return
+
         config = self.config.input.prompt.prefix_prompt
         has_shared_system = config.shared_system_prompt_length is not None
         has_user_context = config.user_context_prompt_length is not None

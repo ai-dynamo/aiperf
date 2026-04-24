@@ -420,7 +420,7 @@ class TestAioHttpClient:
     @pytest.mark.asyncio
     async def test_very_large_payload(self, aiohttp_client: AioHttpClient) -> None:
         """Test handling of very large payloads."""
-        large_payload = "x" * (1024 * 1024)  # 1MB payload
+        large_payload = b"x" * (1024 * 1024)  # 1MB payload
 
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response(text_content='{"received": "ok"}')

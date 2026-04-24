@@ -81,18 +81,25 @@ CONSTRAINT_SYMBOLS = {
     "ge": "≥",
     "le": "≤",
     "gt": ">",
-    "lt": "<",
+    "lt": "&lt;",
     "min_length": "min:",
     "max_length": "max:",
 }
 
+
 # Copyright header for generated markdown files
-SPDX_HEADER_MD = (
-    "<!--",
-    "SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-    "SPDX-License-Identifier: Apache-2.0",
-    "-->",
-)
+def md_frontmatter(sidebar_title: str) -> tuple[str, ...]:
+    """Generate YAML frontmatter with SPDX header and Fern sidebar-title."""
+    # Quote values containing ': ' to prevent YAML parse errors
+    title_value = f'"{sidebar_title}"' if ": " in sidebar_title else sidebar_title
+    return (
+        "---",
+        "# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+        "# SPDX-License-Identifier: Apache-2.0",
+        f"sidebar-title: {title_value}",
+        "---",
+    )
+
 
 # Header for auto-generated Python files
 GENERATED_FILE_HEADER = (

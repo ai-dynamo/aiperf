@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Profile Audio Language Models with AIPerf
+---
 
 # Profile Audio Language Models with AIPerf
 
@@ -86,10 +87,10 @@ CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-ty
 --audio-format 'wav' --audio-sample-rates 16 --streaming --url 'localhost:8000' --request-count 20 --concurrency 4
 Benchmark Duration: 21.80 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.csv
+artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/logs/aiperf.log
+artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
@@ -98,7 +99,8 @@ To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
 
 AIPerf can automatically load and encode audio files from local paths.
 
-> **Note:** The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
+> [!NOTE]
+> The example below uses paths from the AIPerf test fixtures directory. Replace these with paths to your own audio files.
 
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
@@ -150,8 +152,8 @@ CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-ty
 'inputs_filepaths.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --request-count 3
 Benchmark Duration: 3.16 sec
 CSV Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.csv
+artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.csv
 JSON Export:
-/home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.json
-Log File: /home/lkomali/aiperf/artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/logs/aiperf.log
+artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/logs/aiperf.log
 ```

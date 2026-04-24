@@ -1,3 +1,4 @@
+# check=skip=UndefinedVar
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 FROM python:3.13-slim-bookworm@sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc AS base
@@ -95,11 +96,13 @@ RUN mkdir -p /opt/licenses/dpkg \
     && apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
+        libogg-dev \
+        libvorbis-dev \
+        libvpx-dev \
         nasm \
         pkg-config \
         wget \
         yasm \
-        libvpx-dev \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -114,6 +117,7 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --enable-libvorbis \
         --enable-libvpx \
         --disable-doc \
         --disable-htmlpages \
@@ -128,15 +132,23 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp ffmpeg-${FFMPEG_VERSION}/LICENSE.md /opt/licenses/ffmpeg/ \
     && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
-       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
+       cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; }
 
 # Collect copyright files for packages whose files we explicitly copy into the runtime.
 # `dpkg -S` resolves paths against the dpkg database, which only tracks files at
-# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so* were copied from /usr/lib/
-# so querying /opt/ffmpeg/lib/ returns nothing for them — we must query the
-# /usr/lib/ source paths instead. /bin/bash is still at its dpkg-tracked location.
+# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*
+# were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns nothing for
+# them — we must query the /usr/lib/ source paths instead. /bin/bash is still
+# at its dpkg-tracked location.
 RUN { dpkg -S /bin/bash 2>/dev/null; \
-      for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so*; do \
+      for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so* \
+               /usr/lib/*/libvorbis.so* /usr/lib/libvorbis.so* \
+               /usr/lib/*/libvorbisenc.so* /usr/lib/libvorbisenc.so* \
+               /usr/lib/*/libogg.so* /usr/lib/libogg.so*; do \
         [ -e "$f" ] && dpkg -S "$f" 2>/dev/null; \
       done; \
     } | awk -F: '{print $1}' \
@@ -146,8 +158,8 @@ RUN { dpkg -S /bin/bash 2>/dev/null; \
           cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
       done < /opt/licenses/dpkg/runtime-pkgs.txt
 
-ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
-    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # Create directories for the nvs user (UID 1000 in NVIDIA distroless)
 RUN mkdir -p /app /app/artifacts /app/.cache \
@@ -165,6 +177,10 @@ RUN uv pip install /dist/aiperf-*.whl \
 
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
+
+# Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
+RUN mkdir -p /opt/tiktoken_cache \
+    && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 ############################################
 ######### Python License Collector #########
@@ -226,14 +242,15 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 ENTRYPOINT ["/bin/bash", "-c"]
 
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.1-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
 
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/
@@ -247,8 +264,8 @@ COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
 # Copy ffmpeg binaries and libraries (includes libvpx)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
-ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}" \
-    LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 # Setup the directories with permissions for nvs user
 COPY --from=env-builder --chown=1000:1000 /app /app
@@ -258,8 +275,12 @@ ENV HOME=/app
 # Copy the virtual environment and set up
 COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
 
+# Copy pre-cached tiktoken encoding for zero-network --tokenizer builtin
+COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cache
+
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
-    PATH="/opt/aiperf/venv/bin:${PATH}"
+    PATH="/opt/aiperf/venv/bin:${PATH}" \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]

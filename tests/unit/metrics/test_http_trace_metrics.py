@@ -99,13 +99,20 @@ def create_aiohttp_trace_data(
 ) -> AioHttpTraceData:
     """Create AioHttpTraceData with specified timestamps.
 
-    Note: request_send_end_perf_ns is computed from request_chunks[-1][0].
-    If request_send_end is provided but request_chunks is not, a synthetic chunk is created.
+    Aggregate fields (request_chunks_count, request_bytes_total, response_chunks_count,
+    response_bytes_total) are auto-derived from the chunk lists when provided.
     """
-    # request_send_end_perf_ns is computed from request_chunks[-1][0]
-    # Create synthetic chunk if request_send_end provided but no chunks
-    if request_chunks is None and request_send_end is not None:
-        request_chunks = [(request_send_end, 0)]
+    actual_request_chunks = request_chunks or []
+    actual_response_chunks = response_chunks or []
+
+    # Auto-derive start/end timestamps from chunk lists (matching runtime behavior)
+    if response_receive_start is None and actual_response_chunks:
+        response_receive_start = actual_response_chunks[0][0]
+    if response_receive_end is None and actual_response_chunks:
+        response_receive_end = actual_response_chunks[-1][0]
+    if request_send_end is None and actual_request_chunks:
+        request_send_end = actual_request_chunks[-1][0]
+
     return AioHttpTraceData(
         trace_type="aiohttp",
         reference_perf_ns=reference_perf_ns,
@@ -125,12 +132,17 @@ def create_aiohttp_trace_data(
         # Request
         request_send_start_perf_ns=request_send_start,
         request_headers_sent_perf_ns=request_headers_sent,
-        request_chunks=request_chunks or [],
+        request_send_end_perf_ns=request_send_end,
+        request_chunks=actual_request_chunks,
+        request_chunks_count=len(actual_request_chunks),
+        request_bytes_total=sum(size for _, size in actual_request_chunks),
         # Response
         response_receive_start_perf_ns=response_receive_start,
         response_headers_received_perf_ns=response_headers_received,
         response_receive_end_perf_ns=response_receive_end,
-        response_chunks=response_chunks or [],
+        response_chunks=actual_response_chunks,
+        response_chunks_count=len(actual_response_chunks),
+        response_bytes_total=sum(size for _, size in actual_response_chunks),
     )
 
 
@@ -407,7 +419,7 @@ class TestHttpWaitingMetric:
         record = create_record_with_trace(trace_data=trace)
 
         metric = HttpWaitingMetric()
-        with pytest.raises(NoMetricValue, match="No response chunks"):
+        with pytest.raises(NoMetricValue, match="No response receive start"):
             metric.parse_record(record, MetricRecordDict())
 
 
@@ -444,7 +456,7 @@ class TestHttpReceivingMetric:
         record = create_record_with_trace(trace_data=trace)
 
         metric = HttpReceivingMetric()
-        with pytest.raises(NoMetricValue, match="No response chunks"):
+        with pytest.raises(NoMetricValue, match="No response"):
             metric.parse_record(record, MetricRecordDict())
 
 

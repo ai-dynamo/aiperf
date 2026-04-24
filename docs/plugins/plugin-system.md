@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Plugin System
+---
 # AIPerf Plugin System
 
 The AIPerf plugin system provides a flexible, extensible architecture for customizing benchmark behavior. It uses YAML-based configuration with lazy loading, priority-based conflict resolution, and dynamic enum generation.
@@ -246,7 +247,8 @@ endpoint:
     metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true, metrics_title: My Custom Metrics }
 ```
 
-> **Note**: Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
+> [!NOTE]
+> Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
 
 ## Plugin Configuration
 
@@ -332,7 +334,8 @@ $ aiperf plugins endpoint chat
 | 2 | External packages beat built-in (equal priority) |
 | 3 | First registered wins (with warning) |
 
-> **Tip**: Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
+> [!TIP]
+> Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
 
 ### API Reference
 

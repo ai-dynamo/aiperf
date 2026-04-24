@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: HTTP Trace Metrics Guide
+---
 
 # HTTP Trace Metrics Guide
 
@@ -32,16 +33,16 @@ This displays a separate table with the HTTP trace timing breakdown after the ma
 The HTTP request lifecycle breaks down into distinct phases, each measured independently:
 
 ```
-Request Lifecycle ──────────────────────────────────────────────────────────────────────────────►
-    │              │              │                │                    │                       │
-    │◄─ dns_ns ───►│◄ connect_ns ►│◄─ sending_ns ─►│◄──── waiting_ns ──►│◄──── receiving_ns ───►│
-    │              │              │                │                    │                       │
-dns resolution   TCP+TLS      request send     request_send_end     first body chunk      last body chunk
-(cache miss)    handshake     (last chunk)     (ready for server)   (response starts)     (response complete)
-    │              │                                                   │
-    └─ dns_cache_hit (skip lookup)                                     └── response_headers_received
-                    │
-                    └─ connection_reused (skip TCP/TLS)
+Request Lifecycle ────────────────────────────────────────────────────────────────────────────────────►
+    │                 │                 │                │                    │                       │
+    │◄─dns_lookup_ns─►│◄─connecting_ns─►│◄─ sending_ns ─►│◄──── waiting_ns ──►│◄──── receiving_ns ───►│
+    │                 │                 │                │                |   │                       │
+dns resolution     TCP+TLS      request send     request_send_end     first body chunk      last body chunk
+(cache miss)      handshake     (last chunk)     (ready for server)   (response starts)     (response complete)
+    │                 │                                                   │
+    └─ dns_cache_hit (skip lookup)                                        └── response_headers_received
+                      │
+                      └─ connection_reused_ns (skip TCP/TLS)
 ```
 
 ## Metric Reference
@@ -108,9 +109,10 @@ http_req_total = http_req_blocked + http_req_dns_lookup + http_req_connecting
                + http_req_sending + http_req_waiting + http_req_receiving
 ```
 
-> **Note:** `http_req_total` and `http_req_duration` may differ slightly because:
-> - `http_req_duration` is measured end-to-end (includes response finalization time)
-> - `http_req_total` is computed from components (ends at last chunk, before finalization)
+> [!NOTE]
+> `http_req_total` and `http_req_duration` may differ slightly because:
+> - `http_req_duration` is a single end-to-end measurement (`response_receive_end - request_send_start`)
+> - `http_req_total` sums 6 individual phase measurements, which may have small unmeasured gaps between phases
 >
 > Use `http_req_total` when you need the breakdown to add up exactly. Use `http_req_duration` when you want the most accurate single measurement of request/response exchange time.
 
@@ -128,7 +130,7 @@ You may notice that `http_req_total` can be **larger** than `request_latency`. T
 |--------|-------|-----|------------------|
 | `request_latency` | Before HTTP call | Last **content** response | Time to receive all meaningful tokens |
 | `http_req_total` | Sum of phases starting at pool wait | Last **network** chunk | Sum of all HTTP timing phases |
-| `http_req_duration` | Request send start | Response **finalized** | Measured request/response exchange |
+| `http_req_duration` | Request send start | Last **network** chunk | Direct measured request/response exchange |
 
 **Why `http_req_total` > `request_latency`:**
 
@@ -139,8 +141,7 @@ For streaming LLM responses (SSE), the HTTP stream typically ends with:
 [content chunk 2]  ─► included in both metrics
 [content chunk N]  ─► request_latency ends here (last actual token)
 [usage info]       ─► http_req_total includes this
-[DONE]             ─► http_req_total ends here (last network chunk)
-                   ─► http_req_duration ends here (response finalized)
+[DONE]             ─► http_req_total and http_req_duration end here (last network chunk)
 ```
 
 The `request_latency` metric excludes trailing metadata (`[DONE]` markers, usage statistics) because those don't represent meaningful content delivery. The HTTP trace metrics include all network traffic.
@@ -201,14 +202,18 @@ When exported to `profile_export.jsonl`, trace data uses **wall-clock timestamps
     "request_headers": {"Host": "localhost:8000", "Content-Type": "application/json", "...": "..."},
     "request_headers_sent_ns": 1768309400342515706,
     "request_chunks": [[1768309400342549481, 91586]],
+    "request_send_end_ns": 1768309400342549481,
+    "request_chunks_count": 1,
+    "request_bytes_total": 91586,
     "response_status_code": 200,
     "response_reason": "OK",
     "response_receive_start_ns": 1768309404815807889,
     "response_headers": {"Content-Type": "text/event-stream; charset=utf-8", "...": "..."},
     "response_headers_received_ns": 1768309400369701553,
     "response_chunks": [[1768309404815807889, 565], [1768309405191294711, 268], "..."],
+    "response_chunks_count": 42,
+    "response_bytes_total": 16384,
     "response_receive_end_ns": 1768309437763141384,
-    "request_send_end_ns": 1768309400342549481,
     "sending_ns": 667181,
     "waiting_ns": 4473258408,
     "receiving_ns": 32947333495,
@@ -226,7 +231,8 @@ When exported to `profile_export.jsonl`, trace data uses **wall-clock timestamps
 }
 ```
 
-> **Note:** Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connection_reused_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
+> [!NOTE]
+> Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connecting_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
 
 ### Trace Data Fields
 
@@ -253,7 +259,16 @@ The `trace_data` object contains both raw timestamps and computed durations:
 | `dns_cache_hit_ns` | When a DNS cache hit occurred (aiohttp only) |
 | `dns_cache_miss_ns` | When a DNS cache miss occurred (aiohttp only) |
 
-**Chunk Data** (transport-layer granularity):
+**Chunk Aggregates** (always available):
+
+| Field | Description |
+|-------|-------------|
+| `request_chunks_count` | Number of request chunks sent |
+| `request_bytes_total` | Total bytes sent in request chunks |
+| `response_chunks_count` | Number of response chunks received |
+| `response_bytes_total` | Total bytes received in response chunks |
+
+**Chunk Data** (only with `--export-http-trace`, transport-layer granularity):
 
 | Field | Description |
 |-------|-------------|
@@ -324,11 +339,13 @@ Track `http_req_connection_reused` aggregated values:
 
 ### Chunk-Level Analysis
 
-The `request_chunks` and `response_chunks` arrays provide transport-layer granularity useful for:
+When `--export-http-trace` is enabled, the `request_chunks` and `response_chunks` arrays provide transport-layer granularity useful for:
 
 - Analyzing streaming response patterns from LLM APIs
 - Debugging chunked transfer encoding issues
 - Understanding network-level timing variations
+
+Aggregate fields (`request_chunks_count`, `request_bytes_total`, `response_chunks_count`, `response_bytes_total`) are always available regardless of the export flag.
 
 ## Standards Compliance
 
@@ -369,5 +386,5 @@ The k6 `http_req_tls_handshaking` metric is **not separated** in AIPerf. TLS tim
 ## Related Documentation
 
 - [Working with Profile Export Files](./working-with-profile-exports.md) - How to parse and analyze AIPerf output files
-- [Source: trace_models.py](../../src/aiperf/common/models/trace_models.py) - Trace data model definitions
-- [Source: http_trace_metrics.py](../../src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations
+- [Source: trace_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/trace_models.py) - Trace data model definitions
+- [Source: http_trace_metrics.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/http_trace_metrics.py) - HTTP trace metric implementations

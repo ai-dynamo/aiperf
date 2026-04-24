@@ -10,6 +10,14 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "api_router": {
+      "title": "API Router Plugins",
+      "type": "object",
+      "description": "API routers are lifecycle-managed components that extend BaseRouter.\nEach router participates in the full service lifecycle, with access\nto ZMQ communication, configuration, and async initialization.\nRouters expose HTTP/WebSocket endpoints via get_router() -> APIRouter.\nOne-to-many mapping: all registered routers are loaded.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ApiRouterPlugin"
+      }
+    },
     "timing_strategy": {
       "title": "Timing Strategy Plugins",
       "type": "object",
@@ -72,6 +80,14 @@
       "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load().",
       "additionalProperties": {
         "$ref": "#/$defs/CustomDatasetLoaderPlugin"
+      }
+    },
+    "public_dataset_loader": {
+      "title": "Public Dataset Loader Plugins",
+      "type": "object",
+      "description": "Public dataset loaders fetch shared benchmark datasets without requiring a local file.\nSupports HTTP-downloaded and HuggingFace-hosted datasets.\nOne-to-one mapping: selected based on --public-dataset configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PublicDatasetLoaderPlugin"
       }
     },
     "endpoint": {
@@ -214,6 +230,47 @@
   "title": "PluginsManifest",
   "type": "object",
   "$defs": {
+    "ApiRouterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "API Router Plugin",
+      "description": "API routers are lifecycle-managed components that extend BaseRouter.\nEach router participates in the full service lifecycle, with access\nto ZMQ communication, configuration, and async initialization.\nRouters expose HTTP/WebSocket endpoints via get_router() -> APIRouter.\nOne-to-many mapping: all registered routers are loaded."
+    },
     "TimingStrategyPlugin": {
       "type": "object",
       "properties": {
@@ -522,18 +579,31 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
+          "description": "Metadata schema for custom dataset loader plugins.\n\nDefines format-specific defaults for dataset loaders. When a loader specifies\n``block_size``, it overrides the user's ``--isl-block-size`` config default,\nensuring hash-based prompt generation uses the correct token block size for the\ntrace format (e.g. 16 for Bailian, 512 for Mooncake).\n\nReferenced by: categories.yaml custom_dataset_loader.metadata_class\nUsed in: plugins.yaml custom_dataset_loader entries",
+          "properties": {
+            "is_trace": {
+              "default": false,
+              "description": "Whether this loader handles trace-format datasets. Trace datasets use hash_ids-based prompt generation, support synthesis options, and prefer sequential sampling with fixed_schedule timing.",
+              "title": "Is Trace",
+              "type": "boolean"
             },
-            {
-              "type": "null"
+            "default_block_size": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
+              "title": "Default Block Size"
             }
-          ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          },
+          "title": "CustomDatasetLoaderMetadata",
+          "type": "object"
         }
       },
       "required": [
@@ -541,6 +611,162 @@
       ],
       "title": "Custom Dataset Loader Plugin",
       "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
+    },
+    "PublicDatasetLoaderPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for public dataset loader plugins.\n\nReferenced by: categories.yaml public_dataset_loader.metadata_class\nUsed in: plugins.yaml public_dataset_loader entries",
+          "properties": {
+            "hf_dataset_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "HuggingFace dataset identifier (e.g. 'AI-MO/NuminaMath-TIR'). Required for HF-backed loaders.",
+              "title": "Hf Dataset Name"
+            },
+            "hf_split": {
+              "default": "train",
+              "description": "HuggingFace dataset split to load (e.g. 'train', 'test', 'validation').",
+              "title": "Hf Split",
+              "type": "string"
+            },
+            "hf_subset": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
+              "title": "Hf Subset"
+            },
+            "prompt_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Column name containing the prompt/instruction text. Required for HFInstructionResponseDatasetLoader.",
+              "title": "Prompt Column"
+            },
+            "image_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Column name containing the image data (PIL Image). Used for multimodal datasets.",
+              "title": "Image Column"
+            },
+            "video_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Column name containing the video data (URL string or bytes dict). Used for video multimodal datasets.",
+              "title": "Video Column"
+            },
+            "conversation_column": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Column name containing the conversation messages array. Required for HFConversationDatasetLoader.",
+              "title": "Conversation Column"
+            },
+            "message_content_key": {
+              "default": "content",
+              "description": "Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
+              "title": "Message Content Key",
+              "type": "string"
+            },
+            "streaming": {
+              "default": false,
+              "description": "Whether to load the HuggingFace dataset in streaming mode. Use true for large datasets (>10 GB) to avoid downloading the full dataset. Use false (default) for small datasets to leverage HF caching and len() support.",
+              "title": "Streaming",
+              "type": "boolean"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
+              "title": "Category"
+            },
+            "prompt_template": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
+              "title": "Prompt Template"
+            }
+          },
+          "title": "PublicDatasetLoaderMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Public Dataset Loader Plugin",
+      "description": "Public dataset loaders fetch shared benchmark datasets without requiring a local file.\nSupports HTTP-downloaded and HuggingFace-hosted datasets.\nOne-to-one mapping: selected based on --public-dataset configuration."
     },
     "EndpointPlugin": {
       "type": "object",
@@ -663,6 +889,18 @@
               "default": false,
               "description": "Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
               "title": "Requires Polling",
+              "type": "boolean"
+            },
+            "requires_form_data": {
+              "default": false,
+              "description": "Whether endpoint supports multipart/form-data request encoding.",
+              "title": "Requires Form Data",
+              "type": "boolean"
+            },
+            "requires_inline_media": {
+              "default": false,
+              "description": "Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
+              "title": "Requires Inline Media",
               "type": "boolean"
             }
           },

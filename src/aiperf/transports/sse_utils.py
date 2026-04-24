@@ -25,7 +25,7 @@ class AsyncSSEStreamReader:
 
     SSE Format:
         Server-Sent Events are text-based, with messages delimited by double newlines.
-        Supports both \r\n\r\n and \n\n delimiters:
+        Supports both \n\n and \r\n\r\n delimiters:
 
         data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1749678185,"model":"gpt2","choices":[{"index":0,"delta":{"content":"Hello","tool_calls":[]}}]}
 
@@ -35,7 +35,7 @@ class AsyncSSEStreamReader:
 
     Parsing Strategy:
         1. Read response in chunks
-        2. Accumulate chunks in buffer until delimiter found (\r\n\r\n or \n\n)
+        2. Accumulate chunks in buffer until delimiter found (\n\n or \r\n\r\n)
         3. Parse complete message using SSEMessage.parse()
         4. Timestamp message at arrival time
         5. Repeat until stream ends
@@ -97,9 +97,7 @@ class AsyncSSEStreamReader:
                     break
 
             if error_message is None:
-                error_message = (
-                    f"Unknown error in SSE response: {message.model_dump_json()}"
-                )
+                error_message = f"Unknown error in SSE response: {message}"
 
             raise SSEResponseError(
                 f"Error occurred in SSE response: {error_message}", error_code=502
@@ -108,8 +106,14 @@ class AsyncSSEStreamReader:
     async def __aiter__(self) -> AsyncIterator[SSEMessage]:
         """Iterate over the SSE stream in a performant manner and yield parsed SSE messages as they arrive."""
 
-        # Use bytearray for efficient buffer operations (mutable, no copy overhead)
+        # Use bytearray for efficient buffer operations (mutable, no copy overhead).
+        # We track a `consumed` offset instead of deleting from the front on every
+        # message, which avoids an O(remaining) memmove per message. The buffer is
+        # compacted once per chunk instead.
         buffer = bytearray()
+        consumed = 0
+        # Where to start the next delimiter search (avoids re-scanning checked bytes).
+        search_offset = 0
 
         # Stream response body incrementally from the async iterator
         async for chunk in self._async_iter:
@@ -117,32 +121,44 @@ class AsyncSSEStreamReader:
             # This will provide us with the most accurate TTFT and ICL measurements
             chunk_perf_ns = time.perf_counter_ns()
 
-            # bytearray is mutable, no copy overhead, so we can append the chunk to the buffer in-place.
             buffer += chunk
 
             # Parse complete messages from buffer.
-            # SSE spec requires "\r\n\r\n" (CRLF CRLF) but we support both "\r\n\r\n" and "\n\n"
-            # for compatibility with lenient servers.
             while True:
-                # Try to find "\r\n\r\n" first (spec-compliant delimiter)
-                delimiter_index = buffer.find(b"\r\n\r\n")
-                delimiter_length = 4
+                # A delimiter can span two chunks: all but its last byte may
+                # already be in the buffer from the previous chunk. We must back
+                # up by the length of the longest delimiter (\r\n\r\n) minus 1,
+                # i.e. 3 bytes, to re-scan that overlap region.
+                scan_from = max(consumed, search_offset - 3)
+
+                # Only \n\n and \r\n\r\n are checked. The spec also allows \r\r
+                # and mixed combos like \n\r\n, but no real LLM server produces those.
+                #
+                # We check \n\n first (more common with LLM servers) and only fall
+                # back to \r\n\r\n when absent. This is deliberate: a server uses
+                # one delimiter style for the entire stream, so searching for both and
+                # picking the earliest would double the C-level find() cost on every
+                # iteration for no practical correctness gain. Profiling showed this
+                # search dominating CPU time against fast mock servers with high OSL.
+                delimiter_index = buffer.find(b"\n\n", scan_from)
+                delimiter_length = 2
 
                 if delimiter_index == -1:
-                    # Fall back to "\n\n" for lenient servers
-                    delimiter_index = buffer.find(b"\n\n")
-                    delimiter_length = 2
+                    delimiter_index = buffer.find(b"\r\n\r\n", scan_from)
+                    delimiter_length = 4
 
                 if delimiter_index == -1:
-                    # No complete message found, wait for more data
+                    search_offset = len(buffer)
                     break
 
-                # Extract message bytes up to delimiter
-                message_bytes = bytes(buffer[:delimiter_index])
-                # Remove processed message + delimiter from buffer in-place
-                del buffer[: delimiter_index + delimiter_length]
+                raw_message = (
+                    buffer[consumed:delimiter_index]
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+                consumed = delimiter_index + delimiter_length
+                search_offset = consumed
 
-                raw_message = message_bytes.decode("utf-8", errors="replace").strip()
                 if not raw_message:
                     if _logger.is_trace_enabled:
                         _logger.trace(
@@ -155,11 +171,18 @@ class AsyncSSEStreamReader:
                 if _logger.is_trace_enabled:
                     _logger.trace(f"Parsed SSE message: {raw_message}...")
 
+            # Compact: discard consumed bytes once per chunk instead of per message
+            if consumed > 0:
+                del buffer[:consumed]
+                search_offset -= consumed
+                consumed = 0
+
         # Handle any remaining data in buffer after stream ends
         # Some servers don't send final delimiter
-        if buffer_remaining := buffer.strip():
+        remaining = buffer[consumed:].strip()
+        if remaining:
             final_perf_ns = time.perf_counter_ns()
-            raw_message = buffer_remaining.decode("utf-8", errors="replace")
+            raw_message = remaining.decode("utf-8", errors="replace")
             yield SSEMessage.parse(raw_message, final_perf_ns)
 
             if _logger.is_trace_enabled:

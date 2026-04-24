@@ -184,12 +184,13 @@ class BasePublicDatasetLoader(BaseLoader):
             prompt_too_short or output_too_short or prompt_too_long or combined_too_long
         )
 
-    def get_recommended_sampling_strategy(self) -> "DatasetSamplingStrategy":
-        """Get the recommended sampling strategy for this dataset.
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
+        """Get the preferred sampling strategy for this dataset.
 
         Subclasses should override this method to return their preferred strategy.
 
         Returns:
-            DatasetSamplingStrategy: The recommended sampling strategy for this loader.
+            DatasetSamplingStrategy: The preferred sampling strategy for this loader.
         """
         raise NotImplementedError("Subclasses must implement this method")

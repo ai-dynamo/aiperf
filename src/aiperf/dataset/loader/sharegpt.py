@@ -36,7 +36,13 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     url = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
     filename = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
-    def __init__(self, user_config: UserConfig, tokenizer: Tokenizer, **kwargs):
+    def __init__(
+        self, user_config: UserConfig, tokenizer: Tokenizer | None = None, **kwargs
+    ):
+        if tokenizer is None:
+            raise ValueError(
+                "ShareGPTLoader requires a tokenizer; ensure the endpoint supports tokenization."
+            )
         self.tokenizer = tokenizer
         self.user_config = user_config
         self.output_tokens_mean = self.user_config.input.prompt.output_tokens.mean
@@ -128,6 +134,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         else:
             raise ValueError(f"Invalid model selection strategy: {selection_strategy}.")
 
-    def get_recommended_sampling_strategy(self) -> DatasetSamplingStrategy:
-        """Get the recommended sampling strategy for this dataset."""
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Get the preferred sampling strategy for this dataset."""
         return DatasetSamplingStrategy.SEQUENTIAL

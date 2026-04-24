@@ -17,25 +17,95 @@ AIPerf is a comprehensive benchmarking tool that measures the performance of gen
 
 ## Quick Start
 
-```bash
-pip install aiperf
+This quick start guide leverages [Ollama](https://ollama.com/) via
+ [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
+### Setting up a Local Server
+
+In order to set up an Ollama server, run `granite4:350m` using the following commands:
+
+```bash
+docker run -d \
+  --name ollama \
+  -p 11434:11434 \
+  -v ollama-data:/root/.ollama \
+  ollama/ollama:latest
+docker exec -it ollama ollama pull granite4:350m
+```
+
+### Basic Usage
+
+Create a virtual environment and install AIPerf:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install aiperf
+```
+
+To run a simple benchmark against your Ollama server:
+
+```bash
 aiperf profile \
-  --model Qwen/Qwen3-0.6B \
-  --url http://localhost:8000 \
+  --model "granite4:350m" \
+  --streaming \
   --endpoint-type chat \
-  --concurrency 10 \
-  --request-count 100 \
-  --streaming
+  --tokenizer ibm-granite/granite-4.0-micro \
+  --url http://localhost:11434
+```
+
+
+### Example with Custom Configuration
+
+```bash
+aiperf profile \
+  --model "granite4:350m" \
+  --streaming \
+  --endpoint-type chat \
+  --tokenizer ibm-granite/granite-4.0-micro \
+  --url http://localhost:11434
+  --concurrency 5 \
+  --request-count 10
+```
+
+Example output:
+
+
+**NOTE:** The example performance is reflective of a CPU-only run and does not represent an official benchmark.
+
+```bash
+                                               NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┓
+┃                               Metric ┃       avg ┃      min ┃       max ┃       p99 ┃       p90 ┃       p50 ┃      std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━┩
+│             Time to First Token (ms) │  7,463.28 │ 7,125.81 │  9,484.24 │  9,295.48 │  7,596.62 │  7,240.23 │   677.23 │
+│            Time to Second Token (ms) │     68.73 │    32.01 │    102.86 │    102.55 │     99.80 │     67.37 │    24.95 │
+│      Time to First Output Token (ms) │  7,463.28 │ 7,125.81 │  9,484.24 │  9,295.48 │  7,596.62 │  7,240.23 │   677.23 │
+│                 Request Latency (ms) │ 13,829.40 │ 9,029.36 │ 27,905.46 │ 27,237.77 │ 21,228.48 │ 11,338.31 │ 5,614.32 │
+│             Inter Token Latency (ms) │     65.31 │    53.06 │     81.31 │     81.24 │     80.64 │     63.79 │     9.09 │
+│     Output Token Throughput Per User │     15.60 │    12.30 │     18.85 │     18.77 │     18.08 │     15.68 │     2.05 │
+│                    (tokens/sec/user) │           │          │           │           │           │           │          │
+│      Output Sequence Length (tokens) │     95.20 │    29.00 │    295.00 │    283.12 │    176.20 │     63.00 │    77.08 │
+│       Input Sequence Length (tokens) │    550.00 │   550.00 │    550.00 │    550.00 │    550.00 │    550.00 │     0.00 │
+│ Output Token Throughput (tokens/sec) │      6.85 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│    Request Throughput (requests/sec) │      0.07 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+│             Request Count (requests) │     10.00 │      N/A │       N/A │       N/A │       N/A │       N/A │      N/A │
+└──────────────────────────────────────┴───────────┴──────────┴───────────┴───────────┴───────────┴───────────┴──────────┘
+
+CLI Command: aiperf profile --model 'granite4:350m' --streaming --endpoint-type 'chat' --tokenizer 'ibm-granite/granite-4.0-micro' --url 'http://localhost:11434'
+Benchmark Duration: 138.89 sec
+CSV Export: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.csv
+JSON Export: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/logs/aiperf.log
 ```
 
 ## Features
 
 - Scalable multiprocess architecture with 9 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
-- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark_modes/trace_replay.md)
+- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
-- [Public dataset support](docs/benchmark_datasets.md) including ShareGPT and custom formats
+- [Public dataset support](docs/benchmark-datasets.md) including ShareGPT and custom formats
 
 ## Supported APIs
 
@@ -62,11 +132,23 @@ aiperf profile \
 - [Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md) - Distribute across servers
 
 ### Workloads and Data
-- [Trace Benchmarking](docs/benchmark_modes/trace_replay.md) - Deterministic workload replay
+- [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
+- [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
+- [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
+- [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
+- [MMStar Dataset](docs/tutorials/mmstar.md) - Profile vision language models with MMStar visual QA benchmark
+- [MMVU Dataset](docs/tutorials/mmvu.md) - Profile video language models with MMVU expert-level video understanding benchmark
+- [VisionArena Dataset](docs/tutorials/vision-arena.md) - Profile with real-world vision conversations from Chatbot Arena
+- [LLaVA-OneVision Dataset](docs/tutorials/llava-onevision.md) - Profile with diverse multimodal instruction-following data
+- [SPEED-Bench Dataset](docs/tutorials/speed-bench.md) - Profile speculative decoding with SPEED-Bench
+- [InstructCoder Dataset](docs/tutorials/instruct-coder.md) - Profile with InstructCoder code generation dataset
+- [SpecBench Dataset](docs/tutorials/spec-bench.md) - Profile with SpecBench speculative decoding dataset
+- [Blazedit Dataset](docs/tutorials/blazedit.md) - Profile with Blazedit code editing dataset
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
+- [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
 - [Sequence Distributions](docs/tutorials/sequence-distributions.md) - Mixed ISL/OSL pairings
@@ -79,9 +161,11 @@ aiperf profile \
 ### Endpoint Types
 - [Embeddings](docs/tutorials/embeddings.md) - Profile embedding models
 - [Rankings](docs/tutorials/rankings.md) - Profile ranking models
+- [OpenAI Responses API](docs/tutorials/openai-responses.md) - Profile OpenAI Responses API endpoints
 - [Audio](docs/tutorials/audio.md) - Profile audio language models
+- [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
-- [SGLang Image Generation](docs/tutorials/sglang-image-generation.md) - Image generation benchmarking
+- [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
@@ -93,22 +177,23 @@ aiperf profile \
 - [Profile Exports](docs/tutorials/working-with-profile-exports.md) - Post-processing with Pydantic models
 - [Visualization and Plotting](docs/tutorials/plot.md) - PNG charts and multi-run comparison
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
-- [Server Metrics](docs/server_metrics/server-metrics.md) - Prometheus-compatible metrics
+- [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
 | [Architecture](docs/architecture.md) | Three-plane architecture, core components, credit system, data flow |
-| [CLI Options](docs/cli_options.md) | Complete command and option reference |
-| [Metrics Reference](docs/metrics_reference.md) | All metric definitions, formulas, and requirements |
-| [Environment Variables](docs/environment_variables.md) | All `AIPERF_*` configuration variables |
+| [CLI Options](docs/cli-options.md) | Complete command and option reference |
+| [Metrics Reference](docs/metrics-reference.md) | All metric definitions, formulas, and requirements |
+| [Environment Variables](docs/environment-variables.md) | All `AIPERF_*` configuration variables |
 | [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 25+ categories, creation guide |
 | [Creating Plugins](docs/plugins/creating-your-first-plugin.md) | Step-by-step plugin tutorial |
 | [Accuracy Benchmarks](docs/accuracy/accuracy_stubs.md) | Accuracy evaluation stubs and datasets |
-| [Benchmark Modes](docs/benchmark_modes/trace_replay.md) | Trace replay and timing modes |
-| [Server Metrics](docs/server_metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
+| [Benchmark Modes](docs/benchmark-modes/trace-replay.md) | Trace replay and timing modes |
+| [Server Metrics](docs/server-metrics/server-metrics.md) | Prometheus-compatible server metrics collection |
 | [Tokenizer Auto-Detection](docs/reference/tokenizer-auto-detection.md) | Pre-flight tokenizer detection |
+| [Conversation Context Mode](docs/reference/conversation-context-mode.md) | How conversation history accumulates in multi-turn |
 | [Dataset Synthesis API](docs/api/synthesis.md) | Synthesis module API reference |
 | [Code Patterns](docs/dev/patterns.md) | Code examples for services, models, messages, plugins |
 | [Migrating from Genai-Perf](docs/migrating.md) | Migration guide and feature comparison |
@@ -123,3 +208,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions
 - Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.
 - Very high concurrency settings (typically >15,000) may lead to port exhaustion on some systems. Adjust system limits or reduce concurrency if connection failures occur.
 - Startup errors caused by invalid configuration settings can cause AIPerf to hang indefinitely. Terminate the process and check configuration settings.
+- Copying selected text may not work reliably in the dashboard UI. Use the `c` key to copy all logs.

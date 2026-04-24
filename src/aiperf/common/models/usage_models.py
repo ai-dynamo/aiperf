@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, ClassVar
+from __future__ import annotations
 
-from pydantic import RootModel
+from typing import ClassVar
 
 
-class Usage(RootModel[dict[str, Any]]):
+class Usage(dict):
     """Usage wraps API-reported token consumption data with a unified interface.
 
     Inference frameworks like vLLM, TensorRT-LLM, and TGI return token usage
@@ -14,8 +14,8 @@ class Usage(RootModel[dict[str, Any]]):
     output_tokens). Usage normalizes these differences through properties while
     preserving the full underlying dictionary for framework-specific fields.
 
-    The model serializes as a plain dict and accepts any dict structure,
-    allowing framework-specific fields to pass through unchanged.
+    Inherits from dict so it serializes as a plain dict and accepts any dict
+    structure, allowing framework-specific fields to pass through unchanged.
     """
 
     PROMPT_DETAILS_KEYS: ClassVar[list[str]] = [
@@ -27,21 +27,19 @@ class Usage(RootModel[dict[str, Any]]):
         "output_tokens_details",
     ]
 
-    def get(self, key: str, default: Any | None = ...) -> Any | None:
-        """Get a value from the usage dictionary."""
-        if default is ...:
-            return self.root.get(key)
-        return self.root.get(key, default)
-
     @property
     def prompt_tokens(self) -> int | None:
         """Get prompt/input token count from API usage dict."""
-        return self.get("prompt_tokens") or self.get("input_tokens")
+        if "prompt_tokens" in self:
+            return self["prompt_tokens"]
+        return self.get("input_tokens")
 
     @property
     def completion_tokens(self) -> int | None:
         """Get completion/output token count from API usage dict."""
-        return self.get("completion_tokens") or self.get("output_tokens")
+        if "completion_tokens" in self:
+            return self["completion_tokens"]
+        return self.get("output_tokens")
 
     @property
     def total_tokens(self) -> int | None:
@@ -56,6 +54,7 @@ class Usage(RootModel[dict[str, Any]]):
         or output_tokens_details.reasoning_tokens.
         """
         for details_key in self.COMPLETION_DETAILS_KEYS:
-            if reasoning_tokens := self.get(details_key, {}).get("reasoning_tokens"):
-                return reasoning_tokens
+            details = self.get(details_key)
+            if isinstance(details, dict) and "reasoning_tokens" in details:
+                return details["reasoning_tokens"]
         return None

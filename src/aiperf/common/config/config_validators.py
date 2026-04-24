@@ -243,12 +243,21 @@ def parse_file(value: str | None) -> Path | None:
             raise ValueError(f"'{value}' is not a valid file or directory")
 
 
-def parse_str_as_numeric_dict(input_string: str | None) -> dict[str, float] | None:
+def parse_str_as_numeric_dict(
+    input_string: str | dict | None,
+) -> dict[str, float] | None:
     """
     Parse a string of key:value pairs such as 'k:v x:y' into {k: v, x: y}.
     """
     if input_string is None:
         return None
+    if isinstance(input_string, dict):
+        try:
+            return {k: float(v) for k, v in input_string.items()}
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"User Config: goodput dict values must be numeric, got {input_string!r}"
+            ) from e
     if not isinstance(input_string, str):
         raise ValueError(
             f"User Config: expected a string of space-separated 'key:value' pairs, got {type(input_string).__name__}"

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
@@ -167,6 +168,8 @@ class TestCustomDatasetComposerInferType:
             param({"input_length": 100, "output_length": 50}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_input_length"),
             param({"type": "mooncake_trace", "input_length": 100}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_explicit"),
             param({"text_input": "Hello"}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
+            param({"type": "bailian_trace", "chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_explicit"),
+            param({"chat_id": 1, "timestamp": 0.0, "input_length": 100, "output_length": 50, "type": "text"}, None, CustomDatasetType.BAILIAN_TRACE, id="bailian_structural_with_request_type"),
         ],
     )  # fmt: skip
     def test_infer_from_data(
@@ -199,6 +202,15 @@ class TestCustomDatasetComposerInferType:
         """Test that unknown formats raise ValueError."""
         _, composer = create_user_config_and_composer()
         with pytest.raises(ValueError, match="No loader can handle"):
+            composer._infer_type(data)
+
+    def test_infer_explicit_type_loader_rejects_raises(
+        self, create_user_config_and_composer
+    ):
+        """Test that a recognized type field with incompatible data raises ValueError."""
+        _, composer = create_user_config_and_composer()
+        data = {"type": "single_turn", "input_length": 100}
+        with pytest.raises(ValueError, match="cannot handle the data format"):
             composer._infer_type(data)
 
     def test_infer_random_pool_with_directory(self, create_user_config_and_composer):
@@ -357,3 +369,57 @@ class TestDetectionPriorityAndAmbiguity:
             assert SingleTurnDatasetLoader.can_load(data=None, filename=temp_path) is False  # fmt: skip
             assert MultiTurnDatasetLoader.can_load(data=None, filename=temp_path) is False  # fmt: skip
             assert MooncakeTraceDatasetLoader.can_load(data=None, filename=temp_path) is False  # fmt: skip
+            assert BailianTraceDatasetLoader.can_load(data=None, filename=temp_path) is False  # fmt: skip
+
+
+class TestUnrecognizedTypeFieldFallback:
+    """Tests for graceful handling of unrecognized 'type' field values.
+
+    Some trace formats (e.g. Bailian) include a 'type' field that represents
+    something other than the dataset type (e.g. request type: text/search/image).
+    The inference logic should fall back to structural detection instead of raising."""
+
+    def test_bailian_type_field_falls_through_to_structural_detection(
+        self, create_user_config_and_composer
+    ):
+        """Bailian data with type='text' should infer as bailian_trace, not raise."""
+        _, composer = create_user_config_and_composer()
+        data = {
+            "chat_id": 159,
+            "parent_chat_id": -1,
+            "timestamp": 61.114,
+            "input_length": 521,
+            "output_length": 132,
+            "type": "text",
+            "turn": 1,
+            "hash_ids": [1089, 1090, 1091],
+        }
+        result = composer._infer_type(data)
+        assert result == CustomDatasetType.BAILIAN_TRACE
+
+    @pytest.mark.parametrize(
+        "type_value",
+        [
+            param("text", id="text"),
+            param("search", id="search"),
+            param("image", id="image"),
+            param("file", id="file"),
+            param("unknown_garbage", id="garbage"),
+        ],
+    )  # fmt: skip
+    def test_unrecognized_type_field_does_not_raise(
+        self, create_user_config_and_composer, type_value
+    ):
+        """Unrecognized type field values should not raise during inference."""
+        _, composer = create_user_config_and_composer()
+        data = {
+            "chat_id": 1,
+            "parent_chat_id": -1,
+            "timestamp": 0.0,
+            "input_length": 100,
+            "output_length": 50,
+            "type": type_value,
+            "turn": 1,
+        }
+        result = composer._infer_type(data)
+        assert result == CustomDatasetType.BAILIAN_TRACE

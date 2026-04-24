@@ -2,17 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Execution strategies for multi-run orchestration."""
 
+from __future__ import annotations
+
 import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aiperf.common.config import UserConfig
 from aiperf.orchestrator.models import RunResult
 
+if TYPE_CHECKING:
+    from aiperf.orchestrator.convergence.base import ConvergenceCriterion
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AdaptiveStrategy",
     "ExecutionStrategy",
     "FixedTrialsStrategy",
 ]
@@ -347,3 +354,91 @@ class FixedTrialsStrategy(ExecutionStrategy):
         config = config.model_copy(deep=True)
         config.loadgen.disable_warmup()
         return config
+
+
+class AdaptiveStrategy(ExecutionStrategy):
+    """Strategy that stops early when a convergence criterion is satisfied.
+
+    Composes with any ConvergenceCriterion to decide when metrics have
+    stabilized, bounded by configurable min/max run counts. Delegates
+    run labeling, path structure, seed handling, and warmup disabling to
+    a FixedTrialsStrategy instance for artifact compatibility.
+    """
+
+    DEFAULT_SEED = FixedTrialsStrategy.DEFAULT_SEED
+
+    def __init__(
+        self,
+        criterion: ConvergenceCriterion,
+        min_runs: int = 3,
+        max_runs: int = 10,
+        cooldown_seconds: float = 0.0,
+        auto_set_seed: bool = True,
+        disable_warmup_after_first: bool = True,
+    ) -> None:
+        if min_runs < 1:
+            raise ValueError(f"Invalid min_runs: {min_runs}. Must be at least 1.")
+        if max_runs < min_runs:
+            raise ValueError(
+                f"Invalid max_runs: {max_runs}. Must be >= min_runs ({min_runs})."
+            )
+
+        self.criterion = criterion
+        self.min_runs = min_runs
+        self.max_runs = max_runs
+        self._delegate = FixedTrialsStrategy(
+            num_trials=max_runs,
+            cooldown_seconds=cooldown_seconds,
+            auto_set_seed=auto_set_seed,
+            disable_warmup_after_first=disable_warmup_after_first,
+        )
+
+    @property
+    def cooldown_seconds(self) -> float:
+        return self._delegate.cooldown_seconds
+
+    @property
+    def auto_set_seed(self) -> bool:
+        return self._delegate.auto_set_seed
+
+    @property
+    def disable_warmup_after_first(self) -> bool:
+        return self._delegate.disable_warmup_after_first
+
+    def should_continue(self, results: list[RunResult]) -> bool:
+        """Continue unless max reached or criterion converged (after min)."""
+        n = len(results)
+        if n >= self.max_runs:
+            return False
+        if n < self.min_runs:
+            return True
+        try:
+            converged = self.criterion.is_converged(results)
+        except Exception:
+            logger.exception(
+                "Convergence criterion raised an error; treating as not converged"
+            )
+            converged = False
+        return not converged
+
+    def get_next_config(
+        self, base_config: UserConfig, results: list[RunResult]
+    ) -> UserConfig:
+        """Return config for next run, delegating to FixedTrialsStrategy."""
+        return self._delegate.get_next_config(base_config, results)
+
+    def get_run_label(self, run_index: int) -> str:
+        """Generate zero-padded label matching FixedTrialsStrategy: run_0001, etc."""
+        return self._delegate.get_run_label(run_index)
+
+    def get_cooldown_seconds(self) -> float:
+        """Return configured cooldown duration."""
+        return self._delegate.get_cooldown_seconds()
+
+    def get_run_path(self, base_dir: Path, run_index: int) -> Path:
+        """Build path for a run's artifacts: base_dir/profile_runs/run_NNNN/."""
+        return self._delegate.get_run_path(base_dir, run_index)
+
+    def get_aggregate_path(self, base_dir: Path) -> Path:
+        """Build path for aggregate artifacts: base_dir/aggregate/."""
+        return self._delegate.get_aggregate_path(base_dir)

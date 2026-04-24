@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""HuggingFace tokenizer wrapper with sensible defaults."""
+"""HuggingFace tokenizer wrapper with sensible defaults and built-in tiktoken backend."""
 
 import contextlib
+import inspect
 import io
 import logging
 import os
@@ -15,9 +16,55 @@ from typing import TYPE_CHECKING
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 
 if TYPE_CHECKING:
+    import tiktoken
     from transformers import BatchEncoding
 
 _logger = logging.getLogger(__name__)
+
+BUILTIN_TOKENIZER_NAME = "builtin"
+_BUILTIN_ENCODING = "o200k_base"
+# tiktoken encoding names that should be routed through tiktoken, not HF.
+# "gpt2" is excluded because it's also a valid HF model name.
+TIKTOKEN_ENCODING_NAMES = frozenset(
+    {
+        "cl100k_base",
+        "o200k_base",
+        "o200k_harmony",
+        "p50k_base",
+        "p50k_edit",
+        "r50k_base",
+    }
+)
+
+
+class _TiktokenAdapter:
+    """Adapts tiktoken.Encoding to the interface expected by Tokenizer._tokenizer."""
+
+    def __init__(self, encoding: "tiktoken.Encoding") -> None:
+        self._encoding = encoding
+
+    @property
+    def bos_token_id(self) -> int | None:
+        return None
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._encoding.eot_token
+
+    def encode(self, text: str, **kwargs) -> list[int]:
+        return self._encoding.encode(text, allowed_special="all")
+
+    def decode(self, token_ids: list[int], **kwargs) -> str:
+        return self._encoding.decode(token_ids)
+
+    def __call__(self, text: str, **kwargs) -> dict:
+        return {"input_ids": self.encode(text)}
+
+    def __repr__(self) -> str:
+        return f"TiktokenAdapter({self._encoding.name})"
+
+    def __str__(self) -> str:
+        return repr(self)
 
 
 @dataclass(slots=True)
@@ -47,11 +94,68 @@ class AmbiguousTokenizerNameError(ValueError):
         )
 
 
+def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
+    """Check if a method on an object accepts a specific keyword argument."""
+    method = getattr(obj, method_name, None)
+    if method is None:
+        return False
+    try:
+        return kwarg in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _is_offline_mode() -> bool:
     """Check if HuggingFace offline mode is enabled via environment variables."""
     return bool(os.environ.get("HF_HUB_OFFLINE", "")) or bool(
         os.environ.get("TRANSFORMERS_OFFLINE", "")
     )
+
+
+def _find_hf_cache_aliases(name: str) -> list[Path]:
+    """Find HF cache directories matching a model name alias.
+
+    Scans the HF hub cache for ``models--*--<name>`` directories
+    (case-insensitive suffix match).
+
+    Returns:
+        List of matching cache directory paths.
+    """
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return []
+
+    suffix = f"--{name.lower()}"
+    return [
+        entry
+        for entry in cache_dir.iterdir()
+        if entry.is_dir()
+        and entry.name.startswith("models--")
+        and entry.name.lower().endswith(suffix)
+    ]
+
+
+def _is_hf_cached(name: str) -> bool:
+    """Check if a HuggingFace model is available in the local cache.
+
+    Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
+    HF hub cache directory.  Also handles alias-style short names, returning
+    True only when a single unambiguous match exists.
+    """
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return False
+
+    # Exact match: "meta-llama/Llama-2-7b-hf" -> "models--meta-llama--Llama-2-7b-hf"
+    exact = cache_dir / f"models--{name.replace('/', '--')}"
+    if exact.is_dir():
+        return True
+
+    return len(_find_hf_cache_aliases(name)) == 1
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
@@ -76,7 +180,7 @@ def resolve_alias(name: str) -> AliasResolutionResult:
         or path.is_dir()
     )
 
-    if is_local_path or _is_offline_mode():
+    if is_local_path or _is_offline_mode() or _is_hf_cached(name):
         return AliasResolutionResult(resolved_name=name)
 
     # Lazy import HuggingFace Hub
@@ -140,12 +244,32 @@ class Tokenizer:
         self._resolved_name: str | None = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
-        self._decode_args = {"skip_special_tokens": True}
+        # Prompt generation inserts BOS/EOS tokens as block separators
+        # (see PromptGenerator._build_token_sequence). Skipping special tokens
+        # during decode would silently strip those separators.
+        self._decode_args = {"skip_special_tokens": False}
 
     def _require_init(self) -> None:
         """Raise NotInitializedError if tokenizer is not initialized."""
         if self._tokenizer is None:
             raise NotInitializedError("Tokenizer is not initialized.")
+
+    def _apply_kwarg_overrides(self) -> None:
+        """Override default args for tokenizers that use non-standard kwargs (e.g. Kimi)."""
+        if self._tokenizer is None:
+            return
+        if _supports_kwarg(self._tokenizer, "encode", "allow_special_tokens"):
+            self._encode_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "encode", "add_special_tokens"):
+            self._encode_args = {}
+
+        if _supports_kwarg(self._tokenizer, "__call__", "allow_special_tokens"):
+            self._call_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "__call__", "add_special_tokens"):
+            self._call_args = {}
+
+        if not _supports_kwarg(self._tokenizer, "decode", "skip_special_tokens"):
+            self._decode_args = {}
 
     @staticmethod
     def resolve_alias(name: str) -> AliasResolutionResult:
@@ -163,6 +287,8 @@ class Tokenizer:
         """Load a tokenizer for the given pretrained model name.
 
         Uses HF_TOKEN environment variable for authentication.
+        Pass ``"builtin"`` as *name* for a zero-network-access tokenizer
+        backed by tiktoken's ``o200k_base`` encoding.
 
         Args:
             name: The name or path of the pretrained tokenizer model.
@@ -174,6 +300,11 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
+            return cls._from_tiktoken(
+                _BUILTIN_ENCODING if name == BUILTIN_TOKENIZER_NAME else name
+            )
+
         try:
             # Silence tokenizer warning on import and first use
             with (
@@ -182,8 +313,8 @@ class Tokenizer:
             ):
                 from transformers import AutoTokenizer
 
-                # Offline mode: skip alias resolution, load from local cache
-                if _is_offline_mode():
+                # Offline mode or cached: skip network, load from local cache
+                if _is_offline_mode() or _is_hf_cached(name):
                     tokenizer_instance = cls._from_pretrained_local(
                         AutoTokenizer.from_pretrained,
                         name,
@@ -193,7 +324,7 @@ class Tokenizer:
                     tokenizer_instance._resolved_name = name
                     return tokenizer_instance
 
-                # Online mode: resolve alias then load
+                # Online mode (not cached): resolve alias then load
                 resolved_name = name
                 if resolve_alias:
                     result = cls.resolve_alias(name)
@@ -208,6 +339,7 @@ class Tokenizer:
                     revision=revision,
                 )
                 tokenizer_cls._resolved_name = resolved_name
+                tokenizer_cls._apply_kwarg_overrides()
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
@@ -226,24 +358,12 @@ class Tokenizer:
         Returns:
             The full model ID (e.g. "openai-community/gpt2") or None.
         """
-        from huggingface_hub.constants import HF_HUB_CACHE
-
-        cache_dir = Path(HF_HUB_CACHE)
-        if not cache_dir.is_dir():
+        matches = _find_hf_cache_aliases(name)
+        if len(matches) != 1:
             return None
-
-        suffix = f"--{name.lower()}"
-        for entry in cache_dir.iterdir():
-            if (
-                entry.is_dir()
-                and entry.name.startswith("models--")
-                and entry.name.lower().endswith(suffix)
-            ):
-                # Convert "models--openai-community--gpt2" -> "openai-community/gpt2"
-                model_id = entry.name[len("models--") :].replace("--", "/")
-                _logger.debug(f"Found cached model for alias '{name}': {model_id}")
-                return model_id
-        return None
+        model_id = matches[0].name[len("models--") :].replace("--", "/")
+        _logger.debug(f"Found cached model for alias '{name}': {model_id}")
+        return model_id
 
     @classmethod
     def _from_pretrained_local(
@@ -285,9 +405,31 @@ class Tokenizer:
                     revision=revision,
                     local_files_only=True,
                 )
+            tokenizer_cls._apply_kwarg_overrides()
             return tokenizer_cls
         finally:
             huggingface_hub.model_info = _original_model_info
+
+    @classmethod
+    def _from_tiktoken(cls, encoding_name: str = _BUILTIN_ENCODING) -> "Tokenizer":
+        """Load a tokenizer backed by tiktoken (no HuggingFace, no network after first cache)."""
+        try:
+            import tiktoken
+        except ImportError as e:
+            raise TokenizerError(
+                f"tiktoken is required for --tokenizer {encoding_name}",
+                tokenizer_name=encoding_name,
+            ) from e
+
+        tokenizer_cls = cls()
+        tokenizer_cls._tokenizer = _TiktokenAdapter(
+            tiktoken.get_encoding(encoding_name)
+        )
+        tokenizer_cls._resolved_name = encoding_name
+        tokenizer_cls._call_args = {}
+        tokenizer_cls._encode_args = {}
+        tokenizer_cls._decode_args = {}
+        return tokenizer_cls
 
     def __call__(self, text, **kwargs) -> "BatchEncoding":
         """

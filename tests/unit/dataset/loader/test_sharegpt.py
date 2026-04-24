@@ -87,9 +87,9 @@ class TestShareGPTLoader:
         assert turn.max_tokens == len(["This", "is", "test", "output"])
         assert turn.model == "test-model"
 
-    async def test_get_recommended_sampling_strategy(
+    async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader
     ):
-        """Test that ShareGPTLoader returns the correct recommended sampling strategy."""
-        strategy = sharegpt_loader.get_recommended_sampling_strategy()
+        """Test that ShareGPTLoader returns the correct preferred sampling strategy."""
+        strategy = ShareGPTLoader.get_preferred_sampling_strategy()
         assert strategy == DatasetSamplingStrategy.SEQUENTIAL

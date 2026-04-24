@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Fixed Schedule Benchmarking
+---
 
 # Fixed Schedule Benchmarking
 
@@ -169,7 +170,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf
 
 ## Use Cases
 
-> [!IMPORTANT]
+> [!WARNING]
 > **When to Use Fixed Schedule Benchmarking:**
 > - **Traffic Replay**: Reproduce exact timing patterns from production logs
 > - **Temporal Analysis**: Study how performance varies with request timing

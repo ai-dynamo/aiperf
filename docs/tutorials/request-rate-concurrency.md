@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Request Rate with Max Concurrency
+---
 
 # Request Rate with Max Concurrency
 
@@ -24,7 +25,7 @@ When both parameters are specified, AIPerf uses a **sleep-then-gate** pattern fo
 
 The sleep controls **when** requests attempt to launch (the rate), while the semaphore controls **whether** they can proceed (the concurrency ceiling).
 
-> [!IMPORTANT]
+> [!WARNING]
 > **No catch-up behavior**: When the concurrency limit is reached, the system does not attempt to "catch up" by issuing requests faster once slots free up. The schedule continues at the configured rate.
 
 > [!TIP]
@@ -48,7 +49,7 @@ The sleep intervals in step 1 are determined by your chosen arrival pattern (`--
 >
 > **`constant`** — Requests arrive at precisely evenly-spaced intervals for deterministic, predictable load. Ideal for reproducible benchmarks and regression testing.
 >
-> **`gamma`** — Uses gamma-distributed inter-arrival times with tunable smoothness via `--arrival-smoothness`. Values <1.0 create bursty traffic, >1.0 creates smoother traffic, and 1.0 is equivalent to Poisson. Compatible with vLLM's `--burstiness` parameter.
+> **`gamma`** — Uses gamma-distributed inter-arrival times with tunable smoothness via `--arrival-smoothness`. Values &lt;1.0 create bursty traffic, >1.0 creates smoother traffic, and 1.0 is equivalent to Poisson. Compatible with vLLM's `--burstiness` parameter.
 >
 > **`concurrency_burst`** — Issues requests as fast as possible (zero interval), useful for stress testing or when concurrency is the only rate limiter. Often used internally for warmup phases.
 

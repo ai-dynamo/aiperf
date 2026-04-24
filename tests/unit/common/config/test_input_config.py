@@ -193,16 +193,23 @@ def test_all_custom_dataset_types_require_file(dataset_type):
 # ============================================================================
 
 
-def test_synthesis_with_mooncake_trace_succeeds():
-    """Test that synthesis options with mooncake_trace dataset type succeeds."""
+@pytest.mark.parametrize(
+    "dataset_type",
+    [
+        CustomDatasetType.MOONCAKE_TRACE,
+        CustomDatasetType.BAILIAN_TRACE,
+    ],
+)  # fmt: skip
+def test_synthesis_with_trace_dataset_succeeds(dataset_type):
+    """Test that synthesis options with trace dataset types succeed."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            custom_dataset_type=dataset_type,
             file=temp_file.name,
             synthesis=SynthesisConfig(speedup_ratio=2.0),
         )
         assert config.synthesis.speedup_ratio == 2.0
-        assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+        assert config.custom_dataset_type == dataset_type
 
 
 @pytest.mark.parametrize(
@@ -213,8 +220,8 @@ def test_synthesis_with_mooncake_trace_succeeds():
         CustomDatasetType.RANDOM_POOL,
     ],
 )  # fmt: skip
-def test_synthesis_with_non_mooncake_trace_raises_error(dataset_type):
-    """Test that synthesis options with non-mooncake_trace dataset type raises error."""
+def test_synthesis_with_non_trace_dataset_raises_error(dataset_type):
+    """Test that synthesis options with non-trace dataset type raises error."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
@@ -223,7 +230,7 @@ def test_synthesis_with_non_mooncake_trace_raises_error(dataset_type):
                 synthesis=SynthesisConfig(speedup_ratio=2.0),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require a trace dataset type" in str(exc.value)
 
 
 def test_synthesis_with_auto_detect_dataset_type_succeeds():
@@ -252,8 +259,8 @@ def test_synthesis_with_auto_detect_dataset_type_succeeds():
         SynthesisConfig(speedup_ratio=0.5, prefix_len_multiplier=1.5),
     ],
 )  # fmt: skip
-def test_synthesis_various_options_require_mooncake_trace(synthesis_config):
-    """Test that various synthesis option combinations require mooncake_trace."""
+def test_synthesis_various_options_require_trace_dataset(synthesis_config):
+    """Test that various synthesis option combinations require a trace dataset."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
@@ -262,7 +269,7 @@ def test_synthesis_various_options_require_mooncake_trace(synthesis_config):
                 synthesis=synthesis_config,
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require a trace dataset type" in str(exc.value)
 
 
 def test_synthesis_defaults_with_any_dataset_type_succeeds():
@@ -320,8 +327,8 @@ def test_synthesis_max_osl_alone_does_not_trigger_synthesis():
         CustomDatasetType.RANDOM_POOL,
     ],
 )  # fmt: skip
-def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
-    """Test that max_isl requires mooncake_trace dataset type."""
+def test_synthesis_max_isl_requires_trace_dataset(dataset_type):
+    """Test that max_isl requires a trace dataset type."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
@@ -330,7 +337,7 @@ def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
                 synthesis=SynthesisConfig(max_isl=4096),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require a trace dataset type" in str(exc.value)
 
 
 @pytest.mark.parametrize(
@@ -341,8 +348,8 @@ def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
         CustomDatasetType.RANDOM_POOL,
     ],
 )  # fmt: skip
-def test_synthesis_max_osl_requires_mooncake_trace(dataset_type):
-    """Test that max_osl requires mooncake_trace dataset type."""
+def test_synthesis_max_osl_requires_trace_dataset(dataset_type):
+    """Test that max_osl requires a trace dataset type."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
@@ -351,4 +358,4 @@ def test_synthesis_max_osl_requires_mooncake_trace(dataset_type):
                 synthesis=SynthesisConfig(max_osl=2048),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require a trace dataset type" in str(exc.value)

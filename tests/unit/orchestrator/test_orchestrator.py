@@ -371,6 +371,11 @@ class TestMultiRunOrchestrator:
         artifacts_path = tmp_path / "run_0001"
         artifacts_path.mkdir(parents=True)
 
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
         json_content = {
             "time_to_first_token": {
                 "unit": "ms",
@@ -392,7 +397,7 @@ class TestMultiRunOrchestrator:
             json.dump(json_content, f)
 
         # Extract metrics
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Verify metrics were extracted with full JsonMetricResult structure
         assert "time_to_first_token" in metrics
@@ -410,8 +415,13 @@ class TestMultiRunOrchestrator:
         artifacts_path = tmp_path / "run_0001"
         artifacts_path.mkdir(parents=True)
 
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
         # Extract metrics (file doesn't exist)
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Should return empty dict
         assert metrics == {}
@@ -423,12 +433,17 @@ class TestMultiRunOrchestrator:
         artifacts_path = tmp_path / "run_0001"
         artifacts_path.mkdir(parents=True)
 
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
         # Create invalid JSON file
         with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
             f.write("{ invalid json }")
 
         # Extract metrics (invalid JSON)
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Should return empty dict
         assert metrics == {}
@@ -442,6 +457,11 @@ class TestMultiRunOrchestrator:
         artifacts_path = tmp_path / "run_0001"
         artifacts_path.mkdir(parents=True)
 
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
         json_content = {
             "time_to_first_token": {
                 "unit": "ms",
@@ -454,7 +474,7 @@ class TestMultiRunOrchestrator:
         with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
             json.dump(json_content, f)
 
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Verify the full structure is preserved
         assert "time_to_first_token" in metrics

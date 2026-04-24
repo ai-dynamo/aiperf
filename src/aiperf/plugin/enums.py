@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -25,13 +25,17 @@ else:
     }, module=__name__)
     PluginTypeStr: TypeAlias = str
 
+APIRouterTypeStr: TypeAlias = str
+APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", module=__name__)
+"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.PROGRESS, APIRouterType.WORKERS"""
+
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
 """Dynamic enum for timing strategy. Example: TimingMode.FIXED_SCHEDULE, TimingMode.REQUEST_RATE, TimingMode.USER_CENTRIC_RATE"""
 
 ArrivalPatternStr: TypeAlias = str
 ArrivalPattern = plugins.create_enum(PluginType.ARRIVAL_PATTERN, "ArrivalPattern", module=__name__)
-"""Dynamic enum for arrival pattern. Example: ArrivalPattern.CONCURRENCY_BURST, ArrivalPattern.CONSTANT, ArrivalPattern.GAMMA"""
+"""Dynamic enum for arrival pattern. Example: ArrivalPattern.CONCURRENCY_BURST, ArrivalPattern.GAMMA, ArrivalPattern.POISSON"""
 
 RampTypeStr: TypeAlias = str
 RampType = plugins.create_enum(PluginType.RAMP, "RampType", module=__name__)
@@ -55,11 +59,15 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", 
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.MOONCAKE_TRACE, CustomDatasetType.MULTI_TURN, CustomDatasetType.RANDOM_POOL"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.MULTI_TURN, CustomDatasetType.SINGLE_TURN"""
+
+PublicDatasetTypeStr: TypeAlias = str
+PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEED_BENCH_SUMMARIZATION, PublicDatasetType.VISION_ARENA"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
-"""Dynamic enum for endpoint. Example: EndpointType.CHAT, EndpointType.CHAT_EMBEDDINGS, EndpointType.COHERE_RANKINGS"""
+"""Dynamic enum for endpoint. Example: EndpointType.CHAT, EndpointType.IMAGE_GENERATION, EndpointType.VIDEO_GENERATION"""
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)
@@ -71,23 +79,23 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 ResultsProcessorTypeStr: TypeAlias = str
 ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
-"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.GPU_TELEMETRY_ACCUMULATOR, ResultsProcessorType.GPU_TELEMETRY_JSONL_WRITER"""
+"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.RECORD_EXPORT, ResultsProcessorType.TIMESLICE"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
-"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.EXACT_MATCH, AccuracyGraderType.MATH"""
+"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.MATH, AccuracyGraderType.MULTIPLE_CHOICE"""
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)
-"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.AIME24, AccuracyBenchmarkType.AIME25"""
+"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GPQA_DIAMOND, AccuracyBenchmarkType.MMLU"""
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.CSV, DataExporterType.JSON"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.SERVER_METRICS_CSV, DataExporterType.TIMESLICE_JSON"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
-"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.API_ERRORS, ConsoleExporterType.ERRORS"""
+"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.INTERNAL_METRICS, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
 
 UITypeStr: TypeAlias = str
 UIType = plugins.create_enum(PluginType.UI, "UIType", module=__name__)
@@ -99,7 +107,7 @@ URLSelectionStrategy = plugins.create_enum(PluginType.URL_SELECTION_STRATEGY, "U
 
 ServiceTypeStr: TypeAlias = str
 ServiceType = plugins.create_enum(PluginType.SERVICE, "ServiceType", module=__name__)
-"""Dynamic enum for service. Example: ServiceType.DATASET_MANAGER, ServiceType.GPU_TELEMETRY_MANAGER, ServiceType.RECORD_PROCESSOR"""
+"""Dynamic enum for service. Example: ServiceType.API, ServiceType.SERVER_METRICS_MANAGER, ServiceType.WORKER_MANAGER"""
 
 ServiceRunTypeStr: TypeAlias = str
 ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType", module=__name__)
@@ -111,7 +119,7 @@ CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "Communicat
 
 CommClientTypeStr: TypeAlias = str
 CommClientType = plugins.create_enum(PluginType.COMMUNICATION_CLIENT, "CommClientType", module=__name__)
-"""Dynamic enum for communication client. Example: CommClientType.PUB, CommClientType.PULL, CommClientType.PUSH"""
+"""Dynamic enum for communication client. Example: CommClientType.PUB, CommClientType.REQUEST, CommClientType.SUB"""
 
 ZMQProxyTypeStr: TypeAlias = str
 ZMQProxyType = plugins.create_enum(PluginType.ZMQ_PROXY, "ZMQProxyType", module=__name__)
@@ -119,7 +127,7 @@ ZMQProxyType = plugins.create_enum(PluginType.ZMQ_PROXY, "ZMQProxyType", module=
 
 PlotTypeStr: TypeAlias = str
 PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
-"""Dynamic enum for plot. Example: PlotType.AREA, PlotType.DUAL_AXIS, PlotType.HISTOGRAM"""
+"""Dynamic enum for plot. Example: PlotType.AREA, PlotType.REQUEST_TIMELINE, PlotType.TIMESLICE"""
 
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)

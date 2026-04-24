@@ -89,6 +89,71 @@ class TestMooncakeTraceIntegration:
         assert result.request_count == request_count
         assert result.has_all_outputs
 
+    async def test_mooncake_trace_with_messages_field(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        tmp_path: Path,
+    ):
+        """Test mooncake_trace with OpenAI-compatible messages field."""
+        traces = [
+            {"timestamp": 0, "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What is the capital of France?"}], "output_length": 20},
+            {"timestamp": 100, "messages": [{"role": "user", "content": "Explain quantum computing."}], "output_length": 30},
+            {"timestamp": 200, "messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there!"}, {"role": "user", "content": "Thanks for the help."}], "output_length": 25},
+        ]  # fmt: skip
+        trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --input-file {trace_file} \
+                --custom-dataset-type mooncake_trace \
+                --request-count {request_count} \
+                --fixed-schedule \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == request_count
+        assert result.has_all_outputs
+
+    async def test_mooncake_trace_with_messages_and_tools(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        tmp_path: Path,
+    ):
+        """Test mooncake_trace with messages and tools fields."""
+        traces = [
+            {"timestamp": 0, "messages": [{"role": "user", "content": "What's the weather?"}], "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}}], "output_length": 50},
+            {"timestamp": 100, "messages": [{"role": "user", "content": "Hello"}], "output_length": 20},
+        ]  # fmt: skip
+        trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --input-file {trace_file} \
+                --custom-dataset-type mooncake_trace \
+                --request-count {request_count} \
+                --fixed-schedule \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == request_count
+        assert result.has_all_outputs
+
     async def test_mooncake_trace_multi_turn_with_session_id(
         self,
         cli: AIPerfCLI,

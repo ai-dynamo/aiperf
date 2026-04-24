@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pydantic import BaseModel, Field, SerializeAsAny
 
-from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.common.enums import SSEFieldType
+from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
 from aiperf.common.models.export_models import JsonMetricResult
 
 
@@ -116,6 +118,56 @@ class TestProfileResults:
         for i in range(3):
             assert i in profile_results.timeslice_metric_results
             assert len(profile_results.timeslice_metric_results[i]) == 2
+
+
+class TestSSEMessageDataclass:
+    """Test that SSEMessage dataclass works correctly."""
+
+    def test_parse_produces_valid_message(self) -> None:
+        """parse() produces a fully usable SSEMessage."""
+        msg = SSEMessage.parse("data: hello\nevent: message", perf_ns=42)
+        assert msg.perf_ns == 42
+        assert len(msg.packets) == 2
+        assert msg.packets[0].name == SSEFieldType.DATA
+        assert msg.packets[0].value == "hello"
+        assert msg.packets[1].name == SSEFieldType.EVENT
+        assert msg.packets[1].value == "message"
+
+    def test_parse_returns_sse_message_instance(self) -> None:
+        """parse() returns an SSEMessage instance."""
+        msg = SSEMessage.parse("data: test", perf_ns=1)
+        assert isinstance(msg, SSEMessage)
+
+    def test_parse_empty_produces_no_packets(self) -> None:
+        """Empty input yields zero packets."""
+        msg = SSEMessage.parse("", perf_ns=0)
+        assert msg.packets == []
+
+    def test_parse_bytes_input(self) -> None:
+        """parse() handles bytes input."""
+        msg = SSEMessage.parse(b"data: from_bytes", perf_ns=99)
+        assert msg.packets[0].value == "from_bytes"
+
+    def test_pydantic_serialization_roundtrip(self) -> None:
+        """SSEMessage roundtrips through Pydantic when inside a model field."""
+
+        class Wrapper(BaseModel):
+            responses: SerializeAsAny[list[SSEMessage]] = Field(default_factory=list)
+
+        msg = SSEMessage.parse("data: roundtrip\nevent: test", perf_ns=123)
+        wrapper = Wrapper(responses=[msg])
+        json_bytes = wrapper.model_dump_json().encode()
+        restored = Wrapper.model_validate_json(json_bytes)
+        assert restored.responses[0].perf_ns == 123
+        assert len(restored.responses[0].packets) == 2
+        assert restored.responses[0].packets[0].value == "roundtrip"
+
+    def test_parse_get_text_and_get_json(self) -> None:
+        """Protocol methods work on dataclass instances."""
+        msg = SSEMessage.parse('data: {"key": "value"}', perf_ns=1)
+        assert msg.get_text() == '{"key": "value"}'
+        json_obj = msg.get_json()
+        assert json_obj == {"key": "value"}
 
 
 class TestMetricResultSumField:

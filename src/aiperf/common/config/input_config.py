@@ -3,7 +3,13 @@
 
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    SerializationInfo,
+    field_serializer,
+    model_validator,
+)
 from typing_extensions import Self
 
 from aiperf.common import random_generator as rng
@@ -24,11 +30,13 @@ from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
-from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+from aiperf.common.redact import redact_header_tuples
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
+    PublicDatasetType,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -104,10 +112,10 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_synthesis_requires_mooncake_trace(self) -> Self:
-        """Validate that synthesis options require mooncake_trace dataset type.
+    def validate_synthesis_requires_trace_dataset(self) -> Self:
+        """Validate that synthesis options require a trace dataset type.
 
-        Only validates when custom_dataset_type is explicitly set to a non-mooncake
+        Only validates when custom_dataset_type is explicitly set to a non-trace
         type. If custom_dataset_type is None (auto-detect), we allow synthesis
         options and defer validation to runtime when the actual type is determined.
         """
@@ -118,13 +126,13 @@ class InputConfig(BaseConfig):
                 or self.synthesis.max_osl is not None
             )
             and self.custom_dataset_type is not None
-            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and not plugins.is_trace_dataset(self.custom_dataset_type)
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
                 "--synthesis-max-isl, --synthesis-max-osl) "
-                "require --custom-dataset-type mooncake_trace"
+                "require a trace dataset type (e.g., mooncake_trace, bailian_trace)"
             )
         return self
 
@@ -191,7 +199,7 @@ class InputConfig(BaseConfig):
         Any,
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
-            "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, "
+            "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
@@ -207,7 +215,7 @@ class InputConfig(BaseConfig):
         bool,
         Field(
             description="Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays "
-            "the exact timing pattern from the dataset. This mode is automatically enabled for `mooncake_trace` datasets."
+            "the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets."
         ),
         CLIParameter(
             name=(
@@ -264,7 +272,8 @@ class InputConfig(BaseConfig):
         Field(
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
             "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
-            "See `PublicDatasetType` enum for available datasets.",
+            "Run `aiperf plugins public_dataset_loader` to list available datasets. "
+            "Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.",
         ),
         CLIParameter(
             name=("--public-dataset"),
@@ -272,12 +281,28 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.PUBLIC_DATASET
 
+    hf_dataset_subset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). "
+            "Only applies when using `--public-dataset` with a HuggingFace-backed loader. "
+            "Takes priority over the subset defined in the plugin registry.",
+        ),
+        CLIParameter(
+            name=("--hf-subset",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). "
+            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
+            "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
+            "per-entry associations — use `single_turn` if paired modalities must stay together). "
             "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
         ),
         CLIParameter(
@@ -344,3 +369,13 @@ class InputConfig(BaseConfig):
     rankings: RankingsConfig = RankingsConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()
+
+    @field_serializer("headers")
+    @classmethod
+    def _redact_sensitive_headers(
+        cls, v: list[tuple[str, str]], info: SerializationInfo
+    ) -> list[tuple[str, str]]:
+        """Redact values of sensitive headers (Authorization, X-API-Key, etc.)."""
+        if info.context and info.context.get("include_secrets"):
+            return v
+        return redact_header_tuples(v)

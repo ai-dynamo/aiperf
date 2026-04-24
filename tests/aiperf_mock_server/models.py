@@ -183,6 +183,19 @@ class ImageGenerationRequest(BaseModel):
     style: str | None = None
 
 
+class ImageRetrievalInput(BaseModel):
+    """Single image input for NIM image retrieval."""
+
+    type: str
+    url: str
+
+
+class ImageRetrievalRequest(BaseModel):
+    """Request model for NIM image retrieval /v1/infer endpoint."""
+
+    input: list[ImageRetrievalInput]
+
+
 class SolidoRAGRequest(BaseModel):
     """Request model for SOLIDO /rag/api/prompt endpoint."""
 
@@ -209,5 +222,6 @@ RequestT = (
     | CohereRerankRequest
     | TGIGenerateRequest
     | ImageGenerationRequest
+    | ImageRetrievalRequest
     | SolidoRAGRequest
 )

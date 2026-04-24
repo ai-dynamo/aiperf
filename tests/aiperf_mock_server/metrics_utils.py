@@ -46,6 +46,7 @@ from aiperf_mock_server.metrics import (
     # AIPerf mock metrics
     EMBEDDINGS_GENERATED_TOTAL,
     ERRORS_TOTAL,
+    IMAGES_PROCESSED_TOTAL,
     INTER_TOKEN_LATENCY_SECONDS,
     PASSAGES_RANKED_TOTAL,
     PROMPT_TOKENS_TOTAL,
@@ -370,6 +371,14 @@ def record_ranking_success(
     PROMPT_TOKENS_TOTAL.labels(endpoint=endpoint, model=model).inc(prompt_tokens)
     RANKINGS_GENERATED_TOTAL.labels(endpoint=endpoint).inc()
     PASSAGES_RANKED_TOTAL.labels(endpoint=endpoint).inc(num_passages)
+    record_basic_success(endpoint, latency)
+
+
+def record_image_retrieval_success(
+    endpoint: str, num_images: int, latency: float
+) -> None:
+    """Record image retrieval success metrics."""
+    IMAGES_PROCESSED_TOTAL.labels(endpoint=endpoint).inc(num_images)
     record_basic_success(endpoint, latency)
 
 

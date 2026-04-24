@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Fern Docs Checks"
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'fern/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'fern/**'
+
+jobs:
+  fern-checks:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - name: Install Fern CLI
+      run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install dependencies
+      run: make first-time-setup PYTHON_VERSION=3.12
+    - name: Run Fern documentation checks
+      run: make test-fern-docs

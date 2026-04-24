@@ -33,7 +33,7 @@ def test_input_tokens_config_defaults():
     config = InputTokensConfig()
     assert config.mean == InputTokensDefaults.MEAN
     assert config.stddev == InputTokensDefaults.STDDEV
-    assert config.block_size == InputTokensDefaults.BLOCK_SIZE
+    assert config.block_size is None
 
 
 def test_input_tokens_config_custom_values():

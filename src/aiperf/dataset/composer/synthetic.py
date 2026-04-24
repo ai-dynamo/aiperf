@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -11,7 +12,7 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
 
@@ -116,7 +117,16 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         Returns:
             Text: A text payload object.
+
+        Raises:
+            ValueError: If prompt_generator is not available (tokenizer was not configured).
         """
+        if self.prompt_generator is None:
+            raise ValueError(
+                "Text prompt generation requires a tokenizer. Either provide a "
+                "--tokenizer or use an endpoint that supports tokenization."
+            )
+
         text = Text(name="text")
 
         # Sample ISL/OSL pair for this request (cached for consistency)

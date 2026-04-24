@@ -87,20 +87,27 @@ def sample_headers():
 def create_base_trace_data(**overrides):
     """Helper to create BaseTraceData with default values.
 
-    Note: request_send_end_perf_ns is computed from request_chunks[-1][0].
-    If request_send_end_perf_ns is provided but request_chunks is not, a synthetic chunk is created.
+    Aggregate fields are auto-derived from chunk lists when provided.
     """
     from aiperf.common.models import BaseTraceData
 
     defaults = {"trace_type": "base"}
     params = {**defaults, **overrides}
 
-    # request_send_end_perf_ns is computed from request_chunks[-1][0]
-    # Create synthetic chunk if request_send_end_perf_ns provided but no chunks
-    if "request_send_end_perf_ns" in params and "request_chunks" not in params:
-        params["request_chunks"] = [(params.pop("request_send_end_perf_ns"), 0)]
-    elif "request_send_end_perf_ns" in params:
-        params.pop("request_send_end_perf_ns")  # Use existing request_chunks
+    # Auto-derive aggregate fields from chunk lists if not explicitly provided
+    if "request_chunks" in params:
+        chunks = params["request_chunks"]
+        params.setdefault("request_chunks_count", len(chunks))
+        params.setdefault("request_bytes_total", sum(size for _, size in chunks))
+        if chunks:
+            params.setdefault("request_send_end_perf_ns", chunks[-1][0])
+    if "response_chunks" in params:
+        chunks = params["response_chunks"]
+        params.setdefault("response_chunks_count", len(chunks))
+        params.setdefault("response_bytes_total", sum(size for _, size in chunks))
+        if chunks:
+            params.setdefault("response_receive_start_perf_ns", chunks[0][0])
+            params.setdefault("response_receive_end_perf_ns", chunks[-1][0])
 
     return BaseTraceData(**params)
 
@@ -108,18 +115,26 @@ def create_base_trace_data(**overrides):
 def create_aiohttp_trace_data(**overrides):
     """Helper to create AioHttpTraceData with default values.
 
-    Note: request_send_end_perf_ns is computed from request_chunks[-1][0].
-    If request_send_end_perf_ns is provided but request_chunks is not, a synthetic chunk is created.
+    Aggregate fields (request_chunks_count, request_bytes_total, response_chunks_count,
+    response_bytes_total) are auto-derived from the chunk lists when provided.
     """
     from aiperf.common.models import AioHttpTraceData
 
     params = {**overrides}
 
-    # request_send_end_perf_ns is computed from request_chunks[-1][0]
-    # Create synthetic chunk if request_send_end_perf_ns provided but no chunks
-    if "request_send_end_perf_ns" in params and "request_chunks" not in params:
-        params["request_chunks"] = [(params.pop("request_send_end_perf_ns"), 0)]
-    elif "request_send_end_perf_ns" in params:
-        params.pop("request_send_end_perf_ns")  # Use existing request_chunks
+    # Auto-derive aggregate fields from chunk lists if not explicitly provided
+    if "request_chunks" in params:
+        chunks = params["request_chunks"]
+        params.setdefault("request_chunks_count", len(chunks))
+        params.setdefault("request_bytes_total", sum(size for _, size in chunks))
+        if chunks:
+            params.setdefault("request_send_end_perf_ns", chunks[-1][0])
+    if "response_chunks" in params:
+        chunks = params["response_chunks"]
+        params.setdefault("response_chunks_count", len(chunks))
+        params.setdefault("response_bytes_total", sum(size for _, size in chunks))
+        if chunks:
+            params.setdefault("response_receive_start_perf_ns", chunks[0][0])
+            params.setdefault("response_receive_end_perf_ns", chunks[-1][0])
 
     return AioHttpTraceData(**params)

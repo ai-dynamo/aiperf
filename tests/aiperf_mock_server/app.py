@@ -30,6 +30,7 @@ from aiperf_mock_server.metrics_utils import (
     async_track_request,
     init_model_config,
     record_embedding_success,
+    record_image_retrieval_success,
     record_ranking_success,
     record_request_bytes,
     record_tgi_success,
@@ -44,6 +45,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    ImageRetrievalRequest,
     RankingRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
@@ -452,6 +454,81 @@ async def cohere_rerank(req: CohereRerankRequest) -> ORJSONResponse:
     """Mock Cohere /v2/rerank endpoint."""
     ctx, ranked_scores = await _handle_ranking_request(req, "/v2/rerank")
     return ORJSONResponse(_build_cohere_ranking_response_data(ctx, ranked_scores))
+
+
+# ============================================================================
+# NIM Image Retrieval
+# ============================================================================
+
+BOUNDING_BOX_CATEGORIES = ["title", "table", "figure", "text", "header", "footer"]
+
+
+def _generate_bounding_boxes(image_url: str) -> dict[str, list[dict[str, float]]]:
+    """Generate deterministic bounding boxes from image URL using stable hash."""
+    digest = hashlib.blake2s(image_url.encode("utf-8")).digest()
+    seed = int.from_bytes(digest, byteorder="big")
+    rng = random.Random(seed)
+
+    num_boxes = rng.randint(1, 5)
+    boxes: dict[str, list[dict[str, float]]] = {}
+    for _ in range(num_boxes):
+        category = rng.choice(BOUNDING_BOX_CATEGORIES)
+        x_min = round(rng.uniform(0.0, 0.5), 4)
+        y_min = round(rng.uniform(0.0, 0.5), 4)
+        x_max = round(rng.uniform(x_min + 0.05, 1.0), 4)
+        y_max = round(rng.uniform(y_min + 0.05, 1.0), 4)
+        confidence = round(rng.uniform(0.7, 1.0), 4)
+        box = {
+            "x_min": x_min,
+            "y_min": y_min,
+            "x_max": x_max,
+            "y_max": y_max,
+            "confidence": confidence,
+        }
+        boxes.setdefault(category, []).append(box)
+    return boxes
+
+
+def _build_image_retrieval_response_data(
+    req: ImageRetrievalRequest,
+) -> dict[str, Any]:
+    """Build NIM image retrieval response data."""
+    data = []
+    total_size_mb = 0.0
+    for i, img_input in enumerate(req.input):
+        bounding_boxes = _generate_bounding_boxes(img_input.url)
+        data.append({"index": i, "bounding_boxes": bounding_boxes})
+        # Estimate image size from base64 URL length
+        total_size_mb += len(img_input.url) / (1024 * 1024 * 1.37)
+
+    return {
+        "data": data,
+        "usage": {"images_size_mb": round(total_size_mb, 4)},
+    }
+
+
+@app.post("/v1/image/infer", response_model=None)
+@with_error_injection
+async def image_retrieval(req: ImageRetrievalRequest) -> ORJSONResponse:
+    """Mock NIM Image Retrieval endpoint."""
+    endpoint = "/v1/image/infer"
+    start_time = perf_counter()
+    num_images = len(req.input)
+
+    with track_request(endpoint, "image-retrieval"):
+        await _wait_for_processing(
+            server_config.image_retrieval_base_latency,
+            server_config.image_retrieval_per_image_latency,
+            num_images,
+        )
+
+        record_image_retrieval_success(
+            endpoint,
+            num_images,
+            perf_counter() - start_time,
+        )
+
+        return ORJSONResponse(_build_image_retrieval_response_data(req))
 
 
 # ============================================================================

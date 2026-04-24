@@ -187,8 +187,8 @@ class TestMooncakeTraceRequestCount:
             assert count == 3  # 3 non-empty/non-whitespace lines
 
 
-class TestMooncakeTraceTimingDetection:
-    """Test _should_use_fixed_schedule_for_mooncake_trace() for automatic timing detection."""
+class TestTraceDatasetTimingDetection:
+    """Test _should_use_fixed_schedule_for_trace_dataset() for automatic timing detection."""
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -210,7 +210,7 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
+            result = config._should_use_fixed_schedule_for_trace_dataset()
             assert result is True
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -233,15 +233,13 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
+            result = config._should_use_fixed_schedule_for_trace_dataset()
             assert result is False
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
-    def test_non_mooncake_trace_dataset_no_auto_detection(
-        self, mock_is_file, mock_exists
-    ):
-        """Test that non-mooncake_trace datasets don't trigger auto-detection."""
+    def test_non_trace_dataset_no_auto_detection(self, mock_is_file, mock_exists):
+        """Test that non-trace datasets don't trigger auto-detection."""
         mock_file_content = '{"timestamp": 1000, "data": "test"}\n'
 
         config = UserConfig(
@@ -253,7 +251,7 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_mooncake_trace()
+            result = config._should_use_fixed_schedule_for_trace_dataset()
             assert result is False
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -262,7 +260,6 @@ class TestMooncakeTraceTimingDetection:
         self, mock_is_file, mock_exists
     ):
         """Test file parsing handles empty lines and malformed JSON gracefully."""
-        # Content with empty lines, whitespace, and malformed JSON
         mock_file_content = (
             '{"input_length": 50, "timestamp": 1000}\n'
             "\n"  # Empty line
@@ -284,15 +281,14 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            # Should handle malformed JSON gracefully and still detect timestamps
-            has_timestamps = config._should_use_fixed_schedule_for_mooncake_trace()
-            assert has_timestamps is True  # Should find valid timestamps despite errors
+            has_timestamps = config._should_use_fixed_schedule_for_trace_dataset()
+            assert has_timestamps is True
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
     def test_empty_file_timing_detection(self, mock_is_file, mock_exists):
         """Test timing detection with completely empty files."""
-        mock_file_content = ""  # Completely empty file
+        mock_file_content = ""
 
         config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
@@ -303,8 +299,7 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            # Should handle empty file gracefully
-            assert config._should_use_fixed_schedule_for_mooncake_trace() is False
+            assert config._should_use_fixed_schedule_for_trace_dataset() is False
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -326,5 +321,4 @@ class TestMooncakeTraceTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            # Should find no timestamps in malformed JSON
-            assert config._should_use_fixed_schedule_for_mooncake_trace() is False
+            assert config._should_use_fixed_schedule_for_trace_dataset() is False

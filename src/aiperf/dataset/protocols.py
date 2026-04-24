@@ -3,6 +3,7 @@
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
@@ -43,10 +44,48 @@ class CustomDatasetLoaderProtocol(Protocol):
         """
         ...
 
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        """Dataset-level default context mode for conversations without an explicit one.
+
+        Returns:
+            ConversationContextMode or None to fall through to the global default.
+        """
+        ...
+
     def load_dataset(self) -> dict[str, list["CustomDatasetT"]]: ...
 
     def convert_to_conversations(
         self, custom_data: dict[str, list["CustomDatasetT"]]
+    ) -> list[Conversation]: ...
+
+
+@runtime_checkable
+class PublicDatasetLoaderProtocol(Protocol):
+    """Protocol for public dataset loaders that fetch datasets remotely and convert them to Conversations."""
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> "DatasetSamplingStrategy":
+        """Get the preferred dataset sampling strategy for this loader.
+
+        Returns:
+            DatasetSamplingStrategy: The preferred sampling strategy
+        """
+        ...
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        """Dataset-level default context mode for conversations without an explicit one.
+
+        Returns:
+            ConversationContextMode or None to fall through to the global default.
+        """
+        ...
+
+    async def load_dataset(self) -> dict[str, Any]: ...
+
+    async def convert_to_conversations(
+        self, data: dict[str, Any]
     ) -> list[Conversation]: ...
 
 

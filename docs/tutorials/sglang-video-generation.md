@@ -1,7 +1,8 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: SGLang Video Generation
+---
 
 # SGLang Video Generation
 
@@ -66,7 +67,7 @@ uv pip install "sglang[diffusion]" --prerelease=allow --system
 
 **Set the server arguments:**
 
-> [!IMPORTANT]
+> [!WARNING]
 > The following arguments set up the SGLang server to use Wan2.1-T2V-1.3B on port 30010.
 > Adjust `--num-gpus`, `--ulysses-degree`, and `--ring-degree` based on your GPU configuration.
 

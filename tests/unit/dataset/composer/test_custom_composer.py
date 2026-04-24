@@ -37,6 +37,14 @@ class TestInitialization:
         assert input_config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
 
 
+MOCK_SINGLE_TURN_CONTENT = """{"text": "Write a haiku.", "output_length": 50}
+{"text": "Explain quantum computing.", "output_length": 500}
+{"text": "Summarize machine learning."}
+"""
+
+MOCK_MULTI_TURN_CONTENT = """{"session_id": "s1", "turns": [{"text": "Summarize.", "output_length": 100}, {"text": "Key points only."}, {"text": "Expand on point 2.", "output_length": 300}]}
+"""
+
 MOCK_TRACE_CONTENT = """{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
 {"timestamp": 10535, "input_length": 672, "output_length": 52, "hash_ids": [46, 47]}
 {"timestamp": 27482, "input_length": 655, "output_length": 52, "hash_ids": [46, 47]}
@@ -64,7 +72,7 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_create_dataset_trace(
@@ -80,7 +88,7 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_max_tokens_config(
@@ -94,17 +102,51 @@ class TestCoreFunctionality:
         conversations = composer.create_dataset()
 
         assert len(conversations) > 0
-        # With global RNG, verify max_tokens is set to a positive integer
-        # around the mean of 120
+        # Per-line output_length (52) takes precedence over global --osl (120)
         for conversation in conversations:
             for turn in conversation.turns:
-                assert turn.max_tokens is not None
-                assert turn.max_tokens > 0
-                assert isinstance(turn.max_tokens, int)
-                # Should be roughly around the mean of 120 (within 3 stddev)
-                assert 96 < turn.max_tokens < 144
+                assert turn.max_tokens == 52
 
-    @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    @patch("builtins.open", mock_open(read_data=MOCK_SINGLE_TURN_CONTENT))
+    def test_single_turn_output_length_precedence(
+        self, mock_check_file, custom_config, mock_tokenizer
+    ):
+        """Test that per-line output_length takes precedence over global --osl in single_turn."""
+        custom_config.input.prompt.output_tokens.mean = 200
+        custom_config.input.prompt.output_tokens.stddev = 0.0
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 3
+        # First two lines have output_length, third falls back to global --osl (200)
+        assert conversations[0].turns[0].max_tokens == 50
+        assert conversations[1].turns[0].max_tokens == 500
+        assert conversations[2].turns[0].max_tokens == 200
+
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    @patch("builtins.open", mock_open(read_data=MOCK_MULTI_TURN_CONTENT))
+    def test_multi_turn_output_length_precedence(
+        self, mock_check_file, custom_config, mock_tokenizer
+    ):
+        """Test per-turn output_length precedence over global --osl in multi_turn."""
+        custom_config.input.custom_dataset_type = CustomDatasetType.MULTI_TURN
+        custom_config.input.prompt.output_tokens.mean = 200
+        custom_config.input.prompt.output_tokens.stddev = 0.0
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+        turns = conversations[0].turns
+        assert len(turns) == 3
+        # Turn 1 and 3 have output_length, turn 2 falls back to global --osl (200)
+        assert turns[0].max_tokens == 100
+        assert turns[1].max_tokens == 200
+        assert turns[2].max_tokens == 300
+
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
@@ -205,13 +247,22 @@ class TestSamplingStrategy:
 class TestSynthesisValidation:
     """Test class for synthesis configuration validation."""
 
-    def test_synthesis_allowed_with_mooncake_trace(self, trace_config, mock_tokenizer):
-        """Test that synthesis options are allowed with mooncake_trace dataset type."""
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.BAILIAN_TRACE,
+        ],
+    )
+    def test_synthesis_allowed_with_trace_datasets(
+        self, trace_config, mock_tokenizer, dataset_type
+    ):
+        """Test that synthesis options are allowed with trace dataset types."""
         trace_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
 
         # Should not raise
-        composer._validate_synthesis_config(CustomDatasetType.MOONCAKE_TRACE)
+        composer._validate_synthesis_config(dataset_type)
 
     @pytest.mark.parametrize(
         "dataset_type",
@@ -221,17 +272,17 @@ class TestSynthesisValidation:
             CustomDatasetType.RANDOM_POOL,
         ],
     )
-    def test_synthesis_raises_error_with_non_mooncake_types(
+    def test_synthesis_raises_error_with_non_trace_types(
         self, custom_config, mock_tokenizer, dataset_type
     ):
-        """Test that synthesis options raise error with non-mooncake dataset types."""
+        """Test that synthesis options raise error with non-trace dataset types."""
         custom_config.input.synthesis = SynthesisConfig(speedup_ratio=2.0)
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
 
         with pytest.raises(ValueError) as exc:
             composer._validate_synthesis_config(dataset_type)
 
-        assert "only supported with mooncake_trace" in str(exc.value)
+        assert "only supported with trace datasets" in str(exc.value)
         assert dataset_type.value in str(exc.value)
 
     @pytest.mark.parametrize(
@@ -253,7 +304,7 @@ class TestSynthesisValidation:
         with pytest.raises(ValueError) as exc:
             composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
 
-        assert "only supported with mooncake_trace" in str(exc.value)
+        assert "only supported with trace datasets" in str(exc.value)
 
     def test_default_synthesis_allowed_with_any_type(
         self, custom_config, mock_tokenizer

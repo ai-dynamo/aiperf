@@ -5,18 +5,23 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from io import BytesIO
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
+import aiohttp
 import orjson
+from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    ConversationContextMode,
     CreditPhase,
+    ImageFormat,
     MessageType,
-    PublicDatasetType,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_request, on_stop
@@ -39,7 +44,7 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -47,6 +52,8 @@ from aiperf.plugin.enums import (
     PluginType,
     ServiceRunType,
 )
+from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
     from aiperf.dataset.protocols import (
@@ -54,6 +61,7 @@ if TYPE_CHECKING:
         DatasetClientStoreProtocol,
     )
     from aiperf.endpoints.protocols import EndpointProtocol
+    from aiperf.plugin.schema.schemas import EndpointMetadata
 
 
 class DatasetManager(ReplyClientMixin, BaseComponentService):
@@ -107,6 +115,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
+        self._default_context_mode: ConversationContextMode | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -114,11 +123,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> None:
         """Configure the dataset."""
 
-        self.info("Configuring tokenizer(s) for dataset manager")
-        begin = time.perf_counter()
-        await self._configure_tokenizer()
-        duration = time.perf_counter() - begin
-        self.info(lambda: f"Tokenizer(s) configured in {duration:.2f} seconds")
+        endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
+            self.user_config.endpoint.type
+        )
+        if endpoint_meta.tokenizes_input:
+            self.info("Configuring tokenizer(s) for dataset manager")
+            begin = time.perf_counter()
+            await self._configure_tokenizer()
+            duration = time.perf_counter() - begin
+            self.info(lambda: f"Tokenizer(s) configured in {duration:.2f} seconds")
+        else:
+            self.info(
+                "Tokenization is disabled for this endpoint, skipping tokenizer configuration"
+            )
 
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
@@ -176,6 +193,82 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             resolve_alias=tokenizer_config.should_resolve_alias,
         )
 
+    async def _convert_media_urls_to_inline(self) -> None:
+        """Download HTTP(S) image URLs and replace them with base64 data URLs.
+
+        Collects unique URLs across all conversations/turns, downloads each once,
+        and replaces all occurrences in-place. This is needed for endpoints that
+        require inline media (e.g., NIM Image Retrieval).
+        """
+        url_to_locations: dict[str, list[tuple[list[str], int]]] = {}
+
+        for conversation in self.dataset.values():
+            for turn in conversation.turns:
+                for image in turn.images:
+                    for i, content in enumerate(image.contents):
+                        parsed = urlparse(content)
+                        if parsed.scheme in ("http", "https") and parsed.netloc:
+                            url_to_locations.setdefault(content, []).append(
+                                (image.contents, i)
+                            )
+
+        if not url_to_locations:
+            return
+
+        dataset_env = Environment.DATASET
+        timeout = aiohttp.ClientTimeout(total=dataset_env.MEDIA_DOWNLOAD_TIMEOUT)
+        max_concurrency = dataset_env.MEDIA_DOWNLOAD_MAX_CONCURRENCY
+
+        self.info(
+            f"Downloading {len(url_to_locations)} unique media URL(s) "
+            f"for inline encoding (concurrency={max_concurrency})"
+        )
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+        url_to_data_url: dict[str, str] = {}
+
+        async def _download_and_encode(
+            session: aiohttp.ClientSession, url: str
+        ) -> None:
+            async with semaphore:
+                async with session.get(url, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(
+                            f"Failed to download media URL '{url}': HTTP {resp.status}"
+                        )
+                    data = await resp.read()
+
+                img = PILImage.open(BytesIO(data))
+                if img.format is None:
+                    raise RuntimeError(
+                        f"Failed to determine image format for URL '{url}'"
+                    )
+                if img.format.upper() not in list(ImageFormat):
+                    raise RuntimeError(
+                        f"'{img.format}' from URL '{url}' is not a supported "
+                        f"image format: {', '.join(ImageFormat)}"
+                    )
+                url_to_data_url[url] = (
+                    f"data:image/{img.format.lower()};base64,"
+                    f"{encode_image(img, img.format)}"
+                )
+
+        connector = create_tcp_connector()
+        async with aiohttp.ClientSession(
+            connector=connector,
+            trust_env=AioHttpDefaults.TRUST_ENV,
+        ) as session:
+            await asyncio.gather(
+                *[_download_and_encode(session, url) for url in url_to_locations]
+            )
+
+        for url, locations in url_to_locations.items():
+            data_url = url_to_data_url[url]
+            for contents_list, index in locations:
+                contents_list[index] = data_url
+
+        self.info("Media URL download and inline encoding complete")
+
     def _generate_input_payloads(
         self,
         model_endpoint: ModelEndpointInfo,
@@ -207,6 +300,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                     x_request_id="",
                     x_correlation_id="",
                     conversation_id=conversation.session_id,
+                    system_message=conversation.system_message,
+                    user_context_message=conversation.user_context_message,
                 )
                 request_info.endpoint_headers = endpoint.get_endpoint_headers(
                     request_info
@@ -267,29 +362,21 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 temp_file_path.unlink()
 
     async def _load_public_dataset(self) -> list[Conversation]:
-        public_dataset_type = self.user_config.input.public_dataset
-        match public_dataset_type:
-            case PublicDatasetType.SHAREGPT:
-                loader = ShareGPTLoader(self.user_config, self.tokenizer)
-            case _:
-                raise ValueError(
-                    f"Unsupported public dataset type: {public_dataset_type}"
-                )
-
-        dataset = await loader.load_dataset()
-        # Only use loader's recommended strategy if user hasn't explicitly set one
-        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
-            self.user_config.input.dataset_sampling_strategy = (
-                loader.get_recommended_sampling_strategy()
-            )
-        return await loader.convert_to_conversations(dataset)
+        ComposerClass = plugins.get_class(
+            PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
+        )
+        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        self._default_context_mode = composer.get_default_context_mode()
+        return await composer.create_dataset_async()
 
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
+        conversations = composer.create_dataset()
+        self._default_context_mode = composer.get_default_context_mode()
+        return conversations
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
         return "rankings" in endpoint_type.lower()
@@ -304,7 +391,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
+        conversations = composer.create_dataset()
+        self._default_context_mode = composer.get_default_context_mode()
+        return conversations
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
@@ -312,6 +401,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset_configured.clear()
 
+        self._default_context_mode = None
         if self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
@@ -329,6 +419,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
+
+        endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
+            self.user_config.endpoint.type
+        )
+        if endpoint_meta.requires_inline_media:
+            await self._convert_media_urls_to_inline()
 
         # Initialize backing store and stream conversations to mmap files
         # Workers read directly from these files
@@ -355,6 +451,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
             sampling_strategy=self.user_config.input.dataset_sampling_strategy,
+            default_context_mode=self._default_context_mode,
         )
         self.info(
             f"sampling strategy: {self.dataset_metadata.sampling_strategy}, "

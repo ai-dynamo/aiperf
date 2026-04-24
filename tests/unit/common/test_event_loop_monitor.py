@@ -102,7 +102,7 @@ def enabled_env(monkeypatch) -> None:
     monkeypatch.setattr(Environment.SERVICE, "EVENT_LOOP_HEALTH_ENABLED", True)
     monkeypatch.setattr(Environment.SERVICE, "EVENT_LOOP_HEALTH_INTERVAL", 0.1)
     monkeypatch.setattr(
-        Environment.SERVICE, "EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS", 10.0
+        Environment.SERVICE, "EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS", 25.0
     )
 
 

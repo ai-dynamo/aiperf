@@ -10,6 +10,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import LoadGeneratorDefaults
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import ConvergenceMode, ConvergenceStat
 from aiperf.plugin.enums import ArrivalPattern
 
 
@@ -471,6 +472,67 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = True
 
+    convergence_metric: Annotated[
+        str | None,
+        Field(
+            description="Target metric name for adaptive convergence stopping. "
+            "When set with --num-profile-runs > 1, enables adaptive mode that stops "
+            "early once the metric stabilizes according to --convergence-mode. "
+            "Uses --num-profile-runs as the maximum run cap. "
+            "Example metrics: time_to_first_token, request_latency, inter_token_latency.",
+        ),
+        CLIParameter(
+            name=("--convergence-metric",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    convergence_stat: Annotated[
+        ConvergenceStat,
+        Field(
+            description="Statistic to evaluate for convergence when using ci_width or cv mode. "
+            "Common values: avg, p50, p90, p95, p99. "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-stat",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = ConvergenceStat.AVG
+
+    convergence_threshold: Annotated[
+        float,
+        Field(
+            gt=0,
+            lt=1,
+            description="Threshold for convergence detection. "
+            "For ci_width mode: maximum CI width as a fraction of the mean (default 0.10 = 10%). "
+            "For cv mode: maximum coefficient of variation (default 0.10 = 10%). "
+            "For distribution mode: KS test p-value threshold (default 0.10). "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-threshold",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 0.10
+
+    convergence_mode: Annotated[
+        ConvergenceMode,
+        Field(
+            description="Statistical method for convergence detection. "
+            "ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. "
+            "cv: Stop when coefficient of variation (std/mean) is below threshold. "
+            "distribution: Stop when KS test p-value indicates latest run matches prior runs "
+            "(requires --export-level records or --export-level raw; rejected with --export-level summary). "
+            "Only applies when --convergence-metric is set.",
+        ),
+        CLIParameter(
+            name=("--convergence-mode",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = ConvergenceMode.CI_WIDTH
+
     def disable_warmup(self) -> None:
         """Disable all warmup-related parameters.
 
@@ -510,6 +572,32 @@ class LoadGeneratorConfig(BaseConfig):
                        profile_run_cooldown_seconds, or set_consistent_seed are explicitly
                        set when num_profile_runs == 1.
         """
+        # Validate convergence_stat is not used with distribution mode
+        # (distribution operates on per-request distributions, not summary stats)
+        if (
+            "convergence_stat" in self.model_fields_set
+            and self.convergence_mode == ConvergenceMode.DISTRIBUTION
+        ):
+            raise ValueError(
+                "--convergence-stat is not applicable with --convergence-mode distribution. "
+                "Distribution mode uses per-request data directly and ignores the stat parameter. "
+                "Remove --convergence-stat or use --convergence-mode ci_width or cv."
+            )
+
+        # Require --convergence-metric when any other convergence flag is explicitly set
+        convergence_dependent_flags = {
+            "convergence_mode": "--convergence-mode",
+            "convergence_threshold": "--convergence-threshold",
+            "convergence_stat": "--convergence-stat",
+        }
+        if self.convergence_metric is None:
+            for field_name, flag_name in convergence_dependent_flags.items():
+                if field_name in self.model_fields_set:
+                    raise ValueError(
+                        f"{flag_name} requires --convergence-metric to be set. "
+                        f"Either add --convergence-metric or remove {flag_name}."
+                    )
+
         if self.num_profile_runs == 1:
             # Check if confidence_level was explicitly set by the user
             if "confidence_level" in self.model_fields_set:
@@ -538,5 +626,20 @@ class LoadGeneratorConfig(BaseConfig):
                     "--set-consistent-seed only applies when --num-profile-runs > 1. "
                     "Remove --set-consistent-seed or increase --num-profile-runs."
                 )
+
+            # Check if convergence_metric was explicitly set by the user
+            if "convergence_metric" in self.model_fields_set:
+                raise ValueError(
+                    "--convergence-metric only applies when --num-profile-runs > 1. "
+                    "Remove --convergence-metric or increase --num-profile-runs."
+                )
+
+            # Check if other convergence flags were explicitly set
+            for field_name, flag_name in convergence_dependent_flags.items():
+                if field_name in self.model_fields_set:
+                    raise ValueError(
+                        f"{flag_name} only applies when --num-profile-runs > 1. "
+                        f"Remove {flag_name} or increase --num-profile-runs."
+                    )
 
         return self

@@ -34,6 +34,7 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ModelEndpointInfo,
+    ProcessHealth,
     ReasoningResponseData,
     RequestInfo,
     RequestRecord,
@@ -143,7 +144,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
         self.event_loop_monitor = EventLoopMonitor(self.service_id)
-        self.event_loop_monitor.set_callback(self._on_event_loop_blocked_callback)
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
@@ -163,8 +163,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
-            lambda: f"Created inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.inference_client.__class__.__name__}",
+            lambda: (
+                f"Created inference client for {self.model_endpoint.endpoint.type}, "
+                f"class: {self.inference_client.__class__.__name__}"
+            ),
         )
 
         # Identity must be unique - ZMQ ROUTER uses it to address messages to specific
@@ -205,13 +207,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
-    async def _on_event_loop_blocked_callback(self, delta_ms: float) -> None:
-        """Callback to handle event loop blocking.
-
-        This callback is called when the event loop is blocked for longer than the threshold.
-        """
-        self.warning(f"Event loop is blocked for {delta_ms:.2f}ms")
-
     @on_start
     async def _send_worker_ready_message(self) -> None:
         """Send WorkerReady to announce presence."""
@@ -231,9 +226,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
+        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
         self._dataset_configured_event.set()
         self.debug(
-            lambda: f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            lambda: (
+                f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            )
         )
 
     @on_stop
@@ -244,7 +242,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 WorkerShutdown(worker_id=self.service_id)
             )
             self.debug(
-                lambda: f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                lambda: (
+                    f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                )
             )
         except Exception as e:
             self.warning(
@@ -257,12 +257,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     )
     async def _health_check_task(self) -> None:
         """Task to report the health of the worker to the worker manager."""
-        await self.publish(self.create_health_message())
+        health = await asyncio.to_thread(self.get_process_health)
+        await self.publish(self.create_health_message(health))
 
-    def create_health_message(self) -> WorkerHealthMessage:
+    def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
         return WorkerHealthMessage(
             service_id=self.service_id,
-            health=self.get_process_health(),
+            health=health,
             task_stats=self.task_stats,
         )
 
@@ -322,8 +323,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Credit was NOT returned - this means the task was cancelled before it started
         # or failed in some way that prevented the finally block from sending the return
         self.debug(
-            lambda id=credit_id: f"Credit {id} task done but NOT returned! "
-            f"Task likely was cancelled before finally block could execute. Returning now."
+            lambda id=credit_id: (
+                f"Credit {id} task done but NOT returned! "
+                f"Task likely was cancelled before finally block could execute. Returning now."
+            )
         )
 
         # Update credit_context with cancellation status
@@ -353,7 +356,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 task.cancel()
             else:
                 self.debug(
-                    lambda id=credit_id: f"Task for credit {id} not found (already completed?)"
+                    lambda id=credit_id: (
+                        f"Task for credit {id} not found (already completed?)"
+                    )
                 )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
@@ -477,7 +482,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if record.error is not None:
                 credit_context.error = record.error
 
-            if resp_turn := await self._process_response(record):
+            if session.should_store_response() and (
+                resp_turn := await self._process_response(record)
+            ):
                 session.store_response(resp_turn)
 
         except asyncio.CancelledError:
@@ -678,7 +685,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
         if self.is_debug_enabled:
-            memory_usage = self.get_process_health().memory_usage / BYTES_PER_MIB
+            health = await asyncio.to_thread(self.get_process_health)
+            memory_usage = health.memory_usage / BYTES_PER_MIB
             self.memory_usage_before_profiling = memory_usage
             self.debug(f"Memory usage before profiling: {memory_usage:.2f} MiB")
 

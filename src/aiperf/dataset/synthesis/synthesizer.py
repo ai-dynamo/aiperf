@@ -98,9 +98,9 @@ class Synthesizer(AIPerfLoggerMixin):
             if self.params.max_isl and isl > self.params.max_isl:
                 isl = self.params.max_isl
 
-            # Only set input_length if the original trace didn't use text_input
-            # to avoid validation error (MooncakeTrace doesn't allow both)
-            if "text_input" not in trace:
+            # Only set input_length if the original trace used input_length
+            # (not text_input or messages) to avoid validation errors
+            if trace.get("text_input") is None and trace.get("messages") is None:
                 synthetic_trace["input_length"] = isl
 
             # Apply timestamp scaling if present

@@ -11,7 +11,7 @@ allow-direct-references = true
 
 [project]
 name = "aiperf"
-version = "0.6.0"
+version = "0.8.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -25,16 +25,18 @@ dependencies = [
   "async-timeout>=4.0.0; python_version < '3.11'",
   "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
+  "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
+  "datasets>=3.0",
   "huggingface-hub>=0.34.0,<2.0",
-  "jinja2~=3.1.5",  # NOTE: Versions prior to 3.1.5 have vuln exploits
+  "jinja2~=3.1.5", # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
   "kaleido~=1.2.0",
   "matplotlib>=3.10.0",
   "msgspec>=0.19.0,<1.0.0",
   "numpy>=1.26.4,<3",
-  "nvidia-ml-py",  # Note: No version specified to be most compatible with CUDA version
-  "orjson~=3.10.18",
+  "nvidia-ml-py", # Note: No version specified to be most compatible with CUDA version
+  "orjson~=3.11.7",
   "pandas~=2.3.3",
   "pillow~=12.1.1",
   "plotly~=6.4.0",
@@ -49,11 +51,15 @@ dependencies = [
   "rich~=14.1.0",
   "ruamel.yaml~=0.18.12",
   "seaborn~=0.13.2",
+  "scipy>=1.13.0",
   "setproctitle~=1.3.6",
   "soundfile~=0.13.1",
+  "starlette-compress>=1.0.1",
   "textual~=5.3.0",
+  "tiktoken>=0.7.0,<1",
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
+  "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
   "zstandard>=0.25.0",
 ]
@@ -77,7 +83,6 @@ dev = [
   "pytest>=7.0.0",
   "pytest-xdist>=3.8.0",
   "ruff>=0.14.0,<0.15.0",
-  "scipy>=1.13.0",
   "trustme>=1.0.0",
 ]
 
@@ -120,6 +125,7 @@ markers = [
     "component_integration: marks tests as component integration tests",
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
+    "fern: marks tests that validate Fern documentation (requires fern CLI)",
 ]
 # Better console output
 console_output_style = "progress"
@@ -128,7 +134,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, and stress, and statistical, and component_integration, and integration, and server_unit tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
@@ -138,5 +144,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
 ignore-words-list = "timeslice,timeslices"

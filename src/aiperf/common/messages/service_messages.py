@@ -27,7 +27,7 @@ class BaseStatusMessage(BaseServiceMessage):
 
     # override request_ns to be auto-filled if not provided
     request_ns: int | None = Field(
-        default=time.time_ns(),
+        default_factory=time.time_ns,
         description="Timestamp of the request",
     )
     state: LifecycleState = Field(

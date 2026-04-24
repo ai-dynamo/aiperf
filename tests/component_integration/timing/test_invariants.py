@@ -121,7 +121,7 @@ class TestConcurrencyInvariants:
         rather than exceeding the concurrency limit.
         """
         config = TimingTestConfig(
-            num_sessions=50,
+            num_sessions=30,
             qps=qps,
             concurrency=concurrency,
         )

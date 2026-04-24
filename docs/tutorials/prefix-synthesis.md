@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Prefix Data Synthesis Tutorial
+---
 # Prefix Data Synthesis Tutorial
 
 Learn how to analyze and generate synthetic traces with controlled prefix-sharing patterns for KV cache benchmarking.

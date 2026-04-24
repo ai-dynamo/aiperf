@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aiperf.common.enums import MediaType
+from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
@@ -21,7 +21,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     The single turn type
       - supports multi-modal data (e.g. text, image, audio)
       - supports client-side batching for each data (e.g. batch_size > 1)
-      - DOES NOT support multi-turn features (e.g. delay, sessions, etc.)
+      - supports optional session_id for causal ordering across entries
 
     Examples:
     1. Single-batch, text only
@@ -107,7 +107,9 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                     continue  # Skip empty lines
 
                 single_turn_data = SingleTurn.model_validate_json(line)
-                session_id = self.session_id_generator.next()
+                session_id = (
+                    single_turn_data.session_id or self.session_id_generator.next()
+                )
                 data[session_id].append(single_turn_data)
 
         return data
@@ -125,7 +127,14 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """
         conversations = []
         for session_id, single_turns in data.items():
-            conversation = Conversation(session_id=session_id)
+            conversation = Conversation(
+                session_id=session_id,
+                context_mode=(
+                    ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+                    if len(single_turns) > 1
+                    else None
+                ),
+            )
             for single_turn in single_turns:
                 media = self.convert_to_media_objects(single_turn)
                 conversation.turns.append(
@@ -137,6 +146,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         timestamp=single_turn.timestamp,
                         delay=single_turn.delay,
                         role=single_turn.role,
+                        max_tokens=single_turn.output_length,
                     )
                 )
             conversations.append(conversation)

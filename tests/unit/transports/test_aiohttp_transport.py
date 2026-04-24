@@ -76,7 +76,7 @@ class TestAioHttpTransport:
         """Extract URL, JSON, and headers from mock call_args."""
         return {
             "url": mock_call_args[0][0],
-            "json_str": mock_call_args[0][1],
+            "json_bytes": mock_call_args[0][1],
             "headers": mock_call_args[0][2],
         }
 
@@ -246,11 +246,11 @@ class TestAioHttpTransport:
         await transport.send_request(request_info, payload)
 
         args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
-        json_str = args["json_str"]
+        json_bytes = args["json_bytes"]
 
-        assert isinstance(json_str, str)
-        assert "messages" in json_str
-        assert "gpt-4" in json_str
+        assert isinstance(json_bytes, bytes)
+        assert b"messages" in json_bytes
+        assert b"gpt-4" in json_bytes
 
     @pytest.mark.asyncio
     async def test_send_request_handles_exception(
@@ -325,7 +325,7 @@ class TestAioHttpTransport:
 
         assert isinstance(record, RequestRecord)
         args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
-        assert args["json_str"] == "{}"
+        assert args["json_bytes"] == b"{}"
 
     @pytest.mark.asyncio
     async def test_send_request_complex_payload(
@@ -358,10 +358,10 @@ class TestAioHttpTransport:
 
         assert isinstance(record, RequestRecord)
         args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
-        json_str = args["json_str"]
-        assert "messages" in json_str
-        assert "image_url" in json_str
-        assert "0.7" in json_str
+        json_bytes = args["json_bytes"]
+        assert b"messages" in json_bytes
+        assert b"image_url" in json_bytes
+        assert b"0.7" in json_bytes
 
 
 class TestAioHttpTransportLifecycle:
@@ -455,13 +455,13 @@ class TestAioHttpTransportIntegration:
         assert transport.aiohttp_client.post_request.called
         args = {
             "url": transport.aiohttp_client.post_request.call_args[0][0],
-            "json_str": transport.aiohttp_client.post_request.call_args[0][1],
+            "json_bytes": transport.aiohttp_client.post_request.call_args[0][1],
             "headers": transport.aiohttp_client.post_request.call_args[0][2],
         }
 
         assert args["url"].startswith("https://api.example.com/v1/chat/completions")
         assert "api-version=2024-10-01" in args["url"]
-        assert "Hello" in args["json_str"]
+        assert b"Hello" in args["json_bytes"]
         assert args["headers"]["Authorization"] == "Bearer test-key"
         assert args["headers"]["Custom-Header"] == "value"
         assert args["headers"]["X-Request-ID"] == "req-123"

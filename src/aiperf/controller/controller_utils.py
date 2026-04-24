@@ -63,7 +63,11 @@ def _handle_tokenizer_errors(
         )
 
         display_tokenizer_validation_error(
-            name, cause_chain=cause_chain, error_message=msg, console=console
+            name,
+            cause_chain=cause_chain,
+            error_message=msg,
+            cause_message=cause,
+            console=console,
         )
 
     # Filter wrapper errors if we displayed any tokenizer errors

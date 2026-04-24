@@ -1,3 +1,9 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Multi-Run Confidence Reporting
+---
+
 # Multi-Run Confidence Reporting
 
 ## Overview
@@ -147,6 +153,7 @@ artifacts/
     aggregate/
       profile_export_aiperf_aggregate.json
       profile_export_aiperf_aggregate.csv
+      profile_export_aiperf_collated.json   # only with adaptive convergence + records/raw export
 ```
 
 ### Auto-Generated Directory Name
@@ -299,10 +306,11 @@ A normalized measure of variability, expressed as a ratio (not percentage). Usef
 
 **Formula:**
 ```python
-cv = std / mean
+cv = std / abs(mean)
 ```
 
 **Notes:**
+- Uses `abs(mean)` to handle metrics that can be negative
 - Returns `inf` when mean is zero (division by zero)
 - Lower CV indicates more consistent measurements
 
@@ -395,7 +403,7 @@ The CV is a normalized measure of variability: `CV = std / mean`
 
 **Interpretation Guidelines:**
 
-- **CV < 0.05 (5%)**: Excellent repeatability, low noise
+- **CV &lt; 0.05 (5%)**: Excellent repeatability, low noise
   - Results are very stable
   - High confidence in measurements
   - Small differences are likely meaningful
@@ -602,7 +610,7 @@ This provides a good balance of precision and time investment.
 ### 2. Check CV First
 
 After running, look at the CV for your key metrics:
-- CV < 10%: Results are trustworthy
+- CV &lt; 10%: Results are trustworthy
 - CV > 10%: Consider more runs or investigate variance
 
 ### 3. Use Warmup
@@ -632,6 +640,167 @@ When comparing configurations:
 - Use the same `--num-profile-runs`
 - Use the same `--random-seed`
 - Use the same workload parameters
+
+## Adaptive Convergence (Early Stopping)
+
+Instead of always running a fixed number of trials, you can specify a convergence criterion that stops benchmarking early once metrics stabilize. This saves time when results converge quickly and runs to the maximum when they don't.
+
+### How It Works
+
+When `--convergence-metric` is set, AIPerf switches from `FixedTrialsStrategy` to `AdaptiveStrategy`:
+
+1. Runs at least `min(3, num_profile_runs)` trials
+2. After each run, checks whether the convergence criterion is satisfied
+3. Stops early if converged, otherwise continues up to `--num-profile-runs`
+
+The IID property of runs is preserved — convergence operates on independent run-level statistics and never feeds aggregated data back into the decision loop.
+
+### Convergence Modes
+
+Three statistical methods are available via `--convergence-mode`:
+
+**CI Width (default)**: Stops when the Student's t confidence interval width relative to the mean falls below the threshold. Operates on run-level summary statistics.
+
+```bash
+aiperf profile \
+  --num-profile-runs 10 \
+  --convergence-metric request_latency \
+  --convergence-mode ci_width \
+  --convergence-threshold 0.10 \
+  --convergence-stat avg \
+  --concurrency 10 \
+  ...
+```
+
+**CV (Coefficient of Variation)**: Stops when the CV (std/mean) across run-level values drops below the threshold.
+
+```bash
+aiperf profile \
+  --num-profile-runs 10 \
+  --convergence-metric time_to_first_token \
+  --convergence-mode cv \
+  --convergence-threshold 0.05 \
+  --convergence-stat p99 \
+  --concurrency 10 \
+  ...
+```
+
+**Distribution (KS Test)**: Uses a two-sample Kolmogorov-Smirnov test on per-request JSONL data to detect when the latest run's distribution matches prior runs. Catches bimodal behavior and tail shifts that summary statistics miss.
+
+```bash
+aiperf profile \
+  --num-profile-runs 10 \
+  --convergence-metric inter_token_latency \
+  --convergence-mode distribution \
+  --convergence-threshold 0.10 \
+  --export-level records \
+  --concurrency 10 \
+  ...
+```
+
+> Distribution mode requires `--export-level records` or `--export-level raw` because it reads per-request JSONL data. It is rejected with `--export-level summary`.
+
+### Threshold Semantics
+
+For `ci_width` and `cv`, a lower threshold is stricter (harder to converge). For `distribution`, the threshold is a KS test p-value — convergence triggers when `p_value > threshold`, so a higher threshold is stricter. AIPerf logs this at runtime:
+
+```
+Note: distribution mode converges when KS p-value > threshold
+(higher threshold = stricter, opposite of ci_width/cv)
+```
+
+### CLI Flags Reference
+
+| Flag | Description | Default |
+|---|---|---|
+| `--convergence-metric` | Target metric name (e.g., `request_latency`, `time_to_first_token`) | None (disabled) |
+| `--convergence-mode` | Statistical method: `ci_width`, `cv`, or `distribution` | `ci_width` |
+| `--convergence-threshold` | Convergence threshold (0–1) | `0.10` |
+| `--convergence-stat` | Statistic to evaluate: `avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max` | `avg` |
+
+All convergence flags require `--num-profile-runs > 1`. The `--convergence-stat` flag applies to `ci_width` and `cv` modes only (not `distribution`).
+
+### Reduced Run Counts
+
+When `--num-profile-runs` is 2, AIPerf adjusts the minimum runs for convergence checks accordingly and logs a warning about reduced statistical power:
+
+```
+WARNING: --num-profile-runs=2 is below the recommended minimum of 3.
+Convergence checks will have reduced statistical power.
+```
+
+For meaningful convergence, 3+ runs is recommended.
+
+### Unrecognized Metric Names
+
+If `--convergence-metric` contains a typo, AIPerf warns after the minimum runs complete with zero matching values:
+
+```
+WARNING: Convergence metric 'tttf' (stat 'avg') not found in any run's summary metrics;
+convergence will never trigger. Check --convergence-metric spelling.
+Available metrics: ['inter_token_latency', 'request_latency', 'request_throughput', 'time_to_first_token']
+```
+
+## Detailed Aggregation
+
+When adaptive convergence is enabled and `--export-level` is `records` or `raw`, AIPerf produces an additional `profile_export_aiperf_collated.json` in the aggregate directory. This reads per-request JSONL from all runs, combines them into a single population per metric, and computes true combined percentiles (p50, p90, p95, p99).
+
+This complements the standard confidence aggregation — confidence aggregation operates on run-level summary stats, while detailed aggregation gives a combined distribution view over all requests.
+
+### Output Structure with Adaptive Convergence
+
+```
+artifacts/
+  llama-3-8b-openai-chat-concurrency_10/
+    profile_runs/
+      run_0001/
+        profile_export_aiperf.json
+        profile_export_aiperf.csv
+        profile_export.jsonl
+        inputs.json
+      run_0002/
+        ...
+      run_0003/          # may stop here if converged
+        ...
+    aggregate/
+      profile_export_aiperf_aggregate.json
+      profile_export_aiperf_aggregate.csv
+      profile_export_aiperf_collated.json   # per-request combined percentiles
+```
+
+### Example Collated Output
+
+```json
+{
+  "schema_version": "1.0.0",
+  "aiperf_version": "0.5.0",
+  "metadata": {
+    "aggregation_type": "detailed",
+    "num_profile_runs": 3,
+    "num_successful_runs": 3,
+    "failed_runs": [],
+    "run_labels": ["run_0001", "run_0002", "run_0003"]
+  },
+  "metrics": {
+    "time_to_first_token": {
+      "combined": {
+        "mean": 45.23,
+        "std": 12.8,
+        "p50": 42.1,
+        "p90": 58.7,
+        "p95": 65.3,
+        "p99": 78.9,
+        "count": 3000
+      },
+      "per_run": [
+        {"label": "run_0001", "mean": 44.8, "count": 1000},
+        {"label": "run_0002", "mean": 45.1, "count": 1000},
+        {"label": "run_0003", "mean": 45.8, "count": 1000}
+      ]
+    }
+  }
+}
+```
 
 ## Advanced Usage
 
@@ -694,12 +863,22 @@ Multi-run confidence reporting helps you:
 aiperf profile --num-profile-runs 5 [other options]
 ```
 
+**With Adaptive Convergence:**
+```bash
+aiperf profile --num-profile-runs 10 --convergence-metric request_latency --convergence-mode ci_width [other options]
+```
+
+**With Adaptive Convergence:**
+```bash
+aiperf profile --num-profile-runs 10 --convergence-metric request_latency --convergence-mode ci_width [other options]
+```
+
 **Key Metrics:**
-- **CV < 10%**: Good repeatability
+- **CV &lt; 10%**: Good repeatability
 - **Narrow CI**: High precision
 - **No CI overlap**: Strong evidence of difference
 
 For more details, see:
-- [CLI Options](../cli_options.md) - Full parameter reference
-- [Metrics Reference](../metrics_reference.md) - Detailed metric descriptions
+- [CLI Options](../cli-options.md) - Full parameter reference
+- [Metrics Reference](../metrics-reference.md) - Detailed metric descriptions
 - [Architecture](../architecture.md) - How multi-run orchestration works

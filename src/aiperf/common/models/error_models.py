@@ -1,19 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import re
 from typing import Any
 
 from pydantic import Field
 
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.models.base_models import AIPerfBaseModel
-
-# Pre-compiled regex patterns for credential redaction
-_REDACTIONS = [
-    (re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s,;]+"), r"\1***"),
-    (re.compile(r"(?i)\b(api[-_ ]?key|token|secret)\s*=\s*[^&\s]+"), r"\1=***"),
-    (re.compile(r"(?i)(x-api-key:\s*)[^\s,;]+"), r"\1***"),
-]
+from aiperf.common.redact import redact_string
 
 
 class ErrorDetails(AIPerfBaseModel):
@@ -46,9 +39,7 @@ class ErrorDetails(AIPerfBaseModel):
 
     @staticmethod
     def _safe_repr(value: Any, max_len: int = 4096) -> str:
-        s = repr(value)
-        for pattern, repl in _REDACTIONS:
-            s = pattern.sub(repl, s)
+        s = redact_string(repr(value))
         return s[:max_len] + "…" if len(s) > max_len else s
 
     def __eq__(self, other: Any) -> bool:
@@ -66,15 +57,27 @@ class ErrorDetails(AIPerfBaseModel):
         return hash((self.code, self.type, self.message))
 
     @staticmethod
-    def _build_cause_chain(e: BaseException) -> list[str] | None:
-        """Build list of exception type names from __cause__ chain."""
-        chain = []
+    def _build_cause_chain(e: BaseException | None) -> list[str] | None:
+        """Build list of exception type names from the exception chain.
+
+        Follows both explicit chaining (__cause__, set by ``raise X from Y``)
+        and implicit chaining (__context__, set when raising inside an except
+        block). This is critical because libraries like ``transformers`` often
+        re-raise without ``from``, so the root-cause type (e.g. GatedRepoError)
+        only appears in __context__.
+        """
+        chain: list[str] = []
         seen: set[int] = set()
         exc: BaseException | None = e
         while exc is not None and id(exc) not in seen:
             chain.append(exc.__class__.__name__)
             seen.add(id(exc))
-            exc = exc.__cause__
+            if exc.__cause__ is not None:
+                exc = exc.__cause__
+            elif exc.__suppress_context__:
+                break
+            else:
+                exc = exc.__context__
         return chain if chain else None
 
     @classmethod
