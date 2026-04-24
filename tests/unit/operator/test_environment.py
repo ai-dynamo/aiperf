@@ -443,3 +443,24 @@ class TestPreflightTimeoutValidation:
 
         settings = _OperatorEnvironment(PREFLIGHT_TIMEOUT=0.1)
         assert settings.PREFLIGHT_TIMEOUT == 0.1
+
+
+def test_results_retain_runs_default_is_10() -> None:
+    from aiperf.operator.environment import _ResultsSettings
+
+    assert _ResultsSettings().RETAIN_RUNS == 10
+
+
+def test_results_retain_runs_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIPERF_RESULTS_RETAIN_RUNS", "25")
+    from aiperf.operator.environment import _ResultsSettings
+
+    assert _ResultsSettings().RETAIN_RUNS == 25
+
+
+def test_results_retain_runs_rejects_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIPERF_RESULTS_RETAIN_RUNS", "0")
+    from aiperf.operator.environment import _ResultsSettings
+
+    with pytest.raises(ValidationError):
+        _ResultsSettings()

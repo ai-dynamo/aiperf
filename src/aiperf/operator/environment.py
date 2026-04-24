@@ -75,6 +75,14 @@ class _ResultsSettings(BaseSettings):
         default=True,
         description="Store downloaded result files as zstd-compressed (.zst) on disk",
     )
+    RETAIN_RUNS: int = Field(
+        default=10,
+        ge=1,
+        le=10000,
+        description="Max per-run result dirs to keep under <namespace>/<name>/ "
+        "before retention trimming. Applied after every successful completion; "
+        "the just-written epoch is always protected from deletion.",
+    )
 
 
 class _OperatorEnvironment(BaseSettings):
