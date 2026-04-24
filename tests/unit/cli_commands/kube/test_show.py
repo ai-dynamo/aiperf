@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -56,3 +57,63 @@ def test_show_registered_in_kube_app() -> None:
     # (alongside flags like --help). We only care that "show" is registered.
     command_names = set(app)
     assert "show" in command_names
+
+
+def _run_show(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    """Invoke the show command's default callable directly and return stdout."""
+    from aiperf.cli_commands.kube.show import show as show_cmd
+
+    show_cmd(path=path)
+    return capsys.readouterr().out
+
+
+def test_show_renders_jinja_templates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`{{ a * b }}` inside phases must resolve to an int; variables section is stripped."""
+    doc = _minimal_cr()
+    doc["spec"]["benchmark"]["variables"] = {
+        "concurrency_per_gpu": 2,
+        "deployment_gpu_count": 16,
+    }
+    doc["spec"]["benchmark"]["phases"]["default"]["concurrency"] = (
+        "{{ concurrency_per_gpu * deployment_gpu_count }}"
+    )
+    doc["spec"]["benchmark"]["phases"]["default"]["requests"] = (
+        "{{ concurrency_per_gpu * deployment_gpu_count * 10 }}"
+    )
+    path = _write(tmp_path / "job.yaml", doc)
+
+    out = _run_show(path, capsys)
+    rendered = yaml.safe_load(out)
+
+    phase = rendered["spec"]["benchmark"]["phases"]["default"]
+    assert phase["concurrency"] == 32
+    assert phase["requests"] == 320
+    assert "variables" not in rendered["spec"]["benchmark"]
+    assert "{{" not in out
+
+
+def test_show_passes_through_non_benchmark_fields(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """metadata and non-benchmark spec.* keys must appear unchanged."""
+    doc = _minimal_cr()
+    doc["spec"]["image"] = "custom-image:v1"
+    doc["spec"]["connectionsPerWorker"] = 200
+    doc["spec"]["podTemplate"] = {
+        "imagePullSecrets": ["mysecret"],
+        "env": [{"name": "X", "value": "y"}],
+    }
+    path = _write(tmp_path / "job.yaml", doc)
+
+    out = _run_show(path, capsys)
+    rendered = yaml.safe_load(out)
+
+    assert rendered["apiVersion"] == "aiperf.nvidia.com/v1alpha1"
+    assert rendered["kind"] == "AIPerfJob"
+    assert rendered["metadata"]["name"] == "test-job"
+    assert rendered["spec"]["image"] == "custom-image:v1"
+    assert rendered["spec"]["connectionsPerWorker"] == 200
+    assert rendered["spec"]["podTemplate"]["imagePullSecrets"] == ["mysecret"]
+    assert rendered["spec"]["podTemplate"]["env"] == [{"name": "X", "value": "y"}]
