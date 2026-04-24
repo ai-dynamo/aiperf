@@ -170,6 +170,57 @@ export const api = {
     return { runs: body.runs ?? [], latestEpoch: body.latest_epoch ?? null };
   },
 
+  /** Fetch per-request records from ``profile_export.jsonl`` for a run.
+   *
+   *  ``profile_export_aiperf.json`` is the aggregate summary (percentile
+   *  stats with ``unit`` keys); the per-request stream lives in
+   *  ``profile_export.jsonl`` — one JSON object per line. Each record has
+   *  ``metrics.request_latency = {value: <ns>, unit: "ns"|"s"}`` plus
+   *  ``metadata`` timing fields.
+   *
+   *  Returns ``{records, skipped}`` where ``skipped`` is a reason string when
+   *  the file is too large or missing — callers render a graceful fallback
+   *  without showing an error. Passing ``epoch`` pins to a historical run;
+   *  otherwise reads the latest-run file via ``latest.txt``.
+   *
+   *  Size cap: 200 MB (via Content-Length) to keep the browser responsive
+   *  on huge runs.
+   */
+  async fetchRunRequests(ns, jobId, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    const file = 'profile_export.jsonl';
+    const url = epoch && epoch !== 'latest'
+      ? `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}/${file}`
+      : `${BASE}/results/${nsSeg}/${idSeg}/${file}`;
+
+    let resp;
+    try {
+      resp = await fetch(url, { headers: { Accept: 'application/x-ndjson, text/plain' } });
+    } catch (err) {
+      return { records: [], skipped: `fetch failed: ${err.message}` };
+    }
+    if (resp.status === 404) return { records: [], skipped: 'no per-request data' };
+    if (!resp.ok) return { records: [], skipped: `API ${resp.status}` };
+
+    const lenHeader = resp.headers.get('Content-Length');
+    const size = lenHeader != null ? Number(lenHeader) : null;
+    if (size != null && size > 200 * 1024 * 1024) {
+      return { records: [], skipped: `file too large (${Math.round(size / 1024 / 1024)} MB)` };
+    }
+
+    const text = await resp.text();
+    const records = [];
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        records.push(JSON.parse(s));
+      } catch (_e) { /* skip malformed line */ }
+    }
+    return { records, skipped: null };
+  },
+
   /** Get original CR config for a job */
   getJobConfig(ns, jobId) {
     return apiFetch(

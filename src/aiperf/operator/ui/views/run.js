@@ -1000,6 +1000,154 @@ function SparkTile({ spec, samples }) {
   `;
 }
 
+/* ─────────────────── latency-over-time chart ─────────────────── */
+
+const LATENCY_CHART_MAX_POINTS = 10000;
+
+/** Pull end-to-end latency in ms out of a single ``profile_export.jsonl``
+ *  record. The per-request stream stores metric values as
+ *  ``metrics.request_latency = {value, unit}`` where ``unit`` is usually
+ *  ``"ns"`` (raw) but some transports emit ``"s"``. Returns null when the
+ *  metric is missing or the record is an error. */
+function recordLatencyMs(rec) {
+  if (!rec || rec.error != null) return null;
+  const m = rec.metrics?.request_latency;
+  if (!m || m.value == null) return null;
+  const v = Number(m.value);
+  if (!isFinite(v)) return null;
+  const unit = m.unit ?? 'ns';
+  if (unit === 'ns') return v / 1e6;
+  if (unit === 'us') return v / 1e3;
+  if (unit === 'ms') return v;
+  if (unit === 's')  return v * 1e3;
+  return v;  // unknown unit — show raw value so it at least plots
+}
+
+/** Stride-sample a latency array down to ``max`` points by keeping every Nth
+ *  entry. Stride sampling (vs random) preserves monotonic request-index
+ *  order, which is what the x-axis encodes. */
+function strideSample(values, max) {
+  if (values.length <= max) return values;
+  const stride = Math.ceil(values.length / max);
+  const out = [];
+  for (let i = 0; i < values.length; i += stride) out.push(values[i]);
+  return out;
+}
+
+/** Line chart of end-to-end latency (ms) vs request index.
+ *
+ *  Fetches ``profile_export.jsonl`` once on mount (and on ns/name/epoch
+ *  change); stride-samples above 10k points; renders directly with
+ *  ``window.Chart`` (vendored UMD). On any render failure, falls back to
+ *  a plain text badge so a single broken run never blanks the whole view.
+ */
+function LatencyTimelineChart({ ns, name, epoch }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  const [state, setState] = useState({ kind: 'loading' });
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ kind: 'loading' });
+    api.fetchRunRequests(ns, name, epoch)
+      .then(({ records, skipped }) => {
+        if (cancel) return;
+        if (skipped) { setState({ kind: 'skip', msg: skipped }); return; }
+        const ms = records
+          .map(recordLatencyMs)
+          .filter(v => v != null);
+        if (ms.length === 0) { setState({ kind: 'skip', msg: 'no latency data' }); return; }
+        setState({ kind: 'ok', sampled: strideSample(ms, LATENCY_CHART_MAX_POINTS), total: ms.length });
+      })
+      .catch(err => {
+        if (!cancel) setState({ kind: 'err', msg: err.message });
+      });
+    return () => { cancel = true; };
+  }, [ns, name, epoch]);
+
+  useEffect(() => {
+    if (state.kind !== 'ok') return;
+    if (!canvasRef.current || !window.Chart) return;
+
+    const points = state.sampled.map((y, x) => ({ x, y }));
+    try {
+      chartRef.current = new window.Chart(canvasRef.current, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'end-to-end latency (ms)',
+            data: points,
+            borderColor: 'rgba(126, 234, 255, 0.9)',
+            backgroundColor: 'rgba(126, 234, 255, 0.15)',
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          parsing: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { type: 'linear', title: { display: true, text: 'request index' } },
+            y: { title: { display: true, text: 'latency (ms)' }, beginAtZero: true },
+          },
+        },
+      });
+    } catch (err) {
+      setState({ kind: 'err', msg: `chart render failed: ${err.message}` });
+    }
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [state]);
+
+  const header = (meta) => html`
+    <header class="slab-head slab-head--flush">
+      <div class="slab-head-title"><span class="slab-head-caret">▸</span> LATENCY TIMELINE</div>
+      <div class="slab-head-meta">${meta}</div>
+    </header>
+  `;
+
+  if (state.kind === 'loading') {
+    return html`<section class="run-latency-chart" data-testid="run-latency-chart">${header('LOADING…')}</section>`;
+  }
+  if (state.kind === 'skip') {
+    return html`
+      <section class="run-latency-chart" data-testid="run-latency-chart">
+        ${header(state.msg.toUpperCase())}
+      </section>
+    `;
+  }
+  if (state.kind === 'err') {
+    return html`
+      <section class="run-latency-chart" data-testid="run-latency-chart">
+        ${header('CHART UNAVAILABLE')}
+        <div class="run-latency-chart-err">${state.msg}</div>
+      </section>
+    `;
+  }
+
+  const { sampled, total } = state;
+  const metaText = total > sampled.length
+    ? `${fmtInt(sampled.length)} / ${fmtInt(total)} REQUESTS · SAMPLED`
+    : `${fmtInt(total)} REQUESTS`;
+  return html`
+    <section class="run-latency-chart" data-testid="run-latency-chart">
+      ${header(metaText)}
+      <div class="run-latency-chart-body" style="height: 300px;">
+        <canvas ref=${canvasRef}></canvas>
+      </div>
+    </section>
+  `;
+}
+
 /* ─────────────────────── fault callout ──────────────────────── */
 
 /** Prominent red callout shown only when the phase bucket is `fault`.
@@ -1307,6 +1455,11 @@ export function Run({ ns, name, epoch }) {
             <${SparkTile} key=${spec.key} spec=${spec} samples=${samples} />
           `)}
         </section>
+      `}
+
+      <!-- 3c. REQUEST-LATENCY TIMELINE (completed runs) -->
+      ${bucket !== 'live' && html`
+        <${LatencyTimelineChart} ns=${ns} name=${name} epoch=${epoch} />
       `}
 
       <!-- 3. PHASES SWIMLANE -->
