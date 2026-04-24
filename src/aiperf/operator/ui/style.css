@@ -3015,3 +3015,32 @@ input[type="text"]::placeholder { color: var(--paper-ghost); letter-spacing: 0.0
   letter-spacing: 0.04em;
   text-transform: none;
 }
+
+/* ── Run-history dropdown (job detail header) ─────────────────── */
+.run-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 1rem;
+}
+.run-history-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--paper-dim, var(--paper));
+  text-transform: uppercase;
+}
+.run-history-select {
+  margin-left: 0;
+  padding: 0.25rem 0.5rem;
+  font-family: var(--f-mono, inherit);
+  font-size: 0.9em;
+  color: var(--paper);
+  background: var(--ink-3);
+  border: 1px solid var(--edge-2);
+  cursor: pointer;
+}
+.run-history-select:focus-visible {
+  outline: 1px solid var(--edge-amber-hot);
+  outline-offset: 0;
+}

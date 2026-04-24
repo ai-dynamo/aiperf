@@ -110,19 +110,64 @@ export const api = {
     return apiFetch('/results');
   },
 
-  /** List individual result files for a job on the PVC. */
-  listJobFiles(ns, jobId) {
-    return apiFetch(`/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}`);
+  /** List individual result files for a job on the PVC.
+   *
+   * When ``epoch`` is omitted/null/``'latest'``, hits the stable
+   * ``/results/<ns>/<jobId>`` endpoint (follows ``latest.txt``). When a
+   * specific epoch string is passed, hits the pinned historical endpoint
+   * ``/results/<ns>/<jobId>/runs/<epoch>``.
+   */
+  listJobFiles(ns, jobId, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    if (epoch && epoch !== 'latest') {
+      return apiFetch(`/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}`);
+    }
+    return apiFetch(`/results/${nsSeg}/${idSeg}`);
   },
 
-  /** Build an absolute-ish URL for a single result file (for anchor href downloads). */
-  resultFileUrl(ns, jobId, filename) {
-    return `${BASE}/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`;
+  /** Build an absolute-ish URL for a single result file (for anchor href
+   *  downloads). Passing an epoch routes through the historical endpoint.
+   */
+  resultFileUrl(ns, jobId, filename, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    const fileSeg = encodeURIComponent(filename);
+    if (epoch && epoch !== 'latest') {
+      return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}/${fileSeg}`;
+    }
+    return `${BASE}/results/${nsSeg}/${idSeg}/${fileSeg}`;
   },
 
-  /** Build an absolute-ish URL for the full job bundle as a single zip. */
-  resultBundleUrl(ns, jobId) {
-    return `${BASE}/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}.zip`;
+  /** Build an absolute-ish URL for the full job bundle as a single zip.
+   *  Passing an epoch targets the historical bundle.
+   */
+  resultBundleUrl(ns, jobId, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    if (epoch && epoch !== 'latest') {
+      return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
+    }
+    return `${BASE}/results/${nsSeg}/${idSeg}.zip`;
+  },
+
+  /** List every historical run dir for ``<ns>/<jobId>``, newest first.
+   *
+   * Returns ``{runs, latestEpoch}``. A 404 is treated as "no runs yet"
+   * and yields an empty list — this lets the UI render the detail page
+   * for a brand-new CR with no archive tree without surfacing an error.
+   */
+  async listRuns(ns, jobId) {
+    const resp = await fetch(
+      `${BASE}/results/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}/runs`,
+    );
+    if (resp.status === 404) return { runs: [], latestEpoch: null };
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => resp.statusText);
+      throw new Error(`API ${resp.status}: ${text}`);
+    }
+    const body = await resp.json();
+    return { runs: body.runs ?? [], latestEpoch: body.latest_epoch ?? null };
   },
 
   /** Get original CR config for a job */

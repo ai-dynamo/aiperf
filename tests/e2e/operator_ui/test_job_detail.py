@@ -354,3 +354,56 @@ async def test_run_view_for_nonexistent_run_does_not_crash(
     # The view mounts even with no backing data — the shell is
     # lifecycle-independent of the data fetch.
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
+
+
+def _seed_two_epoch_runs(
+    results_dir: Path, namespace: str, name: str
+) -> tuple[str, str]:
+    """Rewrite the flat results dir into two epoch-keyed run dirs + ``latest.txt``.
+
+    Takes whatever files are currently at ``<results>/<ns>/<name>/`` (from
+    the golden tree) and duplicates them under two epoch subdirs so
+    ``list_runs`` surfaces a populated history. Returns ``(older, latest)``
+    epoch strings — ten-digit decimal seconds matching ``EPOCH_RE``.
+    """
+    import shutil
+
+    job_root = results_dir / namespace / name
+    latest_epoch = "1714150923"  # 2024-04-26 16:22:03 UTC
+    older_epoch = "1714064523"  # 2024-04-25 16:22:03 UTC
+    src_files = [p for p in job_root.iterdir() if p.is_file()]
+    for epoch in (latest_epoch, older_epoch):
+        sub = job_root / epoch
+        sub.mkdir(parents=True, exist_ok=True)
+        for f in src_files:
+            shutil.copy2(f, sub / f.name)
+    (job_root / "latest.txt").write_text(latest_epoch)
+    for f in src_files:
+        f.unlink()
+    return older_epoch, latest_epoch
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_history_dropdown_renders_when_two_epoch_runs_exist(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``run-history-select`` lists ``Latest run`` plus one option per epoch.
+
+    The golden tree lays ``aiperf-llama3-c128`` out as a flat job dir;
+    we rewrite it into two epoch subdirs so the ``/runs`` endpoint
+    returns two entries. The dropdown must then mount and carry three
+    total options (``latest`` + the two epoch strings).
+    """
+    older, latest = _seed_two_epoch_runs(
+        seeded_results_dir, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    select = page.get_by_test_id("run-history-select")
+    await expect(select).to_be_visible()
+    # Three options: the implicit Latest + two historical epochs.
+    await expect(select.locator("option")).to_have_count(3)
+    await expect(select.locator(f'option[value="{latest}"]')).to_have_count(1)
+    await expect(select.locator(f'option[value="{older}"]')).to_have_count(1)

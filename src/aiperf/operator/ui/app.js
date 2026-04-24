@@ -41,6 +41,9 @@ import { Analysis } from './views/analysis.js';
 import { Log } from './views/log.js';
 
 function resolveView(currentRoute) {
+  const runEpochMatch = matchRoute('/run/:ns/:name/runs/:epoch', currentRoute)
+    ?? matchRoute('/jobs/:ns/:name/runs/:epoch', currentRoute);
+  if (runEpochMatch)                                   return { kind: 'run', params: runEpochMatch };
   const runMatch = matchRoute('/run/:ns/:name', currentRoute)
     ?? matchRoute('/jobs/:ns/:name', currentRoute);
   if (runMatch)                                        return { kind: 'run', params: runMatch };
@@ -95,7 +98,11 @@ function App() {
 
   let mainView;
   if (resolved.kind === 'run') {
-    mainView = html`<${Run} ns=${resolved.params.ns} name=${resolved.params.name} />`;
+    mainView = html`<${Run}
+      ns=${resolved.params.ns}
+      name=${resolved.params.name}
+      epoch=${resolved.params.epoch ?? null}
+    />`;
   } else if (resolved.kind === 'launch') {
     mainView = html`<${Launch} />`;
   } else if (resolved.kind === 'archive') {

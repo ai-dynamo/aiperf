@@ -87,14 +87,18 @@ function fileKind(name) {
  *  "Bundle ZIP" primary action. Polls once on mount and whenever the run key
  *  changes — the file list rarely mutates after a run finishes, so no
  *  continuous polling.
+ *
+ *  When ``epoch`` is non-null, reads files from the pinned historical run
+ *  dir via ``/api/v1/results/<ns>/<name>/runs/<epoch>``; download URLs
+ *  follow the same pattern so historical bundles stay addressable.
  */
-function ResultsPane({ ns, name }) {
+function ResultsPane({ ns, name, epoch }) {
   const [state, setState] = useState({ kind: 'loading' });
 
   useEffect(() => {
     let cancel = false;
     setState({ kind: 'loading' });
-    api.listJobFiles(ns, name)
+    api.listJobFiles(ns, name, epoch)
       .then(r => { if (!cancel) setState({ kind: 'ok', files: r?.files ?? [] }); })
       .catch(err => {
         if (cancel) return;
@@ -103,7 +107,7 @@ function ResultsPane({ ns, name }) {
         else setState({ kind: 'err', msg: err.message });
       });
     return () => { cancel = true; };
-  }, [ns, name]);
+  }, [ns, name, epoch]);
 
   if (state.kind === 'loading') {
     return html`
@@ -163,7 +167,7 @@ function ResultsPane({ ns, name }) {
           <div class="run-results-actions">
             <a
               class="run-results-bundle"
-              href=${api.resultBundleUrl(ns, name)}
+              href=${api.resultBundleUrl(ns, name, epoch)}
               download
               data-testid="run-results-bundle"
             >
@@ -187,7 +191,7 @@ function ResultsPane({ ns, name }) {
                 ${f.compressed && html`<span class="run-results-zst" title="Stored zstd-compressed; decompressed on download">zst</span>`}
                 <a
                   class="run-results-get"
-                  href=${api.resultFileUrl(ns, name, f.name)}
+                  href=${api.resultFileUrl(ns, name, f.name, epoch)}
                   download
                   aria-label=${'Download ' + f.name}
                 >
@@ -198,6 +202,76 @@ function ResultsPane({ ns, name }) {
           </ol>
         `}
     </section>
+  `;
+}
+
+/* ──────────────────── run-history dropdown ─────────────────── */
+
+/** Format an epoch-seconds string as ``YYYY-MM-DD HH:MM:SS UTC`` for option
+ *  labels. Falls back to the raw epoch string when parsing fails so the user
+ *  never sees a silent "Invalid Date". */
+function fmtRunLabel(entry, isLatest) {
+  const seconds = Number(entry.mtime_epoch ?? entry.epoch);
+  let label = entry.epoch;
+  if (Number.isFinite(seconds) && seconds > 0) {
+    const d = new Date(seconds * 1000);
+    if (!isNaN(d.getTime())) {
+      const pad = n => String(n).padStart(2, '0');
+      label = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} `
+            + `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+    }
+  }
+  return isLatest ? `${label} (latest)` : label;
+}
+
+/** Dropdown that pins the RESULTS pane to a historical run dir.
+ *
+ *  Fetches ``/api/v1/results/<ns>/<name>/runs`` on mount; renders a
+ *  ``<select class="run-history-select">`` when at least one run exists.
+ *  Value ``latest`` stays on ``latest.txt`` (stable URLs); any other value
+ *  is an epoch string and routes to ``#/run/<ns>/<name>/runs/<epoch>``.
+ */
+function RunHistoryDropdown({ ns, name, selectedEpoch }) {
+  const [state, setState] = useState({ kind: 'loading' });
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ kind: 'loading' });
+    api.listRuns(ns, name)
+      .then(({ runs, latestEpoch }) => {
+        if (cancel) return;
+        setState({ kind: 'ok', runs, latestEpoch });
+      })
+      .catch(err => {
+        if (!cancel) setState({ kind: 'err', msg: err.message });
+      });
+    return () => { cancel = true; };
+  }, [ns, name]);
+
+  if (state.kind !== 'ok') return null;
+  const { runs } = state;
+  if (runs.length === 0) return null;
+
+  const value = selectedEpoch ?? 'latest';
+  return html`
+    <label class="run-history" data-testid="run-history">
+      <span class="run-history-label">RUN</span>
+      <select
+        class="run-history-select"
+        value=${value}
+        onchange=${(e) => {
+          const v = e.target.value;
+          if (v === 'latest') navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
+          else navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(v)}`);
+        }}
+        data-testid="run-history-select"
+      >
+        <option value="latest">Latest run</option>
+        ${runs.map(r => html`
+          <option key=${r.epoch} value=${r.epoch}>${fmtRunLabel(r, r.is_latest)}</option>
+        `)}
+      </select>
+    </label>
   `;
 }
 
@@ -1099,7 +1173,7 @@ function EventsPane({ ns, name }) {
 
 /* ──────────────────────── the view ────────────────────────── */
 
-export function Run({ ns, name }) {
+export function Run({ ns, name, epoch }) {
   const [detail, setDetail] = useState(null);
   const [config, setConfig] = useState(null);
   const [samples, setSamples] = useState([]);
@@ -1204,6 +1278,7 @@ export function Run({ ns, name }) {
           </div>
           <${CancelButton} ns=${ns} name=${name} bucket=${bucket} />
           <${RelaunchButton} ns=${ns} name=${name} config=${config} />
+          <${RunHistoryDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
         </div>
       </header>
 
@@ -1285,7 +1360,7 @@ export function Run({ ns, name }) {
       <${GpuTelemetry} metrics=${gpuMetrics} />
 
       <!-- 7. RESULTS -->
-      <${ResultsPane} ns=${ns} name=${name} />
+      <${ResultsPane} ns=${ns} name=${name} epoch=${epoch} />
 
       <!-- 8. CONFIG (collapsed by default) -->
       ${config && html`
