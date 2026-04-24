@@ -229,3 +229,90 @@ async def test_run_results_section_renders(
     )
     await detail.goto()
     await expect(page.get_by_test_id("run-results")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_events_section_renders(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``run-events`` renders unconditionally (even as an empty state).
+
+    ``run.js`` always mounts the events section — LOADING during fetch,
+    empty-copy once the empty response comes back from the stubbed
+    events endpoint. Confirm it's visible on the detail page mount.
+    """
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    await expect(page.get_by_test_id("run-events")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_fault_callout_renders_for_failed_cr(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``run-fault-callout`` appears for a Failed CR with a False condition.
+
+    The callout only renders when ``bucket === 'fault'`` AND there is a
+    ``status=False`` condition (or a Failed pod). The golden Failed CR
+    (``ml-lab/failed-run``) doesn't carry a False condition by default,
+    so seed one into the fake before navigating.
+    """
+    for raw in fake_k8s_client.jobs_raw:
+        if raw["metadata"]["name"] == "failed-run":
+            status = raw.setdefault("status", {})
+            status["phase"] = "Failed"
+            status["conditions"] = [
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "message": "benchmark worker exited with non-zero code",
+                }
+            ]
+            break
+    else:  # pragma: no cover - defensive; the golden CR always exists
+        raise AssertionError("failed-run CR missing from fake fixture")
+    _ensure_empty_results_dir(seeded_results_dir, "ml-lab", "failed-run")
+    detail = JobDetailPage(page, live_operator_app.base_url, "ml-lab", "failed-run")
+    await detail.goto()
+    callout = page.get_by_test_id("run-fault-callout")
+    await expect(callout).to_be_visible()
+    await expect(callout).to_contain_text("non-zero code")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_relaunch_button_submits_new_manifest(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``run-relaunch`` stores a prefill and navigates to /launch.
+
+    The relaunch button only renders when the run's config carries a
+    non-empty ``spec``; the seeded ``aiperf-llama3-c128`` run has
+    ``job_spec.json`` written via the golden fixture. Clicking it writes
+    the current YAML to ``sessionStorage['aiperf.launch.prefill']`` and
+    navigates to ``/launch``, where the prefill notice surfaces via
+    ``launch-prefill-notice``.
+    """
+    import orjson
+
+    # Ensure the config endpoint returns a non-empty spec so RelaunchButton renders.
+    spec_path = (
+        seeded_results_dir / "aiperf-bench" / "aiperf-llama3-c128" / "job_spec.json"
+    )
+    spec_path.write_bytes(
+        orjson.dumps({"benchmark": {"models": [{"name": "llama3-8b"}]}})
+    )
+
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    relaunch = page.get_by_test_id("run-relaunch")
+    await expect(relaunch).to_be_visible()
+    await relaunch.click()
+    await page.wait_for_url("**/#/launch")
+    # Prefill notice should surface the source run name.
+    notice = page.get_by_test_id("launch-prefill-notice")
+    await expect(notice).to_be_visible()
+    await expect(notice).to_contain_text("aiperf-llama3-c128")

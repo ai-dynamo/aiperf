@@ -110,3 +110,35 @@ async def test_archive_row_click_navigates_to_run_detail(
     await archive.row("aiperf-bench", "aiperf-llama3-c128").click()
     await page.wait_for_url("**/run/aiperf-bench/aiperf-llama3-c128")
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_archive_bucket_tabs_filter_rows(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """LIVE / PASSED / FAULT tabs narrow the row list to matching phases.
+
+    Golden fixture has 5 CRs: 3 Succeeded (PASSED), 1 Failed (FAULT),
+    1 Running (LIVE). ALL is the default and shows all 5. Scope the tab
+    lookup to ``.v-archive-tabs`` so it doesn't collide with the
+    same-labelled LIVE/PASSED/FAULT tabs in the bottom ``log-strip``
+    component.
+    """
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(5)
+    tablist = page.locator(".v-archive-tabs")
+
+    await tablist.get_by_role("tab", name="LIVE").click()
+    await expect(archive.rows()).to_have_count(1)
+    await expect(archive.row("aiperf-bench", "live-run")).to_be_visible()
+
+    await tablist.get_by_role("tab", name="PASSED").click()
+    await expect(archive.rows()).to_have_count(3)
+
+    await tablist.get_by_role("tab", name="FAULT").click()
+    await expect(archive.rows()).to_have_count(1)
+    await expect(archive.row("ml-lab", "failed-run")).to_be_visible()
+
+    await tablist.get_by_role("tab", name="ALL").click()
+    await expect(archive.rows()).to_have_count(5)

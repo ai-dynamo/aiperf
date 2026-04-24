@@ -122,6 +122,23 @@ class LogPage(BasePage):
         await expect(self.page.get_by_test_id("page-history")).to_be_visible()
 
 
+class LaunchPage(BasePage):
+    """The ``/launch`` YAML-editor view (root ``page-launch``)."""
+
+    async def goto(self) -> None:
+        await self._goto("/launch")
+        await expect(self.page.get_by_test_id("page-launch")).to_be_visible()
+
+    async def pick_template(self, template_id: str) -> None:
+        await self.page.get_by_test_id(f"launch-template-{template_id}").click()
+
+    async def set_yaml(self, yaml_text: str) -> None:
+        await self.page.get_by_test_id("launch-yaml").fill(yaml_text)
+
+    async def submit(self) -> None:
+        await self.page.get_by_test_id("launch-submit").click()
+
+
 class CommandPalette:
     def __init__(self, page: Page) -> None:
         self.page = page

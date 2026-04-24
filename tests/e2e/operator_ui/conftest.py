@@ -202,6 +202,15 @@ class FakeK8sClient:
     this dict with ``V1Event``-shaped fakes.
     """
 
+    created_jobs: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+    """Recorded ``(namespace, name, manifest)`` for each POST /api/v1/jobs.
+
+    Populated by the ``_create_job_stub`` in place of the real
+    ``CustomObjectsApi(api).create_namespaced_custom_object`` call, so
+    Launch-view tests can assert the submission shape without a live
+    cluster.
+    """
+
     def set_jobs(self, jobs_raw: list[dict[str, Any]]) -> None:
         """Replace the canned AIPerfJob CR list."""
         self.jobs_raw = jobs_raw
@@ -364,6 +373,31 @@ def fake_k8s_client(
 
         return Response(content=b"", media_type="text/plain")
 
+    async def _create_job_stub(api, manifest):
+        """Stub for ``_create_job_impl``.
+
+        The Launch view POSTs a manifest to ``/api/v1/jobs`` which calls
+        ``CustomObjectsApi(api).create_namespaced_custom_object(...)``
+        against the sentinel api and 500s. Record the submission on the
+        fake for assertion and hand back a ``CreateJobResponse``-shaped
+        dict with the namespace/name from the manifest.
+        """
+        from aiperf.operator.routers.jobs_models import CreateJobResponse
+
+        if not isinstance(manifest, dict):
+            from fastapi import HTTPException
+
+            raise HTTPException(400, "Manifest must be a JSON/YAML object.")
+        md = dict(manifest.get("metadata") or {})
+        name = md.get("name")
+        if not name:
+            from fastapi import HTTPException
+
+            raise HTTPException(400, "metadata.name is required.")
+        namespace = md.get("namespace") or "default"
+        fake.created_jobs.append((namespace, name, dict(manifest)))
+        return CreateJobResponse(namespace=namespace, name=name, uid=f"uid-{name}")
+
     # Patch both the source module and the router's local re-imports, because
     # the router does ``from aiperf.kubernetes.client import ...`` which binds
     # the names into its own module namespace. Also patch ``job_union`` which
@@ -408,6 +442,13 @@ def fake_k8s_client(
         jobs_logs_mod, "get_pod_logs_impl", _pod_logs_stub, raising=False
     )
     monkeypatch.setattr(jobs_router, "get_pod_logs_impl", _pod_logs_stub, raising=False)
+
+    # The create-job endpoint calls ``CustomObjectsApi(api).create_namespaced_custom_object``
+    # directly (see ``_create_job_impl`` in ``jobs.py``); stub it so the
+    # Launch view can submit without a real cluster.
+    monkeypatch.setattr(
+        jobs_router, "_create_job_impl", _create_job_stub, raising=False
+    )
 
     # Inject a non-None sentinel into the router's ``api_holder`` so
     # ``_require_api`` passes. The holder is a closure local in

@@ -130,3 +130,36 @@ async def test_home_empty_state_shows_launch_cta(
     await home.goto()
     cta = page.get_by_test_id("home-launch-cta")
     await expect(cta).to_be_visible(timeout=7000)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_home_groups_by_namespace_with_live_first(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Namespace with a Running run renders before namespaces without one.
+
+    ``groupByNamespace`` in ``home.js`` orders namespace groups by:
+    (1) any live run first, (2) any fault next, (3) alphabetical
+    fallback. The golden fixture has ``aiperf-bench`` (carrying the
+    Running ``live-run``) and ``ml-lab`` (only Succeeded + Failed).
+    Alphabetical order would put ``aiperf-bench`` first anyway, so
+    flip one CR — rename ``aiperf-bench``'s namespace to ``z-lab`` at
+    the API level so alphabetical + live-priority disagree, and the
+    live-priority rule is the only thing that can explain the observed
+    ordering.
+    """
+    for raw in fake_k8s_client.jobs_raw:
+        if raw["metadata"]["namespace"] == "aiperf-bench":
+            raw["metadata"]["namespace"] = "z-lab"
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    # Wait for the list variant of Home to mount (not the empty/scanning
+    # state) — ``hm-summary`` is only rendered when there are runs.
+    await expect(home.summary()).to_be_visible()
+    # The first rendered row should be in ``z-lab`` (live namespace) even
+    # though ``ml-lab`` comes first alphabetically.
+    first_row = home.rows().first
+    testid = await first_row.get_attribute("data-testid")
+    assert testid is not None and testid.startswith("hm-row-z-lab-"), (
+        f"expected first row to be in the live namespace (z-lab), got {testid!r}"
+    )
