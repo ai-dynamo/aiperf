@@ -13,8 +13,8 @@
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
 #
-# release=true (default for push/dispatch): full pipeline including approval gate and GitLab scan.
-# release=false (always for schedule):     build only; skip staging and scan.
+# release=true  (schedule; push to pvijayakrish/release; default for workflow_dispatch): full pipeline including approval gate and GitLab scan.
+# release=false (push to main):                                                           build and tests only; skip staging and scan.
 #
 # The ref input accepts a branch name, tag, or commit SHA. When omitted the pipeline
 # builds from the tip-of-tree of the triggering ref (or the default branch for schedule).
@@ -24,7 +24,9 @@ name: Nightly
 on:
   push:
     branches:
-      - 'pvijayakrish/automate-release-rc'
+      - 'main'
+      # Temporary dev branch — remove before this file ships to a release branch.
+      - 'pvijayakrish/release'
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
@@ -34,7 +36,7 @@ on:
         default: ''
         required: false
       release:
-        description: 'Stage artifacts and trigger GitLab security scan. Ignored for schedule — cron always sets release=false.'
+        description: 'Stage artifacts and trigger GitLab security scan. Only honored for workflow_dispatch. Push always sets release=false; schedule always sets release=true.'
         type: boolean
         default: true
       skip_security_scan:
@@ -122,11 +124,13 @@ jobs:
             # shellcheck source=/dev/null
             source .nightly-version/version-info.env
           else
-            # Second-granular UTC timestamp; supports concurrent nightly runs
-            # without collision as long as runs are spaced by ≥1s or differ in
-            # commit. For bulletproof uniqueness under same-second/same-commit
-            # concurrency, append ${GITHUB_RUN_ID} (see TODO below).
-            TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+            # Date-only UTC stamp (YYYYMMDD). CONTAINER_TAG is further
+            # disambiguated by the 7-char short SHA, so two runs on the same
+            # day from different commits do not collide. WHEEL_VERSION has no
+            # SHA component — two runs on the same day produce the same
+            # PEP 440 dev version and will overwrite each other in S3 and
+            # Artifactory (intentional; last-writer-wins per day).
+            TIMESTAMP=$(date -u +%Y%m%d)
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
             FULL_SHA=$(git rev-parse HEAD)
 
@@ -177,15 +181,39 @@ jobs:
 
       - name: Compute effective release mode
         id: release
+        env:
+          # inputs.release is only set when event_name == workflow_dispatch.
+          DISPATCH_RELEASE: ${{ inputs.release }}
         run: |
-          # schedule runs build+tag only — never stage or scan.
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.release }}" = "false" ]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          fi
+          # push to main                 → build + tests only.
+          # push to pvijayakrish/release → full release (temporary: dev branch
+          #                                used to exercise the staging path
+          #                                without waiting for cron).
+          # cron                         → full release.
+          # dispatch                     → honor the `release` input (default true).
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              if [ "${GITHUB_REF_NAME}" = "pvijayakrish/release" ]; then
+                RELEASE=true
+              else
+                RELEASE=false
+              fi
+              ;;
+            schedule)
+              RELEASE=true
+              ;;
+            workflow_dispatch)
+              if [ "${DISPATCH_RELEASE}" = "false" ]; then
+                RELEASE=false
+              else
+                RELEASE=true
+              fi
+              ;;
+            *)
+              RELEASE=false
+              ;;
+          esac
+          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # PHASE 2: VALIDATE
