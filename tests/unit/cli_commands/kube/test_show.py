@@ -117,3 +117,23 @@ def test_show_passes_through_non_benchmark_fields(
     assert rendered["spec"]["connectionsPerWorker"] == 200
     assert rendered["spec"]["podTemplate"]["imagePullSecrets"] == ["mysecret"]
     assert rendered["spec"]["podTemplate"]["env"] == [{"name": "X", "value": "y"}]
+
+
+def test_show_resolves_env_var_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """${VAR:default} must resolve to `default` when VAR is unset."""
+    monkeypatch.delenv("AIPERF_TEST_MODEL", raising=False)
+
+    doc = _minimal_cr()
+    doc["spec"]["benchmark"]["models"] = ["${AIPERF_TEST_MODEL:fallback-model}"]
+    path = _write(tmp_path / "job.yaml", doc)
+
+    out = _run_show(path, capsys)
+    rendered = yaml.safe_load(out)
+
+    # AIPerfConfig normalises string/list forms to {"items": [{"name": ...}]}.
+    items = rendered["spec"]["benchmark"]["models"]["items"]
+    assert items[0]["name"] == "fallback-model"
