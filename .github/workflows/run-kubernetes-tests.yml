@@ -82,8 +82,19 @@ jobs:
         kubectl version --client || true
         helm version || true
 
-    - name: Build aiperf image
-      run: docker build -t aiperf:local .
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build aiperf image (amd64, from build-images GHA cache)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: Dockerfile
+        target: runtime
+        platforms: linux/amd64
+        load: true
+        tags: aiperf:local
+        cache-from: type=gha,scope=aiperf
       timeout-minutes: 20
 
     - name: Build mock server image
