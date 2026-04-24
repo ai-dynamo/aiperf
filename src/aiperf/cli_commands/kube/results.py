@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from cyclopts import App, Parameter
 
@@ -202,3 +202,155 @@ async def _retrieve_from_pods(
             "Pods may have been deleted. Try without --from-pods to retrieve from operator storage."
         )
     return retrieval_success, used_api
+
+
+@app.command(name="list-runs")
+async def list_runs(
+    job_id: Annotated[str | None, Parameter(help="AIPerf job ID to list runs for (default: last deployed job).")] = None,
+    *,
+    manage_options: KubeManageOptions | None = None,
+    output: Annotated[Literal["text", "json"], Parameter(name=["-o", "--output"], help="Output format: 'text' for table, 'json' for machine-parseable.")] = "text",
+    operator_namespace: Annotated[str, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed.")] = "aiperf-system",
+) -> None:  # fmt: skip
+    """List all historical runs of a benchmark job.
+
+    Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and
+    prints either a table (default) or the raw JSON payload.
+
+    Examples:
+        aiperf kube results list-runs                 # last deployed job
+        aiperf kube results list-runs foo             # specific job
+        aiperf kube results list-runs foo --output json
+    """
+    from aiperf import cli_utils
+
+    manage_options = manage_options or KubeManageOptions()
+    with cli_utils.exit_on_error(title="Error Listing Runs"):
+        await _run_list_runs(
+            job_id=job_id,
+            manage_options=manage_options,
+            output=output,
+            operator_namespace=operator_namespace,
+        )
+
+
+async def _run_list_runs(
+    *,
+    job_id: str | None,
+    manage_options: KubeManageOptions,
+    output: Literal["text", "json"],
+    operator_namespace: str,
+) -> None:
+    import logging
+
+    import aiohttp
+    import orjson
+
+    from aiperf.kubernetes import cli_helpers
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes.client import find_operator_pod
+    from aiperf.kubernetes.port_forward import port_forward_with_status
+    from aiperf.kubernetes.results_operator import RESULTS_SERVER_PORT
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
+    if output == "json":
+        kube_logger.setLevel(logging.WARNING)
+
+    try:
+        resolved = await cli_helpers.resolve_job(
+            job_id,
+            manage_options.namespace,
+            kubeconfig=manage_options.kubeconfig,
+            kube_context=manage_options.kube_context,
+        )
+        if not resolved:
+            return
+
+        job_id = resolved.job_id
+        namespace = resolved.namespace
+        api = resolved.api
+
+        pod_info = await find_operator_pod(api, namespace=operator_namespace)
+        if not pod_info:
+            raise RuntimeError(
+                f"Operator pod not found in namespace '{operator_namespace}'. "
+                "Is the aiperf-operator deployed?"
+            )
+        pod_name, _phase = pod_info
+
+        async with port_forward_with_status(
+            operator_namespace,
+            pod_name,
+            0,
+            remote_port=RESULTS_SERVER_PORT,
+            verify_api=False,
+            kubeconfig=manage_options.kubeconfig,
+            kube_context=manage_options.kube_context,
+        ) as port:
+            url = f"http://localhost:{port}/api/v1/results/{namespace}/{job_id}/runs"
+            timeout = aiohttp.ClientTimeout(total=30)
+            connector = create_tcp_connector()
+            async with (
+                aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
+                session.get(url) as resp,
+            ):
+                if resp.status == 404:
+                    raise RuntimeError(
+                        f"No runs found for {namespace}/{job_id}. "
+                        "The job may not have completed yet, or the operator "
+                        "has not captured any runs."
+                    )
+                resp.raise_for_status()
+                payload = await resp.json(loads=orjson.loads)
+    finally:
+        kube_logger.setLevel(original_level)
+
+    if output == "json":
+        kube_console.console.print(
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode(),
+            highlight=False,
+        )
+    else:
+        _print_runs_table(payload)
+
+
+def _print_runs_table(payload: dict) -> None:
+    """Render a ``RunHistoryListResponse`` payload as a rich table."""
+    from datetime import datetime, timezone
+
+    from rich.table import Table
+
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes.console import _human_size
+
+    runs = payload.get("runs", [])
+    namespace = payload.get("namespace", "")
+    job_id = payload.get("job_id", "")
+
+    if not runs:
+        kube_console.print_info(f"No runs found for {namespace}/{job_id}")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None)
+    table.add_column("EPOCH", style="cyan")
+    table.add_column("TIMESTAMP", style="dim")
+    table.add_column("FILES", justify="right")
+    table.add_column("SIZE", justify="right")
+    table.add_column("LATEST", justify="center")
+
+    for run in runs:
+        ts = datetime.fromtimestamp(
+            run.get("mtime_epoch", 0), tz=timezone.utc
+        ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        latest = "[green]✓[/green]" if run.get("is_latest") else ""
+        table.add_row(
+            str(run.get("epoch", "")),
+            ts,
+            str(run.get("file_count", 0)),
+            _human_size(int(run.get("total_size_bytes", 0))),
+            latest,
+        )
+
+    kube_console.console.print(table)
