@@ -13,8 +13,8 @@
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
 #
-# release=true  (schedule; push to pvijayakrish/release; default for workflow_dispatch): full pipeline including approval gate and GitLab scan.
-# release=false (push to main):                                                           build and tests only; skip staging and scan.
+# release=true  (schedule; push to pvijayakrish/**; default for workflow_dispatch): full pipeline including approval gate and GitLab scan.
+# release=false (push to main):                                                      build and tests only; skip staging and scan.
 #
 # The ref input accepts a branch name, tag, or commit SHA. When omitted the pipeline
 # builds from the tip-of-tree of the triggering ref (or the default branch for schedule).
@@ -25,8 +25,10 @@ on:
   push:
     branches:
       - 'main'
-      # Temporary dev branch — remove before this file ships to a release branch.
-      - 'pvijayakrish/release'
+      # Temporary: any personal dev branch under pvijayakrish/** auto-triggers
+      # the pipeline so iteration doesn't require workflow_dispatch. Remove
+      # before this file ships to a long-lived release branch.
+      - 'pvijayakrish/**'
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
@@ -185,19 +187,18 @@ jobs:
           # inputs.release is only set when event_name == workflow_dispatch.
           DISPATCH_RELEASE: ${{ inputs.release }}
         run: |
-          # push to main                 → build + tests only.
-          # push to pvijayakrish/release → full release (temporary: dev branch
-          #                                used to exercise the staging path
-          #                                without waiting for cron).
-          # cron                         → full release.
-          # dispatch                     → honor the `release` input (default true).
+          # push to main           → build + tests only.
+          # push to pvijayakrish/* → full release (temporary: personal dev
+          #                          branches exercise the staging path
+          #                          without waiting for cron).
+          # cron                   → full release.
+          # dispatch               → honor the `release` input (default true).
           case "${GITHUB_EVENT_NAME}" in
             push)
-              if [ "${GITHUB_REF_NAME}" = "pvijayakrish/release" ]; then
-                RELEASE=true
-              else
-                RELEASE=false
-              fi
+              case "${GITHUB_REF_NAME}" in
+                pvijayakrish/*) RELEASE=true  ;;
+                *)              RELEASE=false ;;
+              esac
               ;;
             schedule)
               RELEASE=true
