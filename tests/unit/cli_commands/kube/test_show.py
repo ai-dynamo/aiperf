@@ -137,3 +137,35 @@ def test_show_resolves_env_var_default(
     # AIPerfConfig normalises string/list forms to {"items": [{"name": ...}]}.
     items = rendered["spec"]["benchmark"]["models"]["items"]
     assert items[0]["name"] == "fallback-model"
+
+
+def test_show_missing_file_exits_nonzero(tmp_path: Path) -> None:
+    from aiperf.cli_commands.kube.show import show as show_cmd
+
+    with pytest.raises(SystemExit) as exc_info:
+        show_cmd(path=tmp_path / "does-not-exist.yaml")
+    assert exc_info.value.code != 0
+
+
+def test_show_wrong_kind_exits_nonzero(tmp_path: Path) -> None:
+    from aiperf.cli_commands.kube.show import show as show_cmd
+
+    doc = _minimal_cr()
+    doc["kind"] = "Pod"
+    path = _write(tmp_path / "job.yaml", doc)
+
+    with pytest.raises(SystemExit) as exc_info:
+        show_cmd(path=path)
+    assert exc_info.value.code != 0
+
+
+def test_show_missing_benchmark_exits_nonzero(tmp_path: Path) -> None:
+    from aiperf.cli_commands.kube.show import show as show_cmd
+
+    doc = _minimal_cr()
+    del doc["spec"]["benchmark"]
+    path = _write(tmp_path / "job.yaml", doc)
+
+    with pytest.raises(SystemExit) as exc_info:
+        show_cmd(path=path)
+    assert exc_info.value.code != 0
