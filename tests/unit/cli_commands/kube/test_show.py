@@ -169,3 +169,17 @@ def test_show_missing_benchmark_exits_nonzero(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc_info:
         show_cmd(path=path)
     assert exc_info.value.code != 0
+
+
+def test_show_invalid_benchmark_exits_nonzero(tmp_path: Path) -> None:
+    """First phase with seamless=True is a known AIPerfConfig invariant violation."""
+    from aiperf.cli_commands.kube.show import show as show_cmd
+
+    doc = _minimal_cr()
+    # Seamless is only valid on non-first phases; AIPerfConfig rejects it here.
+    doc["spec"]["benchmark"]["phases"]["default"]["seamless"] = True
+    path = _write(tmp_path / "job.yaml", doc)
+
+    with pytest.raises(SystemExit) as exc_info:
+        show_cmd(path=path)
+    assert exc_info.value.code != 0
