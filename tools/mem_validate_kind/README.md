@@ -89,7 +89,7 @@ Python/AIPerf import heap and ~300 MiB is the two tokenizers.
 
 ```
 tools/mem_validate_kind/
-├── Dockerfile                            # aiperf-slim + transformers/tokenizers + probe.py
+├── Dockerfile                            # aiperf test stage + transformers/tokenizers + probe.py
 ├── probe.py                              # worker / forkserver mode entrypoints
 ├── report.py                             # aggregates snapshots + cgroup metrics
 ├── run.sh                                # end-to-end orchestrator
@@ -104,5 +104,5 @@ tools/mem_validate_kind/
 * `docker` (tested on 28.x)
 * `kind` (tested on v0.29)
 * `kubectl`
-* A local image tagged `aiperf-slim:amd64-final` (built from
-  `deploy/Dockerfile.aiperf-slim`)
+* A local image tagged `aiperf:mem-probe-base`, built from the repo root with:
+  `docker build --target test -t aiperf:mem-probe-base .`
