@@ -29,9 +29,10 @@ Example Usage:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Self
+from typing import Annotated, Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
+from typing_extensions import Self
 
 from aiperf.config._base import BaseConfig
 from aiperf.config._benchmark_helpers import BenchmarkHelpersMixin
