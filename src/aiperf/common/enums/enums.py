@@ -303,6 +303,23 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
     """Randomly select a model for each prompt using uniform distribution."""
 
 
+class RangeRatioMode(CaseInsensitiveStrEnum):
+    """Sampling mode for `--random-range-ratio`.
+
+    Controls how ISL and OSL are drawn from a ratio-defined integer window
+    around the configured means.
+    """
+
+    VLLM = "vllm"
+    """vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`.
+    r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1)."""
+
+    SGLANG = "sglang"
+    """sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`.
+    r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average
+    length <= mean, which skews benchmark throughput relative to the "mean" reading."""
+
+
 class PrometheusMetricType(CaseInsensitiveStrEnum):
     """Prometheus metric types as defined in the Prometheus exposition format.
 

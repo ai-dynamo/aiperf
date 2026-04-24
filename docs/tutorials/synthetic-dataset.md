@@ -59,12 +59,20 @@ aiperf profile \
 - `--random-range-ratio`: Sample ISL and OSL uniformly from a symmetric window around the configured means, matching `vllm bench serve --random-range-ratio`. See [Uniform Range Sampling](#advanced-uniform-range-sampling-vllm-parity) below.
 - `--random-seed`: Seed for reproducible prompt generation (default: None)
 
-### Advanced: Uniform Range Sampling (vllm parity)
+### Advanced: Uniform Range Sampling (vllm / sglang parity)
 
-`--random-range-ratio` draws each request's ISL and OSL uniformly from
-`[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). This
-matches `vllm bench serve --random-range-ratio` and is useful for simulating
-moderate, bounded variability without specifying a full `--seq-dist`.
+`--random-range-ratio` draws each request's ISL and OSL uniformly from a
+ratio-defined integer window around the configured means. The sampling formula
+is selected by `--random-range-ratio-mode`:
+
+| Mode (flag value) | Window | Valid `r` | Semantics |
+|---|---|---|---|
+| `vllm` (default) | `[floor(mean*(1-r)), ceil(mean*(1+r))]` | `[0, 1)` | `r=0` fixed at mean; larger `r` widens symmetrically. Matches `vllm bench serve`. |
+| `sglang` | `[max(1, int(mean*r)), mean]` | `[0, 1]` | `r=0` fully variable `[1, mean]`; `r=1` fixed at mean. Matches `sglang.bench_serving`. |
+
+> **Note:** `r` means opposite things across modes. In `vllm` mode, small `r` = narrow window. In `sglang` mode, small `r` = wide window. Use the same literal value and you will get very different distributions.
+
+**vllm-style (default):**
 
 ```bash
 aiperf profile \
@@ -76,16 +84,23 @@ aiperf profile \
   --request-count 100
 ```
 
-Accepts either a plain float (applied to both ISL and OSL) or a JSON object
-for independent values:
+**sglang-style:**
+
+```bash
+aiperf profile ... --isl 1024 --osl 128 \
+  --random-range-ratio 0.5 --random-range-ratio-mode sglang
+# ISL ∈ [512, 1024], OSL ∈ [64, 128]
+```
+
+Both modes accept a plain float or a JSON object for independent per-dimension
+values:
 
 ```bash
 aiperf profile ... --random-range-ratio '{"input": 0.2, "output": 0.5}'
 ```
 
-Values must satisfy `0 <= r < 1`. When `--osl` is not set, OSL defaults to 128
-(matching vllm). This flag is mutually exclusive with `--seq-dist`,
-`--isl-stddev`, and `--osl-stddev`.
+When `--osl` is not set, OSL defaults to 128. This flag is mutually exclusive
+with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.
 
 ### Advanced: Prefix Synthesis
 

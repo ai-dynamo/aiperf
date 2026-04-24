@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import RangeRatioMode
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     RangeRatioDistribution,
@@ -26,7 +27,6 @@ from aiperf.common.models.sequence_distribution import (
     SequenceLengthSampler,
     create_balanced_distribution,
     create_uniform_distribution,
-    parse_random_range_ratio,
 )
 
 
@@ -888,56 +888,135 @@ class TestRangeRatioDistribution:
         assert first_run == second_run
 
 
+class TestRangeRatioDistributionSglangMode:
+    """sglang-mode semantics: lower-bounded window [max(1, int(mean*r)), mean]."""
+
+    def test_ratio_zero_gives_full_variability(self):
+        dist = RangeRatioDistribution(
+            isl_mean=1024,
+            osl_mean=128,
+            input_ratio=0.0,
+            output_ratio=0.0,
+            mode=RangeRatioMode.SGLANG,
+        )
+        assert dist.input_bounds == (1, 1024)
+        assert dist.output_bounds == (1, 128)
+
+    def test_ratio_one_is_fixed_at_mean(self):
+        dist = RangeRatioDistribution(
+            isl_mean=1024,
+            osl_mean=128,
+            input_ratio=1.0,
+            output_ratio=1.0,
+            mode=RangeRatioMode.SGLANG,
+        )
+        assert dist.input_bounds == (1024, 1024)
+        assert dist.output_bounds == (128, 128)
+        for _ in range(20):
+            assert dist.sample() == (1024, 128)
+
+    def test_ratio_half_gives_lower_bounded_window(self):
+        dist = RangeRatioDistribution(
+            isl_mean=1024,
+            osl_mean=128,
+            input_ratio=0.5,
+            output_ratio=0.5,
+            mode=RangeRatioMode.SGLANG,
+        )
+        assert dist.input_bounds == (512, 1024)
+        assert dist.output_bounds == (64, 128)
+
+    def test_samples_never_exceed_mean(self):
+        dist = RangeRatioDistribution(
+            isl_mean=200,
+            osl_mean=50,
+            input_ratio=0.3,
+            output_ratio=0.2,
+            mode=RangeRatioMode.SGLANG,
+        )
+        for _ in range(2000):
+            isl, osl = dist.sample()
+            assert 1 <= isl <= 200
+            assert 1 <= osl <= 50
+
+    def test_rejects_ratio_below_zero(self):
+        with pytest.raises(ValueError, match=r"\[0, 1\] for sglang mode"):
+            RangeRatioDistribution(
+                isl_mean=100,
+                osl_mean=50,
+                input_ratio=-0.1,
+                output_ratio=0.1,
+                mode=RangeRatioMode.SGLANG,
+            )
+
+    def test_rejects_ratio_above_one(self):
+        with pytest.raises(ValueError, match=r"\[0, 1\] for sglang mode"):
+            RangeRatioDistribution(
+                isl_mean=100,
+                osl_mean=50,
+                input_ratio=0.1,
+                output_ratio=1.5,
+                mode=RangeRatioMode.SGLANG,
+            )
+
+
 class TestParseRandomRangeRatio:
     """Tests for the --random-range-ratio CLI value parser."""
 
     def test_float_applies_to_both_dimensions(self):
-        assert parse_random_range_ratio("0.3") == (0.3, 0.3)
+        assert RangeRatioDistribution.parse_cli_value("0.3") == (0.3, 0.3)
 
     def test_zero_is_valid(self):
-        assert parse_random_range_ratio("0") == (0.0, 0.0)
-        assert parse_random_range_ratio("0.0") == (0.0, 0.0)
+        assert RangeRatioDistribution.parse_cli_value("0") == (0.0, 0.0)
+        assert RangeRatioDistribution.parse_cli_value("0.0") == (0.0, 0.0)
 
     def test_whitespace_is_tolerated(self):
-        assert parse_random_range_ratio("  0.25  ") == (0.25, 0.25)
+        assert RangeRatioDistribution.parse_cli_value("  0.25  ") == (0.25, 0.25)
 
     def test_json_dict_sets_input_and_output_independently(self):
-        assert parse_random_range_ratio('{"input": 0.3, "output": 0.5}') == (0.3, 0.5)
+        assert RangeRatioDistribution.parse_cli_value(
+            '{"input": 0.3, "output": 0.5}'
+        ) == (0.3, 0.5)
 
     def test_json_dict_accepts_integer_values(self):
-        assert parse_random_range_ratio('{"input": 0, "output": 0}') == (0.0, 0.0)
+        assert RangeRatioDistribution.parse_cli_value('{"input": 0, "output": 0}') == (
+            0.0,
+            0.0,
+        )
 
     @pytest.mark.parametrize("bad", [-0.1, 1.0, 1.5])
     def test_float_out_of_range_rejected(self, bad):
         with pytest.raises(ValueError, match=r"\[0, 1\)"):
-            parse_random_range_ratio(str(bad))
+            RangeRatioDistribution.parse_cli_value(str(bad))
 
     def test_json_out_of_range_rejected(self):
         with pytest.raises(ValueError, match=r"\[0, 1\)"):
-            parse_random_range_ratio('{"input": 0.2, "output": 1.2}')
+            RangeRatioDistribution.parse_cli_value('{"input": 0.2, "output": 1.2}')
 
     def test_json_missing_keys_rejected(self):
         with pytest.raises(ValueError, match="missing keys"):
-            parse_random_range_ratio('{"input": 0.3}')
+            RangeRatioDistribution.parse_cli_value('{"input": 0.3}')
 
     def test_json_extra_keys_rejected(self):
         with pytest.raises(ValueError, match="unexpected keys"):
-            parse_random_range_ratio('{"input": 0.3, "output": 0.5, "extra": 1}')
+            RangeRatioDistribution.parse_cli_value(
+                '{"input": 0.3, "output": 0.5, "extra": 1}'
+            )
 
     def test_empty_value_rejected(self):
         with pytest.raises(ValueError, match="cannot be empty"):
-            parse_random_range_ratio("")
+            RangeRatioDistribution.parse_cli_value("")
 
     def test_whitespace_only_rejected(self):
         with pytest.raises(ValueError, match="cannot be empty"):
-            parse_random_range_ratio("   ")
+            RangeRatioDistribution.parse_cli_value("   ")
 
     def test_invalid_json_rejected(self):
         with pytest.raises(ValueError, match="must be a float or a JSON object"):
-            parse_random_range_ratio("{not valid json")
+            RangeRatioDistribution.parse_cli_value("{not valid json")
 
     def test_non_object_json_rejected(self):
         # A bare JSON number string parses as a float via the first-try path,
         # but a JSON array or string must error in the dict-parse branch.
         with pytest.raises(ValueError, match="must be a float or a JSON object"):
-            parse_random_range_ratio("[0.3, 0.5]")
+            RangeRatioDistribution.parse_cli_value("[0.3, 0.5]")

@@ -255,3 +255,51 @@ def test_prompt_config_random_range_ratio_zero_stddev_is_allowed():
         output_tokens=OutputTokensConfig(mean=128, stddev=0.0),
     )
     assert config.random_range_ratio == "0.3"
+
+
+def test_prompt_config_random_range_ratio_mode_defaults_to_vllm():
+    from aiperf.common.enums import RangeRatioMode
+
+    config = PromptConfig()
+    assert config.random_range_ratio_mode == RangeRatioMode.VLLM
+
+
+def test_prompt_config_random_range_ratio_sglang_mode_builds_sglang_distribution():
+    from aiperf.common.enums import RangeRatioMode
+    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+    config = PromptConfig(
+        random_range_ratio="0.5",
+        random_range_ratio_mode=RangeRatioMode.SGLANG,
+        input_tokens=InputTokensConfig(mean=1024),
+        output_tokens=OutputTokensConfig(mean=128),
+    )
+    dist = config.get_sequence_distribution()
+    assert isinstance(dist, RangeRatioDistribution)
+    assert dist.mode == RangeRatioMode.SGLANG
+    assert dist.input_bounds == (512, 1024)
+    assert dist.output_bounds == (64, 128)
+
+
+def test_prompt_config_random_range_ratio_sglang_mode_allows_ratio_one():
+    """sglang mode accepts r=1.0 (fixed at mean); vllm mode rejects it."""
+    from aiperf.common.enums import RangeRatioMode
+
+    config = PromptConfig(
+        random_range_ratio="1.0",
+        random_range_ratio_mode=RangeRatioMode.SGLANG,
+        input_tokens=InputTokensConfig(mean=1024),
+        output_tokens=OutputTokensConfig(mean=128),
+    )
+    dist = config.get_sequence_distribution()
+    assert dist.input_bounds == (1024, 1024)
+    assert dist.output_bounds == (128, 128)
+
+
+def test_prompt_config_random_range_ratio_vllm_mode_rejects_ratio_one():
+    with pytest.raises(ValueError, match=r"\[0, 1\) for vllm mode"):
+        PromptConfig(
+            random_range_ratio="1.0",
+            input_tokens=InputTokensConfig(mean=1024),
+            output_tokens=OutputTokensConfig(mean=128),
+        )

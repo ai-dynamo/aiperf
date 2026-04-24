@@ -42,6 +42,7 @@ import orjson
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import RangeRatioMode
 from aiperf.common.utils import load_json_str
 
 logger = AIPerfLogger(__name__)
@@ -523,15 +524,18 @@ def create_balanced_distribution(
 
 class RangeRatioDistribution:
     """
-    Uniform ISL/OSL sampling in a symmetric window around configured means.
+    Uniform ISL/OSL sampling in a ratio-defined integer window around configured means.
 
-    Matches the semantics of `vllm bench serve --random-range-ratio`:
-    lengths are drawn uniformly from integer ranges
-    ``[floor(mean * (1 - ratio)), ceil(mean * (1 + ratio))]`` (inclusive on
-    both ends), with a minimum of 1 to prevent zero-token requests.
+    Supports two modes (see :class:`RangeRatioMode`):
+
+    - ``VLLM`` (default): symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
+      ``r`` must satisfy ``0.0 <= r < 1.0``. Matches ``vllm bench serve``.
+    - ``SGLANG``: lower-bounded window ``[max(1, int(mean*r)), mean]``. ``r`` must
+      satisfy ``0.0 <= r <= 1.0``. Matches ``sglang.bench_serving``.
 
     Input and output ratios may differ, allowing callers to express
-    ``{"input": 0.3, "output": 0.5}``-style configurations.
+    ``{"input": 0.3, "output": 0.5}``-style configurations. The minimum sampled
+    length is clamped to 1 to prevent zero-token requests.
     """
 
     def __init__(
@@ -540,6 +544,7 @@ class RangeRatioDistribution:
         osl_mean: int,
         input_ratio: float,
         output_ratio: float,
+        mode: RangeRatioMode = RangeRatioMode.VLLM,
     ) -> None:
         if isl_mean < 1:
             raise ValueError(f"Input sequence length mean must be >= 1, got {isl_mean}")
@@ -547,28 +552,54 @@ class RangeRatioDistribution:
             raise ValueError(
                 f"Output sequence length mean must be >= 1, got {osl_mean}"
             )
-        if not 0.0 <= input_ratio < 1.0:
-            raise ValueError(f"input_range_ratio must be in [0, 1), got {input_ratio}")
-        if not 0.0 <= output_ratio < 1.0:
-            raise ValueError(
-                f"output_range_ratio must be in [0, 1), got {output_ratio}"
-            )
+        self._validate_ratio("input_range_ratio", input_ratio, mode)
+        self._validate_ratio("output_range_ratio", output_ratio, mode)
 
         self._rng = rng.derive("models.range_ratio.distribution")
         self._isl_mean = int(isl_mean)
         self._osl_mean = int(osl_mean)
         self._input_ratio = float(input_ratio)
         self._output_ratio = float(output_ratio)
+        self._mode = mode
 
-        self._input_low = max(1, math.floor(self._isl_mean * (1 - self._input_ratio)))
-        self._input_high = max(1, math.ceil(self._isl_mean * (1 + self._input_ratio)))
-        self._output_low = max(1, math.floor(self._osl_mean * (1 - self._output_ratio)))
-        self._output_high = max(1, math.ceil(self._osl_mean * (1 + self._output_ratio)))
+        self._input_low, self._input_high = self._compute_bounds(
+            self._isl_mean, self._input_ratio, mode
+        )
+        self._output_low, self._output_high = self._compute_bounds(
+            self._osl_mean, self._output_ratio, mode
+        )
 
         logger.debug(
-            f"Created RangeRatioDistribution: ISL in [{self._input_low}, {self._input_high}], "
+            f"Created RangeRatioDistribution({mode}): "
+            f"ISL in [{self._input_low}, {self._input_high}], "
             f"OSL in [{self._output_low}, {self._output_high}]"
         )
+
+    @staticmethod
+    def _validate_ratio(name: str, value: float, mode: RangeRatioMode) -> None:
+        if mode == RangeRatioMode.VLLM:
+            if not 0.0 <= value < 1.0:
+                raise ValueError(f"{name} must be in [0, 1) for vllm mode, got {value}")
+        elif mode == RangeRatioMode.SGLANG:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(
+                    f"{name} must be in [0, 1] for sglang mode, got {value}"
+                )
+        else:
+            raise ValueError(f"Unknown range-ratio mode: {mode}")
+
+    @staticmethod
+    def _compute_bounds(
+        mean: int, ratio: float, mode: RangeRatioMode
+    ) -> tuple[int, int]:
+        if mode == RangeRatioMode.VLLM:
+            low = max(1, math.floor(mean * (1 - ratio)))
+            high = max(1, math.ceil(mean * (1 + ratio)))
+        else:
+            # sglang: [max(1, int(mean * r)), mean] inclusive on both ends.
+            low = max(1, int(mean * ratio))
+            high = max(1, mean)
+        return low, high
 
     def sample(self) -> tuple[int, int]:
         """Sample a single (ISL, OSL) pair with independent uniform integers."""
@@ -586,65 +617,70 @@ class RangeRatioDistribution:
         """Inclusive [low, high] integer bounds for OSL sampling."""
         return self._output_low, self._output_high
 
+    @property
+    def mode(self) -> RangeRatioMode:
+        return self._mode
+
     def __repr__(self) -> str:
         return (
-            f"RangeRatioDistribution(isl_mean={self._isl_mean}, "
+            f"RangeRatioDistribution(mode={self._mode}, isl_mean={self._isl_mean}, "
             f"osl_mean={self._osl_mean}, input_ratio={self._input_ratio}, "
             f"output_ratio={self._output_ratio})"
         )
 
+    @classmethod
+    def parse_cli_value(
+        cls,
+        value: str,
+        mode: RangeRatioMode = RangeRatioMode.VLLM,
+    ) -> tuple[float, float]:
+        """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
 
-def parse_random_range_ratio(value: str) -> tuple[float, float]:
-    """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
+        Accepts either a plain float string (``"0.3"``) applied to both dimensions,
+        or a JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent
+        values.
 
-    Accepts either a plain float string (``"0.3"``) applied to both dimensions,
-    or a JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent
-    values. Matches ``vllm bench serve --random-range-ratio`` semantics.
+        The valid ratio range depends on ``mode``: ``[0, 1)`` for vllm parity,
+        ``[0, 1]`` for sglang parity. Returned as a tuple so the config validator
+        can validate the CLI string before the ISL/OSL means needed to construct
+        an instance are available.
+        """
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("--random-range-ratio value cannot be empty")
 
-    Both ratios must satisfy ``0.0 <= r < 1.0``.
-    """
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("--random-range-ratio value cannot be empty")
+        value = value.strip()
 
-    value = value.strip()
-
-    try:
-        ratio = float(value)
-    except ValueError:
         try:
-            data = orjson.loads(value)
-        except orjson.JSONDecodeError as e:
-            raise ValueError(
-                f"--random-range-ratio must be a float or a JSON object with "
-                f"'input' and 'output' keys, got: {value!r} ({e})"
-            ) from e
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"--random-range-ratio must be a float or a JSON object with "
-                f"'input' and 'output' keys, got: {value!r}"
-            ) from None
-        missing = {"input", "output"} - data.keys()
-        if missing:
-            raise ValueError(
-                f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
-            ) from None
-        extra = data.keys() - {"input", "output"}
-        if extra:
-            raise ValueError(
-                f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
-            ) from None
-        input_ratio = float(data["input"])
-        output_ratio = float(data["output"])
-    else:
-        input_ratio = output_ratio = ratio
+            ratio = float(value)
+        except ValueError:
+            try:
+                data = orjson.loads(value)
+            except orjson.JSONDecodeError as e:
+                raise ValueError(
+                    f"--random-range-ratio must be a float or a JSON object with "
+                    f"'input' and 'output' keys, got: {value!r} ({e})"
+                ) from e
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"--random-range-ratio must be a float or a JSON object with "
+                    f"'input' and 'output' keys, got: {value!r}"
+                ) from None
+            missing = {"input", "output"} - data.keys()
+            if missing:
+                raise ValueError(
+                    f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
+                ) from None
+            extra = data.keys() - {"input", "output"}
+            if extra:
+                raise ValueError(
+                    f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
+                ) from None
+            input_ratio = float(data["input"])
+            output_ratio = float(data["output"])
+        else:
+            input_ratio = output_ratio = ratio
 
-    if not 0.0 <= input_ratio < 1.0:
-        raise ValueError(
-            f"--random-range-ratio input value must be in [0, 1), got {input_ratio}"
-        )
-    if not 0.0 <= output_ratio < 1.0:
-        raise ValueError(
-            f"--random-range-ratio output value must be in [0, 1), got {output_ratio}"
-        )
+        cls._validate_ratio("--random-range-ratio input", input_ratio, mode)
+        cls._validate_ratio("--random-range-ratio output", output_ratio, mode)
 
-    return input_ratio, output_ratio
+        return input_ratio, output_ratio

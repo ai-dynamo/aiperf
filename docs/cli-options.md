@@ -485,7 +485,18 @@ Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulatio
 
 #### `--random-range-ratio` `<str>`
 
-Sample ISL and OSL uniformly from a symmetric window around the configured means. Matches `vllm bench serve --random-range-ratio`: each length is drawn from `[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Values must be in `[0, 1)`. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.
+Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.
+
+#### `--random-range-ratio-mode` `<str>`
+
+Sampling formula for `--random-range-ratio`. `vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, ratio in `[0, 1)`. `sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]` (note: the ratio value means the *opposite* thing — r=0 is fully variable, r=1 is fixed at mean). Only applies when `--random-range-ratio` is set.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). |
+| `sglang` |  | sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average length &lt;= mean, which skews benchmark throughput relative to the "mean" reading. |
 
 ### Output Sequence Length (OSL)
 

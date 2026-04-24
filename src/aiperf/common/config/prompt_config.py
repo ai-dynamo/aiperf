@@ -15,6 +15,7 @@ from aiperf.common.config.config_defaults import (
     PromptDefaults,
 )
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import RangeRatioMode
 
 
 class InputTokensConfig(BaseConfig):
@@ -242,12 +243,12 @@ class PromptConfig(BaseConfig):
         if self.random_range_ratio is None:
             return self
 
-        from aiperf.common.models.sequence_distribution import (
-            parse_random_range_ratio,
-        )
+        from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 
         try:
-            parse_random_range_ratio(self.random_range_ratio)
+            RangeRatioDistribution.parse_cli_value(
+                self.random_range_ratio, self.random_range_ratio_mode
+            )
         except Exception as e:
             raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
 
@@ -311,11 +312,12 @@ class PromptConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="Sample ISL and OSL uniformly from a symmetric window around the configured means. "
-            "Matches `vllm bench serve --random-range-ratio`: each length is drawn from "
-            "`[floor(mean * (1 - r)), ceil(mean * (1 + r))]` (inclusive, minimum 1). "
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): "
+            "vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); "
+            "sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). "
             "Accepts a single float (applied to both ISL and OSL) or a JSON object "
-            '`{"input": 0.3, "output": 0.5}` for independent values. Values must be in `[0, 1)`. '
+            '`{"input": 0.3, "output": 0.5}` for independent values. '
             "Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. "
             "Mutually exclusive with `--seq-dist`, `--isl-stddev`, and `--osl-stddev`.",
         ),
@@ -324,6 +326,23 @@ class PromptConfig(BaseConfig):
             group=Groups.INPUT_SEQUENCE_LENGTH,
         ),
     ] = None
+
+    random_range_ratio_mode: Annotated[
+        RangeRatioMode,
+        Field(
+            default=RangeRatioMode.VLLM,
+            description="Sampling formula for `--random-range-ratio`. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, "
+            "ratio in `[0, 1)`. "
+            "`sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]` "
+            "(note: the ratio value means the *opposite* thing — r=0 is fully variable, r=1 is fixed at mean). "
+            "Only applies when `--random-range-ratio` is set.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio-mode",),
+            group=Groups.INPUT_SEQUENCE_LENGTH,
+        ),
+    ] = RangeRatioMode.VLLM
 
     def get_sequence_distribution(self):
         """Get sequence distribution sampler, returning None if not specified.
@@ -339,11 +358,10 @@ class PromptConfig(BaseConfig):
         if self.random_range_ratio is not None:
             from aiperf.common.models.sequence_distribution import (
                 RangeRatioDistribution,
-                parse_random_range_ratio,
             )
 
-            input_ratio, output_ratio = parse_random_range_ratio(
-                self.random_range_ratio
+            input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
+                self.random_range_ratio, self.random_range_ratio_mode
             )
             osl_mean = (
                 128 if self.output_tokens.mean is None else self.output_tokens.mean
@@ -353,5 +371,6 @@ class PromptConfig(BaseConfig):
                 osl_mean=osl_mean,
                 input_ratio=input_ratio,
                 output_ratio=output_ratio,
+                mode=self.random_range_ratio_mode,
             )
         return None
