@@ -4295,6 +4295,10 @@ Local port for API port-forward (default: 0 = ephemeral).
 Namespace where the operator is deployed.
 <br/>_Default: `aiperf-system`_
 
+#### `--run` `<str>`
+
+Pin to a specific historical run (epoch from `aiperf kube results list-runs`). Default: latest.
+
 ### Kubernetes
 
 #### `--kubeconfig` `<str>`

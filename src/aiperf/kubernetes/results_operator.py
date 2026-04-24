@@ -37,6 +37,22 @@ if TYPE_CHECKING:
 RESULTS_SERVER_PORT = 8081
 
 
+def _result_base_url(
+    api_base: str, namespace: str, job_id: str, run: str | None
+) -> str:
+    """Return the results URL prefix for a job, pinned to a run when given.
+
+    When ``run`` is None, returns the "latest" prefix
+    ``<api_base>/api/v1/results/<ns>/<job_id>``. When ``run`` is an epoch
+    (or ``"legacy"``), returns the historical prefix
+    ``<api_base>/api/v1/results/<ns>/<job_id>/runs/<run>``.
+    """
+    base = f"{api_base}/api/v1/results/{namespace}/{job_id}"
+    if run is not None:
+        return f"{base}/runs/{run}"
+    return base
+
+
 async def _download_and_decompress(
     resp: aiohttp.ClientResponse, dest_path: Path, content_encoding: str
 ) -> None:
@@ -73,6 +89,7 @@ async def _download_operator_file(
     job_id: str,
     file_info: dict,
     output_dir: Path,
+    run: str | None = None,
 ) -> tuple[str, int] | None:
     """Download a single file from the operator's results server.
 
@@ -88,7 +105,8 @@ async def _download_operator_file(
         print_warning(f"Refusing unsafe filename: {display_name!r}")
         return None
     quoted_name = quote(safe_name, safe="")
-    download_url = f"{api_base}/api/v1/results/{namespace}/{job_id}/{quoted_name}"
+    base_url = _result_base_url(api_base, namespace, job_id, run)
+    download_url = f"{base_url}/{quoted_name}"
     headers = {"Accept-Encoding": "zstd, gzip, identity"}
 
     try:
@@ -135,9 +153,10 @@ async def _list_operator_files(
     api_base: str,
     namespace: str,
     job_id: str,
+    run: str | None = None,
 ) -> list[dict] | None:
     """List available result files for a job. Returns None on error."""
-    list_url = f"{api_base}/api/v1/results/{namespace}/{job_id}"
+    list_url = _result_base_url(api_base, namespace, job_id, run)
     try:
         async with session.get(list_url) as resp:
             if resp.status == 404:
@@ -162,6 +181,7 @@ async def _download_all_operator_files(
     namespace: str,
     job_id: str,
     output_dir: Path,
+    run: str | None = None,
 ) -> list[tuple[str, int]] | None:
     """List and download every result file for a job.
 
@@ -178,7 +198,7 @@ async def _download_all_operator_files(
         auto_decompress=False,
     ) as session:
         available = await _list_operator_files(
-            session, api_base=api_base, namespace=namespace, job_id=job_id
+            session, api_base=api_base, namespace=namespace, job_id=job_id, run=run
         )
         if available is None:
             return None
@@ -194,6 +214,7 @@ async def _download_all_operator_files(
                 job_id=job_id,
                 file_info=file_info,
                 output_dir=output_dir,
+                run=run,
             )
             if result is not None:
                 downloaded.append(result)
@@ -211,12 +232,18 @@ async def retrieve_results_from_operator(
     results_port: int = RESULTS_SERVER_PORT,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
+    run: str | None = None,
 ) -> bool:
     """Retrieve results from the operator's results server sidecar (PVC-backed).
 
     Port-forwards to the operator pod's results-server sidecar and downloads
     all available files for the specified job. Works even after the benchmark
     JobSet has been deleted, since results are stored on the operator's PVC.
+
+    When ``run`` is provided (a decimal epoch from
+    ``aiperf kube results list-runs`` or the sentinel ``"legacy"``), downloads
+    route through ``/api/v1/results/<ns>/<job>/runs/<run>/`` to pin a specific
+    historical run. Otherwise the latest-run prefix is used.
 
     Returns True if results were successfully retrieved.
     """
@@ -249,6 +276,7 @@ async def retrieve_results_from_operator(
                 namespace=namespace,
                 job_id=job_id,
                 output_dir=output_dir,
+                run=run,
             )
             if downloaded_files is None:
                 return False

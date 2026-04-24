@@ -25,6 +25,7 @@ async def results(
     shutdown: Annotated[bool, Parameter(name="--shutdown", help="Shut down the API service after downloading results. Only takes effect with --from-pods.")] = False,
     port: Annotated[int, Parameter(name="--port", help="Local port for API port-forward (default: 0 = ephemeral).")] = 0,
     operator_namespace: Annotated[str, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed.")] = "aiperf-system",
+    run: Annotated[str | None, Parameter(name="--run", help="Pin to a specific historical run (epoch from `aiperf kube results list-runs`). Default: latest.")] = None,
 ) -> None:  # fmt: skip
     """Retrieve results from an AIPerf benchmark.
 
@@ -34,7 +35,8 @@ async def results(
     Use --summary-only to download only summary results. Use --shutdown with
     --from-pods to shut down the API service after downloading, allowing the
     controller pod to exit cleanly. If no job_id is given, uses the last
-    deployed benchmark.
+    deployed benchmark. Use --run <epoch> to pin to a historical run (see
+    ``aiperf kube results list-runs``).
 
     Examples:
         aiperf kube results                    # last deployed job (operator)
@@ -43,6 +45,7 @@ async def results(
         aiperf kube results --summary-only     # summary only
         aiperf kube results --from-pods        # from benchmark pods
         aiperf kube results --from-pods --shutdown
+        aiperf kube results --run 1714150923   # pin to historical run
     """
     from aiperf import cli_utils
 
@@ -57,11 +60,45 @@ async def results(
             shutdown=shutdown,
             port=port,
             operator_namespace=operator_namespace,
+            run=run,
         )
 
 
 # Alias retained for external callers / tests that import by name.
 results_cmd = results
+
+
+def _validate_run_arg(run: str | None, *, from_pods: bool) -> None:
+    """Reject malformed ``--run`` values before any k8s/HTTP traffic."""
+    from aiperf.operator.results_layout import EPOCH_RE
+
+    if run is None:
+        return
+    if not EPOCH_RE.match(run):
+        raise ValueError(
+            f"Invalid --run value '{run}'. Expected decimal epoch-seconds from "
+            "`aiperf kube results list-runs`, or 'legacy'."
+        )
+    if from_pods:
+        raise ValueError(
+            "--run is only supported for operator-backed downloads; "
+            "drop --from-pods (benchmark pods only hold the latest run)."
+        )
+
+
+def _default_output_dir(
+    *, output: Path | None, namespace: str, job_name: str, run: str | None
+) -> Path:
+    """Return ``output`` if provided, else the default artifact path.
+
+    When ``run`` is set, the default embeds the namespace + job + epoch so
+    historical downloads don't overwrite the latest-run directory.
+    """
+    if output is not None:
+        return output
+    if run is not None:
+        return Path(f"./artifacts/{namespace}__{job_name}__{run}")
+    return Path(f"./artifacts/{job_name}")
 
 
 async def _run_results(
@@ -74,11 +111,14 @@ async def _run_results(
     shutdown: bool,
     port: int,
     operator_namespace: str,
+    run: str | None = None,
 ) -> None:
     from aiperf.kubernetes import cli_helpers
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes import results as kube_results
     from aiperf.kubernetes.client import find_jobset
+
+    _validate_run_arg(run, from_pods=from_pods)
 
     resolved = await cli_helpers.resolve_job(
         job_id,
@@ -95,7 +135,9 @@ async def _run_results(
 
     jobset_info = await find_jobset(api, job_id, ns)
 
-    output_dir = output or Path(f"./artifacts/{resolved.job_info.name}")
+    output_dir = _default_output_dir(
+        output=output, namespace=ns, job_name=resolved.job_info.name, run=run
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     kube_creds = {
@@ -122,6 +164,7 @@ async def _run_results(
             api,
             local_port=port,
             operator_namespace=operator_namespace,
+            run=run,
             **kube_creds,
         )
         used_api = False
@@ -354,3 +397,6 @@ def _print_runs_table(payload: dict) -> None:
         )
 
     kube_console.console.print(table)
+    kube_console.console.print(
+        "Pass --run <epoch> to `aiperf kube results` to pin a historical download."
+    )
