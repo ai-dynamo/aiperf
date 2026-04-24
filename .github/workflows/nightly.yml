@@ -13,36 +13,34 @@
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
 #
-# release=true  (schedule; push to pvijayakrish/**; default for workflow_dispatch): full pipeline including approval gate and GitLab scan.
-# release=false (push to main):                                                      build and tests only; skip staging and scan.
+# Triggers:
+#   schedule         — Mon–Fri 09:00 UTC (01:00 PST / 02:00 PDT). Builds the
+#                      tip of main at fire time. release=true.
+#   workflow_dispatch — manual run launched from main. Builds the SHA passed
+#                      in the `sha` input. release defaults to true.
 #
-# The ref input accepts a branch name, tag, or commit SHA. When omitted the pipeline
-# builds from the tip-of-tree of the triggering ref (or the default branch for schedule).
+# Schedule builds tip of main; dispatch builds the user-supplied SHA. Both
+# paths require the SHA to be reachable from origin/main — dispatch is
+# rejected if the input SHA isn't on main, and the workflow itself is
+# rejected if dispatched from any branch other than main. There are no
+# push triggers.
 
 name: Nightly
 
 on:
-  push:
-    branches:
-      - 'main'
-      # Temporary: any personal dev branch under pvijayakrish/** auto-triggers
-      # the pipeline so iteration doesn't require workflow_dispatch. Remove
-      # before this file ships to a long-lived release branch.
-      - 'pvijayakrish/**'
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 9 * * 1-5'
   workflow_dispatch:
     inputs:
-      ref:
-        description: 'Branch name, tag, or commit SHA to build from. Must resolve to a commit reachable from origin/main. Defaults to tip-of-tree on the triggering ref.'
-        default: ''
-        required: false
+      sha:
+        description: 'Commit SHA to build. Required. Must be on main.'
+        required: true
       release:
-        description: 'Stage artifacts and trigger GitLab security scan. Only honored for workflow_dispatch. Push always sets release=false; schedule always sets release=true.'
+        description: 'Stage artifacts and trigger GitLab security scan. Schedule always sets release=true.'
         type: boolean
         default: true
       skip_security_scan:
-        description: 'Skip GitLab security scan. Emergency use only — requires explicit justification.'
+        description: 'Skip GitLab security scan. Emergency use only.'
         type: boolean
         default: false
 
@@ -86,27 +84,31 @@ jobs:
       resolved_sha:   ${{ steps.version.outputs.resolved_sha }}
       release:        ${{ steps.release.outputs.release }}
     steps:
+      # Workflow file itself must come from main on dispatch.
+      - name: Require dispatch from main
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Dispatch this workflow from main (got '${GITHUB_REF}')."
+          exit 1
+
+      # Schedule → tip of main. Dispatch → user-supplied SHA.
+      # fetch-depth: 0 so the next step can run merge-base against origin/main.
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.sha || 'main' }}
           fetch-depth: 0
 
-      - name: Verify ref is reachable from main
+      - name: Verify SHA is on main
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          REF_DESCRIPTION: ${{ inputs.ref || github.ref }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main
-          RESOLVED_SHA=$(git rev-parse HEAD)
-          echo "Resolved ref '${REF_DESCRIPTION}' to ${RESOLVED_SHA}"
-          if ! git merge-base --is-ancestor "${RESOLVED_SHA}" origin/main; then
-            echo "::error::Ref '${REF_DESCRIPTION}' (${RESOLVED_SHA}) is not reachable from origin/main."
-            echo "::error::On-demand nightly releases must build from commits merged to main."
+          BUILD_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "${BUILD_SHA}" origin/main; then
+            echo "::error::SHA ${BUILD_SHA} is not on main."
             exit 1
           fi
-          echo "Ref verified: ${RESOLVED_SHA} is on main."
+          echo "Verified ${BUILD_SHA} is on main."
 
       - name: Restore version artifact from prior attempt
         id: restore
@@ -128,10 +130,10 @@ jobs:
           else
             # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
             # WHEEL_VERSION are disambiguated by the 7-char short SHA so
-            # two runs on the same day from different commits never collide.
-            # Same-day re-runs of the same commit DO produce identical
-            # versions and will overwrite each other in S3/Artifactory
-            # (intentional; last-writer-wins per commit).
+            # runs on the same day from different commits never collide.
+            # Same-day re-runs of the same commit produce identical tags
+            # and versions and will overwrite each other in ECR / NGC /
+            # S3 / Artifactory (intentional; last-writer-wins per commit).
             TIMESTAMP=$(date -u +%Y%m%d)
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
             FULL_SHA=$(git rev-parse HEAD)
@@ -146,11 +148,12 @@ jobs:
             # summary, Slack notification, and forwarded to the GitLab scan. It
             # is NOT a git tag — nothing in this workflow pushes a git tag.
             NIGHTLY_TAG="AIPerf Nightlies"
+            # Example: nightly-20260423-33d7011
             CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
             # PEP 440: <base>.dev<YYYYMMDD>+g<short_sha>. The `+g<sha>` is a
             # local version identifier (PyPI rejects it; Artifactory accepts).
-            # Example: 0.6.0.dev20260424+g3e3b3b1 → wheel filename
-            # aiperf-0.6.0.dev20260424+g3e3b3b1-py3-none-any.whl
+            # Example: 0.6.0.dev20260423+g33d7011 → wheel filename
+            # aiperf-0.6.0.dev20260423+g33d7011-py3-none-any.whl
             WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+g${SHORT_SHA}"
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
@@ -191,19 +194,9 @@ jobs:
           # inputs.release is only set when event_name == workflow_dispatch.
           DISPATCH_RELEASE: ${{ inputs.release }}
         run: |
-          # push to main           → build + tests only.
-          # push to pvijayakrish/* → full release (temporary: personal dev
-          #                          branches exercise the staging path
-          #                          without waiting for cron).
-          # cron                   → full release.
-          # dispatch               → honor the `release` input (default true).
+          # schedule → full release.
+          # dispatch → honor the `release` input (default true).
           case "${GITHUB_EVENT_NAME}" in
-            push)
-              case "${GITHUB_REF_NAME}" in
-                pvijayakrish/*) RELEASE=true  ;;
-                *)              RELEASE=false ;;
-              esac
-              ;;
             schedule)
               RELEASE=true
               ;;
@@ -215,7 +208,8 @@ jobs:
               fi
               ;;
             *)
-              RELEASE=false
+              echo "::error::Unsupported event '${GITHUB_EVENT_NAME}' — this workflow only runs on schedule or workflow_dispatch."
+              exit 1
               ;;
           esac
           echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
@@ -233,7 +227,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -259,7 +253,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -280,7 +274,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -350,15 +344,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Verify checkout SHA
-        run: |
-          ACTUAL=$(git rev-parse HEAD)
-          echo "Building from SHA: ${ACTUAL}"
-          if [ "${{ inputs.ref }}" = "" ] && [ "${ACTUAL}" != "${{ github.sha }}" ]; then
-            echo "::warning::Checkout SHA ${ACTUAL} does not match github.sha ${{ github.sha }}"
-          fi
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -527,7 +513,7 @@ jobs:
           PRIOR_RUN_ID=$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow=nightly.yml \
-            --branch "${GITHUB_REF_NAME}" \
+            --branch main \
             --status=success \
             --limit=10 \
             --json databaseId \
@@ -614,7 +600,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
 
       # aws-ecr-region makes the composite action fetch the ECR token
       # internally and pipe it to crane over stdin — the token is never
@@ -787,7 +773,7 @@ jobs:
             --form "variables[RELEASE_TYPE]=${RELEASE_TYPE}" \
             --form "variables[DRY_RUN]=true" \
             --form "variables[PROJECT]=aiperf" \
-            --form "variables[SOURCE_BRANCH]=${GITHUB_REF_NAME}" \
+            --form "variables[SOURCE_BRANCH]=main" \
             --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
             --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
             --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
@@ -799,7 +785,7 @@ jobs:
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[SONAR_REPO]=aiperf" \
-            --form "variables[SONAR_BRANCH]=${RESOLVED_SHA}" \
+            --form "variables[SONAR_BRANCH]=main" \
             "${GITLAB_TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
@@ -845,8 +831,8 @@ jobs:
             echo "| Version | \`${WHEEL_VERSION}\` |"
             echo "| Container Tag | \`${CONTAINER_TAG}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Git ref | \`${{ inputs.ref || github.ref }}\` |"
-            echo "| Branch | \`${GITHUB_REF_NAME}\` |"
+            echo "| Git ref | \`refs/heads/main\` |"
+            echo "| Branch | \`main\` |"
             echo "| Trigger | ${{ github.event_name }} |"
             echo "| Release mode | ${{ needs.prepare-nightly.outputs.release }} |"
             echo ""
