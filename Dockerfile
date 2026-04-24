@@ -75,6 +75,12 @@ COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
 # Build the wheel
 RUN uv build --wheel --out-dir /dist
 
+# Export-only stage: scratch-based so `docker buildx build --target
+# wheel-artifact --output type=local,dest=<dir>` writes only the wheel file
+# (a few MB) instead of the ~400 MB wheel-builder filesystem.
+FROM scratch AS wheel-artifact
+COPY --from=wheel-builder /dist/ /
+
 ############################################
 ############# Env Builder ##################
 ############################################
@@ -202,6 +208,12 @@ RUN python3 /tmp/generate_dpkg_attributions.py \
     /opt/licenses/dpkg/runtime-pkgs.txt \
     /opt/licenses/dpkg/dpkg-deps.csv \
     /tmp/licenses.toml
+
+# Export-only stage: scratch-based so `docker buildx build --target
+# licenses-artifact --output type=local,dest=<dir>` writes only the license
+# tree (a few MB) instead of the ~1.3 GB python-licenses filesystem.
+FROM scratch AS licenses-artifact
+COPY --from=python-licenses /opt/licenses/ /
 
 ############################################
 ############### Test Image #################

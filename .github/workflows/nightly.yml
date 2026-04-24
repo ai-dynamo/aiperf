@@ -378,6 +378,10 @@ jobs:
       # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
       # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
       # by the runtime build below.
+      #
+      # Target `wheel-artifact` is a scratch-based export stage that contains
+      # only the wheel file, so `--output type=local` writes a few MB instead
+      # of the full wheel-builder filesystem (~400 MB).
       - name: Build and extract wheel (amd64 only)
         if: matrix.arch == 'amd64'
         env:
@@ -388,7 +392,7 @@ jobs:
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
             --platform linux/amd64 \
-            --target   wheel-builder \
+            --target   wheel-artifact \
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
             --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
             --output     type=local,dest=./dist/ \
@@ -467,11 +471,15 @@ jobs:
           echo "Pushed ${REGISTRY}/aiperf:${IMAGE_TAG} — digest: ${DIGEST}"
 
       # -------------------------------------------------------------------------
-      # Compliance: extract attribution artifacts from the python-licenses stage.
-      # The stage emits /opt/licenses/{python,dpkg,ffmpeg}/* — pip-licenses JSON,
-      # ATTRIBUTIONS-Python.md, per-ecosystem deps CSVs, and a CycloneDX SBOM.
-      # --cache-from hits the registry cache warmed by the runtime build above,
-      # so this step streams cached layers to local output without re-building.
+      # Compliance: extract attribution artifacts from the licenses-artifact
+      # stage — a scratch stage that re-exports /opt/licenses/* from the
+      # python-licenses stage. Using licenses-artifact keeps the `--output
+      # type=local` export to a few MB instead of the ~1.3 GB python-licenses
+      # filesystem. The stage emits python/, dpkg/, ffmpeg/* at the root —
+      # pip-licenses JSON, ATTRIBUTIONS-Python.md, per-ecosystem deps CSVs,
+      # and a CycloneDX SBOM.
+      # --cache-from hits the registry cache warmed by the runtime build above
+      # so this step streams cached layers without re-building.
       # amd64 only: Python deps are pure-Python so identical across archs; dpkg
       # deps only differ for ffmpeg-linked .so files, covered in a follow-up.
       # -------------------------------------------------------------------------
@@ -485,12 +493,12 @@ jobs:
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           docker buildx build \
             --platform linux/amd64 \
-            --target   python-licenses \
+            --target   licenses-artifact \
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
             --output     "type=local,dest=./license-raw" \
             .
           mkdir -p license-artifacts
-          cp -r ./license-raw/opt/licenses/. license-artifacts/
+          cp -r ./license-raw/. license-artifacts/
           # Merge per-ecosystem CSVs into a unified deps.csv (shared schema).
           {
             cat license-artifacts/python/python-deps.csv
