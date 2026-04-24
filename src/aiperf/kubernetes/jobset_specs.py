@@ -75,6 +75,23 @@ _POD_SECURITY_CONTEXT: dict[str, Any] = {
     "seccompProfile": {"type": "RuntimeDefault"},
 }
 
+# (attr_name, camelCase pod-spec key) — truthy values copy straight through.
+# Kept as a table so _build_pod_spec stays simple as new fields are added.
+_POD_TEMPLATE_PASSTHROUGH: tuple[tuple[str, str], ...] = (
+    ("node_selector", "nodeSelector"),
+    ("tolerations", "tolerations"),
+    ("affinity", "affinity"),
+    ("service_account_name", "serviceAccountName"),
+    ("priority_class_name", "priorityClassName"),
+    ("runtime_class_name", "runtimeClassName"),
+    ("scheduler_name", "schedulerName"),
+    ("topology_spread_constraints", "topologySpreadConstraints"),
+    ("host_aliases", "hostAliases"),
+    ("dns_policy", "dnsPolicy"),
+    ("dns_config", "dnsConfig"),
+    ("init_containers", "initContainers"),
+)
+
 
 class AIPerfReplicatedJobSpec(AIPerfBaseModel):
     """Specification for a replicated job within a JobSet."""
@@ -115,18 +132,29 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
         tmpl = self.pod_template
         if tmpl is None:
             return pod_spec
-        if tmpl.node_selector:
-            pod_spec["nodeSelector"] = tmpl.node_selector
-        if tmpl.tolerations:
-            pod_spec["tolerations"] = tmpl.tolerations
+        for attr, key in _POD_TEMPLATE_PASSTHROUGH:
+            value = getattr(tmpl, attr)
+            if value:
+                pod_spec[key] = value
         if tmpl.image_pull_secrets:
             pod_spec["imagePullSecrets"] = [
                 {"name": name} for name in tmpl.image_pull_secrets
             ]
-        if tmpl.service_account_name:
-            pod_spec["serviceAccountName"] = tmpl.service_account_name
         if tmpl.share_process_namespace:
             pod_spec["shareProcessNamespace"] = True
+        if tmpl.termination_grace_period_seconds is not None:
+            pod_spec["terminationGracePeriodSeconds"] = (
+                tmpl.termination_grace_period_seconds
+            )
+        if tmpl.pod_security_context:
+            # Pod-level securityContext; container-level is merged in per-container
+            # via build_security_context().
+            pod_spec["securityContext"] = {
+                **_POD_SECURITY_CONTEXT,
+                **tmpl.pod_security_context,
+            }
+        if tmpl.extra_pod_spec:
+            pod_spec.update(tmpl.extra_pod_spec)
         return pod_spec
 
     def _build_pod_annotations(self) -> dict[str, str]:
