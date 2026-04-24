@@ -141,3 +141,70 @@ async def test_launch_parse_error_surfaces_inline(
     # Submit button should be disabled while the parse error is live.
     await expect(page.get_by_test_id("launch-submit")).to_be_disabled()
     assert fake_k8s_client.created_jobs == []
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_launch_submit_twice_is_idempotent_after_success(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """After success, the submit button no longer posts a second manifest.
+
+    ``canSubmit`` in ``launch.js`` excludes ``state.kind === 'ok'``, so
+    the LAUNCH button relabels to LAUNCHED and a second click must not
+    re-POST. Without this guard a user could create duplicate CRs by
+    double-tapping.
+    """
+    launch = LaunchPage(page, live_operator_app.base_url)
+    await launch.goto()
+    await launch.set_yaml(_MINIMAL_YAML)
+    await launch.submit()
+    await expect(page.get_by_test_id("launch-success")).to_be_visible()
+    assert len(fake_k8s_client.created_jobs) == 1
+
+    # Second click shouldn't POST again. Playwright's ``click`` with
+    # ``force=True`` bypasses the Actionability check, so if the button
+    # is only visually disabled (no ``disabled`` attr) we'd still see a
+    # duplicate submission — which is the failure mode we care about.
+    await page.get_by_test_id("launch-submit").click(force=True)
+    # Give any ill-advised POST time to reach the stub recorder.
+    await page.wait_for_timeout(250)
+    assert len(fake_k8s_client.created_jobs) == 1, (
+        f"re-click after success created a duplicate submission: {fake_k8s_client.created_jobs}"
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_launch_backend_400_surfaces_launch_err(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """A manifest that parses but lacks ``metadata.name`` surfaces ``launch-err``.
+
+    Client-side ``parseYaml`` accepts this as valid YAML (an empty
+    metadata block with no ``name``); the backend rejects with
+    ``HTTPException(400, "metadata.name is required.")`` — the stub
+    preserves that contract. The UI must render ``launch-err`` with the
+    HTTP status and server detail.
+    """
+    yaml_missing_name = (
+        "apiVersion: aiperf.nvidia.com/v1alpha1\n"
+        "kind: AIPerfJob\n"
+        "metadata:\n"
+        "  namespace: e2e-bench\n"
+        "spec:\n"
+        "  model: llama3-8b\n"
+    )
+    launch = LaunchPage(page, live_operator_app.base_url)
+    await launch.goto()
+    await launch.set_yaml(yaml_missing_name)
+    # No parse error — the YAML is syntactically valid.
+    await expect(page.get_by_test_id("launch-parse-err")).to_have_count(0)
+    await launch.submit()
+    err = page.get_by_test_id("launch-err")
+    await expect(err).to_be_visible()
+    # The stub raises HTTPException(400, "metadata.name is required.");
+    # the UI renders the HTTP status + the server's detail message.
+    await expect(err).to_contain_text("400")
+    await expect(err).to_contain_text("metadata.name")
+    # Zero submissions should have been recorded — the stub raised before
+    # appending.
+    assert fake_k8s_client.created_jobs == []

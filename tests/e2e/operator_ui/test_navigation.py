@@ -113,3 +113,70 @@ async def test_top_rail_buttons_present(
     await home.goto()
     for testid in ("rail-launch", "rail-archive", "rail-compare"):
         await expect(page.get_by_test_id(testid)).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_command_palette_shows_empty_state_for_no_matches(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """A query with no fuzzy matches surfaces the ``No results for ...`` line.
+
+    ``command-palette.js`` renders the empty-state ``<li>`` when
+    ``filtered.length === 0``. Typing a string that matches neither the
+    PAGES list nor any job name/namespace drives the list to zero.
+    """
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    await page.keyboard.press("Control+k")
+    await expect(page.get_by_test_id("command-palette")).to_be_visible()
+    await page.get_by_test_id("command-palette-input").fill("zzzz-absolutely-no-match")
+    # The empty-state line lives inside the palette; assert visible
+    # inside the palette's scoped locator rather than globally so a
+    # stray "No results" string elsewhere on the page wouldn't hide a
+    # regression here.
+    palette = page.get_by_test_id("command-palette")
+    await expect(palette).to_contain_text("No results for")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_command_palette_dismisses_on_escape(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Escape closes the palette even when the query is non-empty.
+
+    ``command-palette.js`` binds a global Escape handler that fires
+    ``onClose`` regardless of focus state. Without this, a user whose
+    focus drifts out of the input (e.g. a mouse hover onto a list item
+    mutates cursor state) would strand the modal.
+    """
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    await page.keyboard.press("Control+k")
+    palette = page.get_by_test_id("command-palette")
+    await expect(palette).to_be_visible()
+    await page.get_by_test_id("command-palette-input").fill("partial")
+    await page.keyboard.press("Escape")
+    await expect(palette).to_have_count(0)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_escape_on_run_view_returns_to_home(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Escape on the run workbench navigates back to Home.
+
+    ``app.js`` binds a global Escape handler: when the palette is
+    closed and the current view is ``run``, Escape calls
+    ``navigate('/')``. Verify that path — it's a small UX contract
+    that's easy to regress by accident.
+    """
+    url = f"{live_operator_app.base_url}/#/run/aiperf-bench/aiperf-llama3-c128"
+    await page.goto(url)
+    await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
+    await page.keyboard.press("Escape")
+    await page.wait_for_url(
+        lambda u: u.rstrip("/").endswith(live_operator_app.base_url.split("://", 1)[-1])
+        or u.endswith("/#/")
+        or u.endswith("/")
+    )
+    await expect(page.get_by_test_id("page-home")).to_be_visible()

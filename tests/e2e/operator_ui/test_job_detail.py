@@ -316,3 +316,41 @@ async def test_run_relaunch_button_submits_new_manifest(
     notice = page.get_by_test_id("launch-prefill-notice")
     await expect(notice).to_be_visible()
     await expect(notice).to_contain_text("aiperf-llama3-c128")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_view_breadcrumb_shows_run_name(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Top-rail ``breadcrumb`` on a run view contains the run name.
+
+    ``breadcrumbFor`` in ``top-rail.js`` builds a two-segment trail for
+    run views: the parent link + the run name in the emphasised slot.
+    The name is the only test-identifiable part, so assert on that.
+    """
+    detail = JobDetailPage(
+        page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    await detail.goto()
+    crumbs = page.get_by_test_id("breadcrumb")
+    await expect(crumbs).to_be_visible()
+    await expect(crumbs).to_contain_text("aiperf-llama3-c128")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_view_for_nonexistent_run_does_not_crash(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Hash-navigating to a run that doesn't exist renders without JS errors.
+
+    ``_get_job_impl`` returns 404 when neither a CR nor a PVC dir is
+    found; the UI's top-level fetch has ``.catch(() => null)`` so the
+    view must still mount the ``page-job-detail`` shell. The actual
+    404 is surfaced as a browser-level ``console.error``, which the
+    page fixture now tolerates for 4xx (see conftest ``_on_console``).
+    We pin both: the shell renders, and no ``pageerror`` fires.
+    """
+    await page.goto(f"{live_operator_app.base_url}/#/run/no-such-ns/no-such-name")
+    # The view mounts even with no backing data — the shell is
+    # lifecycle-independent of the data fetch.
+    await expect(page.get_by_test_id("page-job-detail")).to_be_visible()

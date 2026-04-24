@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from playwright.async_api import expect
 
+from ._builders import build_empty
 from ._pages import ArchivePage
 
 pytestmark = [pytest.mark.e2e]
@@ -142,3 +143,64 @@ async def test_archive_bucket_tabs_filter_rows(
 
     await tablist.get_by_role("tab", name="ALL").click()
     await expect(archive.rows()).to_have_count(5)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_archive_search_regex_chars_are_literal(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Regex-like search strings are treated as literal substrings.
+
+    The search input in ``archive.js`` uses ``String.includes``, not a
+    regex — so ``.*`` should match zero rows (no golden job name
+    contains those two characters). A regression that accidentally
+    passed the input to ``new RegExp`` would match everything. Zero
+    matches is the specific observable that disambiguates the two
+    behaviours.
+    """
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(5)
+    await archive.search(".*")
+    await expect(archive.rows()).to_have_count(0)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_archive_empty_bucket_shows_empty_state(
+    live_operator_app, fake_k8s_client, page
+) -> None:
+    """A bucket with zero matches renders the ``arch-empty`` section.
+
+    Archive's row list is the union of live CRs AND on-disk archived
+    runs from the results tree — wipe both sources down to one Running
+    CR, switch to the PASSED tab, and assert the empty-state section
+    surfaces. If either source leaked rows in, the assertion catches it.
+    """
+    fake_k8s_client.jobs_raw = [
+        j for j in fake_k8s_client.jobs_raw if j["metadata"]["name"] == "live-run"
+    ]
+    build_empty(live_operator_app.results_dir)
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    tablist = page.locator(".v-archive-tabs")
+    await tablist.get_by_role("tab", name="PASSED").click()
+    await expect(archive.rows()).to_have_count(0)
+    await expect(page.get_by_test_id("arch-empty")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_archive_entirely_empty_shows_empty_state(
+    live_operator_app, fake_k8s_client, page
+) -> None:
+    """Archive with zero CRs and zero on-disk runs renders ``arch-empty``.
+
+    Archive sources the union of live CRs + on-disk PVC directories.
+    Zero rows requires clearing both — the ``jobs_raw`` list on the
+    fake and the results-dir tree via ``build_empty``.
+    """
+    fake_k8s_client.jobs_raw = []
+    build_empty(live_operator_app.results_dir)
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(0)
+    await expect(page.get_by_test_id("arch-empty")).to_be_visible()

@@ -595,11 +595,23 @@ async def page(
     errors: list[str] = []
     unmapped: list[str] = []
 
+    # Chromium automatically logs every failed fetch as ``console.error``
+    # ("Failed to load resource: the server responded with a status of N").
+    # For 4xx responses that's a business-logic signal the UI deliberately
+    # handles (e.g. Launch surfacing a 400 via ``launch-err``, config
+    # fetches returning 404 for archived runs); failing the test for the
+    # browser's auto-log would force the suite to only cover happy paths.
+    # 5xx is kept on the gate because it indicates a backend bug the UI
+    # should never see in normal operation.
+    _FETCH_4XX = "Failed to load resource: the server responded with a status of 4"
+
     def _on_pageerror(exc: Exception) -> None:
         errors.append(f"pageerror: {exc}")
 
     def _on_console(msg: ConsoleMessage) -> None:
         if msg.type == "error":
+            if _FETCH_4XX in msg.text:
+                return
             errors.append(f"console.error: {msg.text}")
 
     page = await context.new_page()
