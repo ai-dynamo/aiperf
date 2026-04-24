@@ -22,6 +22,8 @@ from aiperf.operator.routers.results_schemas import (
     FileListResponse,
     JobEntry,
     ResultsHistoryListResponse,
+    RunHistoryEntry,
+    RunHistoryListResponse,
 )
 
 CHUNK_SIZE = 64 * 1024
@@ -283,6 +285,59 @@ def _serve_job_file(
     raise HTTPException(404, f"File not found: {filename}")
 
 
+def _build_run_history_response(
+    base_dir: Path, namespace: str, job_id: str
+) -> RunHistoryListResponse:
+    """Resolve every run dir for a job, raising 404 when none exist."""
+    from aiperf.operator.results_layout import list_runs
+
+    runs = list_runs(base_dir, namespace, job_id)
+    if not runs:
+        raise HTTPException(404, f"No runs for {namespace}/{job_id}")
+    latest = next((r.epoch for r in runs if r.is_latest), None)
+    return RunHistoryListResponse(
+        namespace=namespace,
+        job_id=job_id,
+        latest_epoch=latest,
+        runs=[
+            RunHistoryEntry(
+                epoch=r.epoch,
+                mtime_epoch=r.mtime_epoch,
+                file_count=r.file_count,
+                total_size_bytes=r.total_size_bytes,
+                is_latest=r.is_latest,
+            )
+            for r in runs
+        ],
+    )
+
+
+async def _build_jobs_response(base_dir: Path) -> ResultsHistoryListResponse:
+    """Scan ``base_dir`` for jobs with stored results, returning empty on miss."""
+    if not base_dir.exists():
+        return ResultsHistoryListResponse()
+    jobs = await asyncio.to_thread(_scan_job_dirs, base_dir)
+    return ResultsHistoryListResponse(jobs=jobs)
+
+
+async def _build_file_list_response(
+    base_dir: Path, namespace: str, job_id: str, epoch: str | None = None
+) -> FileListResponse:
+    """Resolve a job's run dir and enumerate its files."""
+    job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+    files = await asyncio.to_thread(_list_job_files, job_dir)
+    return FileListResponse(namespace=namespace, job_id=job_id, files=files)
+
+
+def _epoch_bundle_response(
+    base_dir: Path, namespace: str, job_id: str, epoch: str
+) -> StreamingResponse:
+    """Validate ``epoch`` and return a bundle for the matching run dir."""
+    _validate_epoch(epoch)
+    job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+    return _bundle_response(job_dir, f"{namespace}__{job_id}__{epoch}.zip")
+
+
 def create_results_files_router(base_dir: Path) -> APIRouter:
     """Create the router for file listing/download endpoints.
 
@@ -294,10 +349,7 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     @router.get("/results", response_model=ResultsHistoryListResponse)
     async def list_jobs() -> ResultsHistoryListResponse:
         """List all namespaces and jobs with stored results."""
-        if not base_dir.exists():
-            return ResultsHistoryListResponse()
-        jobs = await asyncio.to_thread(_scan_job_dirs, base_dir)
-        return ResultsHistoryListResponse(jobs=jobs)
+        return await _build_jobs_response(base_dir)
 
     @router.get("/results/{namespace}/{job_id}.zip")
     async def download_bundle(namespace: str, job_id: str) -> StreamingResponse:
@@ -313,17 +365,23 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     @router.get("/results/{namespace}/{job_id}", response_model=FileListResponse)
     async def list_job_files(namespace: str, job_id: str) -> FileListResponse:
         """List files for a specific job."""
-        job_dir = _resolve_job_dir(base_dir, namespace, job_id)
-        files = await asyncio.to_thread(_list_job_files, job_dir)
-        return FileListResponse(namespace=namespace, job_id=job_id, files=files)
+        return await _build_file_list_response(base_dir, namespace, job_id)
+
+    @router.get(
+        "/results/{namespace}/{job_id}/runs",
+        response_model=RunHistoryListResponse,
+    )
+    async def list_runs_endpoint(namespace: str, job_id: str) -> RunHistoryListResponse:
+        """List every run dir for a job, newest first, with summary metadata."""
+        return await asyncio.to_thread(
+            _build_run_history_response, base_dir, namespace, job_id
+        )
 
     @router.get("/results/{namespace}/{job_id}/runs/{epoch}.zip")
     async def download_historical_bundle(
         namespace: str, job_id: str, epoch: str
     ) -> StreamingResponse:
-        _validate_epoch(epoch)
-        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
-        return _bundle_response(job_dir, f"{namespace}__{job_id}__{epoch}.zip")
+        return _epoch_bundle_response(base_dir, namespace, job_id, epoch)
 
     @router.get(
         "/results/{namespace}/{job_id}/runs/{epoch}",
@@ -333,9 +391,7 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
         namespace: str, job_id: str, epoch: str
     ) -> FileListResponse:
         _validate_epoch(epoch)
-        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
-        files = await asyncio.to_thread(_list_job_files, job_dir)
-        return FileListResponse(namespace=namespace, job_id=job_id, files=files)
+        return await _build_file_list_response(base_dir, namespace, job_id, epoch)
 
     @router.get("/results/{namespace}/{job_id}/runs/{epoch}/{filename:path}")
     async def download_historical_file(

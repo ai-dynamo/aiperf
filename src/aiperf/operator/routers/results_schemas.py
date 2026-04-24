@@ -47,6 +47,31 @@ class FileListResponse(AIPerfBaseModel):
     )
 
 
+class RunHistoryEntry(AIPerfBaseModel):
+    """One historical run directory under ``<ns>/<name>/``."""
+
+    epoch: str = Field(description="Epoch-seconds key of this run.")
+    mtime_epoch: int = Field(description="Directory modification-time epoch.")
+    file_count: int = Field(description="Number of files in the run dir.")
+    total_size_bytes: int = Field(description="Total bytes across all files.")
+    is_latest: bool = Field(description="True when this run matches latest.txt.")
+
+
+class RunHistoryListResponse(AIPerfBaseModel):
+    """Response listing every run dir for one ``<ns>/<name>`` job."""
+
+    namespace: str = Field(description="Kubernetes namespace.")
+    job_id: str = Field(description="AIPerfJob name.")
+    latest_epoch: str | None = Field(
+        default=None,
+        description="Current latest.txt target, or None if no runs exist.",
+    )
+    runs: list[RunHistoryEntry] = Field(
+        default_factory=list,
+        description="Historical runs, newest first.",
+    )
+
+
 class LeaderboardEntry(AIPerfBaseModel):
     """A single row in a leaderboard ranking."""
 

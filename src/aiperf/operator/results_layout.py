@@ -30,6 +30,7 @@ import os
 import re
 import shutil
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -45,16 +46,69 @@ __all__ = [
     "EPOCH_RE",
     "LATEST_POINTER",
     "LEGACY_EPOCH",
+    "RunEntry",
     "enforce_retention",
     "epoch_key_from_body",
     "job_dir",
     "list_run_epochs",
+    "list_runs",
     "migrate_legacy_layout",
     "resolve_latest",
     "resolve_run_dir",
     "run_dir",
     "write_latest",
 ]
+
+
+@dataclass(slots=True)
+class RunEntry:
+    """One run directory with summary metadata.
+
+    Example:
+        >>> entry = RunEntry(epoch="1714150923", mtime_epoch=1714150925,
+        ...                  file_count=7, total_size_bytes=4823912,
+        ...                  is_latest=True)
+    """
+
+    epoch: str
+    mtime_epoch: int
+    file_count: int
+    total_size_bytes: int
+    is_latest: bool
+
+
+def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
+    """Enumerate all run dirs under ``<base>/<ns>/<name>/``, newest first.
+
+    Returns an empty list if no run dirs exist. The entry flagged
+    ``is_latest=True`` matches ``latest.txt`` when the pointer is present
+    and its target exists on disk.
+
+    Example:
+        >>> list_runs(Path("/data"), "bench", "warmup-7f2a")
+        [RunEntry(epoch='1714150923', mtime_epoch=1714150925, file_count=7,
+                  total_size_bytes=4823912, is_latest=True)]
+    """
+    parent = job_dir(base, namespace, name)
+    if not parent.is_dir():
+        return []
+    latest = resolve_latest(base, namespace, name)
+    runs: list[RunEntry] = []
+    for p in parent.iterdir():
+        if not p.is_dir() or not EPOCH_RE.match(p.name):
+            continue
+        files = [f for f in p.iterdir() if f.is_file()]
+        runs.append(
+            RunEntry(
+                epoch=p.name,
+                mtime_epoch=int(p.stat().st_mtime),
+                file_count=len(files),
+                total_size_bytes=sum(f.stat().st_size for f in files),
+                is_latest=(p.name == latest),
+            )
+        )
+    runs.sort(key=lambda r: r.mtime_epoch, reverse=True)
+    return runs
 
 
 def job_dir(base: Path, namespace: str, name: str) -> Path:

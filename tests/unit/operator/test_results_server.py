@@ -1046,3 +1046,53 @@ def test_scan_job_dirs_collapses_to_latest_epoch(tmp_path: Path) -> None:
             (j["namespace"], j["job_id"], j["file_count"]) for j in r.json()["jobs"]
         ]
         assert entries == [("ns", "job", 1)]
+
+
+def test_list_runs_returns_epochs_newest_first(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "b.json")
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/job/runs")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["namespace"] == "ns"
+        assert body["job_id"] == "job"
+        assert body["latest_epoch"] == _EPOCH_NEW
+        epochs = [run["epoch"] for run in body["runs"]]
+        assert epochs == [_EPOCH_NEW, _EPOCH_OLD]
+        latest_flags = [run["is_latest"] for run in body["runs"]]
+        assert latest_flags == [True, False]
+        for run in body["runs"]:
+            assert run["file_count"] == 1
+            assert run["total_size_bytes"] > 0
+
+
+def test_list_runs_404_when_no_runs(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/absent/runs")
+        assert r.status_code == 404
+
+
+def test_list_runs_skips_non_epoch_dirs(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_layout import job_dir
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
+    (job_dir(tmp_path, "ns", "job") / "not-an-epoch").mkdir()
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/job/runs")
+        assert r.status_code == 200
+        epochs = {run["epoch"] for run in r.json()["runs"]}
+        assert epochs == {_EPOCH_OLD}
