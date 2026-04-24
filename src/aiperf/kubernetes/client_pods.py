@@ -187,6 +187,48 @@ async def get_pods(
     ).items
 
 
+async def list_events_for_object(
+    api: ApiClient,
+    namespace: str,
+    object_name: str,
+) -> list[Any]:
+    """Return raw ``V1Event`` objects whose ``involvedObject.name`` matches.
+
+    Uses a server-side field selector so the apiserver filters for us — cheap
+    even in busy namespaces. ``involvedObject.name`` is not globally unique
+    across kinds, so callers that care about disambiguation must filter by
+    ``involvedObject.kind`` themselves. The AIPerfJob UI relies on the fact
+    that CRs and their pods always have distinct names, so no secondary
+    filtering is needed there.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        namespace: Namespace whose event stream is searched.
+        object_name: Value matched against ``involvedObject.name``.
+
+    Returns:
+        List of ``kubernetes_asyncio.client.V1Event`` instances. Empty list if
+        the apiserver returns no matches. Return type is ``list[Any]`` because
+        the ``V1Event`` class is not a stable import path across versions.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API failure
+            (not suppressed).
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     events = await list_events_for_object(api, "ml-lab", "bench-7f2a")
+        ...     for ev in events:
+        ...         print(ev.last_timestamp, ev.reason, ev.message)
+    """
+    core = client.CoreV1Api(api)
+    resp = await core.list_namespaced_event(
+        namespace=namespace,
+        field_selector=f"involvedObject.name={object_name}",
+    )
+    return list(resp.items or [])
+
+
 async def cluster_version(api: ApiClient) -> dict[str, Any]:
     """Return Kubernetes cluster version info as a dict.
 

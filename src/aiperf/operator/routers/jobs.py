@@ -21,6 +21,7 @@ from aiperf.kubernetes.client import (
     get_pods,
     get_raw_aiperfjob,
     get_raw_aiperfjob_status,
+    list_events_for_object,
 )
 from aiperf.operator.job_union import (
     find_any_job,
@@ -330,26 +331,6 @@ def _event_to_entry(raw: Any) -> EventEntry:
     )
 
 
-async def _events_for_object(
-    core: client.CoreV1Api,
-    namespace: str,
-    object_name: str,
-) -> list[Any]:
-    """Return raw ``V1Event`` objects whose ``involvedObject.name`` matches.
-
-    Uses a field selector so the apiserver filters server-side — this is cheap
-    even in busy namespaces. ``involvedObject.name`` is not globally unique
-    (two kinds can share a name), so callers may need to further filter by
-    ``involvedObject.kind`` if disambiguation matters; the jobs endpoint does
-    not, because AIPerfJob CRs and their pods always have distinct names.
-    """
-    resp = await core.list_namespaced_event(
-        namespace=namespace,
-        field_selector=f"involvedObject.name={object_name}",
-    )
-    return list(resp.items or [])
-
-
 async def _list_events_impl(
     api: ApiClient,
     namespace: str,
@@ -375,15 +356,14 @@ async def _list_events_impl(
     if cr is None:
         raise HTTPException(404, f"AIPerfJob {namespace}/{name} not found")
 
-    core = client.CoreV1Api(api)
-    cr_events = await _events_for_object(core, namespace, name)
+    cr_events = await list_events_for_object(api, namespace, name)
 
     pods = await get_pods(api, namespace, f"aiperf.nvidia.com/job-id={name}")
     pod_names = [p.metadata.name for p in pods if p.metadata and p.metadata.name]
 
     pod_event_lists: list[list[Any]] = []
     for pod_name in pod_names:
-        pod_event_lists.append(await _events_for_object(core, namespace, pod_name))
+        pod_event_lists.append(await list_events_for_object(api, namespace, pod_name))
 
     raw_events: list[Any] = [*cr_events]
     for lst in pod_event_lists:
