@@ -16,6 +16,7 @@ import aiofiles
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
 from aiperf.operator.routers.results_schemas import (
     FileEntry,
     FileListResponse,
@@ -56,6 +57,7 @@ async def _build_job_bundle(job_dir: Path) -> bytes:
     """
     import io
     import zipfile
+
     import zstandard
 
     dctx = zstandard.ZstdDecompressor()
@@ -63,7 +65,9 @@ async def _build_job_bundle(job_dir: Path) -> bytes:
 
     def _build() -> bytes:
         buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        with zipfile.ZipFile(
+            buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True
+        ) as zf:
             for f in files:
                 arcname = _display_name(f)
                 if f.suffix == ".zst":
@@ -82,7 +86,7 @@ async def _stream_job_bundle(job_dir: Path) -> AsyncIterator[bytes]:
     the zip itself is constructed in one shot by :func:`_build_job_bundle`."""
     data = await _build_job_bundle(job_dir)
     for i in range(0, len(data), CHUNK_SIZE):
-        yield data[i:i + CHUNK_SIZE]
+        yield data[i : i + CHUNK_SIZE]
 
 
 async def _stream_zstd_raw(file_path: Path) -> AsyncIterator[bytes]:
@@ -183,24 +187,33 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
 
 
 def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
-    """Walk ``<namespace>/<job_id>/`` under ``base_dir`` and summarize each job."""
+    """Walk ``<namespace>/<job_id>/<epoch>/`` under ``base_dir``.
+
+    Yields one :class:`JobEntry` per ``<ns>/<name>`` using the run pointed
+    to by latest.txt. Jobs whose pointer is missing or targets a vanished
+    epoch are skipped silently.
+    """
     found: list[JobEntry] = []
     for ns_dir in sorted(base_dir.iterdir()):
         if not ns_dir.is_dir():
             continue
-        for job_dir in sorted(ns_dir.iterdir()):
-            if not job_dir.is_dir():
+        for name_dir in sorted(ns_dir.iterdir()):
+            if not name_dir.is_dir():
                 continue
-            files = [f for f in job_dir.iterdir() if f.is_file()]
-            if files:
-                found.append(
-                    JobEntry(
-                        namespace=ns_dir.name,
-                        job_id=job_dir.name,
-                        file_count=len(files),
-                        total_size_bytes=sum(f.stat().st_size for f in files),
-                    )
+            latest_dir = resolve_run_dir(base_dir, ns_dir.name, name_dir.name)
+            if latest_dir is None:
+                continue
+            files = [f for f in latest_dir.iterdir() if f.is_file()]
+            if not files:
+                continue
+            found.append(
+                JobEntry(
+                    namespace=ns_dir.name,
+                    job_id=name_dir.name,
+                    file_count=len(files),
+                    total_size_bytes=sum(f.stat().st_size for f in files),
                 )
+            )
     return found
 
 
@@ -221,12 +234,53 @@ def _list_job_files(job_dir: Path) -> list[FileEntry]:
     )
 
 
-def _resolve_job_dir(base_dir: Path, namespace: str, job_id: str) -> Path:
-    """Resolve ``base_dir/namespace/job_id`` or raise 404 if missing/unsafe."""
-    job_dir = _safe_resolve(base_dir, namespace, job_id)
-    if job_dir is None or not job_dir.is_dir():
-        raise HTTPException(404, f"No results for {namespace}/{job_id}")
-    return job_dir
+def _resolve_job_dir(
+    base_dir: Path,
+    namespace: str,
+    job_id: str,
+    epoch: str | None = None,
+) -> Path:
+    """Resolve a run dir under ``<base>/<ns>/<name>/``.
+
+    ``epoch=None`` -> latest run via latest.txt.
+    ``epoch="<digits>"`` -> explicit historical run.
+    """
+    resolved = resolve_run_dir(base_dir, namespace, job_id, epoch=epoch)
+    if resolved is None:
+        target = f"{namespace}/{job_id}" + (f"/runs/{epoch}" if epoch else "")
+        raise HTTPException(404, f"No results for {target}")
+    return resolved
+
+
+def _validate_epoch(epoch: str) -> None:
+    """Raise 422 if ``epoch`` does not match the EPOCH_RE allowlist."""
+    if not EPOCH_RE.match(epoch):
+        raise HTTPException(422, f"Invalid epoch: {epoch}")
+
+
+def _bundle_response(job_dir: Path, bundle_name: str) -> StreamingResponse:
+    """Stream a zip bundle of ``job_dir`` with Content-Disposition set."""
+    return StreamingResponse(
+        _stream_job_bundle(job_dir),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bundle_name}"',
+            "X-Filename": bundle_name,
+        },
+    )
+
+
+def _serve_job_file(
+    request: Request, job_dir: Path, filename: str
+) -> StreamingResponse:
+    """Serve ``filename`` from ``job_dir``, preferring .zst + content negotiation."""
+    zst_path = _safe_resolve(job_dir, filename + ".zst")
+    raw_path = _safe_resolve(job_dir, filename)
+    if zst_path and zst_path.is_file():
+        return _serve_zst_file(request, zst_path, filename)
+    if raw_path and raw_path.is_file():
+        return _serve_raw_file(request, raw_path)
+    raise HTTPException(404, f"File not found: {filename}")
 
 
 def create_results_files_router(base_dir: Path) -> APIRouter:
@@ -249,25 +303,12 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     async def download_bundle(namespace: str, job_id: str) -> StreamingResponse:
         """Download every result file for a job as one uncompressed zip.
 
-        Entries stored in zstd-compressed form on the PVC are decompressed back
-        to their original names inside the archive, so the download is usable
-        without extra tooling.
-
-        This route is registered before ``list_job_files`` so the FastAPI
-        matcher sees ``{job_id}.zip`` first — otherwise the bare
-        ``/results/{ns}/{job_id}`` pattern would capture the ``.zip`` as part
-        of the job_id and fall through to a 404.
+        Registered before ``list_job_files`` so FastAPI matches ``.zip``
+        before the bare ``/results/{ns}/{job_id}`` pattern would capture
+        it as part of the job_id.
         """
         job_dir = _resolve_job_dir(base_dir, namespace, job_id)
-        bundle_name = f"{namespace}__{job_id}.zip"
-        return StreamingResponse(
-            _stream_job_bundle(job_dir),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{bundle_name}"',
-                "X-Filename": bundle_name,
-            },
-        )
+        return _bundle_response(job_dir, f"{namespace}__{job_id}.zip")
 
     @router.get("/results/{namespace}/{job_id}", response_model=FileListResponse)
     async def list_job_files(namespace: str, job_id: str) -> FileListResponse:
@@ -276,19 +317,45 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
         files = await asyncio.to_thread(_list_job_files, job_dir)
         return FileListResponse(namespace=namespace, job_id=job_id, files=files)
 
+    @router.get("/results/{namespace}/{job_id}/runs/{epoch}.zip")
+    async def download_historical_bundle(
+        namespace: str, job_id: str, epoch: str
+    ) -> StreamingResponse:
+        _validate_epoch(epoch)
+        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+        return _bundle_response(job_dir, f"{namespace}__{job_id}__{epoch}.zip")
+
+    @router.get(
+        "/results/{namespace}/{job_id}/runs/{epoch}",
+        response_model=FileListResponse,
+    )
+    async def list_historical_files(
+        namespace: str, job_id: str, epoch: str
+    ) -> FileListResponse:
+        _validate_epoch(epoch)
+        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+        files = await asyncio.to_thread(_list_job_files, job_dir)
+        return FileListResponse(namespace=namespace, job_id=job_id, files=files)
+
+    @router.get("/results/{namespace}/{job_id}/runs/{epoch}/{filename:path}")
+    async def download_historical_file(
+        namespace: str,
+        job_id: str,
+        epoch: str,
+        filename: str,
+        *,
+        request: Request,
+    ) -> StreamingResponse:
+        _validate_epoch(epoch)
+        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+        return _serve_job_file(request, job_dir, filename)
+
     @router.get("/results/{namespace}/{job_id}/{filename:path}")
     async def download_file(
         namespace: str, job_id: str, filename: str, request: Request
     ) -> StreamingResponse:
         """Download a result file with content negotiation."""
         job_dir = _resolve_job_dir(base_dir, namespace, job_id)
-        zst_path = _safe_resolve(job_dir, filename + ".zst")
-        raw_path = _safe_resolve(job_dir, filename)
-
-        if zst_path and zst_path.is_file():
-            return _serve_zst_file(request, zst_path, filename)
-        if raw_path and raw_path.is_file():
-            return _serve_raw_file(request, raw_path)
-        raise HTTPException(404, f"File not found: {filename}")
+        return _serve_job_file(request, job_dir, filename)
 
     return router

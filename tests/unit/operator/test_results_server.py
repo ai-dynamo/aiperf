@@ -46,16 +46,30 @@ def _create_result_file(
     *,
     compress: bool = False,
 ) -> Path:
-    """Create a result file in the expected directory structure."""
-    job_dir = base_dir / namespace / job_id
+    """Create a result file under the epoch-keyed layout, pointed at by latest.txt.
+
+    Uses a synthetic default epoch so pre-existing flat-layout tests keep
+    exercising the latest-run code path. Also mirrors the file at the
+    legacy flat path so DuckDB analytics globs (``<ns>/<job>/*``) still
+    match during the transition.
+    """
+    from aiperf.operator.results_layout import run_dir, write_latest
+
+    default_epoch = "1714064523"
+    job_dir = run_dir(base_dir, namespace, job_id, default_epoch)
     job_dir.mkdir(parents=True, exist_ok=True)
+    flat_dir = base_dir / namespace / job_id
     if compress:
         cctx = zstandard.ZstdCompressor()
+        payload = cctx.compress(content)
         file_path = job_dir / (filename + ".zst")
-        file_path.write_bytes(cctx.compress(content))
+        file_path.write_bytes(payload)
+        (flat_dir / (filename + ".zst")).write_bytes(payload)
     else:
         file_path = job_dir / filename
         file_path.write_bytes(content)
+        (flat_dir / filename).write_bytes(content)
+    write_latest(base_dir, namespace, job_id, default_epoch)
     return file_path
 
 
@@ -432,13 +446,17 @@ class TestDownloadFile:
     async def test_download_prefers_zst_over_raw(
         self, results_dir: Path, client: httpx.AsyncClient
     ) -> None:
+        from aiperf.operator.results_layout import run_dir, write_latest
+
         raw_content = b'{"raw": true}'
         zst_content = b'{"zst": true}'
-        job_dir = results_dir / "ns" / "job-1"
+        epoch = "1714064523"
+        job_dir = run_dir(results_dir, "ns", "job-1", epoch)
         job_dir.mkdir(parents=True)
         (job_dir / "data.json").write_bytes(raw_content)
         cctx = zstandard.ZstdCompressor()
         (job_dir / "data.json.zst").write_bytes(cctx.compress(zst_content))
+        write_latest(results_dir, "ns", "job-1", epoch)
 
         resp = await client.get(
             "/api/v1/results/ns/job-1/data.json",
@@ -932,3 +950,99 @@ def test_lifespan_runs_migration_shim(tmp_path: Path) -> None:
         assert (
             tmp_path / "ns" / "legacy-job" / LATEST_POINTER
         ).read_text().strip() == "legacy"
+
+
+# ============================================================
+# Epoch-keyed layout routing
+# ============================================================
+
+
+def _seed_epoch_run(
+    base: Path,
+    namespace: str,
+    name: str,
+    epoch: str,
+    filename: str,
+    content: bytes = b"{}",
+) -> Path:
+    from aiperf.operator.results_layout import run_dir, write_latest
+
+    d = run_dir(base, namespace, name, epoch)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / filename).write_bytes(content)
+    write_latest(base, namespace, name, epoch)
+    return d
+
+
+_EPOCH_OLD = "1714064523"
+_EPOCH_NEW = "1714150923"
+
+
+def test_list_job_files_resolves_latest_epoch(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/job")
+        assert r.status_code == 200
+        names = {f["name"] for f in r.json()["files"]}
+        assert names == {"new.json"}
+
+
+def test_historical_route_pins_epoch(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(f"/api/v1/results/ns/job/runs/{_EPOCH_OLD}")
+        assert r.status_code == 200
+        names = {f["name"] for f in r.json()["files"]}
+        assert names == {"old.json"}
+
+
+def test_historical_route_invalid_epoch_rejected(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json")
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results/ns/job/runs/..%2Fevil")
+        assert r.status_code in (404, 422)
+
+
+def test_historical_zip_bundle_pins_epoch(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(f"/api/v1/results/ns/job/runs/{_EPOCH_OLD}.zip")
+        assert r.status_code == 200
+        assert b"old.json" in r.content
+
+
+def test_scan_job_dirs_collapses_to_latest_epoch(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json")
+    _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json")
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get("/api/v1/results")
+        assert r.status_code == 200
+        entries = [
+            (j["namespace"], j["job_id"], j["file_count"]) for j in r.json()["jobs"]
+        ]
+        assert entries == [("ns", "job", 1)]
