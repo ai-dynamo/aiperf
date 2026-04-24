@@ -1,40 +1,31 @@
-#!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Assemble per-category SPEED-Bench results into a matrix report.
 
-Run ``aiperf profile`` once per SPEED-Bench category, then point this script
-at the output directories to produce an acceptance-length matrix matching the
-SPEED-Bench paper format.
-
-Usage::
-
-    # Scan a parent directory for per-category run subdirectories
-    python scripts/speed_bench_report.py ./artifacts/
-
-    # Or list run directories explicitly
-    python scripts/speed_bench_report.py \\
-        ./artifacts/run_coding/ \\
-        ./artifacts/run_math/ \\
-        ./artifacts/run_writing/
-
-    # Options
-    python scripts/speed_bench_report.py ./artifacts/ \\
-        --format both \\
-        --output speed_bench_report.csv \\
-        --metric accept_length
+Run ``aiperf profile`` once per SPEED-Bench category, then invoke
+``aiperf speed-bench-report`` against the output directories to produce an
+acceptance-length matrix matching the SPEED-Bench paper format.
 """
 
 from __future__ import annotations
 
-import argparse
 import csv
+import math
 import sys
 from pathlib import Path
 from statistics import mean
+from typing import Literal
 
 import orjson
+
+MetricType = Literal["accept_length", "accept_rate", "throughput"]
+OutputFormat = Literal["csv", "table", "both"]
+
+
+class SpeedBenchReportError(Exception):
+    """Raised when the report cannot be assembled from the given paths."""
+
 
 QUALITATIVE_CATEGORIES = [
     "coding",
@@ -138,7 +129,7 @@ def extract_model(profile: dict) -> str:
     return "unknown"
 
 
-def _get_metric_stat(metrics: dict, name: str, stat: str = "total") -> float | None:
+def _get_metric_stat(metrics: dict, name: str, stat: str) -> float | None:
     """Get a stat value from a named metric's first series."""
     metric = metrics.get(name)
     if not metric:
@@ -174,10 +165,12 @@ def extract_accept_length(server_metrics: dict) -> float | None:
     if accepted is not None and drafts and drafts > 0:
         return (accepted / drafts) + 1.0
 
-    # Fuzzy fallback
+    # Fuzzy fallback for engines we don't know by name yet. Require all three
+    # of "spec", "accept", "length" in the metric name so we don't pick up
+    # unrelated metrics like "request_acceptance_total_length".
     for metric_name, metric_data in metrics.items():
         lower = metric_name.lower()
-        if "accept" in lower and "length" in lower:
+        if "spec" in lower and "accept" in lower and "length" in lower:
             series = metric_data.get("series", [])
             if series:
                 val = series[0].get("stats", {}).get("avg")
@@ -220,7 +213,7 @@ def extract_throughput(profile: dict) -> float | None:
 
 def build_report(
     run_dirs: list[Path],
-    metric_type: str = "accept_length",
+    metric_type: MetricType = "accept_length",
 ) -> dict[str, dict[str, float | None]]:
     """Build a {model: {category: value}} matrix from run directories.
 
@@ -249,7 +242,7 @@ def build_report(
 
         if metric_type in ("accept_length", "accept_rate"):
             server_metrics = load_server_metrics(run_dir)
-            if server_metrics:
+            if server_metrics is not None:
                 if metric_type == "accept_length":
                     value = extract_accept_length(server_metrics)
                 else:
@@ -273,17 +266,14 @@ def build_report(
 
 def detect_columns(results: dict[str, dict[str, float | None]]) -> list[str]:
     """Detect which column set to use based on the categories present."""
-    all_cats = set()
+    all_cats: set[str] = set()
     for model_data in results.values():
         all_cats.update(model_data.keys())
 
-    # Check if all categories are qualitative
     if all_cats <= set(QUALITATIVE_CATEGORIES):
         return [c for c in QUALITATIVE_CATEGORIES if c in all_cats]
-    # Check if all categories are throughput tiers
     if all_cats <= set(THROUGHPUT_TIERS):
         return [c for c in THROUGHPUT_TIERS if c in all_cats]
-    # Mixed or throughput ISL variants
     return sorted(all_cats)
 
 
@@ -313,7 +303,7 @@ def write_csv(
 def print_table(
     results: dict[str, dict[str, float | None]],
     columns: list[str],
-    metric_type: str,
+    metric_type: MetricType,
 ) -> None:
     """Print a rich console table, falling back to plain text."""
     try:
@@ -350,7 +340,6 @@ def print_table(
         Console().print(table)
 
     except ImportError:
-        # Fallback: plain text table
         header = ["Model", *columns, "Overall"]
         widths = [max(len(h), 8) for h in header]
         widths[0] = max(widths[0], max((len(m) for m in results), default=8))
@@ -370,58 +359,40 @@ def print_table(
             print("  ".join(c.rjust(w) for c, w in zip(cells, widths, strict=True)))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Assemble per-category SPEED-Bench aiperf results into a matrix report.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "paths",
-        nargs="+",
-        type=Path,
-        help="Run directories or parent directories containing run subdirectories.",
-    )
-    parser.add_argument(
-        "--format",
-        choices=["csv", "table", "both"],
-        default="both",
-        help="Output format (default: both).",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("speed_bench_report.csv"),
-        help="Output CSV file path (default: speed_bench_report.csv).",
-    )
-    parser.add_argument(
-        "--metric",
-        choices=["accept_length", "accept_rate", "throughput"],
-        default="accept_length",
-        help="Which metric to report (default: accept_length).",
-    )
-    args = parser.parse_args()
+def generate_report(
+    paths: list[Path],
+    output: Path = Path("speed_bench_report.csv"),
+    output_format: OutputFormat = "both",
+    metric: MetricType = "accept_length",
+) -> None:
+    """Discover run directories, build a SPEED-Bench matrix report, and emit it.
 
-    run_dirs = find_run_dirs(args.paths)
+    Raises:
+        SpeedBenchReportError: if no run directories are found under ``paths``,
+            or if no SPEED-Bench results could be extracted from them.
+    """
+    run_dirs = find_run_dirs(paths)
     if not run_dirs:
-        print("Error: no aiperf run directories found.", file=sys.stderr)
-        sys.exit(1)
+        raise SpeedBenchReportError("no aiperf run directories found")
 
     print(f"Found {len(run_dirs)} run directories.")
-    results = build_report(run_dirs, metric_type=args.metric)
+    results = build_report(run_dirs, metric_type=metric)
 
-    if not results:
-        print("Error: no SPEED-Bench results extracted.", file=sys.stderr)
-        sys.exit(1)
+    for model_data in results.values():
+        for cat, v in model_data.items():
+            if isinstance(v, float) and math.isnan(v):
+                model_data[cat] = None
+
+    has_value = any(
+        v is not None for model_data in results.values() for v in model_data.values()
+    )
+    if not has_value:
+        raise SpeedBenchReportError("no SPEED-Bench results extracted")
 
     columns = detect_columns(results)
 
-    if args.format in ("table", "both"):
-        print_table(results, columns, args.metric)
+    if output_format in ("table", "both"):
+        print_table(results, columns, metric)
 
-    if args.format in ("csv", "both"):
-        write_csv(results, columns, args.output)
-
-
-if __name__ == "__main__":
-    main()
+    if output_format in ("csv", "both"):
+        write_csv(results, columns, output)

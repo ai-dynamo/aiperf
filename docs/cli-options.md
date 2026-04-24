@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions
 
+### [`speed-bench-report`](#aiperf-speed-bench-report)
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report
+
 ### [`profile`](#aiperf-profile)
 
 Benchmark AI models and measure performance metrics
@@ -172,6 +176,31 @@ KV cache block size for analysis.
 #### `--output-file` `<str>`
 
 Output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf speed-bench-report`
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report
+
+#### `--paths`, `--empty-paths` `<list>` _(Required)_
+
+Run directories or parent directories containing run subdirectories.
+
+#### `--output` `<str>`
+
+Output CSV file path. Defaults to ./speed_bench_report.csv.
+<br/>_Default: `speed_bench_report.csv`_
+
+#### `--format` `<str>`
+
+Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
+<br/>_Default: `both`_
+
+#### `--metric` `<str>`
+
+Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
+<br/>_Default: `accept_length`_
 
 <hr/>
 

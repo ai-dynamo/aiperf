@@ -2,6 +2,26 @@
   "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python -m tools.check_ergonomics --regenerate-baseline. New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
+      "duplicate-classes",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "EventType"
+    ],
+    [
+      "duplicate-classes",
+      "src/aiperf/operator/events.py",
+      "EventType"
+    ],
+    [
+      "file-size",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/analysis/calibrate_memory_estimates.py",
+      ""
+    ],
+    [
       "file-size",
       "src/aiperf/config/cli_model.py",
       ""
@@ -58,8 +78,43 @@
     ],
     [
       "function-size",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "analyze_metrics"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "main"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "plot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "print_sweep_summary"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/calibrate_memory_estimates.py",
+      "measure_record_processor"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/calibrate_memory_estimates.py",
+      "run_scenario"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_commands/kube/list_.py",
       "list_jobs"
+    ],
+    [
+      "function-size",
+      "src/aiperf/controller/system_controller.py",
+      "_check_sibling_containers_alive"
     ],
     [
       "function-size",
@@ -75,11 +130,6 @@
       "function-size",
       "src/aiperf/operator/handlers/monitor.py",
       "_maybe_recover_terminated_controller"
-    ],
-    [
-      "function-size",
-      "src/aiperf/operator/results_server.py",
-      "create_app"
     ],
     [
       "function-size",
@@ -273,6 +323,21 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "plot"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "print_sweep_summary"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/estimate_deployment_resources.py",
+      "_make_params"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/operator/handlers/create.py",
       "on_create"
     ],
@@ -350,6 +415,11 @@
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
       "update_single_run_plot_config"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/analysis/analyze_profile_export.py",
+      "sweep"
     ],
     [
       "nesting-depth",

@@ -35,6 +35,11 @@ app.command(
     help="Analyze a mooncake trace file for ISL/OSL distributions",
 )
 app.command(
+    "aiperf.cli_commands.speed_bench_report:app",
+    name="speed-bench-report",
+    help="Assemble per-category SPEED-Bench aiperf results into a matrix report",
+)
+app.command(
     "aiperf.cli_commands.profile:app",
     name="profile",
     help="Benchmark AI models and measure performance metrics",
