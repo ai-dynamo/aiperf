@@ -1,19 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""E2E tests for the operator web UI jobs page.
+"""E2E tests for the Archive view (``/archive``).
 
-Covers table rendering from the live k8s source (no merge with results —
-``jobs.js`` polls ``api.listJobs()`` only), phase rendering for the
-``Running`` job, the search input's namespace-matching behaviour (the
-page has no dedicated namespace selector), column header sort toggling,
-and row-click navigation to the job detail route.
+Covers the row list sourced from ``api.listJobs()``, the running-phase
+label on the live CR, the shared search input's substring match on
+name / namespace / model, the sort dropdown, and row-click navigation
+into the single-run workbench. Per ``src/aiperf/operator/ui/views/archive.js``,
+Archive is bucketed by namespace with one row per AIPerfJob (no mergewith on-disk results — the merge happens only on the run detail page).
 
 The ``fake_k8s_client`` golden ``jobs.json`` seeds five AIPerfJobs:
 ``aiperf-bench/{aiperf-llama3-c128, aiperf-llama3-c256, live-run}`` and
-``ml-lab/{mistral-7b-run1, failed-run}``. All five surface on ``/jobs``
-regardless of phase; only ``live-run`` has no on-disk results, which
-does not affect the jobs table (that merge happens on the dashboard KPIs
-and leaderboard, not here).
+``ml-lab/{mistral-7b-run1, failed-run}``. All five surface on
+``/archive`` regardless of phase because the default bucket is "ALL".
 """
 
 from __future__ import annotations
@@ -21,92 +19,94 @@ from __future__ import annotations
 import pytest
 from playwright.async_api import expect
 
-from ._pages import JobsPage
+from ._pages import ArchivePage
 
 pytestmark = [pytest.mark.e2e]
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_jobs_table_renders_rows(
+async def test_archive_lists_all_rows(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``/jobs`` renders the ``job-table`` tbody with one row per k8s job.
+    """``/archive`` renders one ``arch-row-*`` per AIPerfJob in the golden data.
 
-    ``jobs.js`` sources rows from ``api.listJobs()`` only — no merge with
-    on-disk results — so all five golden AIPerfJobs (including the
-    Running ``live-run`` and the Failed ``failed-run``) appear.
+    Archive sources rows from ``api.listJobs()`` only — no merge with
+    on-disk results — so all five golden CRs (including the Running
+    ``live-run`` and the Failed ``failed-run``) appear.
     """
-    jobs_page = JobsPage(page, live_operator_app.base_url)
-    await jobs_page.goto()
-    await expect(page.get_by_test_id("job-table")).to_be_visible()
-    await expect(jobs_page.rows()).to_have_count(5)
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(5)
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_jobs_row_shows_live_status_for_running_job(
+async def test_archive_row_shows_running_phase_for_live_run(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """The row for ``aiperf-bench/live-run`` shows the ``Running`` phase badge.
+    """The row for ``aiperf-bench/live-run`` shows the ``RUNNING`` phase text.
 
-    ``job-table.js``'s ``renderPhase`` writes ``job.phase`` verbatim into a
-    ``.phase-badge`` span, and the golden CR has ``status.phase: Running``.
+    Each row renders ``job.phase.toUpperCase()`` in the phase cell, and
+    the golden CR has ``status.phase: Running``.
     """
-    jobs_page = JobsPage(page, live_operator_app.base_url)
-    await jobs_page.goto()
-    row = jobs_page.row("aiperf-bench", "live-run")
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    row = archive.row("aiperf-bench", "live-run")
     await expect(row).to_be_visible()
-    await expect(row).to_contain_text("Running")
+    await expect(row).to_contain_text("RUNNING")
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_jobs_search_by_namespace(
+async def test_archive_search_by_namespace(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
     """Typing a namespace into the search input narrows to matching rows only.
 
-    ``jobs.js`` filters by ``j.name.includes(q) || j.namespace.includes(q)``.
-    No golden job name contains ``ml-lab`` as a substring, so typing it
+    The search input substring-matches name, namespace, or model. No
+    golden job name contains ``ml-lab`` as a substring, so typing it
     leaves exactly the two ``ml-lab`` rows (``mistral-7b-run1`` and
     ``failed-run``).
     """
-    jobs_page = JobsPage(page, live_operator_app.base_url)
-    await jobs_page.goto()
-    await expect(jobs_page.rows()).to_have_count(5)
-    await jobs_page.set_namespace_filter("ml-lab")
-    ml_lab_rows = page.get_by_test_id("job-table").locator(
-        "[data-testid^='job-row-ml-lab-']"
-    )
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(5)
+    await archive.search("ml-lab")
+    ml_lab_rows = page.locator("[data-testid^='arch-row-ml-lab-']")
     await expect(ml_lab_rows).to_have_count(2)
-    await expect(jobs_page.rows()).to_have_count(2)
+    await expect(archive.rows()).to_have_count(2)
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_jobs_sort_by_column(
+async def test_archive_sort_selector_applies(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Clicking the ``name`` column header sorts the table by job name.
+    """Choosing a different sort option updates the ``archive-sort`` value.
 
-    The default sort is ``age desc``; clicking ``col-header-name`` sets
-    ``sortKey='name', sortDir=1`` (ascending). The five golden jobs sort
-    alphabetically with ``aiperf-llama3-c128`` first.
+    The sort dropdown (``archive-sort``) carries five options: ``newest``,
+    ``oldest``, ``rps``, ``p99``, ``dur``. The UI's controlled-select
+    writes the chosen ``key`` back into the ``value=${sort}`` binding, so
+    asserting the new value is visible is the deterministic signal that
+    the dropdown is functional. Row ordering after the change depends on
+    per-job start / throughput / latency data that's not uniformly
+    populated on the golden CRs, so we deliberately don't pin an order.
     """
-    jobs_page = JobsPage(page, live_operator_app.base_url)
-    await jobs_page.goto()
-    await expect(jobs_page.rows()).to_have_count(5)
-    await jobs_page.click_column_header("name")
-    first_row = jobs_page.rows().first
-    await expect(first_row).to_have_attribute(
-        "data-testid", "job-row-aiperf-bench-aiperf-llama3-c128"
-    )
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await expect(archive.rows()).to_have_count(5)
+    sort_select = page.get_by_test_id("archive-sort")
+    await expect(sort_select).to_have_value("newest")
+    await archive.set_sort("oldest")
+    await expect(sort_select).to_have_value("oldest")
+    # Rows should still be rendered — only the ordering changed.
+    await expect(archive.rows()).to_have_count(5)
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_jobs_row_click_navigates_to_detail(
+async def test_archive_row_click_navigates_to_run_detail(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Clicking a row navigates to ``/jobs/<ns>/<name>`` and renders the detail page."""
-    jobs_page = JobsPage(page, live_operator_app.base_url)
-    await jobs_page.goto()
-    await jobs_page.row("aiperf-bench", "aiperf-llama3-c128").click()
-    await page.wait_for_url("**/jobs/aiperf-bench/aiperf-llama3-c128")
+    """Clicking a row navigates to ``/run/<ns>/<name>`` and renders the detail page."""
+    archive = ArchivePage(page, live_operator_app.base_url)
+    await archive.goto()
+    await archive.row("aiperf-bench", "aiperf-llama3-c128").click()
+    await page.wait_for_url("**/run/aiperf-bench/aiperf-llama3-c128")
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()

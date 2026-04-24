@@ -139,6 +139,13 @@ def write_archived_job(results_dir: Path, namespace: str, name: str) -> None:
         )
     )
     (d / ".aiperf_results_ready.json").write_bytes(orjson.dumps({"ready": True}))
+    # The run view unconditionally fetches ``/api/v1/config/<ns>/<name>``
+    # on mount (``api.getJobConfig(...).catch(() => null)``). That 404s
+    # without a ``job_spec.json`` sidecar, and the browser logs the 404
+    # as ``console.error`` — which trips the page-fixture error gate
+    # even though the UI's JS catch handler has resolved it to ``null``.
+    # Drop a minimal spec so the config endpoint returns 200.
+    (d / "job_spec.json").write_bytes(orjson.dumps({"benchmark": {}}))
 
 
 @pytest.fixture
@@ -339,6 +346,24 @@ def fake_k8s_client(
     async def _events_for_object(api, namespace, object_name):
         return list(fake.events_by_object.get((namespace, object_name), []))
 
+    async def _pod_logs_stub(
+        api, namespace, name, *, pod, follow, tail_lines, container
+    ):
+        """Stub for ``get_pod_logs_impl``.
+
+        The run view auto-follows pod logs on mount for Running CRs, which
+        would otherwise drive ``CoreV1Api(api).read_namespaced_pod_log(...)``
+        against the ``object()`` api sentinel and crash with
+        ``AttributeError: 'object' object has no attribute 'client_side_validation'``.
+        Return an empty ``text/plain`` body for both follow and non-follow
+        paths — tests that care about log content can override via the
+        fake's ``pod_logs_by_pod`` mapping (not wired here because no test
+        inspects rendered log content yet).
+        """
+        from fastapi.responses import Response
+
+        return Response(content=b"", media_type="text/plain")
+
     # Patch both the source module and the router's local re-imports, because
     # the router does ``from aiperf.kubernetes.client import ...`` which binds
     # the names into its own module namespace. Also patch ``job_union`` which
@@ -374,6 +399,15 @@ def fake_k8s_client(
             target, "list_events_for_object", _events_for_object, raising=False
         )
         monkeypatch.setattr(target, "cancel_aiperf_job", _cancel, raising=False)
+
+    # The pod-logs endpoint is implemented in its own module but imported
+    # into the main jobs router's namespace (``from aiperf.operator.routers
+    # .jobs_logs import get_pod_logs_impl``). Patch in both namespaces so
+    # the run view's auto-follow fetch doesn't hit the bare api sentinel.
+    monkeypatch.setattr(
+        jobs_logs_mod, "get_pod_logs_impl", _pod_logs_stub, raising=False
+    )
+    monkeypatch.setattr(jobs_router, "get_pod_logs_impl", _pod_logs_stub, raising=False)
 
     # Inject a non-None sentinel into the router's ``api_holder`` so
     # ``_require_api`` passes. The holder is a closure local in

@@ -1,16 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""E2E tests for the operator web UI dashboard page.
+"""E2E tests for the operator web UI Home view.
 
-Covers the five KPI cards rendered by ``dashboard.js`` (``Running``,
-``Completed``, ``Peak Throughput``, ``Best TTFT``, ``Token Throughput``),
-the empty-results-dir render, and the persistent top-nav / breadcrumb
-chrome.
-
-The Running / Completed KPIs are driven by the Kubernetes API (via
-``fake_k8s_client``'s canned AIPerfJob list), not by the on-disk results
-tree. The throughput / TTFT / token KPIs are driven by the leaderboard +
-per-job summary fetches against ``results_dir``.
+Covers the ``/`` route — the WORKBENCH shell's Home view
+(``src/aiperf/operator/ui/views/home.js``). Home replaces the older
+dashboard: instead of five KPI cards + a hero strip, it renders one
+compact five-cell summary strip (Running / Passed / Fault / NS /
+optional GPUs) plus a dense, per-namespace list of runs. The Running /
+Passed / Fault counts are driven by the Kubernetes API (via
+``fake_k8s_client``'s canned AIPerfJob list).
 """
 
 from __future__ import annotations
@@ -19,172 +17,116 @@ import pytest
 from playwright.async_api import expect
 
 from ._builders import build_empty
-from ._pages import DashboardPage
+from ._pages import HomePage
 
 pytestmark = [pytest.mark.e2e]
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_loads_with_seeded_data(
+async def test_home_loads_with_seeded_data(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Dashboard root URL renders the ``page-dashboard`` root element."""
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    await expect(page.get_by_test_id("page-dashboard")).to_be_visible()
+    """Home root URL renders the ``page-home`` root element."""
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    await expect(page.get_by_test_id("page-home")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_shows_completed_kpi(
+async def test_home_summary_shows_passed_count(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``kpi-completed`` shows the count of Succeeded+Completed k8s jobs.
+    """The Passed cell counts Succeeded/Completed jobs from the k8s fixture.
 
-    The ``fake_k8s_client`` golden jobs.json has 3 Succeeded jobs
+    The ``fake_k8s_client`` golden ``jobs.json`` has 3 Succeeded CRs
     (``aiperf-llama3-c128``, ``aiperf-llama3-c256``, ``mistral-7b-run1``),
-    so the Completed KPI renders literal "3".
+    so the Passed cell renders literal ``3``.
     """
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    kpi = dash.kpi("completed")
-    await expect(kpi).to_be_visible()
-    await expect(kpi).to_contain_text("3")
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    passed = home.summary_cell("Passed")
+    await expect(passed).to_be_visible()
+    await expect(passed).to_contain_text("3")
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_shows_running_kpi(
+async def test_home_summary_shows_running_count(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``kpi-running`` shows the count of Running/Initializing/Pending jobs.
+    """The Running cell counts Running/Initializing/Pending jobs.
 
-    The golden jobs.json has exactly one Running job (``live-run``); no
-    Initializing or Pending entries, so the Running KPI renders "1".
+    The golden ``jobs.json`` has exactly one Running CR (``live-run``);
+    no Initializing or Pending entries, so the Running cell renders ``1``.
     """
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    kpi = dash.kpi("running")
-    await expect(kpi).to_be_visible()
-    await expect(kpi).to_contain_text("1")
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    running = home.summary_cell("Running")
+    await expect(running).to_be_visible()
+    await expect(running).to_contain_text("1")
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_empty_state(live_operator_app, fake_k8s_client, page) -> None:
-    """Empty ``results_dir`` still renders the dashboard without crashing.
+async def test_home_empty_results_dir_still_renders(
+    live_operator_app, fake_k8s_client, page
+) -> None:
+    """Empty ``results_dir`` still renders Home without crashing.
 
-    Running / Completed KPIs remain populated from the k8s fixture; the
-    three result-driven KPIs (Peak Throughput, Best TTFT, Token
-    Throughput) render the em-dash placeholder ``---`` because no summary
-    files exist on disk.
+    Running / Passed / Fault cells remain populated from the k8s fixture
+    (which is independent of the on-disk results tree).
     """
     build_empty(live_operator_app.results_dir)
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    await expect(page.get_by_test_id("page-dashboard")).to_be_visible()
-    # All five KPI cards still render (UI does not hide them when empty).
-    for label in (
-        "running",
-        "completed",
-        "peak-throughput",
-        "best-ttft",
-        "token-throughput",
-    ):
-        await expect(dash.kpi(label)).to_be_visible()
-    # Result-driven KPIs show the em-dash fallback.
-    await expect(dash.kpi("peak-throughput")).to_contain_text("---")
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    await expect(page.get_by_test_id("page-home")).to_be_visible()
+    await expect(home.summary()).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_renders_top_nav_and_breadcrumb(
+async def test_home_renders_top_nav_and_breadcrumb(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Top-nav and breadcrumb chrome are both visible on the dashboard."""
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
+    """Top-nav chrome is visible on Home.
+
+    The breadcrumb nav is only rendered when the view actually carries a
+    crumb trail (Run / Launch / Archive); Home intentionally omits it
+    because ``/`` is the root, so we only assert ``top-nav`` here.
+    """
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
     await expect(page.get_by_test_id("top-nav")).to_be_visible()
-    await expect(page.get_by_test_id("breadcrumb")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_hero_visible_for_running_job(
-    live_operator_app,
-    seeded_results_dir,
-    fake_k8s_client,
-    page,
+async def test_home_lists_live_run_row(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """HeroStrip appears on the dashboard when a running CR exists.
+    """Home renders a clickable row for the single running CR in the golden data.
 
-    The golden ``jobs.json`` carries a single ``live-run`` CR in phase
-    ``Running``; the dashboard should mount a ``dashboard-hero`` wrapper
-    whose text at least references the running job's name.
-
-    We drop a minimal ``job_spec.json`` for ``live-run`` so the hero's
-    config fetch returns 200 (otherwise Chrome logs the 404 as
-    ``console.error`` and the ``page`` fixture fails teardown). The empty
-    spec declares zero SLOs, so the hero shows the honest "Running" +
-    "no SLOs declared — no live judgment" variant rather than the old
-    present-tense "On target" lie.
+    The row's test-id is derived from namespace + name
+    (``hm-row-aiperf-bench-live-run``) and carries the run name text.
     """
-    import orjson
-
-    live_dir = live_operator_app.results_dir / "aiperf-bench" / "live-run"
-    live_dir.mkdir(parents=True, exist_ok=True)
-    (live_dir / "job_spec.json").write_bytes(orjson.dumps({"benchmark": {}}))
-
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    hero = page.get_by_test_id("dashboard-hero")
-    await expect(hero).to_be_visible()
-    await expect(hero).to_contain_text("live-run")
-    text = await hero.inner_text()
-    assert "Running" in text or "no SLOs declared" in text, text
-    assert "On target" not in text, text
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    row = home.row("aiperf-bench", "live-run")
+    await expect(row).to_be_visible()
+    await expect(row).to_contain_text("live-run")
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_hero_absent_when_no_running_job(
+async def test_home_empty_state_shows_launch_cta(
     live_operator_app,
     fake_k8s_client,
     page,
 ) -> None:
-    """With no Running CR and an empty results tree, no hero is rendered."""
-    fake_k8s_client.jobs_raw = [
-        j for j in fake_k8s_client.jobs_raw if j["status"].get("phase") != "Running"
-    ]
+    """With no CRs and an empty results tree, Home shows the launch CTA.
+
+    After the 2s scanning animation settles, Home renders the
+    ``home-launch-cta`` button (deep-linked at ``/launch``) in place of
+    the run list.
+    """
+    fake_k8s_client.jobs_raw = []
     build_empty(live_operator_app.results_dir)
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    hero = page.get_by_test_id("dashboard-hero")
-    await expect(hero).to_have_count(0)
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_dashboard_hero_shows_slo_chip_for_running_job(
-    live_operator_app,
-    seeded_results_dir,
-    fake_k8s_client,
-    page,
-) -> None:
-    """With SLOs declared on the running CR's spec, the hero shows SLO judgment.
-
-    Task E fix: ``/api/v1/config/{ns}/{name}`` falls back to the live CR spec
-    for a running job with no on-disk artifacts, so the hero can classify
-    health against the declared SLO instead of showing "Waiting for data".
-    """
-    for raw in fake_k8s_client.jobs_raw:
-        if raw["metadata"]["name"] == "live-run":
-            raw["spec"] = raw.get("spec", {})
-            raw["spec"]["benchmark"] = {
-                "models": {"items": [{"name": "llama3-8b"}]},
-                "endpoint": {"urls": ["http://llama3.svc:8000/v1"], "type": "chat"},
-                "slos": {"time_to_first_token": 500},
-            }
-            raw.setdefault("status", {})["liveSummary"] = {
-                "throughput_rps": 31.5,
-                "ttft_p99_ms": 250.0,
-                "latency_p99_ms": 380.0,
-            }
-    dash = DashboardPage(page, live_operator_app.base_url)
-    await dash.goto()
-    hero = page.get_by_test_id("dashboard-hero")
-    await expect(hero).to_be_visible()
-    await expect(hero).to_contain_text("On target")
+    home = HomePage(page, live_operator_app.base_url)
+    await home.goto()
+    cta = page.get_by_test_id("home-launch-cta")
+    await expect(cta).to_be_visible(timeout=7000)

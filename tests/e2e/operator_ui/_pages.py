@@ -2,8 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Page-object wrappers used by the e2e UI tests.
 
-Thin helpers — not a full POM. Each page exposes `.goto(...)` and the
+Thin helpers — not a full POM. Each page exposes ``.goto(...)`` and the
 handful of interactions the per-page test files actually exercise.
+
+The operator UI was rewritten to the WORKBENCH shell (see
+``src/aiperf/operator/ui/app.js``); routes and test-ids changed
+substantially from the prior Flight-Deck incarnation. This module
+targets the current contract:
+
+- ``/``           → Home view, root ``page-home``
+- ``/archive``    → Archive view, root ``page-archive``
+- ``/run/:ns/:name`` → single-run workbench, root ``page-job-detail``
+- ``/compare`` / ``/analysis`` → Analysis view, root ``page-leaderboard``
+- ``/log`` / ``/history`` → Log view, root ``page-history``
+- ``/launch``     → Launch view, root ``page-launch``
+
+Legacy URLs (``/jobs``, ``/jobs/:ns/:name``, ``/leaderboard``,
+``/history``) still resolve so deep links keep working; tests use the
+new canonical paths.
 """
 
 from __future__ import annotations
@@ -21,76 +37,88 @@ class BasePage:
     async def _goto(self, route: str) -> None:
         # The UI uses hash-based routing (``window.location.hash``); the
         # FastAPI server mounts only ``/`` for the SPA, so non-root URLs
-        # like ``/jobs`` return 404. Route all navigations through
+        # like ``/archive`` return 404. Route all navigations through
         # ``/#<route>``, with ``/`` short-circuited to the bare index.
         suffix = "" if route in ("", "/") else f"#{route}"
         await self.page.goto(self.base_url + "/" + suffix)
 
 
-class DashboardPage(BasePage):
+class HomePage(BasePage):
+    """The ``/`` Home view — dense list of all runs grouped by namespace."""
+
     async def goto(self) -> None:
         await self._goto("/")
-        await expect(self.page.get_by_test_id("page-dashboard")).to_be_visible()
+        await expect(self.page.get_by_test_id("page-home")).to_be_visible()
 
-    def kpi(self, label: str) -> Locator:
-        return self.page.get_by_test_id(f"kpi-{label}")
+    def summary(self) -> Locator:
+        """The five-cell summary strip (Running / Passed / Fault / NS / GPUs)."""
+        return self.page.get_by_test_id("hm-summary")
 
+    def summary_cell(self, label: str) -> Locator:
+        """A single cell in the summary strip, matched by its uppercase label.
 
-class JobsPage(BasePage):
-    async def goto(self) -> None:
-        await self._goto("/jobs")
-        await expect(self.page.get_by_test_id("page-jobs")).to_be_visible()
-
-    def rows(self) -> Locator:
-        return self.page.get_by_test_id("job-table").locator(
-            "[data-testid^='job-row-']"
-        )
+        Args:
+            label: One of ``Running``, ``Passed``, ``Fault``, ``NS``, ``GPUs``.
+        """
+        return self.summary().locator(".hm-cell", has_text=label)
 
     def row(self, namespace: str, name: str) -> Locator:
-        return self.page.get_by_test_id(f"job-row-{namespace}-{name}")
+        return self.page.get_by_test_id(f"hm-row-{namespace}-{name}")
 
-    async def click_column_header(self, key: str) -> None:
-        await self.page.get_by_test_id(f"col-header-{key}").click()
+    def rows(self) -> Locator:
+        return self.page.locator("[data-testid^='hm-row-']")
 
-    async def set_namespace_filter(self, ns: str) -> None:
-        # The jobs page has no dedicated namespace selector; instead the
-        # search input matches against both name and namespace. Typing the
-        # namespace narrows the table the same way a filter would.
-        await self.page.get_by_placeholder("Search name...").fill(ns)
+
+class ArchivePage(BasePage):
+    """The ``/archive`` view — past-runs browser with filter + sort controls."""
+
+    async def goto(self) -> None:
+        await self._goto("/archive")
+        await expect(self.page.get_by_test_id("page-archive")).to_be_visible()
+
+    def row(self, namespace: str, name: str) -> Locator:
+        return self.page.get_by_test_id(f"arch-row-{namespace}-{name}")
+
+    def rows(self) -> Locator:
+        return self.page.locator("[data-testid^='arch-row-']")
+
+    async def search(self, query: str) -> None:
+        await self.page.get_by_test_id("archive-search").fill(query)
+
+    async def set_sort(self, value: str) -> None:
+        """Set the sort dropdown (``archive-sort``) to one of its options."""
+        await self.page.get_by_test_id("archive-sort").select_option(value)
 
 
 class JobDetailPage(BasePage):
+    """The ``/run/:ns/:name`` single-run workbench (root ``page-job-detail``)."""
+
     def __init__(self, page: Page, base_url: str, namespace: str, name: str) -> None:
         super().__init__(page, base_url)
         self.namespace = namespace
         self.name = name
 
     async def goto(self) -> None:
-        await self._goto(f"/jobs/{self.namespace}/{self.name}")
+        await self._goto(f"/run/{self.namespace}/{self.name}")
         await expect(self.page.get_by_test_id("page-job-detail")).to_be_visible()
 
     async def cancel(self) -> None:
-        await self.page.get_by_test_id("job-detail-cancel").click()
+        await self.page.get_by_test_id("run-cancel").click()
 
 
-class LeaderboardPage(BasePage):
-    async def goto(self) -> None:
-        await self._goto("/leaderboard")
-        await expect(self.page.get_by_test_id("page-leaderboard")).to_be_visible()
+class AnalysisPage(BasePage):
+    """The ``/compare`` / ``/analysis`` view (root ``page-leaderboard``)."""
 
-    async def select_metric(self, metric: str) -> None:
-        await self.page.get_by_test_id("metric-selector").select_option(metric)
-
-
-class ComparePage(BasePage):
     async def goto(self) -> None:
         await self._goto("/compare")
-        await expect(self.page.get_by_test_id("page-compare")).to_be_visible()
+        await expect(self.page.get_by_test_id("page-leaderboard")).to_be_visible()
 
 
-class HistoryPage(BasePage):
+class LogPage(BasePage):
+    """The ``/log`` / ``/history`` durable run-log view (root ``page-history``)."""
+
     async def goto(self) -> None:
-        await self._goto("/history")
+        await self._goto("/log")
         await expect(self.page.get_by_test_id("page-history")).to_be_visible()
 
 
