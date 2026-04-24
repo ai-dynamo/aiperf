@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -158,17 +159,25 @@ def enforce_retention(
     *,
     keep: int,
     protect_epoch: str,
+    retain_days: int = 0,
 ) -> list[str]:
-    """Prune old run dirs, keeping the ``keep`` newest plus ``protect_epoch``.
+    """Prune old run dirs by count and optionally age (conservative intersection).
 
-    Sorts existing runs by mtime descending, keeps the first ``keep``,
-    and deletes the tail. ``protect_epoch`` is always retained even if
-    it would otherwise be pruned — the active run must never be
-    deleted out from under the writer.
+    A run is kept iff BOTH policies agree to keep it (or ``protect_epoch``
+    overrides):
 
-    Returns the list of deleted epoch strings. I/O failures on
-    individual deletions are logged and swallowed so one corrupt dir
-    never blocks retention on the rest.
+    - Count policy keeps the ``keep`` newest by mtime.
+    - Age policy keeps runs whose mtime is within ``retain_days`` days.
+
+    A run is deleted only when BOTH policies would reap it. ``retain_days=0``
+    disables the age policy (treated as "always keep"), so behavior falls
+    back to count-only. ``protect_epoch`` is always retained regardless of
+    either policy — the active run must never be deleted out from under
+    the writer.
+
+    Returns the list of deleted epoch strings. I/O failures on individual
+    deletions are logged and swallowed so one corrupt dir never blocks
+    retention on the rest.
 
     Example:
         >>> enforce_retention(Path("/data"), "bench", "warmup-7f2a", keep=10, protect_epoch="1714069323")
@@ -187,12 +196,16 @@ def enforce_retention(
         return []
 
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    survivors = {p.name for p in candidates[:keep]}
-    survivors.add(protect_epoch)
+    count_keepers = {p.name for p in candidates[:keep]}
+    age_cutoff = time.time() - retain_days * 86400 if retain_days > 0 else None
 
     deleted: list[str] = []
     for child in candidates:
-        if child.name in survivors:
+        if child.name == protect_epoch:
+            continue
+        count_keep = child.name in count_keepers
+        age_keep = age_cutoff is None or child.stat().st_mtime >= age_cutoff
+        if count_keep and age_keep:
             continue
         try:
             shutil.rmtree(child)

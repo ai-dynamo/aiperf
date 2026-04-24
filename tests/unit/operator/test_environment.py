@@ -464,3 +464,16 @@ def test_results_retain_runs_rejects_zero(monkeypatch: pytest.MonkeyPatch) -> No
 
     with pytest.raises(ValidationError):
         _ResultsSettings()
+
+
+def test_retain_days_default_is_zero() -> None:
+    from aiperf.operator.environment import _ResultsSettings
+
+    assert _ResultsSettings().RETAIN_DAYS == 0
+
+
+def test_retain_days_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIPERF_RESULTS_RETAIN_DAYS", "90")
+    from aiperf.operator.environment import _ResultsSettings
+
+    assert _ResultsSettings().RETAIN_DAYS == 90

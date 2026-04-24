@@ -83,6 +83,14 @@ class _ResultsSettings(BaseSettings):
         "before retention trimming. Applied after every successful completion; "
         "the just-written epoch is always protected from deletion.",
     )
+    RETAIN_DAYS: int = Field(
+        default=0,
+        ge=0,
+        le=36500,
+        description="Age-based retention cap in days. 0 disables age policy. "
+        "A run is deleted only when BOTH this age cap AND RETAIN_RUNS "
+        "agree the run is outside the keep window; protect_epoch still wins.",
+    )
 
 
 class _OperatorEnvironment(BaseSettings):

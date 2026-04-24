@@ -174,3 +174,67 @@ def test_epoch_key_from_body_parses_iso_timestamp() -> None:
 def test_epoch_key_from_body_stable_across_calls() -> None:
     body = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}}
     assert epoch_key_from_body(body) == epoch_key_from_body(body)
+
+
+def test_enforce_retention_age_and_count_both_apply(tmp_path: Path) -> None:
+    now = time.time()
+    old_epoch, recent1, recent2 = "1700000000", "1714000000", "1714100000"
+    for epoch, age_days in [(old_epoch, 100), (recent1, 1), (recent2, 0)]:
+        d = run_dir(tmp_path, "ns", "job", epoch)
+        d.mkdir(parents=True)
+        os.utime(d, (now - age_days * 86400, now - age_days * 86400))
+    # keep=10 (everything in count window) AND retain_days=30 (only old eligible)
+    # Intersection: only old_epoch is deleted.
+    deleted = enforce_retention(
+        tmp_path,
+        "ns",
+        "job",
+        keep=10,
+        protect_epoch=recent2,
+        retain_days=30,
+    )
+    assert deleted == [old_epoch]
+
+
+def test_enforce_retention_age_only_doesnt_delete_within_count_window(
+    tmp_path: Path,
+) -> None:
+    now = time.time()
+    epoch = "1700000000"
+    d = run_dir(tmp_path, "ns", "job", epoch)
+    d.mkdir(parents=True)
+    os.utime(d, (now - 100 * 86400, now - 100 * 86400))
+    # keep=10 says "keep"; age says "too old". Intersection = keep (conservative).
+    deleted = enforce_retention(
+        tmp_path,
+        "ns",
+        "job",
+        keep=10,
+        protect_epoch=epoch,
+        retain_days=30,
+    )
+    assert deleted == []
+    assert epoch in list_run_epochs(tmp_path, "ns", "job")
+
+
+def test_enforce_retention_retain_days_zero_disables_age_policy(
+    tmp_path: Path,
+) -> None:
+    now = time.time()
+    epochs = ["1710000000", "1711000000", "1712000000"]
+    for i, epoch in enumerate(epochs):
+        d = run_dir(tmp_path, "ns", "job", epoch)
+        d.mkdir(parents=True)
+        # epochs[-1] is newest so it matches protect_epoch under count-only.
+        age_days = len(epochs) - i
+        os.utime(d, (now - age_days * 86400, now - age_days * 86400))
+    # keep=1 forces reap of two; retain_days=0 = age policy off -> count alone.
+    deleted = enforce_retention(
+        tmp_path,
+        "ns",
+        "job",
+        keep=1,
+        protect_epoch=epochs[-1],
+        retain_days=0,
+    )
+    assert len(deleted) == 2

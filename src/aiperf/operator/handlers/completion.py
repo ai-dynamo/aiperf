@@ -266,6 +266,7 @@ def _run_retention_pass(namespace: str, job_id: str, epoch: str) -> None:
             job_id,
             keep=OperatorEnvironment.RESULTS.RETAIN_RUNS,
             protect_epoch=epoch,
+            retain_days=OperatorEnvironment.RESULTS.RETAIN_DAYS,
         )
     except Exception:  # noqa: BLE001 - retention is best-effort; never fail completion on disk I/O
         logger.warning(
