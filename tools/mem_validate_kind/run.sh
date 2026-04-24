@@ -3,7 +3,7 @@
 #
 # Pipeline:
 #   1. Ensure a kind cluster exists (reuse or create).
-#   2. Build the probe image (aiperf-slim + transformers/tokenizers + probe.py).
+#   2. Build the probe image (aiperf test stage + transformers/tokenizers + probe.py).
 #   3. Load the image into kind.
 #   4. Apply two pods: N-container mode, and 1-container-with-N-children mode.
 #   5. Wait for every worker-shaped process to signal readiness via /shared.
@@ -20,7 +20,7 @@ REPO="$(cd "${HERE}/../.." && pwd)"
 CLUSTER_NAME="${CLUSTER_NAME:-aiperf-mem-validate}"
 N_CHILDREN="${N:-10}"
 IMAGE="localhost/aiperf-mem-probe:latest"
-BASE_IMAGE="aiperf-slim:amd64-final"
+BASE_IMAGE="aiperf:mem-probe-base"
 OUT="${HERE}/results"
 mkdir -p "${OUT}"
 
@@ -40,7 +40,7 @@ step_cluster() {
 
 step_image() {
   if ! docker image inspect "${BASE_IMAGE}" >/dev/null 2>&1; then
-    err "base image ${BASE_IMAGE} missing; build it first from deploy/Dockerfile.aiperf-slim"
+    err "base image ${BASE_IMAGE} missing; build with: docker build --target test -t ${BASE_IMAGE} ."
     exit 2
   fi
   log "building probe image ${IMAGE}"

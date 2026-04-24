@@ -2565,7 +2565,7 @@ def cmd_install_loki() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Image push (retag + docker push the aiperf-slim image)
+# Image push (retag + docker push the aiperf image)
 # ---------------------------------------------------------------------------
 
 

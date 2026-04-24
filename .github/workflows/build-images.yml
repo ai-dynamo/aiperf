@@ -1,11 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Multi-arch container image build workflow (opt-in push).
 #
-# On pull_request and push-to-main, both deploy/Dockerfile.aiperf-slim and
-# deploy/Dockerfile.operator are BUILT for linux/amd64 + linux/arm64 as a CI
-# check. Nothing is pushed.
+# Builds the official aiperf image (root `Dockerfile`, `runtime` stage) for
+# linux/amd64 + linux/arm64 as a CI check on pull_request and push-to-main;
+# nothing is pushed by default.
+#
+# The operator and benchmark pods share this one image — kopf is a main
+# dependency (see pyproject.toml), so `kopf run -m aiperf.operator.main ...`
+# works from the same venv that benchmark pods use. The Helm chart
+# (`deploy/helm/aiperf-operator/values.yaml`) points at `nvcr.io/nvidia/aiperf`
+# by default, matching this workflow's registry.
 #
 # To publish images, trigger this workflow manually ("Run workflow" /
 # workflow_dispatch) with:
@@ -55,17 +61,9 @@ permissions:
 
 jobs:
   build:
-    name: "build (${{ matrix.image.name }})"
+    name: "build (aiperf)"
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - name: aiperf-slim
-            dockerfile: deploy/Dockerfile.aiperf-slim
-          - name: operator
-            dockerfile: deploy/Dockerfile.operator
     env:
       PUSH_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.push_to_registry == true }}
       REGISTRY: ${{ (github.event_name == 'workflow_dispatch' && inputs.registry) || 'ghcr.io/ai-dynamo/aiperf' }}
@@ -105,7 +103,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image.name }}
+          images: ${{ env.REGISTRY }}/aiperf
           tags: |
             type=sha,format=short,prefix=sha-
             type=ref,event=pr,prefix=pr-
@@ -123,27 +121,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Build${{ steps.push.outputs.enabled == 'true' && ' and push' || '' }} ${{ matrix.image.name }}
+      - name: Build${{ steps.push.outputs.enabled == 'true' && ' and push' || '' }} aiperf
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.image.dockerfile }}
+          file: Dockerfile
+          target: runtime
           platforms: linux/amd64,linux/arm64
           push: ${{ steps.push.outputs.enabled == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+          cache-from: type=gha,scope=aiperf
+          cache-to: type=gha,scope=aiperf,mode=max
 
       - name: Write job summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Image build: \`${{ matrix.image.name }}\`"
+            echo "## Image build: \`aiperf\`"
             echo ""
-            echo "- Dockerfile: \`${{ matrix.image.dockerfile }}\`"
+            echo "- Dockerfile: \`Dockerfile\` (target: \`runtime\`)"
             echo "- Platforms: \`linux/amd64,linux/arm64\`"
             echo "- Registry: \`${REGISTRY}\`"
             echo "- Push requested: \`${PUSH_REQUESTED}\`"
