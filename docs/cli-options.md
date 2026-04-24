@@ -112,6 +112,10 @@ Retrieve benchmark results
 
 [Parameters](#parameters) • [Kubernetes](#kubernetes)
 
+### [`kube show`](#aiperf-kube-show)
+
+Render an AIPerfJob CR with Jinja2/env-vars resolved
+
 ### [`kube debug`](#aiperf-kube-debug)
 
 Run diagnostic analysis on a deployment
@@ -4298,6 +4302,16 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 #### `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
+
+<hr/>
+
+## `aiperf kube show`
+
+Render an AIPerfJob CR with Jinja2/env-vars resolved
+
+#### `-p`, `--path` `<str>` _(Required)_
+
+Path to an AIPerfJob YAML file.
 
 <hr/>
 

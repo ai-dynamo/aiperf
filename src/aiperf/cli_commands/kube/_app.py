@@ -49,6 +49,11 @@ app.command(
     help="Retrieve benchmark results",
 )
 app.command(
+    "aiperf.cli_commands.kube.show:app",
+    name="show",
+    help="Render an AIPerfJob CR with Jinja2/env-vars resolved",
+)
+app.command(
     "aiperf.cli_commands.kube.debug:app",
     name="debug",
     help="Run diagnostic analysis on a deployment",
