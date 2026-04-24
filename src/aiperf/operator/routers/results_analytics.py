@@ -18,6 +18,7 @@ from kubernetes_asyncio.client import ApiClient
 
 from aiperf.kubernetes.client import get_raw_aiperfjob
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
+from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers.results_schemas import (
     CompareResponse,
     HistoryEntry,
@@ -205,12 +206,14 @@ def _register_index_routes(
         if spec is not None:
             return {"source": "index", "spec": spec}
 
-        spec_file = base_dir / namespace / job_id / "job_spec.json"
-        if spec_file.exists():
-            import orjson
+        run = resolve_run_dir(base_dir, namespace, job_id)
+        if run is not None:
+            spec_file = run / "job_spec.json"
+            if spec_file.exists():
+                import orjson
 
-            data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
-            return {"source": "file", "spec": data}
+                data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
+                return {"source": "file", "spec": data}
 
         result = await get_db().summary(namespace, job_id)
         if result and result.get("input_config"):

@@ -23,6 +23,7 @@ import orjson
 # Import at module level so tests can monkeypatch these bindings directly.
 from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator.results_layout import resolve_run_dir
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -112,10 +113,13 @@ def _scan_pvc_jobs(
             continue
         if namespace is not None and ns_dir.name != namespace:
             continue
-        for job_dir in sorted(ns_dir.iterdir()):
-            if not job_dir.is_dir():
+        for name_dir in sorted(ns_dir.iterdir()):
+            if not name_dir.is_dir():
                 continue
-            summary_path = job_dir / _SUMMARY_FILE
+            run = resolve_run_dir(base_dir, ns_dir.name, name_dir.name)
+            if run is None:
+                continue
+            summary_path = run / _SUMMARY_FILE
             if not summary_path.is_file():
                 continue
             summary = _read_summary(summary_path)
@@ -132,7 +136,7 @@ def _scan_pvc_jobs(
             out.append(
                 _archived_from_summary(
                     ns_dir.name,
-                    job_dir.name,
+                    name_dir.name,
                     summary,
                     mtime_iso=mtime_iso,
                 )
@@ -317,9 +321,10 @@ async def find_any_job(
     if cr is not None:
         cr.source = "live"
 
-    summary_path = results_dir / namespace / name / _SUMMARY_FILE
+    run = resolve_run_dir(results_dir, namespace, name)
+    summary_path = run / _SUMMARY_FILE if run is not None else None
     pvc: AIPerfJobInfo | None = None
-    if summary_path.is_file():
+    if summary_path is not None and summary_path.is_file():
         import datetime as _dt
 
         data = _read_summary(summary_path)

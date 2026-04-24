@@ -29,6 +29,7 @@ from aiperf.operator.job_union import (
     list_all_jobs,
     synthesize_status_from_summary,
 )
+from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
 from aiperf.operator.routers.jobs_models import (
     ActiveJobListResponse,
@@ -157,7 +158,9 @@ async def _get_job_impl(
         raise HTTPException(404, f"Job {namespace}/{name} not found")
 
     if job.source == "archived":
-        job_dir = results_dir / namespace / name
+        job_dir = resolve_run_dir(results_dir, namespace, name)
+        if job_dir is None:
+            raise HTTPException(404, f"No persisted run for {namespace}/{name}")
         summary_path = job_dir / "profile_export_aiperf.json"
         try:
             summary = orjson.loads(summary_path.read_bytes())

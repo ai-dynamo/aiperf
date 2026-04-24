@@ -26,6 +26,9 @@ from pytest import param
 pytest.importorskip("duckdb", reason="duckdb required for results_db tests")
 
 from aiperf.operator.results_db import ResultsDB, _escape_like, _validate_identifier
+from aiperf.operator.results_layout import write_latest
+
+_TEST_EPOCH = "1714064523"
 
 # ============================================================
 # Helpers
@@ -79,7 +82,7 @@ def _write_summary(
         },
     }
 
-    job_dir = base_dir / namespace / job_id
+    job_dir = base_dir / namespace / job_id / _TEST_EPOCH
     job_dir.mkdir(parents=True, exist_ok=True)
 
     content = orjson.dumps(data)
@@ -90,6 +93,7 @@ def _write_summary(
     else:
         path = job_dir / "profile_export_aiperf.json"
         path.write_bytes(content)
+    write_latest(base_dir, namespace, job_id, _TEST_EPOCH)
     return path
 
 
@@ -312,9 +316,10 @@ class TestLeaderboard:
     async def test_leaderboard_malformed_json_returns_empty(
         self, results_dir: Path, db: ResultsDB
     ) -> None:
-        job_dir = results_dir / "ns" / "job-bad"
+        job_dir = results_dir / "ns" / "job-bad" / _TEST_EPOCH
         job_dir.mkdir(parents=True)
         (job_dir / "profile_export_aiperf.json").write_bytes(b"not valid json at all")
+        write_latest(results_dir, "ns", "job-bad", _TEST_EPOCH)
 
         # DuckDB should handle this gracefully
         rows = await db.leaderboard()
@@ -528,9 +533,10 @@ class TestSummary:
     async def test_summary_job_dir_exists_but_no_summary_file(
         self, results_dir: Path, db: ResultsDB
     ) -> None:
-        job_dir = results_dir / "ns" / "job-1"
+        job_dir = results_dir / "ns" / "job-1" / _TEST_EPOCH
         job_dir.mkdir(parents=True)
         (job_dir / "other.json").write_bytes(b"{}")
+        write_latest(results_dir, "ns", "job-1", _TEST_EPOCH)
 
         result = await db.summary("ns", "job-1")
         assert result is None

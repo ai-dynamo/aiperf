@@ -18,6 +18,8 @@ from typing import Any
 
 import duckdb
 
+from aiperf.operator.results_layout import resolve_run_dir
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_COMPARE_METRICS = [
@@ -49,15 +51,17 @@ class ResultsDB:
         """Build a glob pattern matching summary files across all jobs.
 
         Handles both compressed (.zst) and uncompressed variants.
+        Layout is ``<base>/<namespace>/<job>/<epoch>/<filename>`` — the extra
+        ``*`` covers the run-epoch directory introduced by results_layout.
         Returns a DuckDB-compatible glob string.
         """
         base = str(self._results_dir)
         # DuckDB's read_json supports glob patterns
-        zst = f"{base}/*/*/{glob}.zst"
-        raw = f"{base}/*/*/{glob}"
+        zst = f"{base}/*/*/*/{glob}.zst"
+        raw = f"{base}/*/*/*/{glob}"
 
-        zst_exists = any(self._results_dir.glob(f"*/*/{glob}.zst"))
-        raw_exists = any(self._results_dir.glob(f"*/*/{glob}"))
+        zst_exists = any(self._results_dir.glob(f"*/*/*/{glob}.zst"))
+        raw_exists = any(self._results_dir.glob(f"*/*/*/{glob}"))
 
         if zst_exists and raw_exists:
             return f"['{zst}', '{raw}']"
@@ -68,10 +72,14 @@ class ResultsDB:
         return "''"
 
     def _extract_job_path_parts(self) -> str:
-        """SQL expression to extract namespace and job_id from the filename path."""
+        """SQL expression to extract namespace and job_id from the filename path.
+
+        Filename shape is ``<base>/<namespace>/<job>/<epoch>/<filename>``,
+        so namespace is the 4th-from-last segment and job_id is the 3rd.
+        """
         return (
-            "string_split(filename, '/')[-3] AS namespace, "
-            "string_split(filename, '/')[-2] AS job_id"
+            "string_split(filename, '/')[-4] AS namespace, "
+            "string_split(filename, '/')[-3] AS job_id"
         )
 
     async def leaderboard(
@@ -248,7 +256,7 @@ class ResultsDB:
                     compression='auto_detect',
                     union_by_name=true)
             ) t
-            WHERE string_split(filename, '/')[-2] IN ({job_id_list})
+            WHERE string_split(filename, '/')[-3] IN ({job_id_list})
         """  # noqa: S608
 
     def _compare_metric_sql(self, files: str, job_id_list: str, metric: str) -> str:
@@ -257,8 +265,8 @@ class ResultsDB:
         json_expr = f"to_json(t.{metric})"
         return f"""
             SELECT
-                string_split(filename, '/')[-3] AS namespace,
-                string_split(filename, '/')[-2] AS job_id,
+                string_split(filename, '/')[-4] AS namespace,
+                string_split(filename, '/')[-3] AS job_id,
                 TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {metric}_avg,
                 TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {metric}_p50,
                 TRY_CAST({json_expr}->>'p99' AS DOUBLE) AS {metric}_p99,
@@ -269,7 +277,7 @@ class ResultsDB:
                     compression='auto_detect',
                     union_by_name=true)
             ) t
-            WHERE string_split(filename, '/')[-2] IN ({job_id_list})
+            WHERE string_split(filename, '/')[-3] IN ({job_id_list})
         """  # noqa: S608
 
     async def summary(self, namespace: str, job_id: str) -> dict[str, Any] | None:
@@ -279,8 +287,8 @@ class ResultsDB:
             namespace: Kubernetes namespace.
             job_id: Job identifier.
         """
-        job_dir = self._results_dir / namespace / job_id
-        if not job_dir.is_dir():
+        job_dir = resolve_run_dir(self._results_dir, namespace, job_id)
+        if job_dir is None:
             return None
 
         zst = job_dir / "profile_export_aiperf.json.zst"

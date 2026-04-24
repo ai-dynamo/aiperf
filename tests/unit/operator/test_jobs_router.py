@@ -12,7 +12,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.operator.results_layout import write_latest
 from aiperf.operator.routers.jobs import create_jobs_router
+
+_TEST_EPOCH = "1714064523"
 
 
 def _make_app(api=None, results_dir: Path | None = None):
@@ -233,11 +236,12 @@ class TestCancel:
         """Archived (PVC-only) jobs cannot be cancelled — should return 400."""
         from fastapi import FastAPI
 
-        d = tmp_path / "ns" / "ghost"
+        d = tmp_path / "ns" / "ghost" / _TEST_EPOCH
         d.mkdir(parents=True)
         (d / "profile_export_aiperf.json").write_bytes(
             orjson.dumps({"status": "Succeeded"})
         )
+        write_latest(tmp_path, "ns", "ghost", _TEST_EPOCH)
 
         mock_api = MagicMock()
         mock_custom = MagicMock()
@@ -271,7 +275,7 @@ def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
     from aiperf.operator import job_union as ju
     from aiperf.operator.routers.jobs import create_jobs_router
 
-    d = tmp_path / "ns" / "ghost"
+    d = tmp_path / "ns" / "ghost" / _TEST_EPOCH
     d.mkdir(parents=True)
     (d / "profile_export_aiperf.json").write_bytes(
         orjson.dumps(
@@ -287,6 +291,7 @@ def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
             }
         )
     )
+    write_latest(tmp_path, "ns", "ghost", _TEST_EPOCH)
 
     async def fake_find(api, name, namespace):
         return None
@@ -323,7 +328,7 @@ def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
     from aiperf.operator import job_union as ju
     from aiperf.operator.routers.jobs import create_jobs_router
 
-    d = tmp_path / "aiperf-bench" / "archive-only"
+    d = tmp_path / "aiperf-bench" / "archive-only" / _TEST_EPOCH
     d.mkdir(parents=True)
     (d / "profile_export_aiperf.json").write_bytes(
         orjson.dumps(
@@ -333,6 +338,7 @@ def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
             }
         )
     )
+    write_latest(tmp_path, "aiperf-bench", "archive-only", _TEST_EPOCH)
 
     async def fake_list(api, *, all_namespaces=True, namespace=None, **_):
         return []

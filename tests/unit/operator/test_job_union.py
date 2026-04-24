@@ -10,6 +10,9 @@ import orjson
 import pytest
 
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator.results_layout import write_latest
+
+_TEST_EPOCH = "1714064523"
 
 
 def test_aiperfjobinfo_source_defaults_to_live():
@@ -46,7 +49,7 @@ def test_aiperfjobinfo_source_rejects_unknown():
 
 
 def _write_summary(base: Path, ns: str, name: str, **extra) -> None:
-    d = base / ns / name
+    d = base / ns / name / _TEST_EPOCH
     d.mkdir(parents=True, exist_ok=True)
     body = {
         "status": "Succeeded",
@@ -61,6 +64,7 @@ def _write_summary(base: Path, ns: str, name: str, **extra) -> None:
     }
     body.update(extra)
     (d / "profile_export_aiperf.json").write_bytes(orjson.dumps(body))
+    write_latest(base, ns, name, _TEST_EPOCH)
 
 
 def test_scan_pvc_jobs_empty_dir(tmp_path):
@@ -93,15 +97,17 @@ def test_scan_pvc_jobs_finds_summary_files(tmp_path):
 def test_scan_pvc_jobs_skips_dirs_without_summary(tmp_path):
     from aiperf.operator.job_union import _scan_pvc_jobs
 
-    (tmp_path / "aiperf-bench" / "no-summary").mkdir(parents=True)
-    (tmp_path / "aiperf-bench" / "no-summary" / "other.txt").write_bytes(b"x")
+    run = tmp_path / "aiperf-bench" / "no-summary" / _TEST_EPOCH
+    run.mkdir(parents=True)
+    (run / "other.txt").write_bytes(b"x")
+    write_latest(tmp_path, "aiperf-bench", "no-summary", _TEST_EPOCH)
     assert _scan_pvc_jobs(tmp_path) == []
 
 
 def test_scan_pvc_jobs_missing_status_defaults_to_archived(tmp_path):
     from aiperf.operator.job_union import _scan_pvc_jobs
 
-    d = tmp_path / "ns" / "job"
+    d = tmp_path / "ns" / "job" / _TEST_EPOCH
     d.mkdir(parents=True)
     (d / "profile_export_aiperf.json").write_bytes(
         orjson.dumps(
@@ -110,6 +116,7 @@ def test_scan_pvc_jobs_missing_status_defaults_to_archived(tmp_path):
             }
         )
     )
+    write_latest(tmp_path, "ns", "job", _TEST_EPOCH)
     [e] = _scan_pvc_jobs(tmp_path)
     assert e.phase == "Archived"
 
