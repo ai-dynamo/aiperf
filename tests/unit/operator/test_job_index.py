@@ -165,14 +165,18 @@ class TestSaveJobSpecFile:
     @pytest.mark.asyncio
     async def test_saves_json_file(self, results_dir: Path):
         spec = {"image": "aiperf:local", "benchmark": {"models": {}}}
-        await save_job_spec_file("ns", "j1", spec)
+        await save_job_spec_file("ns", "j1", spec, epoch="1714064523")
 
-        path = results_dir / "ns" / "j1" / "job_spec.json"
+        path = results_dir / "ns" / "j1" / "1714064523" / "job_spec.json"
         assert path.exists()
         saved = orjson.loads(path.read_bytes())
         assert saved == spec
 
     @pytest.mark.asyncio
     async def test_creates_directories(self, results_dir: Path):
-        await save_job_spec_file("deep/ns", "my-job", {"test": True})
-        assert (results_dir / "deep/ns" / "my-job" / "job_spec.json").exists()
+        await save_job_spec_file(
+            "deep/ns", "my-job", {"test": True}, epoch="1714064523"
+        )
+        assert (
+            results_dir / "deep/ns" / "my-job" / "1714064523" / "job_spec.json"
+        ).exists()

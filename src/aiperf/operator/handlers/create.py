@@ -35,6 +35,7 @@ from aiperf.operator.k8s_helpers import (
     create_idempotent_role_binding,
 )
 from aiperf.operator.models import AIPerfJobSpec, OwnerReference
+from aiperf.operator.results_layout import epoch_key_from_body
 from aiperf.operator.spec_converter import (
     AIPerfJobSpecConverter,
     apply_worker_config,
@@ -274,6 +275,8 @@ async def _persist_spec_and_index(
     namespace: str,
     name: str,
     job_id: str,
+    *,
+    body: dict[str, Any],
 ) -> None:
     """Persist spec to disk and update the job index.
 
@@ -284,7 +287,8 @@ async def _persist_spec_and_index(
     """
     try:
         plain_spec = _to_plain(spec)
-        await save_job_spec_file(namespace, job_id, plain_spec)
+        epoch = epoch_key_from_body(body)
+        await save_job_spec_file(namespace, job_id, plain_spec, epoch=epoch)
         await index_job_created(namespace, job_id, plain_spec)
     except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
@@ -389,7 +393,7 @@ async def _create_resources(
         configmap_name = await _create_configmap(
             api, deployment, namespace, owner_ref_dict
         )
-        await _persist_spec_and_index(spec, namespace, name, job_id)
+        await _persist_spec_and_index(spec, namespace, name, job_id, body=body)
         jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
 
         return _finalize_success(

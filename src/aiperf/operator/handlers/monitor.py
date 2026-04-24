@@ -48,6 +48,7 @@ from aiperf.operator.handlers.completion import (
     handle_completion,
 )
 from aiperf.operator.models import MetricsSummary, PhaseProgress
+from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from aiperf.operator.status import (
     ConditionType,
     Phase,
@@ -1050,9 +1051,10 @@ async def _recover_from_partial_checkpoints(
     custom: CustomObjectsApi,
 ) -> None:
     """Salvage partial checkpoint files and mark the CR FAILED."""
-    dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+    epoch = epoch_key_from_body(body)
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
     checkpoint_metrics = _parse_metrics_from_files(
-        result.checkpoints, namespace, job_id
+        result.checkpoints, namespace, job_id, epoch=epoch
     )
     if checkpoint_metrics:
         sb.set_results(checkpoint_metrics)
@@ -1152,6 +1154,7 @@ async def _maybe_recover_terminated_controller(
         controller_dns_name(jobset_name, namespace),
         namespace,
         job_id,
+        body=body,
     )
     if result.downloaded:
         # Go through the durable claim — the in-process _shutdown_sent set

@@ -36,6 +36,12 @@ from aiperf.operator.handlers._completion_fetch import (
 from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.models import ControllerFetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient  # re-exported for tests
+from aiperf.operator.results_layout import (
+    enforce_retention,
+    epoch_key_from_body,
+    run_dir,
+    write_latest,
+)
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
 
 __all__ = [
@@ -95,7 +101,7 @@ async def handle_completion(
 
     if result is None:
         host = controller_dns_name(jobset_name, namespace)
-        result = await fetch_results_with_retry(host, namespace, job_id)
+        result = await fetch_results_with_retry(host, namespace, job_id, body=body)
 
     flags = _compute_result_flags(result, job_id)
 
@@ -224,6 +230,7 @@ def _record_results_on_status(
     has_files: bool,
 ) -> None:
     """Populate metrics/summary/resultsPath on the status patch."""
+    epoch = epoch_key_from_body(body)
     if has_metrics:
         sb.set_results(result.metrics)
         summary = MetricsSummary.from_metrics(result.metrics)
@@ -233,16 +240,48 @@ def _record_results_on_status(
     elif has_files:
         # API metrics empty/unavailable but files downloaded.
         # Parse metrics from the JSON export file and store in CR.
-        file_metrics = _parse_metrics_from_files(result.downloaded, namespace, job_id)
+        file_metrics = _parse_metrics_from_files(
+            result.downloaded, namespace, job_id, epoch=epoch
+        )
         if file_metrics:
             sb.set_results(file_metrics)
             logger.info(f"Parsed metrics from result files for {job_id}")
 
     if has_files:
-        dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+        dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
         sb.set_results_path(str(dest_dir))
+        write_latest(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+        sb.set_run_epoch(int(epoch))
+        _run_retention_pass(namespace, job_id, epoch)
         events.results_stored(body, str(dest_dir), len(result.downloaded))
         logger.info(f"Downloaded {len(result.downloaded)} result files to {dest_dir}")
+
+
+def _run_retention_pass(namespace: str, job_id: str, epoch: str) -> None:
+    """Trim old run dirs after a successful write; never fatal on failure."""
+    try:
+        deleted = enforce_retention(
+            OperatorEnvironment.RESULTS.DIR,
+            namespace,
+            job_id,
+            keep=OperatorEnvironment.RESULTS.RETAIN_RUNS,
+            protect_epoch=epoch,
+        )
+    except Exception:  # noqa: BLE001 - retention is best-effort; never fail completion on disk I/O
+        logger.warning(
+            "retention pass failed for %s/%s; continuing",
+            namespace,
+            job_id,
+            exc_info=True,
+        )
+        return
+    if deleted:
+        logger.info(
+            "retention: trimmed %d old runs for %s/%s",
+            len(deleted),
+            namespace,
+            job_id,
+        )
 
 
 def _set_results_phase_and_condition(
@@ -364,13 +403,15 @@ def _parse_metrics_from_files(
     downloaded: list[str],
     namespace: str,
     job_id: str,
+    *,
+    epoch: str,
 ) -> dict[str, Any] | None:
     """Parse metrics from downloaded result files.
 
     Looks for profile_export_aiperf.json (or .json.zst) which contains the
     full benchmark results in a format compatible with the CR status.
     """
-    dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
 
     try:
         for path in _metric_file_candidates(dest_dir, downloaded):

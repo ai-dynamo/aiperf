@@ -28,6 +28,11 @@ from aiperf.operator.client_cache import (
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.progress_client import ProgressClient
+from aiperf.operator.results_layout import (
+    LEGACY_EPOCH,
+    epoch_key_from_body,
+    run_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +377,7 @@ async def fetch_results_with_retry(
     max_retries: int = OperatorEnvironment.RESULTS.MAX_RETRIES,
     retry_delay: float = OperatorEnvironment.RESULTS.RETRY_DELAY,
     dest_dir: Path | None = None,
+    body: dict[str, Any] | None = None,
 ) -> ControllerFetchResult:
     """Fetch results from controller pod with retry logic.
 
@@ -385,7 +391,11 @@ async def fetch_results_with_retry(
         max_retries: Maximum retry attempts.
         retry_delay: Delay between retries (with exponential backoff).
         dest_dir: Explicit destination directory for results. When None,
-            defaults to ``RESULTS.DIR / namespace / job_id``.
+            derives the epoch-keyed path from ``body`` (or falls back to
+            the legacy sentinel directory if ``body`` is also None).
+        body: AIPerfJob CR body used to compute the ``<ns>/<name>/<epoch>/``
+            run directory. Required in production; tests may omit it when
+            the caller explicitly passes ``dest_dir``.
 
     Returns:
         ControllerFetchResult with metrics dict and list of downloaded files.
@@ -398,7 +408,8 @@ async def fetch_results_with_retry(
     progress_client = await get_or_create_progress_client(key)
 
     if dest_dir is None:
-        dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+        epoch = epoch_key_from_body(body) if body is not None else LEGACY_EPOCH
+        dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
 
     # Mutable state shared across retry attempts so partial progress
     # (e.g. metrics fetched but files not yet) survives retries.

@@ -42,6 +42,14 @@ from aiperf.operator.models import ControllerFetchResult, OwnerReference
 from aiperf.operator.progress_client import ControllerAggregateWorkerStatus, JobProgress
 from aiperf.operator.status import Phase
 
+# Body fixture with a deterministic creationTimestamp so results_layout
+# functions (epoch_key_from_body) have a valid epoch in unit tests.
+# 2024-04-25T17:02:03Z -> epoch 1714064523.
+_FIXTURE_CREATION_TS = "2024-04-25T17:02:03Z"
+_FIXTURE_BODY: dict[str, Any] = {
+    "metadata": {"creationTimestamp": _FIXTURE_CREATION_TS}
+}
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -730,7 +738,13 @@ class TestOnCreateHandler:
         """Verify fails permanently with invalid spec."""
         from aiperf.operator.main import on_create
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         spec = {"endpoint": {}}  # Missing required fields
         kopf_patch = MagicMock()
         kopf_patch.status = {}
@@ -754,7 +768,13 @@ class TestOnCreateHandler:
         """Verify creates ConfigMap and JobSet on valid spec."""
         from aiperf.operator.main import on_create
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -821,7 +841,13 @@ class TestOnCreateHandler:
         """Verify unreachable endpoint is a warning, not failure."""
         from aiperf.operator.main import on_create
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -922,7 +948,7 @@ class TestOnCancelHandler:
         kopf_patch.status = {}
 
         await on_cancel(
-            body={},
+            body=_FIXTURE_BODY,
             spec=spec,
             status=status,
             name="test-job",
@@ -963,7 +989,7 @@ class TestOnCancelHandler:
             ),
         ):
             await on_cancel(
-                body={},
+                body=_FIXTURE_BODY,
                 spec=spec,
                 status=status,
                 name="test-job",
@@ -995,7 +1021,7 @@ class TestMonitorProgressHandler:
         kopf_patch.status = {}
 
         await monitor_progress(
-            body={},
+            body=_FIXTURE_BODY,
             status={"phase": phase},
             spec={},
             name="test-job",
@@ -1014,7 +1040,7 @@ class TestMonitorProgressHandler:
         kopf_patch.status = {}
 
         await monitor_progress(
-            body={},
+            body=_FIXTURE_BODY,
             status={"phase": Phase.PENDING},
             spec={},
             name="test-job",
@@ -1047,7 +1073,7 @@ class TestMonitorProgressHandler:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1092,7 +1118,7 @@ class TestMonitorProgressHandler:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.PENDING,
                     "jobSetName": "test-jobset",
@@ -1173,7 +1199,7 @@ class TestMonitorCompletedClaimsShutdownKey:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1280,7 +1306,7 @@ class TestMonitorCompletedClaimsShutdownKey:
         ):
             monitor_task = asyncio.create_task(
                 monitor_progress(
-                    body={},
+                    body=_FIXTURE_BODY,
                     status={
                         "phase": Phase.RUNNING,
                         "jobSetName": "test-jobset",
@@ -1303,7 +1329,7 @@ class TestMonitorCompletedClaimsShutdownKey:
             # Now fire the watch handler for the same CR. It must see the
             # claim and return early without invoking handle_completion.
             await on_benchmark_complete(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1409,7 +1435,7 @@ class TestMonitorProgressAdvanced:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.INITIALIZING,
                     "jobSetName": "test-jobset",
@@ -1476,7 +1502,7 @@ class TestMonitorProgressAdvanced:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.PENDING,
                     "jobSetName": "test-jobset",
@@ -1533,7 +1559,7 @@ class TestMonitorProgressAdvanced:
             mock_patch("aiperf.operator.events.failed") as mock_failed,
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1606,7 +1632,7 @@ class TestMonitorProgressAdvanced:
             mock_patch("aiperf.operator.events.failed") as mock_failed,
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1646,7 +1672,7 @@ class TestMonitorProgressAdvanced:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1701,7 +1727,7 @@ class TestMonitorProgressAdvanced:
             ) as mock_completion,
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -1769,7 +1795,7 @@ class TestHandleCompletion:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-123",
@@ -1821,7 +1847,7 @@ class TestHandleCompletion:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-123",
@@ -1877,7 +1903,7 @@ class TestHandleCompletion:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-123",
@@ -1927,7 +1953,7 @@ class TestHandleCompletion:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-123",
@@ -2148,7 +2174,7 @@ class TestCleanupOldResultsTimer:
         from aiperf.operator.handlers.cleanup import cleanup_old_results
 
         await cleanup_old_results(
-            body={},
+            body=_FIXTURE_BODY,
             status={"phase": phase},
             name="test-job",
         )
@@ -2159,7 +2185,7 @@ class TestCleanupOldResultsTimer:
         from aiperf.operator.handlers.cleanup import cleanup_old_results
 
         await cleanup_old_results(
-            body={},
+            body=_FIXTURE_BODY,
             status={"phase": Phase.COMPLETED},
             name="test-job",
         )
@@ -2170,7 +2196,7 @@ class TestCleanupOldResultsTimer:
         from aiperf.operator.handlers.cleanup import cleanup_old_results
 
         await cleanup_old_results(
-            body={},
+            body=_FIXTURE_BODY,
             status={
                 "phase": Phase.COMPLETED,
                 "jobId": "job-123",
@@ -2196,7 +2222,7 @@ class TestCleanupOldResultsTimer:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             await cleanup_old_results(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.COMPLETED,
                     "jobId": "job-123",
@@ -2218,7 +2244,7 @@ class TestCleanupOldResultsTimer:
 
         with mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir):
             await cleanup_old_results(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.COMPLETED,
                     "jobId": "job-123",
@@ -2248,7 +2274,7 @@ class TestCleanupOldResultsTimer:
         ):
             # Should not raise
             await cleanup_old_results(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.COMPLETED,
                     "jobId": "job-123",
@@ -2791,7 +2817,9 @@ class TestRecoverTerminatedController:
             ],
         )
 
-        checkpoint_dir = temp_results_dir / "default" / "job-1" / "checkpoints"
+        checkpoint_dir = (
+            temp_results_dir / "default" / "job-1" / "1714064523" / "checkpoints"
+        )
         checkpoint_dir.mkdir(parents=True)
         (checkpoint_dir / "profile_export_aiperf_partial.json").write_text(
             '{"request_throughput":{"unit":"req/s","avg":123.0}}'
@@ -2829,7 +2857,7 @@ class TestRecoverTerminatedController:
         ):
             handled = await _maybe_recover_terminated_controller(
                 AsyncMock(),
-                {},
+                _FIXTURE_BODY,
                 "default",
                 "test-jobset",
                 "job-1",
@@ -2842,7 +2870,7 @@ class TestRecoverTerminatedController:
         assert handled is True
         assert kopf_patch.status["phase"] == Phase.FAILED
         assert kopf_patch.status["resultsPath"] == str(
-            temp_results_dir / "default" / "job-1"
+            temp_results_dir / "default" / "job-1" / "1714064523"
         )
         assert (
             kopf_patch.status["conditions"][0]["type"]
@@ -2895,7 +2923,12 @@ class TestMonitorProgressTimeout:
             ),
         ):
             await monitor_progress(
-                body={"metadata": {"name": "timeout-job"}},
+                body={
+                    "metadata": {
+                        "name": "timeout-job",
+                        "creationTimestamp": _FIXTURE_CREATION_TS,
+                    }
+                },
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -2949,7 +2982,7 @@ class TestMonitorProgressTimeout:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -3002,7 +3035,7 @@ class TestMonitorProgressTimeout:
             ),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",
@@ -3050,7 +3083,7 @@ class TestHandleCompletionBackfill:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-backfill",
@@ -3090,7 +3123,7 @@ class TestHandleCompletionBackfill:
             ),
         ):
             await _handle_completion(
-                body={},
+                body=_FIXTURE_BODY,
                 namespace="default",
                 jobset_name="test-jobset",
                 job_id="job-backfill",
@@ -3191,7 +3224,13 @@ class TestOnCreatePreflightIntegration:
         passing_results.add(CheckResult("K8s Version", CheckStatus.PASS, "ok"))
         passing_results.add(CheckResult("JobSet CRD", CheckStatus.PASS, "ok"))
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -3272,7 +3311,13 @@ class TestOnCreatePreflightIntegration:
             CheckResult("K8s Version", CheckStatus.FAIL, "Too old: v1.22")
         )
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -3356,7 +3401,13 @@ class TestOnCreatePreflightIntegration:
             CheckResult("Network Policy", CheckStatus.WARN, "Restrictive policy found")
         )
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -3435,7 +3486,13 @@ class TestOnCreatePreflightIntegration:
             )
         )
 
-        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        body = {
+            "metadata": {
+                "name": "test-job",
+                "namespace": "default",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -3499,7 +3556,13 @@ class TestOnCreatePreflightIntegration:
 
         passing_results = PreflightResults()
 
-        body = {"metadata": {"name": "param-job", "namespace": "bench-ns"}}
+        body = {
+            "metadata": {
+                "name": "param-job",
+                "namespace": "bench-ns",
+                "creationTimestamp": _FIXTURE_CREATION_TS,
+            }
+        }
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -3620,7 +3683,7 @@ class TestMonitorStaleReadLogging:
             caplog.at_level(logging.ERROR, logger="aiperf.operator.handlers.monitor"),
         ):
             await monitor_progress(
-                body={},
+                body=_FIXTURE_BODY,
                 status={
                     "phase": Phase.RUNNING,
                     "jobSetName": "test-jobset",

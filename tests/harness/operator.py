@@ -25,6 +25,9 @@ def build_sample_body() -> dict[str, Any]:
             "name": "test-job",
             "namespace": "default",
             "uid": "abc-123",
+            # 2024-04-25T17:02:03Z -> epoch 1714064523; fixed so epoch-keyed
+            # run dirs under results_layout.run_dir are deterministic.
+            "creationTimestamp": "2024-04-25T17:02:03Z",
         },
         "spec": {
             "image": "aiperf:test",

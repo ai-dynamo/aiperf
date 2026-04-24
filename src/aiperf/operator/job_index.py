@@ -22,6 +22,7 @@ from typing import Any
 import orjson
 
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.results_layout import run_dir
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,13 @@ async def get_job_spec(namespace: str, job_id: str) -> dict[str, Any] | None:
     return entry.get("spec")
 
 
-async def save_job_spec_file(namespace: str, job_id: str, spec: dict[str, Any]) -> None:
+async def save_job_spec_file(
+    namespace: str,
+    job_id: str,
+    spec: dict[str, Any],
+    *,
+    epoch: str,
+) -> None:
     """Save the CR spec as a standalone JSON file in the job's results directory.
 
     This is a belt-and-suspenders approach: the spec is also in the index,
@@ -195,7 +202,7 @@ async def save_job_spec_file(namespace: str, job_id: str, spec: dict[str, Any]) 
     is regenerated. Disk I/O is offloaded to a worker thread so we don't block
     the kopf event loop under reconcile load.
     """
-    dest_dir = OperatorEnvironment.RESULTS.DIR / namespace / job_id
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
     path = dest_dir / "job_spec.json"
     payload = orjson.dumps(spec, option=orjson.OPT_INDENT_2)
 

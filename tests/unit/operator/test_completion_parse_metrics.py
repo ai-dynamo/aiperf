@@ -18,10 +18,15 @@ import orjson
 import zstandard
 
 from aiperf.operator.handlers.completion import _parse_metrics_from_files
+from aiperf.operator.results_layout import write_latest
 
 # ============================================================
 # Helpers
 # ============================================================
+
+# Fixed epoch for deterministic on-disk layout in unit tests
+# (matches metadata.creationTimestamp=2024-04-25T17:02:03Z).
+FIXTURE_EPOCH = "1714064523"
 
 
 def _setup_result_file(
@@ -34,8 +39,9 @@ def _setup_result_file(
     filename: str = "profile_export_aiperf.json",
 ) -> None:
     """Write a result file in the expected directory structure."""
-    job_dir = base_dir / namespace / job_id
+    job_dir = base_dir / namespace / job_id / FIXTURE_EPOCH
     job_dir.mkdir(parents=True, exist_ok=True)
+    write_latest(base_dir, namespace, job_id, FIXTURE_EPOCH)
 
     if data is None:
         return
@@ -76,7 +82,7 @@ class TestParseMetricsHappyPath:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "job-1"
+                ["profile_export_aiperf.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is not None
@@ -87,7 +93,7 @@ class TestParseMetricsHappyPath:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json.zst"], "ns", "job-1"
+                ["profile_export_aiperf.json.zst"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is not None
@@ -107,6 +113,7 @@ class TestParseMetricsHappyPath:
                 ["profile_export_aiperf.json", "profile_export_aiperf.json.zst"],
                 "ns",
                 "job-1",
+                epoch=FIXTURE_EPOCH,
             )
 
         assert result is not None
@@ -122,23 +129,29 @@ class TestParseMetricsMissingFiles:
     """Verify handling of missing or empty files."""
 
     def test_no_summary_file_returns_none(self, tmp_path: Path) -> None:
-        (tmp_path / "ns" / "job-1").mkdir(parents=True)
+        (tmp_path / "ns" / "job-1" / FIXTURE_EPOCH).mkdir(parents=True)
+        write_latest(tmp_path, "ns", "job-1", FIXTURE_EPOCH)
 
         with _patch_results_dir(tmp_path):
-            result = _parse_metrics_from_files(["other.json"], "ns", "job-1")
+            result = _parse_metrics_from_files(
+                ["other.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
+            )
 
         assert result is None
 
     def test_empty_downloaded_list_returns_none(self, tmp_path: Path) -> None:
         with _patch_results_dir(tmp_path):
-            result = _parse_metrics_from_files([], "ns", "job-1")
+            result = _parse_metrics_from_files([], "ns", "job-1", epoch=FIXTURE_EPOCH)
 
         assert result is None
 
     def test_dir_not_exists_returns_none(self, tmp_path: Path) -> None:
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "nonexistent"
+                ["profile_export_aiperf.json"],
+                "ns",
+                "nonexistent",
+                epoch=FIXTURE_EPOCH,
             )
 
         assert result is None
@@ -157,7 +170,7 @@ class TestParseMetricsCorruptedData:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "job-1"
+                ["profile_export_aiperf.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is None
@@ -167,7 +180,7 @@ class TestParseMetricsCorruptedData:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "job-1"
+                ["profile_export_aiperf.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is None
@@ -177,19 +190,20 @@ class TestParseMetricsCorruptedData:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "job-1"
+                ["profile_export_aiperf.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is None
 
     def test_corrupted_zst_file_returns_none(self, tmp_path: Path) -> None:
-        job_dir = tmp_path / "ns" / "job-1"
+        job_dir = tmp_path / "ns" / "job-1" / FIXTURE_EPOCH
         job_dir.mkdir(parents=True)
+        write_latest(tmp_path, "ns", "job-1", FIXTURE_EPOCH)
         (job_dir / "profile_export_aiperf.json.zst").write_bytes(b"not zstd data")
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json.zst"], "ns", "job-1"
+                ["profile_export_aiperf.json.zst"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is None
@@ -199,7 +213,7 @@ class TestParseMetricsCorruptedData:
 
         with _patch_results_dir(tmp_path):
             result = _parse_metrics_from_files(
-                ["profile_export_aiperf.json"], "ns", "job-1"
+                ["profile_export_aiperf.json"], "ns", "job-1", epoch=FIXTURE_EPOCH
             )
 
         assert result is None

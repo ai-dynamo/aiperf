@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +9,11 @@ import pytest
 from aiperf.operator.handlers.completion import handle_completion
 from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder
+
+# metadata.creationTimestamp that maps to epoch 1714064523 — stable fixture
+# so the epoch-keyed run dir under results_layout.run_dir is deterministic.
+_FIXTURE_CREATION_TS = "2024-04-25T17:02:03Z"
+_FIXTURE_BODY = {"metadata": {"creationTimestamp": _FIXTURE_CREATION_TS}}
 
 
 @pytest.mark.asyncio
@@ -39,7 +45,7 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
         ),
     ):
         await handle_completion(
-            body={},
+            body=_FIXTURE_BODY,
             namespace="test-ns",
             jobset_name="test-jobset",
             job_id="test-job",
@@ -54,7 +60,9 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_completion_has_files_with_error_marks_failed() -> None:
+async def test_handle_completion_has_files_with_error_marks_failed(
+    tmp_path: Path,
+) -> None:
     """M3: ControllerFetchResult with has_files=True AND error set should NOT be Completed.
 
     A partial fetch can download some files (e.g. checkpoints) while still
@@ -74,6 +82,11 @@ async def test_handle_completion_has_files_with_error_marks_failed() -> None:
     completed_mock = MagicMock()
     with (
         patch(
+            "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
+            DIR=tmp_path,
+            RETAIN_RUNS=5,
+        ),
+        patch(
             "aiperf.operator.handlers.completion.events.results_failed",
             results_failed_mock,
         ),
@@ -89,7 +102,7 @@ async def test_handle_completion_has_files_with_error_marks_failed() -> None:
         ),
     ):
         await handle_completion(
-            body={},
+            body=_FIXTURE_BODY,
             namespace="ns",
             jobset_name="js",
             job_id="j1",
@@ -113,7 +126,9 @@ async def test_handle_completion_has_files_with_error_marks_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_completion_index_failure_sets_condition_and_event() -> None:
+async def test_handle_completion_index_failure_sets_condition_and_event(
+    tmp_path: Path,
+) -> None:
     """M1: index_job_completed failure should set INDEX_UPDATED=False and warn.
 
     Results are already on disk, so we must not retry the completion handler;
@@ -131,6 +146,11 @@ async def test_handle_completion_index_failure_sets_condition_and_event() -> Non
 
     kopf_event_mock = MagicMock()
     with (
+        patch(
+            "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
+            DIR=tmp_path,
+            RETAIN_RUNS=5,
+        ),
         patch("aiperf.operator.handlers.completion.events.results_stored"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
@@ -152,7 +172,13 @@ async def test_handle_completion_index_failure_sets_condition_and_event() -> Non
         ),
     ):
         await handle_completion(
-            body={"metadata": {"name": "j1", "namespace": "ns"}},
+            body={
+                "metadata": {
+                    "name": "j1",
+                    "namespace": "ns",
+                    "creationTimestamp": _FIXTURE_CREATION_TS,
+                }
+            },
             namespace="ns",
             jobset_name="js",
             job_id="j1",
