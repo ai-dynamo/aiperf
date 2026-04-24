@@ -753,6 +753,22 @@ const CONDITION_LABELS = {
   ResultsAvailable:   'Results',
 };
 
+/** Per-type wording when a condition is negative (status === 'False').
+ *  Without this flip, the strip/callout shows the *type* label ("Succeeded",
+ *  "Ready") next to a red swatch — misleading because the label reads
+ *  positive even though the condition failed. */
+const CONDITION_FALSE_LABELS = {
+  ConfigValid:        'Config invalid',
+  EndpointReachable:  'Endpoint unreachable',
+  PreflightPassed:    'Preflight failed',
+  ResourcesCreated:   'Resources missing',
+  WorkersReady:       'Workers not ready',
+  BenchmarkRunning:   'Not running',
+  ResultsAvailable:   'No results',
+  Succeeded:          'Failed',
+  Ready:              'Not ready',
+};
+
 function conditionKind(c) {
   const status = (c.status ?? '').toLowerCase();
   const reason = (c.reason ?? '').toLowerCase();
@@ -762,12 +778,21 @@ function conditionKind(c) {
   return 'idle';
 }
 
+function conditionLabel(c) {
+  const status = (c.status ?? '').toLowerCase();
+  if (status === 'false') {
+    return CONDITION_FALSE_LABELS[c.type]
+      ?? ('Not ' + (CONDITION_LABELS[c.type] ?? c.type).toLowerCase());
+  }
+  return CONDITION_LABELS[c.type] ?? c.type;
+}
+
 function ConditionsStrip({ conditions }) {
   if (!conditions || conditions.length === 0) return null;
   return html`
     <section class="run-conditions" data-testid="run-conditions" aria-label="Conditions">
       ${conditions.map(c => {
-        const label = CONDITION_LABELS[c.type] ?? c.type;
+        const label = conditionLabel(c);
         const kind = conditionKind(c);
         const title = c.message ? `${c.type}: ${c.message}` : c.type;
         return html`
@@ -1226,7 +1251,7 @@ function FaultCallout({ bucket, conditions, pods }) {
   });
   if (!falseCond && !failedPod) return null;
 
-  const condLabel = falseCond ? (CONDITION_LABELS[falseCond.type] ?? falseCond.type).toUpperCase() : null;
+  const condLabel = falseCond ? conditionLabel(falseCond).toUpperCase() : null;
   const term = failedPod?.lastState?.terminated;
 
   return html`

@@ -1424,7 +1424,13 @@ a.rail-crumb:hover { color: var(--amber); }
   line-height: 1.05;
   letter-spacing: -0.015em;
   color: var(--paper);
-  word-break: break-word;
+  /* Identifiers like "failed-run" or "aiperf-llama3-c128" must NEVER break
+   * mid-token at a hyphen. keep-all keeps hyphenated tokens atomic;
+   * overflow-wrap: break-word is a last-resort fallback when a single
+   * unbreakable token is wider than the container (e.g. very narrow viewport). */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  hyphens: none;
 }
 .run-header-sub {
   display: flex; flex-wrap: wrap; gap: 14px;
@@ -2113,6 +2119,9 @@ a.rail-crumb:hover { color: var(--amber); }
   font-family: var(--f-mono); font-weight: 700; font-size: 14px;
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--paper);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  hyphens: none;
 }
 .arch-ns-counts {
   display: flex; gap: var(--s-2); flex-wrap: wrap;
@@ -2170,6 +2179,9 @@ a.rail-crumb:hover { color: var(--amber); }
   color: var(--paper);
   letter-spacing: 0.01em;
   display: flex; flex-direction: column; gap: 1px;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  hyphens: none;
   overflow: hidden;
 }
 .arch-row-name small {
