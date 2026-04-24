@@ -112,6 +112,12 @@ Retrieve benchmark results
 
 [Parameters](#parameters) • [Kubernetes](#kubernetes)
 
+### [`kube results list-runs`](#aiperf-kube-results-list-runs)
+
+List all historical runs of a benchmark job.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
+
 ### [`kube show`](#aiperf-kube-show)
 
 Render an AIPerfJob CR with Jinja2/env-vars resolved
@@ -4283,6 +4289,52 @@ Shut down the API service after downloading results. Only takes effect with --fr
 
 Local port for API port-forward (default: 0 = ephemeral).
 <br/>_Default: `0`_
+
+#### `--operator-namespace` `<str>`
+
+Namespace where the operator is deployed.
+<br/>_Default: `aiperf-system`_
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
+
+<hr/>
+
+## `aiperf kube results list-runs`
+
+List all historical runs of a benchmark job.
+
+Queries the operator's ``/api/v1/results/<ns>/<job_id>/runs`` endpoint and prints either a table (default) or the raw JSON payload.
+
+**Examples:**
+
+```bash
+aiperf kube results list-runs                 # last deployed job
+aiperf kube results list-runs foo             # specific job
+aiperf kube results list-runs foo --output json
+```
+
+### Parameters
+
+#### `--job-id` `<str>`
+
+AIPerf job ID to list runs for (default: last deployed job).
+
+#### `-o`, `--output` `<str>`
+
+Output format: 'text' for table, 'json' for machine-parseable.
+<br/>_Default: `text`_
 
 #### `--operator-namespace` `<str>`
 

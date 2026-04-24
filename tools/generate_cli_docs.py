@@ -28,6 +28,7 @@ from inspect import isclass
 from io import StringIO
 from typing import Any, get_origin
 
+from cyclopts import App
 from rich.console import Console
 
 from tools._core import (
@@ -256,38 +257,42 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 def extract_commands(app: Any) -> list[tuple[str, str]]:
     """Extract command names and descriptions.
 
-    For nested apps (like 'kube'), this extracts subcommands as 'parent subcommand' format.
+    Walks the cyclopts App tree recursively so nested sub-apps (e.g.
+    ``aiperf kube results list-runs``) emit one entry per leaf command, using
+    space-separated full paths. A node is treated as a runnable command if it
+    is a non-App leaf or if its ``default_command`` is set; sub-apps are always
+    recursed into to find their children.
     """
     skip = {"--help", "-h", "--version"}
-    commands = []
-    for name, cmd in app._commands.items():
-        if name in skip:
-            continue
+    commands: list[tuple[str, str]] = []
+
+    def _help_first_line(cmd: Any) -> str:
         help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
             help_text = help_text()
         if help_text:
-            help_text = _extract_text(help_text).split("\n")[0].strip()
+            return _extract_text(help_text).split("\n")[0].strip()
+        return ""
 
-        # Check if this is a subcommand group (has user-defined subcommands
-        # beyond the built-in --help/-h).
-        user_subs = (
-            {k for k in cmd._commands if k not in skip}
-            if hasattr(cmd, "_commands")
-            else set()
-        )
-        if user_subs:
-            for sub_name, sub_obj in cmd._commands.items():
-                if sub_name in skip:
-                    continue
-                sub_help = sub_obj.help if hasattr(sub_obj, "help") else ""
-                if callable(sub_help):
-                    sub_help = sub_help()
-                if sub_help:
-                    sub_help = _extract_text(sub_help).split("\n")[0].strip()
-                commands.append((f"{name} {sub_name}", sub_help or ""))
-        else:
-            commands.append((name, help_text or ""))
+    def _walk(node: Any, prefix: tuple[str, ...], depth: int) -> None:
+        if depth > 5 or not hasattr(node, "_commands"):
+            return
+        for name, cmd in node._commands.items():
+            if name in skip:
+                continue
+            full = (*prefix, name)
+            full_name = " ".join(full)
+            is_app = isinstance(cmd, App)
+            has_children = is_app and any(
+                k not in skip for k in getattr(cmd, "_commands", {})
+            )
+            is_runnable = (not is_app) or getattr(cmd, "default_command", None)
+            if is_runnable:
+                commands.append((full_name, _help_first_line(cmd)))
+            if has_children:
+                _walk(cmd, full, depth + 1)
+
+    _walk(app, (), 0)
     return commands
 
 
