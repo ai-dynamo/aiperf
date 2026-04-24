@@ -11,14 +11,21 @@ element or ``Compare (N)`` button in the new UI, so the prior
 selection-driven tests have no direct analog. These smoke tests cover
 what survived: the page mounts, the Pareto chart canvas renders, and
 axis-switch buttons are clickable.
+
+The run-diff view at ``/compare/<ns>/<name>/<a>/<b>`` — added alongside
+the run-history dropdown — is a separate feature covered at the bottom
+of the file.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 from playwright.async_api import expect
 
 from ._pages import AnalysisPage
+from .test_job_detail import _seed_two_epoch_runs
 
 pytestmark = [pytest.mark.e2e]
 
@@ -67,3 +74,69 @@ async def test_analysis_axis_switch_does_not_crash(
         await buttons.nth(i).click()
     # Settle the 300ms Chart.js update animation before teardown.
     await page.wait_for_timeout(600)
+
+
+# ─────────────────── run-diff compare view ────────────────────
+
+
+def _write_summary(path: Path, throughput_avg: float, latency_p99: float) -> None:
+    """Fabricate a minimal ``profile_export_aiperf.json`` with the nine metrics
+    the compare view reads. Only ``throughput`` + ``latency_p99`` vary across
+    the two runs — enough to force a non-zero Δ in the rendered table.
+    """
+    import orjson
+
+    path.write_bytes(
+        orjson.dumps(
+            {
+                "request_throughput": {"unit": "requests/sec", "avg": throughput_avg},
+                "request_latency": {
+                    "unit": "ms",
+                    "avg": 300.0,
+                    "p50": 285.0,
+                    "p99": latency_p99,
+                },
+                "time_to_first_token": {
+                    "unit": "ms",
+                    "avg": 150.0,
+                    "p50": 142.5,
+                    "p99": 195.0,
+                },
+                "inter_token_latency": {"unit": "ms", "avg": 25.0},
+                "output_token_throughput": {"unit": "tokens/sec", "avg": 5000.0},
+            }
+        )
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_diff_compare_view_renders_two_column_table(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """``#/compare/<ns>/<name>/<a>/<b>`` mounts a 2-data-column table.
+
+    Seeds two epoch-keyed run dirs for ``aiperf-bench/aiperf-llama3-c128`` via
+    the same helper the run-history dropdown test uses, then overwrites each
+    run's ``profile_export_aiperf.json`` with different throughput + p99 so
+    the Δ column has something to colour. Navigates directly to the compare
+    URL (the run-diff view must not require the run view to be traversed
+    first) and asserts the table root + both data-column headers render.
+    """
+    older, latest = _seed_two_epoch_runs(
+        seeded_results_dir, "aiperf-bench", "aiperf-llama3-c128"
+    )
+    run_root = seeded_results_dir / "aiperf-bench" / "aiperf-llama3-c128"
+    _write_summary(run_root / older / "profile_export_aiperf.json", 40.0, 380.0)
+    _write_summary(run_root / latest / "profile_export_aiperf.json", 50.0, 320.0)
+
+    await page.goto(
+        f"{live_operator_app.base_url}/#/compare/aiperf-bench/aiperf-llama3-c128/{older}/{latest}"
+    )
+    await expect(page.get_by_test_id("page-compare")).to_be_visible()
+    table = page.get_by_test_id("compare-table")
+    await expect(table).to_be_visible()
+    # Two data columns (Run A, Run B) plus the Metric + Δ labels.
+    await expect(page.get_by_test_id("compare-col-a")).to_be_visible()
+    await expect(page.get_by_test_id("compare-col-b")).to_be_visible()
+    # One row per metric (9 metrics — see METRICS in compare.js).
+    await expect(table.locator("tbody tr")).to_have_count(9)

@@ -221,6 +221,29 @@ export const api = {
     return { records, skipped: null };
   },
 
+  /** Fetch the top-level summary metrics of a historical run's
+   *  ``profile_export_aiperf.json``. Used by the run-diff view to lay two
+   *  runs' ``request_throughput`` / ``request_latency`` / etc. side-by-side.
+   *
+   *  Throws with a parseable ``status`` field on the error when the HTTP
+   *  request fails so callers can distinguish 404 (run exists, no export)
+   *  from transport errors. Caller is expected to handle the missing-export
+   *  case gracefully (render "n/a" in the affected column).
+   */
+  async fetchRunSummary(ns, jobId, epoch) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    const epSeg = encodeURIComponent(epoch);
+    const url = `${BASE}/results/${nsSeg}/${idSeg}/runs/${epSeg}/profile_export_aiperf.json`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const err = new Error(`fetchRunSummary ${ns}/${jobId}/${epoch}: ${resp.status}`);
+      err.status = resp.status;
+      throw err;
+    }
+    return resp.json();
+  },
+
   /** Get original CR config for a job */
   getJobConfig(ns, jobId) {
     return apiFetch(

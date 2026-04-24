@@ -3044,3 +3044,92 @@ input[type="text"]::placeholder { color: var(--paper-ghost); letter-spacing: 0.0
   outline: 1px solid var(--edge-amber-hot);
   outline-offset: 0;
 }
+
+/* Compare-with dropdown — same visual language as RUN history dropdown. */
+.run-compare {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 0.5rem;
+}
+.run-compare-label {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+.run-compare-select {
+  background: var(--bg-1, #1a1a1a);
+  color: var(--text-primary);
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--edge-2);
+  cursor: pointer;
+}
+.run-compare-select:focus-visible {
+  outline: 1px solid var(--edge-amber-hot);
+  outline-offset: 0;
+}
+
+/* Run-diff compare view. */
+.v-compare {
+  padding: 1rem 1.25rem;
+}
+.compare-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.compare-head-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.compare-back {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--edge-2);
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+}
+.compare-back:hover { color: var(--text-primary); border-color: var(--edge-3); }
+.compare-head-eyebrow {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+.compare-head-name {
+  font-size: 1.25rem;
+  margin: 0.15rem 0 0 0;
+  color: var(--text-primary);
+}
+.compare-loading, .compare-err, .compare-warn {
+  padding: 1rem;
+  color: var(--text-secondary);
+  border: 1px solid var(--edge-2);
+  margin-bottom: 1rem;
+}
+.compare-err { color: var(--red); border-color: var(--red); }
+.compare-view table.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.compare-view th,
+.compare-view td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border, var(--edge-2));
+}
+.compare-view th {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.compare-metric { color: var(--text-secondary); }
+.compare-value  { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.compare-delta  { font-variant-numeric: tabular-nums; text-align: right; }
+.compare-delta--better  { color: var(--green); }
+.compare-delta--worse   { color: var(--red); }
+.compare-delta--neutral { color: var(--text-tertiary); }
+

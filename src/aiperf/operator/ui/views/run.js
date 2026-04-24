@@ -275,6 +275,70 @@ function RunHistoryDropdown({ ns, name, selectedEpoch }) {
   `;
 }
 
+/** Dropdown that jumps to the run-diff compare view. Populated from the same
+ *  ``listRuns`` endpoint as ``RunHistoryDropdown``, with the currently-pinned
+ *  run excluded (diffing a run against itself is meaningless). The default
+ *  "Compare with…" option is a placeholder; picking any epoch navigates to
+ *  ``#/compare/<ns>/<name>/<currentEpoch>/<selectedEpoch>``.
+ *
+ *  When ``selectedEpoch`` is null (viewing "latest"), the dropdown uses the
+ *  reported ``latestEpoch`` as the A-side of the compare URL so the compare
+ *  view always has two concrete epoch anchors — the #/compare route shape
+ *  requires both. If no ``latestEpoch`` is available (edge case: only one
+ *  run exists and ``listRuns`` hasn't reported an epoch for it), the
+ *  dropdown hides itself rather than link to an unresolvable URL.
+ */
+function CompareWithDropdown({ ns, name, selectedEpoch }) {
+  const [state, setState] = useState({ kind: 'loading' });
+
+  useEffect(() => {
+    let cancel = false;
+    setState({ kind: 'loading' });
+    api.listRuns(ns, name)
+      .then(({ runs, latestEpoch }) => {
+        if (cancel) return;
+        setState({ kind: 'ok', runs, latestEpoch });
+      })
+      .catch(err => {
+        if (!cancel) setState({ kind: 'err', msg: err.message });
+      });
+    return () => { cancel = true; };
+  }, [ns, name]);
+
+  if (state.kind !== 'ok') return null;
+  const { runs, latestEpoch } = state;
+  const currentEpoch = selectedEpoch ?? latestEpoch;
+  if (!currentEpoch || runs.length < 2) return null;
+
+  const others = runs.filter(r => r.epoch !== currentEpoch);
+  if (others.length === 0) return null;
+
+  return html`
+    <label class="run-compare" data-testid="run-compare">
+      <span class="run-compare-label">COMPARE</span>
+      <select
+        class="run-compare-select"
+        value=""
+        onchange=${(e) => {
+          const v = e.target.value;
+          if (!v) return;
+          const nsSeg = encodeURIComponent(ns);
+          const nameSeg = encodeURIComponent(name);
+          const a = encodeURIComponent(currentEpoch);
+          const b = encodeURIComponent(v);
+          window.location.hash = `#/compare/${nsSeg}/${nameSeg}/${a}/${b}`;
+        }}
+        data-testid="run-compare-select"
+      >
+        <option value="">Compare with…</option>
+        ${others.map(r => html`
+          <option key=${r.epoch} value=${r.epoch}>${fmtRunLabel(r, r.is_latest)}</option>
+        `)}
+      </select>
+    </label>
+  `;
+}
+
 /* ──────────────────── headline cancel button ─────────────────── */
 
 function CancelButton({ ns, name, bucket, onCancel }) {
@@ -1427,6 +1491,7 @@ export function Run({ ns, name, epoch }) {
           <${CancelButton} ns=${ns} name=${name} bucket=${bucket} />
           <${RelaunchButton} ns=${ns} name=${name} config=${config} />
           <${RunHistoryDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
+          <${CompareWithDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
         </div>
       </header>
 

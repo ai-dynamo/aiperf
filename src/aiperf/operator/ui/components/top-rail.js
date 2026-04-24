@@ -61,6 +61,13 @@ function breadcrumbFor(viewKind, runParams) {
       { label: runParams.name, path: null, emphasise: true },
     ];
   }
+  if (viewKind === 'compare' && runParams) {
+    return [
+      { label: 'Compare', path: null },
+      { label: runParams.ns, path: '/archive' },
+      { label: runParams.name, path: `/run/${runParams.ns}/${runParams.name}`, emphasise: true },
+    ];
+  }
   if (viewKind === 'launch')   return [{ label: 'Launch', path: null, emphasise: true }];
   if (viewKind === 'archive')  return [{ label: 'Archive', path: null, emphasise: true }];
   if (viewKind === 'analysis') return [{ label: 'Compare', path: null, emphasise: true }];

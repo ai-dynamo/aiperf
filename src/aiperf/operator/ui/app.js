@@ -38,6 +38,7 @@ import { Launch } from './views/launch.js';
 import { Run } from './views/run.js';
 import { Archive } from './views/archive.js';
 import { Analysis } from './views/analysis.js';
+import { Compare } from './views/compare.js';
 import { Log } from './views/log.js';
 
 function resolveView(currentRoute) {
@@ -47,6 +48,8 @@ function resolveView(currentRoute) {
   const runMatch = matchRoute('/run/:ns/:name', currentRoute)
     ?? matchRoute('/jobs/:ns/:name', currentRoute);
   if (runMatch)                                        return { kind: 'run', params: runMatch };
+  const compareDiffMatch = matchRoute('/compare/:ns/:name/:epochA/:epochB', currentRoute);
+  if (compareDiffMatch)                                return { kind: 'compare', params: compareDiffMatch };
   if (currentRoute === '/launch')                      return { kind: 'launch' };
   if (currentRoute === '/archive'
     || currentRoute === '/fleet'
@@ -107,6 +110,13 @@ function App() {
     mainView = html`<${Launch} />`;
   } else if (resolved.kind === 'archive') {
     mainView = html`<${Archive} />`;
+  } else if (resolved.kind === 'compare') {
+    mainView = html`<${Compare}
+      ns=${resolved.params.ns}
+      name=${resolved.params.name}
+      epochA=${resolved.params.epochA}
+      epochB=${resolved.params.epochB}
+    />`;
   } else if (resolved.kind === 'analysis') {
     mainView = html`<${Analysis} />`;
   } else if (resolved.kind === 'log') {
