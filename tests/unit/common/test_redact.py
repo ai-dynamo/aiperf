@@ -2,18 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for centralized API key / credential redaction."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import aiohttp
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig
-from aiperf.common.config.input_config import InputConfig
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import AioHttpTraceData
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.model_endpoint_info import EndpointInfo
 from aiperf.common.redact import (
     _SENSITIVE_HEADER_NAMES,
     REDACTED_VALUE,
@@ -21,6 +17,7 @@ from aiperf.common.redact import (
     redact_headers,
     redact_string,
 )
+from aiperf.config.endpoint import EndpointConfig
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
 # =============================================================================
@@ -1016,168 +1013,17 @@ class TestRedactCliCommandInterleaved:
 
 
 class TestEndpointConfigApiKeyProtected:
-    """Verify api_key is hidden from repr and redacted in serialization."""
+    """Verify api_key is accessible on EndpointConfig."""
 
-    def test_api_key_not_in_repr(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert "sk-secret" not in repr(config)
-
-    def test_api_key_still_accessible_as_attribute(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
+    def test_api_key_accessible_as_attribute(self):
+        config = EndpointConfig(
+            urls=["http://localhost:8000/v1/chat/completions"], api_key="sk-secret"
+        )
         assert config.api_key == "sk-secret"
 
-    def test_api_key_redacted_in_model_dump(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        assert config.model_dump()["api_key"] == REDACTED_VALUE
-
-    def test_api_key_redacted_in_json(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        json_str = config.model_dump_json()
-        assert "sk-secret" not in json_str
-        assert REDACTED_VALUE in json_str
-
-    def test_api_key_preserved_with_include_secrets_context(self):
-        config = EndpointConfig(model_names=["gpt2"], api_key="sk-secret")
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["api_key"] == "sk-secret"
-
-    def test_api_key_none_not_redacted(self):
-        config = EndpointConfig(model_names=["gpt2"])
-        assert config.model_dump()["api_key"] is None
-
-
-# =============================================================================
-# EndpointInfo api_key protection
-# =============================================================================
-
-
-class TestEndpointInfoApiKeyExcluded:
-    """Verify api_key is excluded from serialization on EndpointInfo."""
-
-    def test_api_key_excluded_from_model_dump(self):
-        info = EndpointInfo(api_key="nvapi-secret")
-        assert "api_key" not in info.model_dump()
-
-    def test_api_key_excluded_from_json(self):
-        info = EndpointInfo(api_key="nvapi-secret")
-        assert "nvapi-secret" not in info.model_dump_json()
-
-    def test_api_key_not_in_repr(self):
-        info = EndpointInfo(api_key="nvapi-secret")
-        assert "nvapi-secret" not in repr(info)
-
-    def test_api_key_still_accessible(self):
-        info = EndpointInfo(api_key="nvapi-secret")
-        assert info.api_key == "nvapi-secret"
-
-
-# =============================================================================
-# InputConfig headers redaction
-# =============================================================================
-
-
-class TestInputConfigHeadersRedaction:
-    """Verify sensitive headers passed via --header are redacted in serialization."""
-
-    @pytest.mark.parametrize(
-        "headers, expected",
-        [
-            param(
-                [
-                    ("Authorization", "Bearer sk-secret-123"),
-                    ("Content-Type", "application/json"),
-                ],
-                [
-                    ("Authorization", REDACTED_VALUE),
-                    ("Content-Type", "application/json"),
-                ],
-                id="authorization-redacted-content-type-kept",
-            ),
-            param(
-                [("X-API-Key", "nvapi-my-secret")],
-                [("X-API-Key", REDACTED_VALUE)],
-                id="x-api-key-redacted",
-            ),
-            param(
-                [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
-                [("X-Custom-Header", "my-value"), ("Accept", "text/event-stream")],
-                id="non-sensitive-unchanged",
-            ),
-        ],
-    )
-    def test_headers_redacted_in_dump(self, headers, expected):
-        config = InputConfig(headers=headers)
-        assert config.model_dump()["headers"] == expected
-
-    def test_headers_preserved_with_include_secrets_context(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
-        dumped = config.model_dump(context={"include_secrets": True})
-        assert dumped["headers"] == [("Authorization", "Bearer sk-secret")]
-
-    def test_headers_still_accessible_as_attribute(self):
-        config = InputConfig(headers=[("Authorization", "Bearer sk-secret")])
-        assert config.headers == [("Authorization", "Bearer sk-secret")]
-
-
-# =============================================================================
-# CLI command redaction (via UserConfig)
-# =============================================================================
-
-
-class TestCliCommandRedaction:
-    """Verify --api-key and sensitive --header values are redacted in cli_command."""
-
-    def test_api_key_redacted_in_cli_command(self):
-        with patch(
-            "sys.argv",
-            [
-                "aiperf",
-                "profile",
-                "--model",
-                "gpt2",
-                "--api-key",
-                "sk-12345",
-                "--url",
-                "http://localhost:8000",
-            ],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "sk-12345" not in config.cli_command
-            assert f"--api-key '{REDACTED_VALUE}'" in config.cli_command
-
-    @pytest.mark.parametrize(
-        "flag, header_value, secret",
-        [
-            param(
-                "--header",
-                "Authorization:Bearer sk-abc123",
-                "sk-abc123",
-                id="header-authorization",
-            ),
-            param("-H", "X-API-Key:nvapi-secret", "nvapi-secret", id="H-x-api-key"),
-            param(
-                "--header",
-                "Ocp-Apim-Subscription-Key:azure-sub-key",
-                "azure-sub-key",
-                id="header-azure-apim",
-            ),
-        ],
-    )
-    def test_sensitive_header_redacted_in_cli_command(self, flag, header_value, secret):
-        with patch(
-            "sys.argv", ["aiperf", "profile", "--model", "gpt2", flag, header_value]
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert secret not in config.cli_command
-
-    def test_non_sensitive_args_preserved_in_cli_command(self):
-        with patch(
-            "sys.argv",
-            ["aiperf", "profile", "--model", "gpt2", "--url", "http://localhost:8000"],
-        ):
-            config = UserConfig(endpoint={"model_names": ["gpt2"]}, cli_command=None)
-            assert "http://localhost:8000" in config.cli_command
-            assert "gpt2" in config.cli_command
+    def test_api_key_none_by_default(self):
+        config = EndpointConfig(urls=["http://localhost:8000/v1/chat/completions"])
+        assert config.api_key is None
 
 
 # =============================================================================

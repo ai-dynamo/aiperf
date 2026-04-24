@@ -5,22 +5,17 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
-from io import BytesIO
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 
-import aiohttp
+import msgspec
 import orjson
-from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationContextMode,
-    CreditPhase,
-    ImageFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -31,7 +26,6 @@ from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
@@ -39,28 +33,35 @@ from aiperf.common.models import (
     DatasetClientMetadata,
     DatasetMetadata,
     InputsFile,
-    ModelEndpointInfo,
-    RequestInfo,
-    SessionPayloads,
 )
+from aiperf.common.models.base_models import _msgspec_enc_hook
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.utils import encode_image
+from aiperf.config import OutputDefaults
+from aiperf.dataset.composer_loader import (
+    load_conversations_for_run,
+    load_custom_dataset,
+    load_public_dataset,
+    load_synthetic_dataset,
+)
+from aiperf.dataset.inputs_file_builder import build_inputs_file
+from aiperf.dataset.media_inline import (
+    collect_http_image_urls,
+    download_and_inline_urls,
+)
+from aiperf.dataset.tokenizer_loader import load_tokenizer_for_run
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
-    ComposerType,
     DatasetBackingStoreType,
     PluginType,
     ServiceRunType,
 )
-from aiperf.transports.aiohttp_client import create_tcp_connector
-from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
     )
-    from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
 
@@ -78,20 +79,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
             **kwargs,
         )
-        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[
             str, Conversation
@@ -102,29 +100,49 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
         # This avoids creating large uncompressed files on the control plane.
-        # WorkerPodManagers will download compressed files and decompress locally.
+        # WorkerGroupManagers will download compressed files and decompress locally.
         self._compress_only = (
-            service_config.service_run_type == ServiceRunType.KUBERNETES
+            run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
 
         BackingStoreClass = plugins.get_class(
             PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
         )
         self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
+            benchmark_id=self.run.cfg.artifacts.benchmark_id,
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
+        self._rebroadcast_task: asyncio.Task | None = None
         self._default_context_mode: ConversationContextMode | None = None
+        self._profile_configure_task: asyncio.Task[None] | None = None
+
+    @on_command(CommandType.PROFILE_START)
+    async def _on_profile_start(self, message: Command) -> None:
+        """Stop rebroadcasting dataset notifications once profiling begins."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset."""
+        if self._profile_configure_task is not None:
+            await self._profile_configure_task
+            return
 
+        self._profile_configure_task = asyncio.create_task(
+            self._run_profile_configure()
+        )
+        try:
+            await self._profile_configure_task
+        finally:
+            self._profile_configure_task = None
+
+    async def _run_profile_configure(self) -> None:
+        """Run dataset configuration once, coalescing concurrent configure commands."""
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.tokenizes_input:
             self.info("Configuring tokenizer(s) for dataset manager")
@@ -180,18 +198,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
-        model_name = self.user_config.endpoint.model_names[0]
-        tokenizer_config = self.user_config.tokenizer
-        tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
-
-        # Let exceptions propagate - controller_utils will display the error panel
-        self.tokenizer = await asyncio.to_thread(
-            Tokenizer.from_pretrained,
-            tokenizer_name,
-            trust_remote_code=tokenizer_config.trust_remote_code,
-            revision=tokenizer_config.revision,
-            resolve_alias=tokenizer_config.should_resolve_alias,
-        )
+        self.tokenizer = await load_tokenizer_for_run(self.run)
 
     async def _convert_media_urls_to_inline(self) -> None:
         """Download HTTP(S) image URLs and replace them with base64 data URLs.
@@ -200,159 +207,54 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         and replaces all occurrences in-place. This is needed for endpoints that
         require inline media (e.g., NIM Image Retrieval).
         """
-        url_to_locations: dict[str, list[tuple[list[str], int]]] = {}
-
-        for conversation in self.dataset.values():
-            for turn in conversation.turns:
-                for image in turn.images:
-                    for i, content in enumerate(image.contents):
-                        parsed = urlparse(content)
-                        if parsed.scheme in ("http", "https") and parsed.netloc:
-                            url_to_locations.setdefault(content, []).append(
-                                (image.contents, i)
-                            )
-
+        url_to_locations = collect_http_image_urls(self.dataset.values())
         if not url_to_locations:
             return
 
-        dataset_env = Environment.DATASET
-        timeout = aiohttp.ClientTimeout(total=dataset_env.MEDIA_DOWNLOAD_TIMEOUT)
-        max_concurrency = dataset_env.MEDIA_DOWNLOAD_MAX_CONCURRENCY
-
+        max_concurrency = Environment.DATASET.MEDIA_DOWNLOAD_MAX_CONCURRENCY
         self.info(
             f"Downloading {len(url_to_locations)} unique media URL(s) "
             f"for inline encoding (concurrency={max_concurrency})"
         )
-
-        semaphore = asyncio.Semaphore(max_concurrency)
-        url_to_data_url: dict[str, str] = {}
-
-        async def _download_and_encode(
-            session: aiohttp.ClientSession, url: str
-        ) -> None:
-            async with semaphore:
-                async with session.get(url, timeout=timeout) as resp:
-                    if resp.status != 200:
-                        raise RuntimeError(
-                            f"Failed to download media URL '{url}': HTTP {resp.status}"
-                        )
-                    data = await resp.read()
-
-                img = PILImage.open(BytesIO(data))
-                if img.format is None:
-                    raise RuntimeError(
-                        f"Failed to determine image format for URL '{url}'"
-                    )
-                if img.format.upper() not in list(ImageFormat):
-                    raise RuntimeError(
-                        f"'{img.format}' from URL '{url}' is not a supported "
-                        f"image format: {', '.join(ImageFormat)}"
-                    )
-                url_to_data_url[url] = (
-                    f"data:image/{img.format.lower()};base64,"
-                    f"{encode_image(img, img.format)}"
-                )
-
-        connector = create_tcp_connector()
-        async with aiohttp.ClientSession(
-            connector=connector,
-            trust_env=AioHttpDefaults.TRUST_ENV,
-        ) as session:
-            await asyncio.gather(
-                *[_download_and_encode(session, url) for url in url_to_locations]
-            )
-
-        for url, locations in url_to_locations.items():
-            data_url = url_to_data_url[url]
-            for contents_list, index in locations:
-                contents_list[index] = data_url
-
+        await download_and_inline_urls(url_to_locations)
         self.info("Media URL download and inline encoding complete")
 
-    def _generate_input_payloads(
-        self,
-        model_endpoint: ModelEndpointInfo,
-    ) -> InputsFile:
+    def _generate_input_payloads(self) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
-        inputs = InputsFile()
-
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, model_endpoint.endpoint.type
-        )
-        endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
+            lambda: f"Building inputs.json payloads for endpoint {self.run.cfg.endpoint.type}"
         )
-        session_payloads_map: dict[str, list] = {}
-        for conversation in self.dataset.values():
-            session_id = conversation.session_id
-            if session_id not in session_payloads_map:
-                session_payloads_map[session_id] = []
-
-            for i, turn in enumerate(conversation.turns):
-                request_info = RequestInfo(
-                    model_endpoint=model_endpoint,
-                    turns=[turn],
-                    turn_index=i,
-                    credit_num=i,
-                    credit_phase=CreditPhase.PROFILING,
-                    x_request_id="",
-                    x_correlation_id="",
-                    conversation_id=conversation.session_id,
-                    system_message=conversation.system_message,
-                    user_context_message=conversation.user_context_message,
-                )
-                request_info.endpoint_headers = endpoint.get_endpoint_headers(
-                    request_info
-                )
-                request_info.endpoint_params = endpoint.get_endpoint_params(
-                    request_info
-                )
-                payload = endpoint.format_payload(request_info)
-                session_payloads_map[session_id].append(payload)
-
-        for session_id, payloads in session_payloads_map.items():
-            inputs.data.append(
-                SessionPayloads(session_id=session_id, payloads=payloads)
-            )
-        return inputs
+        return build_inputs_file(self.run, self.dataset)
 
     async def _generate_inputs_json_file(self) -> None:
-        """Generate inputs.json file in the artifact directory."""
-        file_path = (
-            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
-        )
+        """Generate inputs.json file in the artifact directory.
+
+        OSError is logged but not re-raised (failing to write this file does not
+        affect benchmark execution). Any other exception is fatal because later
+        stages rely on the payload format on the worker side.
+        """
+        file_path = self.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
         temp_file_path = file_path.with_suffix(".tmp")
         self.info(f"Generating inputs.json file at {file_path.resolve()}")
 
         try:
             start_time = time.perf_counter()
             file_path.parent.mkdir(parents=True, exist_ok=True)
-
-            model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            inputs = self._generate_input_payloads(model_endpoint)
-
+            inputs = self._generate_input_payloads()
             temp_file_path.write_bytes(
                 orjson.dumps(
-                    inputs.model_dump(exclude_none=True, mode="json"),
+                    msgspec.to_builtins(inputs, enc_hook=_msgspec_enc_hook),
                     option=orjson.OPT_INDENT_2,
                 )
             )
             temp_file_path.replace(file_path)
-
             duration = time.perf_counter() - start_time
             self.info(f"inputs.json file generated in {duration:.2f} seconds")
-
         except OSError as e:
             self.exception(
                 f"Error generating inputs.json file at {file_path.resolve()}: {e!r}"
             )
-            # NOTE: We don't raise an error here for OS related errors like writing to a file,
-            # as this won't affect the benchmark execution.
         except Exception as e:
-            # This is a fatal error, as later in the benchmark, errors will occur while trying to convert the payloads
-            # on the worker side.
             self.exception(
                 f"Error generating inputs.json file at {file_path.resolve()}: {e!r}"
             )
@@ -362,58 +264,75 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 temp_file_path.unlink()
 
     async def _load_public_dataset(self) -> list[Conversation]:
-        ComposerClass = plugins.get_class(
-            PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
+        conversations, self._default_context_mode = await load_public_dataset(
+            self.run, self.tokenizer
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        self._default_context_mode = composer.get_default_context_mode()
-        return await composer.create_dataset_async()
+        return conversations
 
     def _load_custom_dataset(self) -> list[Conversation]:
-        ComposerClass = plugins.get_class(
-            PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
+        conversations, self._default_context_mode = load_custom_dataset(
+            self.run, self.tokenizer
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        conversations = composer.create_dataset()
-        self._default_context_mode = composer.get_default_context_mode()
         return conversations
-
-    def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
-        return "rankings" in endpoint_type.lower()
 
     def _load_synthetic_dataset(self) -> list[Conversation]:
-        endpoint_type = self.user_config.endpoint.type
-
-        if self._is_rankings_endpoint(endpoint_type):
-            composer_type = ComposerType.SYNTHETIC_RANKINGS
-        else:
-            composer_type = ComposerType.SYNTHETIC
-
-        ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        conversations = composer.create_dataset()
-        self._default_context_mode = composer.get_default_context_mode()
+        conversations, self._default_context_mode = load_synthetic_dataset(
+            self.run, self.tokenizer
+        )
         return conversations
 
+    async def _load_conversations(self) -> list[Conversation]:
+        """Load conversations using the composer selected by the dataset config."""
+        conversations, self._default_context_mode = await load_conversations_for_run(
+            self.run, self.tokenizer
+        )
+        return conversations
+
+    async def _persist_conversations_to_backing_store(
+        self, conversations: list[Conversation]
+    ) -> DatasetClientMetadata:
+        """Stream conversations into the backing store and return client metadata.
+
+        In Kubernetes mode (compress_only=True), files are compressed during finalize();
+        in local mode, uncompressed files are used directly.
+        """
+        await self._backing_store.initialize()
+        conversations_dict = {conv.session_id: conv for conv in conversations}
+        await self._backing_store.add_conversations(conversations_dict)
+        await self._backing_store.finalize()
+
+        mmap_metadata = self._backing_store.get_client_metadata()
+        self.info(f"Backing store finalized: {mmap_metadata}")
+
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            self.info(
+                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
+                "from WorkerGroupManager before accessing dataset"
+            )
+        return mmap_metadata
+
+    def _build_dataset_metadata(
+        self, conversations: list[Conversation]
+    ) -> DatasetMetadata:
+        """Build the DatasetMetadata describing loaded conversations."""
+        from aiperf.config.resolved import (
+            conversations_have_timing_data,
+            get_sampling_strategy,
+        )
+
+        dataset_config = self.run.cfg.get_default_dataset()
+        return DatasetMetadata(
+            conversations=[conversation.metadata() for conversation in conversations],
+            sampling_strategy=get_sampling_strategy(dataset_config),
+            has_timing_data=conversations_have_timing_data(conversations),
+            default_context_mode=self._default_context_mode,
+        )
+
     async def _configure_dataset(self) -> None:
-        if self.user_config is None:
-            raise self._service_error("User config is required for dataset manager")
-
         self.dataset_configured.clear()
-
         self._default_context_mode = None
-        if self.user_config.input.public_dataset is not None:
-            conversations = await self._load_public_dataset()
-        elif (
-            self.user_config.input.custom_dataset_type is not None
-            or self.user_config.input.file is not None
-        ):
-            # Use CUSTOM composer if either:
-            # 1. custom_dataset_type is explicitly set, OR
-            # 2. input file is provided (composer will auto-infer type)
-            conversations = self._load_custom_dataset()
-        else:
-            conversations = self._load_synthetic_dataset()
+
+        conversations = await self._load_conversations()
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._conversation_ids_cache = [
@@ -421,38 +340,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ]
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
 
-        # Initialize backing store and stream conversations to mmap files
-        # Workers read directly from these files
-        await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
-        await self._backing_store.finalize()
-        # In Kubernetes mode (compress_only=True), files are already compressed
-        # during finalize(). In local mode, uncompressed files are used directly.
-
-        mmap_metadata = self._backing_store.get_client_metadata()
-        self.info(f"Backing store finalized: {mmap_metadata}")
-
-        # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
-        # WorkerPodManager which provides local file paths. We still send mmap_metadata
-        # which has the control plane paths (ignored by workers in Kubernetes mode).
-        client_metadata: DatasetClientMetadata = mmap_metadata
-        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
-            self.info(
-                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
-                "from WorkerPodManager before accessing dataset"
-            )
-
-        self.dataset_metadata = DatasetMetadata(
-            conversations=[conversation.metadata() for conversation in conversations],
-            sampling_strategy=self.user_config.input.dataset_sampling_strategy,
-            default_context_mode=self._default_context_mode,
+        client_metadata = await self._persist_conversations_to_backing_store(
+            conversations
         )
+
+        self.dataset_metadata = self._build_dataset_metadata(conversations)
         self.info(
             f"sampling strategy: {self.dataset_metadata.sampling_strategy}, "
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
@@ -461,21 +358,35 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
+            benchmark_generation=self.run.cfg.artifacts.benchmark_id,
+            dataset_generation=f"{self.run.cfg.artifacts.benchmark_id}:dataset",
+        )
+        await self.publish(notification)
+        self._rebroadcast_task = asyncio.create_task(
+            self._rebroadcast_dataset_notification(notification)
         )
 
-    @on_request(MessageType.CONVERSATION_REQUEST)
-    async def _handle_conversation_request(
-        self, message: ConversationRequestMessage
-    ) -> ConversationResponseMessage:
-        """Handle a conversation request using the dataset client."""
-        self.debug(lambda: f"Handling conversation request: {message}")
+    async def _rebroadcast_dataset_notification(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Rebroadcast the dataset notification every second until profile_start."""
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+                await self.publish(notification)
+        except asyncio.CancelledError:
+            pass
 
+    async def _get_conversation_or_raise(self, conversation_id: str) -> Conversation:
+        """Wait for configuration, validate client readiness, then fetch a conversation.
+
+        Raises `_service_error` if the client is unavailable (Kubernetes mode or not
+        initialized) or the conversation is missing.
+        """
         await self._wait_for_dataset_configuration()
 
         if self._dataset_client is None:
@@ -489,13 +400,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         try:
-            conversation = await self._dataset_client.get_conversation(
-                message.conversation_id
-            )
-        except KeyError:
+            return await self._dataset_client.get_conversation(conversation_id)
+        except KeyError as e:
             raise self._service_error(
-                f"Conversation {message.conversation_id} not found in dataset.",
-            ) from None
+                f"Conversation {conversation_id} not found in dataset.",
+            ) from e
+
+    @on_request(MessageType.CONVERSATION_REQUEST)
+    async def _handle_conversation_request(
+        self, message: ConversationRequestMessage
+    ) -> ConversationResponseMessage:
+        """Handle a conversation request using the dataset client."""
+        self.debug(lambda: f"Handling conversation request: {message}")
+        conversation = await self._get_conversation_or_raise(message.conversation_id)
 
         self.trace_or_debug(
             lambda: f"Sending conversation response: {conversation}",
@@ -513,27 +430,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     ) -> ConversationTurnResponseMessage:
         """Handle a turn request using the dataset client."""
         self.debug(lambda: f"Handling turn request: {message}")
-
-        await self._wait_for_dataset_configuration()
-
-        if self._dataset_client is None:
-            if self._compress_only:
-                raise self._service_error(
-                    "DatasetManager cannot serve requests in Kubernetes mode. "
-                    "Workers should handle all conversation requests.",
-                )
-            raise self._service_error(
-                "Dataset client is not initialized. Dataset must be configured before handling requests.",
-            )
-
-        try:
-            conversation = await self._dataset_client.get_conversation(
-                message.conversation_id
-            )
-        except KeyError as e:
-            raise self._service_error(
-                f"Conversation {message.conversation_id} not found in dataset.",
-            ) from e
+        conversation = await self._get_conversation_or_raise(message.conversation_id)
 
         if message.turn_index >= len(conversation.turns):
             raise self._service_error(
@@ -541,7 +438,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         turn = conversation.turns[message.turn_index]
-
         self.trace_or_debug(
             lambda: f"Sending turn response: {turn}",
             "Sending turn response",
@@ -566,6 +462,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     @on_stop
     async def _cleanup(self) -> None:
         """Clean up the backing store, dataset client, and associated mmap files."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
         if self._dataset_client is not None:
             await self._dataset_client.stop()
             self.debug("Dataset client cleanup complete")

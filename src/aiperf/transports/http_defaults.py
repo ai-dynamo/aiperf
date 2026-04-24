@@ -32,6 +32,36 @@ class SocketDefaults:
     SO_REUSEPORT = 1  # Enable reuse port
 
     @classmethod
+    def build_socket_options(cls) -> list[tuple[int, int, int]]:
+        """Build socket options as a list of (level, optname, value) tuples.
+
+        Used by httpcore which accepts socket_options in this format.
+        """
+        options = [
+            (socket.SOL_TCP, socket.TCP_NODELAY, cls.TCP_NODELAY),
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, cls.SO_KEEPALIVE),
+        ]
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            options.extend(
+                [
+                    (
+                        socket.SOL_TCP,
+                        socket.TCP_KEEPIDLE,
+                        Environment.HTTP.TCP_KEEPIDLE,
+                    ),
+                    (
+                        socket.SOL_TCP,
+                        socket.TCP_KEEPINTVL,
+                        Environment.HTTP.TCP_KEEPINTVL,
+                    ),
+                    (socket.SOL_TCP, socket.TCP_KEEPCNT, Environment.HTTP.TCP_KEEPCNT),
+                ]
+            )
+        if hasattr(socket, "TCP_QUICKACK"):
+            options.append((socket.SOL_TCP, socket.TCP_QUICKACK, cls.TCP_QUICKACK))
+        return options
+
+    @classmethod
     def apply_to_socket(cls, sock: socket.socket) -> None:
         """Apply the default socket options to the given socket."""
 
@@ -108,3 +138,27 @@ class AioHttpDefaults:
             "family": cls.SOCKET_FAMILY,
             "ssl": cls.SSL_VERIFY,
         }
+
+
+@dataclass(frozen=True)
+class HttpCoreDefaults:
+    """Default values for httpcore.AsyncConnectionPool with HTTP/2 support."""
+
+    HTTP1 = True
+    HTTP2 = True
+    STREAMS_PER_CONNECTION = 100
+    KEEPALIVE_EXPIRY = 300.0
+    RETRIES = 0
+    MIN_CONNECTIONS = 10
+
+    @classmethod
+    def calculate_max_connections(cls) -> int:
+        """Calculate maximum connections based on target concurrency.
+
+        Strategy: AIPERF_HTTP_CONNECTION_LIMIT / STREAMS_PER_CONNECTION.
+        HTTP/2 supports ~100 concurrent streams per connection.
+        """
+        return max(
+            cls.MIN_CONNECTIONS,
+            Environment.HTTP.CONNECTION_LIMIT // cls.STREAMS_PER_CONNECTION,
+        )

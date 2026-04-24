@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 
@@ -33,7 +32,9 @@ def mock_stop_checker():
 def mock_progress():
     """Mock progress tracker."""
     mock = MagicMock()
-    mock.increment_sent = MagicMock(return_value=(1, False))  # (credit_index, is_final)
+    mock.increment_sent = MagicMock(
+        return_value=(1, 0, False)
+    )  # (credit_index, session_index, is_final)
     mock.freeze_sent_counts = MagicMock()
     mock.all_credits_sent_event = asyncio.Event()
     return mock
@@ -70,10 +71,7 @@ def mock_lifecycle():
     """Mock phase lifecycle."""
     mock = MagicMock()
     mock.time_left_in_seconds = MagicMock(return_value=None)
-    mock.phase_start_ns = 0
-    # CreditIssuer uses these to calculate issued_at_ns timestamps
-    mock.started_at_ns = time.time_ns()
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock.clock.now_ns = MagicMock(side_effect=time.time_ns)
     return mock
 
 
@@ -88,7 +86,8 @@ def credit_issuer(
 ):
     """Create CreditIssuer with all mocked dependencies."""
     return CreditIssuer(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
+        exclude_from_results=False,
         stop_checker=mock_stop_checker,
         progress=mock_progress,
         concurrency_manager=mock_concurrency,
@@ -102,6 +101,8 @@ def make_turn(
     conversation_id: str = "conv1",
     turn_index: int = 0,
     num_turns: int = 1,
+    url_index: int | None = None,
+    allow_worker_migration: bool = False,
 ) -> TurnToSend:
     """Create a TurnToSend for testing."""
     return TurnToSend(
@@ -109,6 +110,8 @@ def make_turn(
         x_correlation_id=f"corr-{conversation_id}",
         turn_index=turn_index,
         num_turns=num_turns,
+        url_index=url_index,
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -150,25 +153,38 @@ class TestBasicCreditIssuance:
         self, credit_issuer, mock_router, mock_progress
     ):
         """Credit struct should have correct fields from turn."""
-        mock_progress.increment_sent.return_value = (42, False)  # credit_index=42
+        mock_progress.increment_sent.return_value = (42, 0, False)  # credit_index=42
         turn = make_turn(conversation_id="test-conv", turn_index=1, num_turns=5)
 
         await credit_issuer.issue_credit(turn)
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.id == 42
-        assert sent_credit.phase == CreditPhase.PROFILING
+        assert sent_credit.phase == "profiling"
         assert sent_credit.conversation_id == "test-conv"
         assert sent_credit.x_correlation_id == "corr-test-conv"
         assert sent_credit.turn_index == 1
         assert sent_credit.num_turns == 5
         assert sent_credit.issued_at_ns > 0
 
+    async def test_issue_credit_sets_session_num_on_credit(
+        self, credit_issuer, mock_router, mock_progress
+    ):
+        """Credit struct should carry session_num from progress tracker."""
+        mock_progress.increment_sent.return_value = (5, 3, False)
+        turn = make_turn()
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.id == 5
+        assert sent_credit.session_num == 3
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):
         """Should return True when not the final credit."""
-        mock_progress.increment_sent.return_value = (1, False)  # Not final
+        mock_progress.increment_sent.return_value = (1, 0, False)  # Not final
         turn = make_turn()
 
         result = await credit_issuer.issue_credit(turn)
@@ -179,7 +195,7 @@ class TestBasicCreditIssuance:
         self, credit_issuer, mock_progress
     ):
         """Should return False when this is the final credit."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         result = await credit_issuer.issue_credit(turn)
@@ -219,9 +235,7 @@ class TestSlotAcquisitionFailures:
         result = await credit_issuer.issue_credit(turn)
 
         assert result is False
-        mock_concurrency.release_session_slot.assert_called_once_with(
-            CreditPhase.PROFILING
-        )
+        mock_concurrency.release_session_slot.assert_called_once_with("profiling")
         mock_router.send_credit.assert_not_called()
 
     async def test_subsequent_turn_returns_false_when_prefill_fails(
@@ -284,7 +298,7 @@ class TestFinalCreditHandling:
 
     async def test_final_credit_freezes_sent_counts(self, credit_issuer, mock_progress):
         """Final credit should freeze sent counts."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -293,7 +307,7 @@ class TestFinalCreditHandling:
 
     async def test_final_credit_sets_event(self, credit_issuer, mock_progress):
         """Final credit should set the all_credits_sent_event."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -304,7 +318,7 @@ class TestFinalCreditHandling:
         self, credit_issuer, mock_progress
     ):
         """Non-final credit should not freeze counts or set event."""
-        mock_progress.increment_sent.return_value = (5, False)  # Not final
+        mock_progress.increment_sent.return_value = (5, 0, False)  # Not final
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -354,7 +368,7 @@ class TestCancellationPolicy:
         await credit_issuer.issue_credit(turn)
 
         mock_cancellation.next_cancellation_delay_ns.assert_called_once_with(
-            turn, CreditPhase.PROFILING
+            turn, "profiling", exclude_from_results=False
         )
 
 
@@ -381,13 +395,14 @@ class TestAtomicCreditNumbering:
 
         def increment_sent(turn):
             call_count[0] += 1
-            return (call_count[0], call_count[0] >= 3)  # Final at 3rd call
+            return (call_count[0], 0, call_count[0] >= 3)  # Final at 3rd call
 
         progress.increment_sent = increment_sent
         progress.freeze_sent_counts = MagicMock()
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=progress,
             concurrency_manager=mock_concurrency,
@@ -437,7 +452,8 @@ class TestEdgeCases:
     ):
         """CreditIssuer should work with WARMUP phase."""
         issuer = CreditIssuer(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
+            exclude_from_results=True,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -450,7 +466,7 @@ class TestEdgeCases:
         await issuer.issue_credit(turn)
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-        assert sent_credit.phase == CreditPhase.WARMUP
+        assert sent_credit.phase == "warmup"
 
     async def test_large_conversation_with_many_turns(self, credit_issuer, mock_router):
         """Should handle conversations with many turns."""
@@ -543,7 +559,8 @@ class TestURLSelectionStrategy:
 
     When multiple --url endpoints are configured, the URL selection strategy
     (round-robin) should only be invoked on the first turn of a conversation.
-    Subsequent turns get url_index=None and rely on the worker's session cache.
+    Subsequent turns preserve the original url_index so worker migration keeps
+    the session on the same backend.
     """
 
     async def test_first_turn_gets_url_index_from_strategy(
@@ -560,7 +577,8 @@ class TestURLSelectionStrategy:
         mock_url_strategy.next_url_index.return_value = 2
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -578,7 +596,7 @@ class TestURLSelectionStrategy:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.url_index == 2
 
-    async def test_subsequent_turns_get_none_url_index(
+    async def test_subsequent_turns_preserve_existing_url_index(
         self,
         mock_stop_checker,
         mock_progress,
@@ -587,12 +605,13 @@ class TestURLSelectionStrategy:
         mock_cancellation,
         mock_lifecycle,
     ):
-        """Subsequent turns should get url_index=None (worker uses session cache)."""
+        """Subsequent turns should reuse the preserved URL index."""
         mock_url_strategy = MagicMock()
         mock_url_strategy.next_url_index.return_value = 5  # Should NOT be used
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -602,13 +621,13 @@ class TestURLSelectionStrategy:
             url_selection_strategy=mock_url_strategy,
         )
 
-        turn = make_turn(turn_index=1, num_turns=3)  # NOT first turn
+        turn = make_turn(turn_index=1, num_turns=3, url_index=4)  # NOT first turn
         await issuer.issue_credit(turn)
 
         # Strategy should NOT be called for subsequent turns
         mock_url_strategy.next_url_index.assert_not_called()
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-        assert sent_credit.url_index is None
+        assert sent_credit.url_index == 4
 
     async def test_multi_turn_conversation_only_first_turn_advances_round_robin(
         self,
@@ -636,7 +655,8 @@ class TestURLSelectionStrategy:
         mock_url_strategy.next_url_index.side_effect = next_url
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -646,25 +666,27 @@ class TestURLSelectionStrategy:
             url_selection_strategy=mock_url_strategy,
         )
 
-        # Simulate 3-turn conversation
-        for turn_index in range(3):
-            turn = make_turn(
-                conversation_id="multi-turn-conv",
-                turn_index=turn_index,
-                num_turns=3,
-            )
-            await issuer.issue_credit(turn)
+        turn = make_turn(conversation_id="multi-turn-conv", turn_index=0, num_turns=3)
+        await issuer.issue_credit(turn)
+        first_credit = mock_router.send_credit.call_args_list[0].kwargs["credit"]
+
+        turn = TurnToSend.from_previous_credit(first_credit)
+        await issuer.issue_credit(turn)
+        second_credit = mock_router.send_credit.call_args_list[1].kwargs["credit"]
+
+        turn = TurnToSend.from_previous_credit(second_credit)
+        await issuer.issue_credit(turn)
 
         # Round-robin should only advance once (for first turn)
         assert mock_url_strategy.next_url_index.call_count == 1
 
-        # Check credits: first turn has url_index=0, others have None
+        # Check credits: all turns preserve the same URL index
         sent_credits = [
             call.kwargs["credit"] for call in mock_router.send_credit.call_args_list
         ]
         assert sent_credits[0].url_index == 0  # First turn gets index
-        assert sent_credits[1].url_index is None  # Subsequent turns: None
-        assert sent_credits[2].url_index is None
+        assert sent_credits[1].url_index == 0
+        assert sent_credits[2].url_index == 0
 
     async def test_no_url_strategy_means_none_url_index(
         self, credit_issuer, mock_router

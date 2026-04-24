@@ -145,8 +145,9 @@ class ModeDetector(AIPerfLoggerMixin):
         A valid run directory must:
         - Be a directory
         - Contain the required profile export files (profile_export.jsonl, profile_export_aiperf.json)
+          in either raw or .zst compressed form
 
-        Note: This function follows symlinks. If profile_export.jsonl or profile_export_aiperf.json is a broken
+        Note: This function follows symlinks. If a marker file or its .zst variant is a broken
         symlink, the directory is not considered a valid run directory.
 
         Args:
@@ -158,33 +159,24 @@ class ModeDetector(AIPerfLoggerMixin):
         if not path.is_dir():
             return False
 
-        jsonl_file = path / PROFILE_EXPORT_JSONL
-        aiperf_json_file = path / PROFILE_EXPORT_AIPERF_JSON
-
-        try:
-            if jsonl_file.is_symlink() and not jsonl_file.exists():
-                self.warning(
-                    f"Directory {path} contains broken symlink for {jsonl_file}"
-                )
+        def _has_file(name: str) -> bool:
+            raw = path / name
+            zst = path / f"{name}.zst"
+            try:
+                if raw.is_symlink() and not raw.exists():
+                    self.warning(f"Directory {path} contains broken symlink for {raw}")
+                    return False
+                if raw.exists():
+                    return True
+                if zst.is_symlink() and not zst.exists():
+                    self.warning(f"Directory {path} contains broken symlink for {zst}")
+                    return False
+                return zst.exists()
+            except (PermissionError, OSError) as e:
+                self.warning(f"Cannot check file status for {name} in {path}: {e}")
                 return False
 
-            if not jsonl_file.exists():
-                return False
-
-            if aiperf_json_file.is_symlink() and not aiperf_json_file.exists():
-                self.warning(
-                    f"Directory {path} contains broken symlink for {aiperf_json_file}"
-                )
-                return False
-
-            if not aiperf_json_file.exists():
-                return False
-
-        except (PermissionError, OSError) as e:
-            self.warning(f"Cannot check file status for {jsonl_file}: {e}")
-            return False
-
-        return True
+        return _has_file(PROFILE_EXPORT_JSONL) and _has_file(PROFILE_EXPORT_AIPERF_JSON)
 
     def _find_all_run_directories_recursive(
         self, path: Path, visited: set[Path] | None = None

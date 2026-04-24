@@ -7,38 +7,39 @@ from dataclasses import dataclass, field
 
 @dataclass(slots=True)
 class RadixTreeStats:
-    """Statistics about radix tree structure.
-
-    Attributes:
-        num_nodes: Total number of nodes in tree.
-        num_leaves: Number of leaf nodes (nodes with no children).
-        total_visits: Number of paths added to tree.
-        max_depth: Maximum depth from root to leaf.
-    """
+    """Statistics about radix tree structure."""
 
     num_nodes: int
+    """Total number of nodes in tree."""
+
     num_leaves: int
+    """Number of leaf nodes (nodes with no children)."""
+
     total_visits: int
+    """Number of paths added to tree."""
+
     max_depth: int
+    """Maximum depth from root to leaf."""
 
 
 @dataclass(slots=True)
 class RadixNode:
-    """A node in the radix tree representing a prefix path.
-
-    Attributes:
-        node_id: Unique node identifier.
-        label: Edge label (token count).
-        visit_count: Number of times this node is visited.
-        children: Child nodes by edge label.
-        parent: Parent node reference.
-    """
+    """A node in the radix tree representing a prefix path."""
 
     node_id: int
+    """Unique node identifier."""
+
     label: int | None = None
+    """Edge label (token count)."""
+
     visit_count: int = 0
+    """Number of times this node is visited."""
+
     children: dict[int, "RadixNode"] = field(default_factory=dict)
+    """Child nodes by edge label."""
+
     parent: "RadixNode | None" = None
+    """Parent node reference."""
 
     def add_child(self, label: int, child: "RadixNode") -> None:
         """Add a child node with the given edge label.

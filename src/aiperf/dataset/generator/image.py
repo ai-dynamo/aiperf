@@ -1,16 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import glob
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import ImageConfig
 from aiperf.common.enums import ImageFormat
 from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class ImageGenerator(BaseGenerator):
@@ -22,15 +27,18 @@ class ImageGenerator(BaseGenerator):
     The dimensions can be randomized based on mean and standard deviation values.
     """
 
-    def __init__(self, config: ImageConfig, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
+        # Extract image config from dataset config
+        dataset_config = run.cfg.get_default_dataset()
+        self.image_config = getattr(dataset_config, "images", None)
 
         # Separate RNGs for independent concerns
         self._dimensions_rng = rng.derive("dataset.image.dimensions")
         self._format_rng = rng.derive("dataset.image.format")
         self._source_rng = rng.derive("dataset.image.source")
 
-        self.config = config
+        self.run = run
 
         # Pre-load source images into memory for fast sampling
         source_images_dir = Path(__file__).parent.resolve() / "assets" / "source_images"
@@ -55,17 +63,16 @@ class ImageGenerator(BaseGenerator):
         Returns:
             A base64 encoded string of the generated image.
         """
-        image_format = self.config.format
+        if self.image_config is None:
+            raise ValueError("Image config is not available in dataset config")
+
+        image_format = self.image_config.format
         if image_format == ImageFormat.RANDOM:
             formats = [f for f in ImageFormat if f != ImageFormat.RANDOM]
             image_format = self._format_rng.choice(formats)
 
-        width = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.width.mean, self.config.width.stddev
-        )
-        height = self._dimensions_rng.sample_positive_normal_integer(
-            self.config.height.mean, self.config.height.stddev
-        )
+        width = self.image_config.width.sample_int(self._dimensions_rng)
+        height = self.image_config.height.sample_int(self._dimensions_rng)
 
         self.logger.debug(
             "Generating image with width=%d, height=%d",

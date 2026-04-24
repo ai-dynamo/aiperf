@@ -3,10 +3,8 @@
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
@@ -61,7 +59,7 @@ def make_strategy(
     )
     src = ConversationSource(ds, sampler)
     cfg = CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.FIXED_SCHEDULE,
         total_expected_requests=len(schedule),
         auto_offset_timestamps=auto_offset,
@@ -81,7 +79,11 @@ def make_strategy(
 @pytest.mark.asyncio
 class TestFixedScheduleStrategy:
     async def test_empty_schedule_raises(self, create_orchestrator_harness) -> None:
-        with pytest.raises(ValidationError, match="greater than 0"):
+        # With an empty schedule, the dataset sampler rejects an empty
+        # conversation list. (Previously this raised pydantic ValidationError on
+        # CreditPhaseConfig(total_expected_requests=0); the gt=0 constraint was
+        # dropped when CreditPhaseConfig became msgspec.)
+        with pytest.raises(ValueError, match="conversation_ids cannot be empty"):
             create_orchestrator_harness(schedule=[])
 
     @pytest.mark.parametrize(
@@ -173,7 +175,7 @@ class TestFixedScheduleExecutePhase:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
@@ -199,7 +201,7 @@ class TestFixedScheduleCreditReturn:
         await strategy.setup_phase()
         credit = Credit(
             id=1,
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             conversation_id="c1",
             x_correlation_id="corr-c1",
             turn_index=1,
@@ -217,7 +219,7 @@ class TestFixedScheduleCreditReturn:
         await strategy.setup_phase()
         credit = Credit(
             id=1,
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             conversation_id="c1",
             x_correlation_id="corr-c1",
             turn_index=0,
@@ -273,7 +275,7 @@ class TestFixedScheduleEdgeCases:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
@@ -308,7 +310,7 @@ class TestFixedScheduleEdgeCases:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,

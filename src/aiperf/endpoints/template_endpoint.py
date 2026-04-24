@@ -33,14 +33,13 @@ class TemplateEndpoint(BaseEndpoint):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        extra = self.model_endpoint.endpoint.extra
-        extra_dict = dict(extra) if extra else {}
 
-        template_source = extra_dict.get("payload_template")
-        if not template_source:
+        template_config = self.run.cfg.endpoint.template
+        if not template_config:
             raise InvalidStateError(
-                "Template endpoint requires 'payload_template' in endpoint.extra configuration"
+                "Template endpoint requires 'template' configuration in endpoint"
             )
+        template_source = template_config.body
 
         if template_source in NAMED_TEMPLATES:
             self.info(f"Using named template: '{template_source}'")
@@ -59,9 +58,9 @@ class TemplateEndpoint(BaseEndpoint):
         )
         self.info(f"Compiled template ({len(template_source)} chars)")
 
-        response_field = extra_dict.get("response_field")
+        response_field = template_config.response_field
         self._compiled_jmespath = None
-        if response_field:
+        if response_field and response_field != "text":
             try:
                 self._compiled_jmespath = jmespath.compile(response_field)
                 self.info(f"Compiled JMESPath query: '{response_field}'")
@@ -70,11 +69,9 @@ class TemplateEndpoint(BaseEndpoint):
                     f"Failed to compile JMESPath query: '{response_field}' - {e!r}"
                 )
 
-        self._extra_fields = {
-            k: v
-            for k, v in extra_dict.items()
-            if k not in ("payload_template", "response_field")
-        }
+        self._extra_fields = (
+            dict(self.run.cfg.endpoint.extra) if self.run.cfg.endpoint.extra else {}
+        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format custom template request payload from RequestInfo.
@@ -115,13 +112,13 @@ class TemplateEndpoint(BaseEndpoint):
             "images_by_name": images_by_name or {},
             "audios_by_name": audios_by_name or {},
             "videos_by_name": videos_by_name or {},
-            "model": turn.model or self.model_endpoint.primary_model_name,
+            "model": turn.model or self.run.cfg.get_model_names()[0],
             "max_tokens": turn.max_tokens,
             "role": turn.role,
             "turn": turn,
             "turns": request_info.turns,
             "request_info": request_info,
-            "stream": self.model_endpoint.endpoint.streaming,
+            "stream": self.run.cfg.endpoint.streaming,
         }
 
         rendered = self._template.render(**template_vars)

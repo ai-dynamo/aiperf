@@ -72,7 +72,7 @@ class MultiRunPNGExporter(BasePNGExporter):
                 self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - PNG export aggregates across heterogeneous plot specs; one bad spec shouldn't block the rest — log and continue
                 self.error(f"Failed to generate {spec.name}: {e}")
 
         self._create_summary_file(generated_files)
@@ -132,136 +132,156 @@ class MultiRunPNGExporter(BasePNGExporter):
         Returns:
             DataFrame with columns for metrics, metadata, and all config fields
         """
-        rows = []
-        for run in runs:
-            row = {}
-
-            row["run_name"] = run.metadata.run_name
-            row["model"] = run.metadata.model or "Unknown"
-            row["concurrency"] = run.metadata.concurrency or 1
-            row["request_count"] = run.metadata.request_count
-            row["duration_seconds"] = run.metadata.duration_seconds
-            row["experiment_type"] = run.metadata.experiment_type
-            row["experiment_group"] = run.metadata.experiment_group
-            if run.metadata.endpoint_type:
-                row["endpoint_type"] = run.metadata.endpoint_type
-
-            if "input_config" in run.aggregated:
-                config = run.aggregated["input_config"]
-                flattened = flatten_config(config)
-                row.update(flattened)
-
-            for key, value in run.aggregated.items():
-                if key in NON_METRIC_KEYS:
-                    continue
-
-                if isinstance(value, MetricResult):
-                    if (
-                        hasattr(value, DEFAULT_PERCENTILE)
-                        and getattr(value, DEFAULT_PERCENTILE) is not None
-                    ):
-                        row[key] = getattr(value, DEFAULT_PERCENTILE)
-                    elif value.avg is not None:
-                        row[key] = value.avg
-                elif isinstance(value, dict) and "unit" in value and value is not None:
-                    if DEFAULT_PERCENTILE in value:
-                        row[key] = value[DEFAULT_PERCENTILE]
-                    elif "avg" in value:
-                        row[key] = value["avg"]
-                    elif "value" in value:
-                        row[key] = value["value"]
-
-            # Extract server metrics from server_metrics_aggregated
-            if run.server_metrics_aggregated:
-                for metric_name, endpoint_data in run.server_metrics_aggregated.items():
-                    # Aggregate across ALL endpoints and label combinations
-                    # This ensures consistent behavior regardless of label cardinality
-                    values = []
-                    metric_type = None
-                    total_combinations = 0
-
-                    for _endpoint_url, labels_dict in endpoint_data.items():
-                        for _labels_key, series_data in labels_dict.items():
-                            total_combinations += 1
-                            stats = series_data.get("stats")
-
-                            if stats is None:
-                                # Static value (no variation) - use the value directly
-                                static_value = series_data.get("value")
-                                if static_value is not None:
-                                    values.append(static_value)
-                                continue
-
-                            # Extract metric type (same for all series)
-                            if metric_type is None:
-                                metric_type = series_data.get(
-                                    "type", PrometheusMetricType.UNKNOWN
-                                )
-
-                            # Extract appropriate stat based on metric type
-                            if metric_type == PrometheusMetricType.COUNTER:
-                                # Use rate for counters
-                                if hasattr(stats, "rate") and stats.rate is not None:
-                                    values.append(stats.rate)
-                                elif (
-                                    isinstance(stats, dict)
-                                    and stats.get("rate") is not None
-                                ):
-                                    values.append(stats["rate"])
-                            else:
-                                # Use avg for gauge/histogram
-                                if hasattr(stats, "avg") and stats.avg is not None:
-                                    values.append(stats.avg)
-                                elif (
-                                    isinstance(stats, dict)
-                                    and stats.get("avg") is not None
-                                ):
-                                    values.append(stats["avg"])
-
-                    # Aggregate all values
-                    if values:
-                        # Use sum for counters (total rate), average for others
-                        if metric_type == PrometheusMetricType.COUNTER:
-                            row[metric_name] = sum(
-                                values
-                            )  # Sum rates across all labels/endpoints
-                        else:
-                            row[metric_name] = sum(values) / len(
-                                values
-                            )  # Average across labels/endpoints
-
-                        # Warn if multiple combinations exist (potential semantic issue)
-                        if total_combinations > 1:
-                            self.debug(
-                                f"Server metric '{metric_name}' has {total_combinations} "
-                                f"endpoint+label combinations - aggregated to single value "
-                                f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
-                            )
-
-            rows.append(row)
-
+        rows = [self._run_to_row(run) for run in runs]
         df = pd.DataFrame(rows)
 
-        if "experiment_group" in df.columns:
-            if classification_config and classification_config.group_display_names:
-                df["group_display_name"] = (
-                    df["experiment_group"]
-                    .map(classification_config.group_display_names)
-                    .fillna(df["experiment_group"])
-                )
-            else:
-                df["group_display_name"] = df["experiment_group"]
+        self._apply_group_display_names(df, classification_config)
+        self._log_unique_experiment_columns(df)
 
+        return df
+
+    def _run_to_row(self, run: RunData) -> dict:
+        """Build a single DataFrame row dict from one RunData."""
+        row: dict = {
+            "run_name": run.metadata.run_name,
+            "model": run.metadata.model or "Unknown",
+            "concurrency": run.metadata.concurrency or 1,
+            "request_count": run.metadata.request_count,
+            "duration_seconds": run.metadata.duration_seconds,
+            "experiment_type": run.metadata.experiment_type,
+            "experiment_group": run.metadata.experiment_group,
+        }
+        if run.metadata.endpoint_type:
+            row["endpoint_type"] = run.metadata.endpoint_type
+
+        if "input_config" in run.aggregated:
+            row.update(flatten_config(run.aggregated["input_config"]))
+
+        for key, value in run.aggregated.items():
+            if key in NON_METRIC_KEYS:
+                continue
+            extracted = _extract_aggregated_value(value)
+            if extracted is not None:
+                row[key] = extracted
+
+        if run.server_metrics_aggregated:
+            for metric_name, endpoint_data in run.server_metrics_aggregated.items():
+                self._aggregate_server_metric_into_row(row, metric_name, endpoint_data)
+
+        return row
+
+    def _apply_group_display_names(
+        self,
+        df: pd.DataFrame,
+        classification_config: ExperimentClassificationConfig | None,
+    ) -> None:
+        """Populate ``group_display_name`` on the DataFrame if experiment_group exists."""
+        if "experiment_group" not in df.columns:
+            return
+        if classification_config and classification_config.group_display_names:
+            df["group_display_name"] = (
+                df["experiment_group"]
+                .map(classification_config.group_display_names)
+                .fillna(df["experiment_group"])
+            )
+        else:
+            df["group_display_name"] = df["experiment_group"]
+
+    def _log_unique_experiment_columns(self, df: pd.DataFrame) -> None:
+        """Log unique values for experiment_group and experiment_type columns."""
         if "experiment_group" in df.columns:
             unique_groups = df["experiment_group"].unique()
             self.info(
                 f"DataFrame has {len(unique_groups)} unique experiment_groups: {sorted(unique_groups)}"
             )
-
         if "experiment_type" in df.columns:
             unique_types = df["experiment_type"].unique()
             self.info(
                 f"DataFrame has {len(unique_types)} unique experiment_types: {sorted(unique_types)}"
             )
 
-        return df
+    def _aggregate_server_metric_into_row(
+        self,
+        row: dict,
+        metric_name: str,
+        endpoint_data: dict,
+    ) -> None:
+        """Aggregate one server metric across all endpoint+label combinations into `row`.
+
+        Sums rates for counters, averages avg for gauges/histograms. Falls back to the
+        static ``value`` field when ``stats`` isn't present.
+        """
+        values: list[float] = []
+        metric_type: PrometheusMetricType | str | None = None
+        total_combinations = 0
+
+        for labels_dict in endpoint_data.values():
+            for series_data in labels_dict.values():
+                total_combinations += 1
+                stats = series_data.get("stats")
+
+                if stats is None:
+                    # Static value (no variation) - use the value directly
+                    static_value = series_data.get("value")
+                    if static_value is not None:
+                        values.append(static_value)
+                    continue
+
+                if metric_type is None:
+                    metric_type = series_data.get("type", PrometheusMetricType.UNKNOWN)
+
+                extracted = _extract_stat_value(stats, metric_type)
+                if extracted is not None:
+                    values.append(extracted)
+
+        if not values:
+            return
+
+        # Use sum for counters (total rate), average for others
+        if metric_type == PrometheusMetricType.COUNTER:
+            row[metric_name] = sum(values)
+        else:
+            row[metric_name] = sum(values) / len(values)
+
+        if total_combinations > 1:
+            self.debug(
+                f"Server metric '{metric_name}' has {total_combinations} "
+                f"endpoint+label combinations - aggregated to single value "
+                f"({'sum' if metric_type == PrometheusMetricType.COUNTER else 'average'})"
+            )
+
+
+def _extract_aggregated_value(value: object) -> float | None:
+    """Pull the preferred scalar (percentile, avg, or value) from an aggregated entry.
+
+    Handles both ``MetricResult`` objects and legacy dict-shaped entries that carry
+    a ``unit`` key. Returns ``None`` when nothing usable is present.
+    """
+    if isinstance(value, MetricResult):
+        pct = getattr(value, DEFAULT_PERCENTILE, None)
+        if pct is not None:
+            return pct
+        return value.avg
+    if isinstance(value, dict) and "unit" in value:
+        if DEFAULT_PERCENTILE in value:
+            return value[DEFAULT_PERCENTILE]
+        if "avg" in value:
+            return value["avg"]
+        if "value" in value:
+            return value["value"]
+    return None
+
+
+def _extract_stat_value(stats, metric_type) -> float | None:
+    """Pull the appropriate scalar (rate for counter, avg otherwise) from a stats object or dict."""
+    if metric_type == PrometheusMetricType.COUNTER:
+        if hasattr(stats, "rate") and stats.rate is not None:
+            return stats.rate
+        if isinstance(stats, dict) and stats.get("rate") is not None:
+            return stats["rate"]
+        return None
+    if hasattr(stats, "avg") and stats.avg is not None:
+        return stats.avg
+    if isinstance(stats, dict) and stats.get("avg") is not None:
+        return stats["avg"]
+    return None

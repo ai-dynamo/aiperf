@@ -1,0 +1,127 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# CRD release workflow.
+#
+# Regenerates the AIPerfJob CRD from the Pydantic config model and publishes
+# a standalone, non-Helm-templated CRD YAML as:
+#   - a workflow artifact (always), and
+#   - a release asset attached to the pushed tag (on `v*.*.*` tag push only).
+#
+# `tools/generate_crd.py` emits a Helm-templated CRD directly to
+# `deploy/helm/aiperf-operator/templates/crd.yaml`. For release consumption we
+# need a plain K8s manifest with template actions resolved, so we render via
+# `helm template --show-only templates/crd.yaml`.
+name: "CRD Release"
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag label used in the artifact filename (release attachment is skipped on workflow_dispatch)."
+        type: string
+        default: "v0.0.0-dev"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  crd-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      TAG_NAME: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      - name: Install project (uv venv via make first-time-setup)
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Check CRD is in sync with Pydantic model
+        run: make check-crd
+
+      - name: Render standalone CRD YAML
+        run: make crd-release
+
+      - name: Stage artifact with tag-suffixed filename
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          out="dist/release/aiperfjob-crd-${TAG_NAME}.yaml"
+          cp dist/aiperfjob-crd.yaml "${out}"
+          echo "path=${out}" >> "$GITHUB_OUTPUT"
+          echo "name=aiperfjob-crd-${TAG_NAME}.yaml" >> "$GITHUB_OUTPUT"
+          echo "Rendered CRD:"
+          ls -la "${out}"
+          head -5 "${out}"
+
+      - name: Validate rendered CRD YAML
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, sys, yaml
+          path = os.environ["CRD_PATH"]
+          with open(path) as f:
+              docs = list(yaml.safe_load_all(f))
+          docs = [d for d in docs if d]
+          assert len(docs) == 1, f"expected 1 CRD doc, got {len(docs)}"
+          crd = docs[0]
+          assert crd.get("kind") == "CustomResourceDefinition", crd.get("kind")
+          assert crd["metadata"]["name"] == "aiperfjobs.aiperf.nvidia.com"
+          print("CRD YAML OK:", crd["metadata"]["name"])
+          PY
+        env:
+          CRD_PATH: ${{ steps.stage.outputs.path }}
+
+      - name: Upload CRD artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stage.outputs.name }}
+          path: ${{ steps.stage.outputs.path }}
+          retention-days: 90
+
+      - name: Attach CRD to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.stage.outputs.path }}
+          fail_on_unmatched_files: true
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## CRD release"
+            echo ""
+            echo "- Tag label: \`${TAG_NAME}\`"
+            echo "- Source: Helm-rendered (\`helm template --show-only templates/crd.yaml\`)"
+            echo "- Artifact: \`${{ steps.stage.outputs.name }}\` (90 day retention)"
+            if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+              echo "- Release attachment: enabled (tag push)"
+            else
+              echo "- Release attachment: skipped (not a tag push)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.common.monotonic_clock import MonotonicClock
 
 if TYPE_CHECKING:
     from aiperf.timing.config import CreditPhaseConfig
@@ -51,13 +52,13 @@ class PhaseLifecycle:
         self._config = config
         self.state: PhaseState = PhaseState.CREATED
 
+        # Monotonic wall clock captured at start() - provides both wall-clock
+        # timestamps (now_ns) and perf_counter anchors (elapsed_ns) in one object.
+        self.clock: MonotonicClock | None = None
+
         # Timestamps (wall clock - time.time_ns())
-        self.started_at_ns: int | None = None
         self.sending_complete_at_ns: int | None = None
         self.complete_at_ns: int | None = None
-
-        # Performance timestamps (process-local - time.perf_counter_ns())
-        self.started_at_perf_ns: int | None = None
 
         # Transition metadata
         self.timeout_triggered: bool = False
@@ -67,11 +68,21 @@ class PhaseLifecycle:
         self.was_cancelled: bool = False
 
     @property
+    def started_at_ns(self) -> int | None:
+        """Wall-clock timestamp when phase started."""
+        return self.clock.wall_anchor_ns if self.clock is not None else None
+
+    @property
+    def started_at_perf_ns(self) -> int | None:
+        """Performance counter when phase started."""
+        return self.clock.perf_anchor_ns if self.clock is not None else None
+
+    @property
     def started_at_perf_sec(self) -> float | None:
         """The start time of the phase in performance seconds."""
         return (
-            self.started_at_perf_ns / NANOS_PER_SECOND
-            if self.started_at_perf_ns is not None
+            self.clock.perf_anchor_ns / NANOS_PER_SECOND
+            if self.clock is not None
             else None
         )
 
@@ -84,9 +95,7 @@ class PhaseLifecycle:
         if self.state != PhaseState.CREATED:
             raise ValueError("Credit phase already started")
         self.state = PhaseState.STARTED
-        perf_ns, time_ns = time.perf_counter_ns(), time.time_ns()
-        self.started_at_ns = time_ns
-        self.started_at_perf_ns = perf_ns
+        self.clock = MonotonicClock()
 
     def mark_sending_complete(self, *, timeout_triggered: bool = False) -> None:
         """Transition to SENDING_COMPLETE state.
@@ -145,11 +154,10 @@ class PhaseLifecycle:
         if self._config.expected_duration_sec is None:
             return None
 
-        if self.started_at_perf_ns is None:
+        if self.clock is None:
             return None  # Not started yet
 
-        elapsed_ns = time.perf_counter_ns() - self.started_at_perf_ns
-        elapsed_sec = elapsed_ns / NANOS_PER_SECOND
+        elapsed_sec = self.clock.elapsed_sec()
         grace = (self._config.grace_period_sec or 0) if include_grace_period else 0
         time_left = self._config.expected_duration_sec + grace - elapsed_sec
 

@@ -11,8 +11,10 @@ import aiohttp
 import pytest
 
 from aiperf.common.enums import SSEEventType, SSEFieldType
+from aiperf.common.environment import Environment
 from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.aiohttp_client import AioHttpClient
+from aiperf.transports.http_defaults import AioHttpDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.unit.transports.conftest import (
     MockStreamReader,
@@ -318,9 +320,6 @@ class TestAioHttpClient:
         monkeypatch,
     ) -> None:
         """Test that TRUST_ENV setting is passed to ClientSession."""
-        from aiperf.common.environment import Environment
-        from aiperf.transports.http_defaults import AioHttpDefaults
-
         monkeypatch.setattr(Environment.HTTP, "TRUST_ENV", trust_env_value)
         monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", trust_env_value)
 

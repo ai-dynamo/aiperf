@@ -11,10 +11,13 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 import pytest
+from pydantic import BaseModel, Field
 from pytest import param
 
+from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import ExtensibleStrEnum
 from aiperf.plugin.plugins import _PluginRegistry
+from aiperf.plugin.schema import PluginSpec
 from aiperf.plugin.types import PackageInfo, PluginEntry, PluginError, TypeNotFoundError
 
 if TYPE_CHECKING:
@@ -909,7 +912,7 @@ class TestCategoryMetadata:
     ) -> None:
         """_load_category_metadata() filters out schema_version."""
         yaml_content = 'schema_version: "1.0"\nendpoint:\n  internal: false'
-        with patch("aiperf.plugin.plugins.importlib.resources.files") as mock_files:
+        with patch("aiperf.plugin._loader.importlib.resources.files") as mock_files:
             mock_files.return_value.__truediv__.return_value.read_text.return_value = (
                 yaml_content
             )
@@ -1018,7 +1021,7 @@ class TestPluginDiscovery:
         mock_ep.value = "some.module:plugins.yaml"
 
         with (
-            patch("aiperf.plugin.plugins.entry_points", return_value=[mock_ep]),
+            patch("aiperf.plugin._loader.entry_points", return_value=[mock_ep]),
             patch.object(empty_registry, "load_manifest") as mock_load,
         ):
             empty_registry.discover_plugins()
@@ -1133,8 +1136,6 @@ class TestPluginEntry:
 
     def test_from_type_spec(self) -> None:
         """from_type_spec() creates entry from PluginSpec."""
-        from aiperf.plugin.schema import PluginSpec
-
         spec = PluginSpec(
             class_="module:Class",
             description="Test",
@@ -1151,7 +1152,6 @@ class TestPluginEntry:
 
     def test_get_typed_metadata(self) -> None:
         """get_typed_metadata() validates and returns typed metadata."""
-        from pydantic import BaseModel, Field
 
         class TestMeta(BaseModel):
             name: str = Field(...)
@@ -1322,8 +1322,6 @@ class TestModuleLevelAPI:
 
     def test_module_exports_core_functions(self) -> None:
         """Module exports expected public API."""
-        from aiperf.plugin import plugins
-
         expected_functions = [
             "get_class",
             "get_entry",

@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import UserConfig
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
+
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
@@ -33,20 +37,22 @@ class GPUTelemetryJSONLWriter(
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ):
-        if user_config.gpu_telemetry_disabled:
+        config = run.cfg
+        if config.gpu_telemetry_disabled:
             raise PostProcessorDisabled(
                 "GPU telemetry export is disabled via --no-gpu-telemetry"
             )
 
-        output_file: Path = user_config.output.profile_export_gpu_telemetry_jsonl_file
+        output_file: Path = config.artifacts.profile_export_gpu_telemetry_jsonl_file
 
         super().__init__(
-            user_config=user_config,
+            run=run,
             output_file=output_file,
             batch_size=Environment.GPU.EXPORT_BATCH_SIZE,
+            flush_interval=Environment.GPU.EXPORT_FLUSH_INTERVAL,
             **kwargs,
         )
 
@@ -60,7 +66,7 @@ class GPUTelemetryJSONLWriter(
         """
         try:
             await self.buffered_write(record)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write GPU telemetry record: {e}")
 
     async def summarize(self) -> list[MetricResult]:

@@ -1,226 +1,127 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
-import multiprocessing
-import uuid
-from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
+from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import TYPE_CHECKING
 
-from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import AIPerfError
+from aiperf.common.error_queue import ErrorQueue
+from aiperf.common.hooks import background_task
+from aiperf.common.logging import LogQueue
+from aiperf.common.service_registry import ServiceRegistry
+from aiperf.common.subprocess_manager import SubprocessManager
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
+from aiperf.plugin import plugins
 
-
-class MultiProcessRunInfo(BaseModel):
-    """Information about a service running as a multiprocessing process."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
-    service_type: ServiceTypeT = Field(
-        ...,
-        description="Type of service running in the process",
-    )
-    service_id: str = Field(
-        ...,
-        description="ID of the service running in the process",
-    )
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class MultiProcessServiceManager(BaseServiceManager):
-    """
-    Service Manager for starting and stopping services as multiprocessing processes.
+    """Service Manager for starting and stopping services as multiprocessing processes.
+
+    Uses SubprocessManager for process lifecycle management and ServiceRegistry
+    for centralized registration tracking.
     """
 
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
-        log_queue: "multiprocessing.Queue | None" = None,
+        run: BenchmarkRun,
+        log_queue: LogQueue | None = None,
+        error_queue: ErrorQueue | None = None,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
-        self.multi_process_info: list[MultiProcessRunInfo] = []
+        super().__init__(required_services, run, **kwargs)
+        self._subprocess_manager = SubprocessManager(
+            run=run,
+            log_queue=log_queue,
+            error_queue=error_queue,
+            logger=self,
+        )
         self.log_queue = log_queue
+        self.error_queue = error_queue
+        self._id_counters: dict[ServiceTypeT, int] = {}
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
     ) -> None:
         """Run a service with the given number of replicas."""
-        from aiperf.plugin import plugins
-
         service_metadata = plugins.get_service_metadata(service_type)
         for _ in range(num_replicas):
+            idx = self._id_counters.get(service_type, 0)
+            self._id_counters[service_type] = idx + 1
             service_id = (
-                f"{service_type}_{uuid.uuid4().hex[:8]}"
-                if service_metadata.replicable
-                else str(service_type)
+                f"{service_type}_{idx}" if service_metadata.replicable else None
             )
-            process = Process(
-                target=bootstrap_and_run_service,
-                name=f"{service_type}_process",
-                kwargs={
-                    "service_type": service_type,
-                    "service_id": service_id,
-                    "service_config": self.service_config,
-                    "user_config": self.user_config,
-                    "log_queue": self.log_queue,
-                },
-                daemon=True,
+            info = await self._subprocess_manager.spawn_service(
+                service_type=service_type,
+                service_id=service_id,
+                replicable=service_metadata.replicable,
             )
-
-            process.start()
-
-            self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
-            )
-
-            self.multi_process_info.append(
-                MultiProcessRunInfo(
-                    process=process,
-                    service_type=service_type,
-                    service_id=service_id,
-                )
-            )
+            ServiceRegistry.expect_service(info.service_id, service_type)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
     ) -> list[BaseException | None]:
-        self.debug(lambda: f"Stopping {service_type} process(es) with id: {service_id}")
-        tasks = []
-        for info in list(self.multi_process_info):
-            if info.service_type == service_type and (
-                service_id is None or info.service_id == service_id
-            ):
-                task = asyncio.create_task(self._wait_for_process(info))
-                task.add_done_callback(
-                    lambda _, info=info: self.multi_process_info.remove(info)
-                )
-                tasks.append(task)
-        return await asyncio.gather(*tasks, return_exceptions=True)
+        return await self._subprocess_manager.stop_service(service_type, service_id)
 
     async def shutdown_all_services(self) -> list[BaseException | None]:
         """Stop all required services as multiprocessing processes."""
+        self._shutdown_complete = True
         self.debug("Stopping all service processes")
-
-        # Wait for all to finish in parallel
-        return await asyncio.gather(
-            *[self._wait_for_process(info) for info in self.multi_process_info],
-            return_exceptions=True,
-        )
+        return await self._subprocess_manager.stop_all()
 
     async def kill_all_services(self) -> list[BaseException | None]:
         """Kill all required services as multiprocessing processes."""
+        self._shutdown_complete = True
         self.debug("Killing all service processes")
-
-        # Kill all processes
-        for info in self.multi_process_info:
-            if info.process:
-                info.process.kill()
-
-        # Wait for all to finish in parallel
-        return await asyncio.gather(
-            *[self._wait_for_process(info) for info in self.multi_process_info],
-            return_exceptions=True,
-        )
+        return await self._subprocess_manager.kill_all()
 
     async def wait_for_all_services_registration(
         self,
-        stop_event: asyncio.Event,
         timeout_seconds: float = Environment.SERVICE.REGISTRATION_TIMEOUT,
     ) -> None:
         """Wait for all required services to be registered.
 
-        Args:
-            stop_event: Event to check if operation should be cancelled
-            timeout_seconds: Maximum time to wait in seconds
-
         Raises:
-            Exception if any service failed to register, None otherwise
+            ServiceProcessDiedError: If a required service process dies while waiting.
+            ServiceRegistrationTimeoutError: If services don't register within timeout.
         """
-        self.debug("Waiting for all required services to register...")
+        self.info("Waiting for all required services to register...")
+        await ServiceRegistry.wait_for_all(timeout_seconds)
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
+    # -- Process health monitoring --
 
-        # TODO: Can this be done better by using asyncio.Event()?
+    @background_task(
+        interval=lambda self: Environment.SERVICE.PROCESS_MONITOR_INTERVAL,
+        immediate=False,
+    )
+    async def _monitor_processes(self) -> None:
+        """Periodically check for dead service processes.
 
-        async def _wait_for_registration():
-            while not stop_event.is_set():
-                # Get all registered service types from the id map
-                registered_types = {
-                    service_info.service_type
-                    for service_info in self.service_id_map.values()
-                    if service_info.registration_status
-                    == ServiceRegistrationStatus.REGISTERED
-                }
-
-                # Check if all required types are registered
-                if required_types.issubset(registered_types):
-                    return
-
-                for process in self.multi_process_info:
-                    if not process.process or not process.process.is_alive():
-                        raise AIPerfError(
-                            f"Service process {process.service_id} died before registering"
-                        )
-
-                # Wait a bit before checking again
-                await asyncio.sleep(0.5)
-
-        try:
-            await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
-        except asyncio.TimeoutError as e:
-            # Log which services didn't register in time
-            registered_types_set = set(
-                service_info.service_type
-                for service_info in self.service_id_map.values()
-                if service_info.registration_status
-                == ServiceRegistrationStatus.REGISTERED
-            )
-
-            for service_type in required_types:
-                if service_type not in registered_types_set:
-                    self.error(
-                        f"Service {service_type} failed to register within timeout"
-                    )
-
-            raise AIPerfError("Some services failed to register within timeout") from e
-
-    async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
-        """Wait for a process to terminate with timeout handling."""
-        if not info.process or not info.process.is_alive():
+        Required services trigger a fatal registry failure (waking all waiters).
+        Optional services are silently forgotten so the system continues.
+        During shutdown, process exits are expected and logged at debug level.
+        """
+        if self._shutdown_complete or self.stop_requested:
             return
 
-        info.process.terminate()
-        await asyncio.to_thread(
-            info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
-        )
-        if info.process.is_alive():
-            self.warning(
-                f"Service {info.service_type} process (pid: {info.process.pid}) did not terminate gracefully, killing"
-            )
-            info.process.kill()
-        else:
-            self.debug(
-                lambda: f"Service {info.service_type} process stopped (pid: {info.process.pid})"
-            )
+        dead = self._subprocess_manager.check_alive()
+        for info in dead:
+            self._subprocess_manager.remove(info)
+            service_metadata = plugins.get_service_metadata(info.service_type)
 
-    async def wait_for_all_services_start(
-        self,
-        stop_event: asyncio.Event,
-        timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
-    ) -> None:
-        """Wait for all required services to be started."""
-        self.debug("Waiting for all required services to start...")
-        self.warning(
-            "Waiting for all required services to start is not implemented for multiprocessing"
-        )
+            if service_metadata.required:
+                self.error(
+                    f"Required service process '{info.service_id}' ({info.service_type}) "
+                    f"died with exit code {info.exitcode}"
+                )
+                ServiceRegistry.fail_service(info.service_id, info.service_type)
+            else:
+                self.warning(
+                    f"Optional service process '{info.service_id}' ({info.service_type}) "
+                    f"exited with code {info.exitcode} — forgetting it"
+                )
+                ServiceRegistry.forget(info.service_id)

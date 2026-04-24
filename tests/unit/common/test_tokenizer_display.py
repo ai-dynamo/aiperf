@@ -3,6 +3,8 @@
 
 """Tests for tokenizer validation console display."""
 
+from unittest.mock import patch
+
 import pytest
 
 from aiperf.common.tokenizer_display import (
@@ -125,6 +127,15 @@ class TestLogTokenizerValidationResults:
 
 class TestDisplayTokenizerValidationError:
     """Tests for display_tokenizer_validation_error function."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_reproduce_traceback(self):
+        """Prevent real HF calls from _reproduce_traceback in fallback cases."""
+        with patch(
+            "aiperf.common.tokenizer_display._reproduce_traceback",
+            return_value="Traceback (most recent call last):\n  mocked traceback",
+        ):
+            yield
 
     @pytest.mark.parametrize(
         ("cause_chain", "error_message", "expected_title", "expected_in_output"),

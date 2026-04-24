@@ -1,17 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config import UserConfig
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class MetricRecordProcessor(BaseMetricsProcessor):
@@ -23,10 +27,10 @@ class MetricRecordProcessor(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
         # Store a reference to the parse_record function for valid metrics.
         # This is done to avoid extra attribute lookups.
@@ -64,6 +68,6 @@ class MetricRecordProcessor(BaseMetricsProcessor):
                 self.trace(
                     lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad parse and continue
                 self.warning(f"Error parsing record for metric '{tag}': {e!r}")
         return record_metrics

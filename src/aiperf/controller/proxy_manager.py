@@ -1,34 +1,65 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ZMQProxyType
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
+
 
 class ProxyManager(AIPerfLifecycleMixin):
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
-        super().__init__(service_config=service_config, **kwargs)
-        self.service_config = service_config
+    def __init__(
+        self,
+        run: BenchmarkRun,
+        *,
+        enable_event_bus: bool = False,
+        enable_dataset_manager: bool = False,
+        enable_raw_inference: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.run = run
+        self._enable_event_bus = enable_event_bus
+        self._enable_dataset_manager = enable_dataset_manager
+        self._enable_raw_inference = enable_raw_inference
 
     @on_init
     async def _initialize_proxies(self) -> None:
-        comm_config = self.service_config.comm_config
-        XPubXSubClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB)
-        DealerRouterClass = plugins.get_class(
-            PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER
-        )
-        PushPullClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.PUSH_PULL)
-        self.proxies = [
-            XPubXSubClass(zmq_proxy_config=comm_config.event_bus_proxy_config),
-            DealerRouterClass(
-                zmq_proxy_config=comm_config.dataset_manager_proxy_config
-            ),
-            PushPullClass(zmq_proxy_config=comm_config.raw_inference_proxy_config),
-        ]
+        comm_config = self.run.resolved.comm_config or self.run.cfg.comm_config
+        self.proxies = []
+
+        if self._enable_event_bus:
+            XPubXSubClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB
+            )
+            self.proxies.append(
+                XPubXSubClass(zmq_proxy_config=comm_config.event_bus_proxy_config)
+            )
+
+        if self._enable_dataset_manager:
+            DealerRouterClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER
+            )
+            self.proxies.append(
+                DealerRouterClass(
+                    zmq_proxy_config=comm_config.dataset_manager_proxy_config
+                )
+            )
+
+        if self._enable_raw_inference:
+            PushPullClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.PUSH_PULL
+            )
+            self.proxies.append(
+                PushPullClass(zmq_proxy_config=comm_config.raw_inference_proxy_config)
+            )
+
         for proxy in self.proxies:
             await proxy.initialize()
         self.debug("All proxies initialized successfully")

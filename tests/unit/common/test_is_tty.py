@@ -12,6 +12,7 @@ from aiperf.common.logging import (
     _BASIC_LOG_FORMAT,
     CustomRichHandler,
     _create_basic_handler,
+    create_file_handler,
 )
 from aiperf.common.utils import is_tty
 
@@ -128,8 +129,6 @@ class TestFileHandlerFormat:
 
     def test_file_handler_format_includes_milliseconds(self, tmp_path):
         """File handler output should include milliseconds."""
-        from aiperf.common.logging import create_file_handler
-
         handler = create_file_handler(tmp_path, "DEBUG")
         record = logging.LogRecord(
             name="test.logger",

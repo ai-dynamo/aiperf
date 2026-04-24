@@ -69,7 +69,7 @@ from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
 
 if TYPE_CHECKING:
-    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+    from aiperf.config import BenchmarkRun
 
 BuildResponseFn: TypeAlias = Callable[..., dict[str, Any]]
 StreamFn: TypeAlias = Callable[[RequestCtx, str, bool], AsyncGenerator[bytes, None]]
@@ -80,12 +80,25 @@ class HandlerInput:
     """Common inputs for all request handlers."""
 
     start_perf_ns: int
+    """Performance counter timestamp at request start."""
+
     ctx: RequestCtx
+    """Mock server request context with token and latency info."""
+
     endpoint_path: str
+    """API endpoint path for this request."""
+
     req: BaseModel
+    """Parsed request model."""
+
     stream_fn: StreamFn | None = None
+    """Streaming generator function for SSE responses."""
+
     build_response: BuildResponseFn | None = None
+    """Function to build a non-streaming JSON response."""
+
     first_token_callback: FirstTokenCallback | None = None
+    """Callback invoked when the first token is produced."""
 
 
 HandlerFn: TypeAlias = Callable[[HandlerInput], Awaitable[RequestRecord]]
@@ -103,19 +116,19 @@ class FakeTransport(BaseTransport):
 
     def __init__(
         self,
-        model_endpoint: ModelEndpointInfo,
-        config: MockServerConfig | None = None,
+        run: BenchmarkRun | None = None,
+        mock_server_config: MockServerConfig | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize FakeTransport.
 
         Args:
-            model_endpoint: Model endpoint configuration.
-            config: Optional MockServerConfig for test isolation.
+            run: BenchmarkRun wrapping the benchmark configuration.
+            mock_server_config: Optional MockServerConfig for test isolation.
                 Defaults to zero-latency config for fast testing.
         """
-        super().__init__(model_endpoint=model_endpoint, **kwargs)
-        self.config = config or self._DEFAULT_CONFIG
+        super().__init__(run=run, **kwargs)
+        self.mock_server_config = mock_server_config or self._DEFAULT_CONFIG
         self.warning(
             "*** Using FakeTransport to bypass HTTP. This is for component integration testing only. ***"
         )
@@ -129,7 +142,7 @@ class FakeTransport(BaseTransport):
 
     def get_url(self, request_info: RequestInfo) -> str:
         """Return fake URL (not actually used since we bypass HTTP)."""
-        return self.model_endpoint.endpoint.base_url
+        return self.run.cfg.endpoint.urls[0]
 
     # =========================================================================
     # Helper methods to reduce duplication
@@ -213,7 +226,7 @@ class FakeTransport(BaseTransport):
         start_perf_ns = time.perf_counter_ns()
         endpoint_path = plugins.get_endpoint_metadata(endpoint_type).endpoint_path
         req = self._parse_payload(payload, request_class)
-        ctx = make_ctx(req, endpoint_path, time.perf_counter(), self.config)
+        ctx = make_ctx(req, endpoint_path, time.perf_counter(), self.mock_server_config)
         input = HandlerInput(
             start_perf_ns=start_perf_ns,
             ctx=ctx,
@@ -236,7 +249,7 @@ class FakeTransport(BaseTransport):
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
         """Route request to appropriate handler based on endpoint type."""
-        endpoint_type = self.model_endpoint.endpoint.type
+        endpoint_type = self.run.cfg.endpoint.type
 
         # Handle cancellation by running request in a task and cancelling it
         if request_info.cancel_after_ns is not None:
@@ -379,7 +392,7 @@ class FakeTransport(BaseTransport):
 
     async def _do_streaming(self, inp: HandlerInput) -> RequestRecord:
         """Handle streaming completion requests (chat, text, TGI)."""
-        if self.model_endpoint.endpoint.streaming:
+        if self.run.cfg.endpoint.streaming:
             include_usage = getattr(inp.req, "include_usage", False)
             stream = inp.stream_fn(inp.ctx, inp.endpoint_path, include_usage)
             return await self._stream_to_record(
@@ -392,8 +405,8 @@ class FakeTransport(BaseTransport):
     async def _do_embedding(self, inp: HandlerInput) -> RequestRecord:
         """Handle embedding requests."""
         await _wait_for_processing(
-            self.config.embedding_base_latency,
-            self.config.embedding_per_input_latency,
+            self.mock_server_config.embedding_base_latency,
+            self.mock_server_config.embedding_per_input_latency,
             len(inp.req.inputs),
         )
         return self._make_json_record(
@@ -406,8 +419,8 @@ class FakeTransport(BaseTransport):
             inp.req.query_text, inp.req.passage_texts
         )
         await _wait_for_processing(
-            self.config.ranking_base_latency,
-            self.config.ranking_per_passage_latency,
+            self.mock_server_config.ranking_base_latency,
+            self.mock_server_config.ranking_per_passage_latency,
             len(inp.req.passage_texts),
         )
         return self._make_json_record(
@@ -419,8 +432,8 @@ class FakeTransport(BaseTransport):
         start_perf_ns = time.perf_counter_ns()
         req = self._parse_payload(payload, ImageRetrievalRequest)
         await _wait_for_processing(
-            self.config.image_retrieval_base_latency,
-            self.config.image_retrieval_per_image_latency,
+            self.mock_server_config.image_retrieval_base_latency,
+            self.mock_server_config.image_retrieval_per_image_latency,
             len(req.input),
         )
         return self._make_json_record(

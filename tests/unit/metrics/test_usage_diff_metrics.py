@@ -52,8 +52,6 @@ def create_record_with_usage(
         usage_reasoning_tokens: API-reported reasoning token count (optional)
     """
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,

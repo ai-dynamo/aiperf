@@ -28,12 +28,31 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.mixins.health_check_mixin import HealthCheckMixin
+from aiperf.plugin.enums import ServiceType
 
-# Process-level registry of active health servers to prevent duplicate binds.
-# Maps (host, port) -> service_id that owns it. When multiple services run in
-# the same process (component-integration tests, Kubernetes controller pod),
-# only the first service to initialize starts the health server.
-_active_health_servers: dict[tuple[str, int], str] = {}
+
+class _ActiveHealthServers:
+    """Process-level registry of active health servers to prevent duplicate binds.
+
+    Maps (host, port) -> service_id that owns it. When multiple services run in
+    the same process (component-integration tests, Kubernetes controller pod),
+    only the first service to initialize starts the health server.
+    Genuine process-wide registry — scope matches the (host, port) binding domain.
+    """
+
+    _registry: dict[tuple[str, int], str] = {}
+
+    @classmethod
+    def get(cls, bind_key: tuple[str, int]) -> str | None:
+        return cls._registry.get(bind_key)
+
+    @classmethod
+    def claim(cls, bind_key: tuple[str, int], service_id: str) -> None:
+        cls._registry[bind_key] = service_id
+
+    @classmethod
+    def release(cls, bind_key: tuple[str, int]) -> None:
+        cls._registry.pop(bind_key, None)
 
 
 def _make_response(
@@ -79,8 +98,14 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
     @on_init
     async def _health_server_start(self) -> None:
-        """Start health server if enabled via environment."""
-        if not Environment.SERVICE.HEALTH_ENABLED:
+        """Start health server if enabled via environment or CLI --health-port."""
+        service_type = getattr(self, "service_type", None)
+        if service_type == ServiceType.API:
+            self.debug("Health server is disabled for API service. Skipping start.")
+            return
+
+        cli_port = getattr(self, "_health_port", None)
+        if cli_port is None and not Environment.SERVICE.HEALTH_ENABLED:
             self.debug("Health server is disabled. Skipping start.")
             return
 
@@ -90,13 +115,15 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
             return
 
         host = Environment.SERVICE.HEALTH_HOST
-        port = Environment.SERVICE.HEALTH_PORT
+        # Distinguish "CLI port not set" (None) from "CLI port 0, let OS pick".
+        # A plain `cli_port or HEALTH_PORT` would fall through on 0.
+        port = cli_port if cli_port is not None else Environment.SERVICE.HEALTH_PORT
         bind_key = (host, port)
 
         # Check if another service already owns this port in this process
         service_id = getattr(self, "id", str(id(self)))
-        if bind_key in _active_health_servers:
-            owner = _active_health_servers[bind_key]
+        owner = _ActiveHealthServers.get(bind_key)
+        if owner is not None:
             self.debug(
                 f"Health server already running on {host}:{port} (owned by {owner}). "
                 "Skipping duplicate bind."
@@ -116,7 +143,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
                 "Set AIPERF_SERVICE_HEALTH_ENABLED=false to disable health server."
             )
             raise
-        _active_health_servers[bind_key] = service_id
+        _ActiveHealthServers.claim(bind_key, service_id)
         self._health_server_bind_key = bind_key
         self.info(f"Health server started on {host}:{port}")
 
@@ -133,8 +160,8 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
         # Unregister from process-level registry
         bind_key = self._health_server_bind_key
-        if bind_key in _active_health_servers:
-            del _active_health_servers[bind_key]
+        if bind_key is not None:
+            _ActiveHealthServers.release(bind_key)
 
         health_server.close()
         await health_server.wait_closed()
@@ -175,7 +202,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
         except TimeoutError:
             self.warning("Health request timed out")
-        except Exception as e:
+        except (OSError, ConnectionError) as e:
             self.error(f"Health server error: {e!r}")
         finally:
             writer.close()

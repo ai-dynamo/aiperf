@@ -11,8 +11,8 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.models.record_models import MetricResult
+from aiperf.config import BenchmarkRun
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
 
 _logger = AIPerfLogger(__name__)
@@ -112,7 +112,7 @@ class GPUMetricsTable(Widget):
                 self.data_table.update_cell(  # type: ignore
                     row_key, self._column_keys[col_name], cell_value, update_width=True
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort UI cell update; any textual/rich error is logged and skipped
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )
@@ -143,7 +143,7 @@ class GPUMetricsTable(Widget):
         if value is None:
             return Text("N/A", justify="right", style="dim")
 
-        if not isinstance(value, int | float):
+        if not isinstance(value, (int, float)):
             return Text(str(value), justify="right", style="green")
 
         value_str = f"{value:.2e}" if abs(value) >= 1000000 else f"{value:,.2f}"
@@ -266,9 +266,9 @@ class RealtimeTelemetryDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
+    def __init__(self, run: BenchmarkRun, **kwargs):
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.all_nodes_view: SingleNodeView | None = None
         self.metrics: list[MetricResult] = []
         self.border_title = "Real-Time GPU Telemetry"

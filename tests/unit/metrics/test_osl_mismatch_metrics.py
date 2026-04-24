@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, MetricFlags, ModelSelectionStrategy
+from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
@@ -13,12 +13,6 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.models.dataset_models import Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.osl_mismatch_metrics import (
@@ -29,7 +23,6 @@ from aiperf.metrics.types.osl_mismatch_metrics import (
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
-from aiperf.plugin.enums import EndpointType
 from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 
@@ -37,20 +30,10 @@ def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
     """Create a RequestInfo with a turn that has max_tokens set."""
     turn = Turn(max_tokens=max_tokens)
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=[turn],
         turn_index=0,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id="test-conversation",

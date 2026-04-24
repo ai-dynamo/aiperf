@@ -7,10 +7,42 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import AdaptiveStrategy, FixedTrialsStrategy
+
+_MINIMAL_CONFIG_KWARGS = {
+    "models": ["test-model"],
+    "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 100,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {
+        "warmup": {
+            "type": "concurrency",
+            "requests": 10,
+            "concurrency": 1,
+            "exclude_from_results": True,
+        },
+        "default": {"type": "concurrency", "requests": 100, "concurrency": 1},
+    },
+    "random_seed": 42,
+}
+
+
+def _make_config(**overrides) -> BenchmarkConfig:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _has_warmup_phase(config: BenchmarkConfig) -> bool:
+    """Return True if config has any phase with exclude_from_results=True."""
+    return any(p.exclude_from_results for p in config.phases.values())
 
 
 class TestFixedTrialsStrategy:
@@ -93,45 +125,32 @@ class TestFixedTrialsStrategy:
         """Test auto_set_seed sets random_seed on first run when None."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
 
-        # Create config with None random_seed
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
+        config = _make_config(random_seed=None)
 
-        # Get config for first run
         new_config = strategy.get_next_config(config, [])
 
-        # Should have set random_seed to DEFAULT_SEED
-        assert new_config.input.random_seed == FixedTrialsStrategy.DEFAULT_SEED
-        # Original config should be unchanged
-        assert config.input.random_seed is None
+        assert new_config.random_seed == FixedTrialsStrategy.DEFAULT_SEED
+        assert config.random_seed is None
 
     def test_auto_set_seed_preserves_user_seed(self):
         """Test auto_set_seed preserves user-specified random_seed."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
 
-        # Create config with user-specified random_seed
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = 999
+        config = _make_config(random_seed=999)
 
-        # Get config for first run
         new_config = strategy.get_next_config(config, [])
 
-        # Should preserve user's seed
-        assert new_config.input.random_seed == 999
+        assert new_config.random_seed == 999
 
     def test_auto_set_seed_disabled(self):
         """Test that auto_set_seed=False doesn't modify config."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=False)
 
-        # Create config with None random_seed
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
+        config = _make_config(random_seed=None)
 
-        # Get config for first run
         new_config = strategy.get_next_config(config, [])
 
-        # Should not have modified random_seed
-        assert new_config.input.random_seed is None
+        assert new_config.random_seed is None
 
     def test_get_next_config_returns_base_config_after_first_run(self):
         """Test get_next_config returns modified config after first run when warmup disabled."""
@@ -139,11 +158,8 @@ class TestFixedTrialsStrategy:
             num_trials=3, auto_set_seed=True, disable_warmup_after_first=True
         )
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = 42
-        config.loadgen.warmup_request_count = 10
+        config = _make_config()
 
-        # Create a result to simulate first run completed
         results = [
             RunResult(
                 label="run_0001",
@@ -153,29 +169,23 @@ class TestFixedTrialsStrategy:
             )
         ]
 
-        # Get config for second run
         new_config = strategy.get_next_config(config, results)
 
-        # Should return a different config object (deep copy with warmup disabled)
         assert new_config is not config
-        assert new_config.loadgen.warmup_request_count is None
-        # Original config should be unchanged
-        assert config.loadgen.warmup_request_count == 10
+        assert not _has_warmup_phase(new_config)
+        assert _has_warmup_phase(config)
 
     def test_ensure_random_seed_creates_deep_copy(self):
         """Test that _ensure_random_seed creates a deep copy."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
+        config = _make_config(random_seed=None)
 
-        # Get modified config
         new_config = strategy.get_next_config(config, [])
 
-        # Verify it's a different object (deep copy)
         assert new_config is not config
-        assert new_config.input.random_seed == FixedTrialsStrategy.DEFAULT_SEED
-        assert config.input.random_seed is None
+        assert new_config.random_seed == FixedTrialsStrategy.DEFAULT_SEED
+        assert config.random_seed is None
 
     def test_invalid_cooldown_seconds(self):
         """Test that negative cooldown raises ValueError."""
@@ -186,7 +196,6 @@ class TestFixedTrialsStrategy:
         """Test that labels are sanitized to prevent path traversal."""
         strategy = FixedTrialsStrategy(num_trials=5)
 
-        # Normal labels should work fine
         assert strategy.get_run_label(0) == "run_0001"
         assert strategy.get_run_label(99) == "run_0100"
 
@@ -194,19 +203,13 @@ class TestFixedTrialsStrategy:
         """Test that warmup is disabled after first run when disable_warmup_after_first=True."""
         strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=True)
 
-        # Create config with warmup enabled
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.loadgen.warmup_request_count = 10
-        config.loadgen.warmup_duration = 30.0
-        config.loadgen.warmup_concurrency = 2
+        config = _make_config()
 
         # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
-        assert first_config.loadgen.warmup_request_count == 10
-        assert first_config.loadgen.warmup_duration == 30.0
-        assert first_config.loadgen.warmup_concurrency == 2
+        assert _has_warmup_phase(first_config)
+        assert "warmup" in first_config.phases
 
-        # Create a result to simulate first run completed
         results = [
             RunResult(
                 label="run_0001",
@@ -218,30 +221,24 @@ class TestFixedTrialsStrategy:
 
         # Second run should have warmup disabled
         second_config = strategy.get_next_config(config, results)
-        assert second_config.loadgen.warmup_request_count is None
-        assert second_config.loadgen.warmup_duration is None
-        assert second_config.loadgen.warmup_concurrency is None
+        assert not _has_warmup_phase(second_config)
+        assert "warmup" not in second_config.phases
 
         # Original config should be unchanged
-        assert config.loadgen.warmup_request_count == 10
+        assert _has_warmup_phase(config)
+        assert "warmup" in config.phases
 
     def test_disable_warmup_after_first_disabled(self):
         """Test that warmup is preserved for all runs when disable_warmup_after_first=False."""
         strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=False)
 
-        # Create config with warmup enabled
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.loadgen.warmup_request_count = 10
-        config.loadgen.warmup_duration = 30.0
-        config.loadgen.warmup_concurrency = 2
+        config = _make_config()
 
         # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
-        assert first_config.loadgen.warmup_request_count == 10
-        assert first_config.loadgen.warmup_duration == 30.0
-        assert first_config.loadgen.warmup_concurrency == 2
+        assert _has_warmup_phase(first_config)
+        assert "warmup" in first_config.phases
 
-        # Create a result to simulate first run completed
         results = [
             RunResult(
                 label="run_0001",
@@ -253,20 +250,15 @@ class TestFixedTrialsStrategy:
 
         # Second run should STILL have warmup (not disabled)
         second_config = strategy.get_next_config(config, results)
-        assert second_config.loadgen.warmup_request_count == 10
-        assert second_config.loadgen.warmup_duration == 30.0
-        assert second_config.loadgen.warmup_concurrency == 2
+        assert _has_warmup_phase(second_config)
+        assert "warmup" in second_config.phases
 
     def test_disable_warmup_creates_deep_copy(self):
         """Test that disabling warmup creates a deep copy and doesn't modify original."""
         strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=True)
 
-        # Create config with warmup enabled
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.loadgen.warmup_request_count = 10
-        config.loadgen.warmup_duration = 30.0
+        config = _make_config()
 
-        # Create a result to simulate first run completed
         results = [
             RunResult(
                 label="run_0001",
@@ -276,40 +268,30 @@ class TestFixedTrialsStrategy:
             )
         ]
 
-        # Get config for second run (should disable warmup)
         second_config = strategy.get_next_config(config, results)
 
-        # Verify it's a different object (deep copy)
         assert second_config is not config
-        assert second_config.loadgen.warmup_request_count is None
+        assert not _has_warmup_phase(second_config)
 
-        # Original config should be unchanged
-        assert config.loadgen.warmup_request_count == 10
-        assert config.loadgen.warmup_duration == 30.0
+        assert _has_warmup_phase(config)
+        assert "warmup" in config.phases
 
     def test_get_run_path(self):
         """Test get_run_path returns correct path structure."""
-        from pathlib import Path
-
         strategy = FixedTrialsStrategy(num_trials=3)
         base_dir = Path("/tmp/artifacts")
 
-        # Test path for first run
         path = strategy.get_run_path(base_dir, 0)
         assert path == Path("/tmp/artifacts/profile_runs/run_0001")
 
-        # Test path for second run
         path = strategy.get_run_path(base_dir, 1)
         assert path == Path("/tmp/artifacts/profile_runs/run_0002")
 
-        # Test path for tenth run
         path = strategy.get_run_path(base_dir, 9)
         assert path == Path("/tmp/artifacts/profile_runs/run_0010")
 
     def test_get_aggregate_path(self):
         """Test get_aggregate_path returns correct path."""
-        from pathlib import Path
-
         strategy = FixedTrialsStrategy(num_trials=3)
         base_dir = Path("/tmp/artifacts")
 
@@ -318,17 +300,13 @@ class TestFixedTrialsStrategy:
 
     def test_path_building_consistency(self):
         """Test that path building is consistent with label generation."""
-        from pathlib import Path
-
         strategy = FixedTrialsStrategy(num_trials=5)
         base_dir = Path("/tmp/artifacts")
 
-        # Path should use the same label as get_run_label
         for run_index in range(5):
             label = strategy.get_run_label(run_index)
             path = strategy.get_run_path(base_dir, run_index)
 
-            # Path should end with the label
             assert path.name == label
             assert str(path).endswith(f"profile_runs/{label}")
 
@@ -378,14 +356,14 @@ class TestAdaptiveStrategy:
         assert strategy.should_continue(self._make_results(5)) is False
 
     def test_criterion_flips_true_at_run_4(self):
-        """Criterion flips to converged at run 4 → stops at 4."""
+        """Criterion flips to converged at run 4 -> stops at 4."""
         criterion = MagicMock()
         criterion.is_converged.side_effect = [False, True]
         strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
 
-        # Run 3: first convergence check → False → continue
+        # Run 3: first convergence check -> False -> continue
         assert strategy.should_continue(self._make_results(3)) is True
-        # Run 4: second convergence check → True → stop
+        # Run 4: second convergence check -> True -> stop
         assert strategy.should_continue(self._make_results(4)) is False
 
     def test_min_runs_floor_enforced(self):
@@ -407,7 +385,7 @@ class TestAdaptiveStrategy:
         assert strategy.should_continue(self._make_results(6)) is False
 
     def test_empty_results_continues(self):
-        """No results yet → always continue."""
+        """No results yet -> always continue."""
         criterion = self._make_mock_criterion(converged=True)
         strategy = AdaptiveStrategy(criterion=criterion, min_runs=3, max_runs=10)
         assert strategy.should_continue([]) is True
@@ -465,34 +443,31 @@ class TestAdaptiveStrategy:
         criterion = self._make_mock_criterion()
         strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=True)
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
+        config = _make_config(random_seed=None)
 
         new_config = strategy.get_next_config(config, [])
-        assert new_config.input.random_seed == AdaptiveStrategy.DEFAULT_SEED
-        assert config.input.random_seed is None
+        assert new_config.random_seed == AdaptiveStrategy.DEFAULT_SEED
+        assert config.random_seed is None
 
     def test_auto_set_seed_preserves_user_seed(self):
         """Preserves user-specified seed."""
         criterion = self._make_mock_criterion()
         strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=True)
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = 999
+        config = _make_config(random_seed=999)
 
         new_config = strategy.get_next_config(config, [])
-        assert new_config.input.random_seed == 999
+        assert new_config.random_seed == 999
 
     def test_auto_set_seed_disabled(self):
         """auto_set_seed=False leaves seed as None."""
         criterion = self._make_mock_criterion()
         strategy = AdaptiveStrategy(criterion=criterion, auto_set_seed=False)
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
+        config = _make_config(random_seed=None)
 
         new_config = strategy.get_next_config(config, [])
-        assert new_config.input.random_seed is None
+        assert new_config.random_seed is None
 
     def test_disable_warmup_after_first_run(self):
         """Warmup disabled for runs after the first."""
@@ -501,22 +476,22 @@ class TestAdaptiveStrategy:
             criterion=criterion, disable_warmup_after_first=True
         )
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.loadgen.warmup_request_count = 10
-        config.loadgen.warmup_duration = 30.0
+        config = _make_config()
 
         # First run: warmup preserved
         first = strategy.get_next_config(config, [])
-        assert first.loadgen.warmup_request_count == 10
+        assert _has_warmup_phase(first)
+        assert "warmup" in first.phases
 
         # Second run: warmup disabled
         results = self._make_results(1)
         second = strategy.get_next_config(config, results)
-        assert second.loadgen.warmup_request_count is None
-        assert second.loadgen.warmup_duration is None
+        assert not _has_warmup_phase(second)
+        assert "warmup" not in second.phases
 
         # Original unchanged
-        assert config.loadgen.warmup_request_count == 10
+        assert _has_warmup_phase(config)
+        assert "warmup" in config.phases
 
     def test_disable_warmup_after_first_disabled(self):
         """Warmup preserved for all runs when disable_warmup_after_first=False."""
@@ -525,12 +500,12 @@ class TestAdaptiveStrategy:
             criterion=criterion, disable_warmup_after_first=False
         )
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.loadgen.warmup_request_count = 10
+        config = _make_config()
 
         results = self._make_results(1)
         second = strategy.get_next_config(config, results)
-        assert second.loadgen.warmup_request_count == 10
+        assert _has_warmup_phase(second)
+        assert "warmup" in second.phases
 
     def test_config_parity_seed_and_warmup_with_fixed_trials(self):
         """Full config transformation parity between Adaptive and Fixed strategies."""
@@ -546,20 +521,15 @@ class TestAdaptiveStrategy:
             disable_warmup_after_first=True,
         )
 
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        config.input.random_seed = None
-        config.loadgen.warmup_request_count = 10
+        config = _make_config(random_seed=None)
 
         results = self._make_results(1)
 
         adaptive_cfg = adaptive.get_next_config(config, results)
         fixed_cfg = fixed.get_next_config(config, results)
 
-        assert adaptive_cfg.input.random_seed == fixed_cfg.input.random_seed
-        assert (
-            adaptive_cfg.loadgen.warmup_request_count
-            == fixed_cfg.loadgen.warmup_request_count
-        )
+        assert adaptive_cfg.random_seed == fixed_cfg.random_seed
+        assert _has_warmup_phase(adaptive_cfg) == _has_warmup_phase(fixed_cfg)
 
     # -- Cooldown --
 

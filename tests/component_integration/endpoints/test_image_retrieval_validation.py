@@ -33,7 +33,8 @@ class TestNonTokenizingEndpointTextValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "--synthetic-input-tokens-mean" in result.stderr
+        output = result.stderr + result.stdout
+        assert "--synthetic-input-tokens-mean" in output
 
     def test_rejects_synthetic_input_tokens_stddev(self, cli: AIPerfCLI):
         result = cli.run_sync(
@@ -41,7 +42,8 @@ class TestNonTokenizingEndpointTextValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "--synthetic-input-tokens-stddev" in result.stderr
+        output = result.stderr + result.stdout
+        assert "--synthetic-input-tokens-stddev" in output
 
     def test_rejects_batch_size_text(self, cli: AIPerfCLI):
         result = cli.run_sync(
@@ -49,7 +51,8 @@ class TestNonTokenizingEndpointTextValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "--batch-size-text" in result.stderr
+        output = result.stderr + result.stdout
+        assert "--batch-size-text" in output
 
     def test_rejects_sequence_distribution(self, cli: AIPerfCLI):
         result = cli.run_sync(
@@ -57,7 +60,8 @@ class TestNonTokenizingEndpointTextValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "--sequence-distribution" in result.stderr
+        output = result.stderr + result.stdout
+        assert "--sequence-distribution" in output
 
     def test_rejects_prefix_prompt_options(self, cli: AIPerfCLI):
         result = cli.run_sync(
@@ -65,7 +69,8 @@ class TestNonTokenizingEndpointTextValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "Prefix prompt options" in result.stderr
+        output = result.stderr + result.stdout
+        assert "--prefix-prompt" in output
 
 
 @pytest.mark.component_integration
@@ -78,7 +83,8 @@ class TestNonTokenEndpointTokenizerValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "Tokenizer options" in result.stderr
+        output = result.stderr + result.stdout
+        assert "Tokenizer options" in output
 
     def test_rejects_tokenizer_trust_remote_code(self, cli: AIPerfCLI):
         result = cli.run_sync(
@@ -86,4 +92,5 @@ class TestNonTokenEndpointTokenizerValidation:
             assert_success=False,
         )
         assert result.exit_code == 1
-        assert "Tokenizer options" in result.stderr
+        output = result.stderr + result.stdout
+        assert "Tokenizer options" in output

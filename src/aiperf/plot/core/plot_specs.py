@@ -7,7 +7,6 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from aiperf.common.config import BaseConfig
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.plugin.enums import PlotType
@@ -46,7 +45,7 @@ class Style(AIPerfBaseModel):
     )
 
 
-class ExperimentClassificationConfig(BaseConfig):
+class ExperimentClassificationConfig(AIPerfBaseModel):
     """Configuration for classifying runs as baseline or treatment."""
 
     baselines: list[str] = Field(

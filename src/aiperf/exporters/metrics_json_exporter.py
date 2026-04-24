@@ -21,7 +21,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.user_config.output.profile_export_json_file
+        self._file_path = exporter_config.config.artifacts.profile_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
             lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
@@ -61,8 +61,8 @@ class MetricsJsonExporter(MetricsBaseExporter):
         export_data = JsonExportData(
             schema_version=JsonExportData.SCHEMA_VERSION,
             aiperf_version=aiperf_version,
-            benchmark_id=self._user_config.benchmark_id,
-            input_config=self._user_config,
+            benchmark_id=self._config.artifacts.benchmark_id,
+            input_config=self._config,
             was_cancelled=self._results.was_cancelled,
             error_summary=self._results.error_summary,
             start_time=start_time,

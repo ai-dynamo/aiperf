@@ -3,44 +3,30 @@
 
 """User session management for multi-turn conversation optimization."""
 
-from pydantic import Field
+import msgspec
 
 from aiperf.common.enums import ConversationContextMode
-from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
 
-class UserSession(AIPerfBaseModel):
+class UserSession(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     User session for multi-turn processing.
 
-    Stores full conversation data and turn list (including assistant responses) to enable building requests
-    with conversation context.
+    Stores full conversation data and turn list (including assistant responses)
+    to enable building requests with conversation context. In-process state
+    only; never crosses a wire boundary. Mutable — the worker appends to
+    ``turn_list`` and advances ``turn_index`` as the session progresses.
     """
 
-    x_correlation_id: str = Field(
-        ..., description="X-Correlation-ID header value. Used for sticky routing."
-    )
-    num_turns: int = Field(..., ge=0, description="Number of turns in the conversation")
-    url_index: int | None = Field(
-        default=None,
-        description="URL index for multi-URL load balancing. "
-        "Set on first turn to ensure all turns in a conversation hit the same backend.",
-    )
-    conversation: Conversation = Field(
-        ..., description="Full conversation data from DatasetManager"
-    )
-    turn_list: list[Turn] = Field(
-        default_factory=list,
-        description="Current list of turns in conversation order, including the assistant responses",
-    )
-    turn_index: int = Field(
-        default=0, ge=0, description="The index of the current turn in the conversation"
-    )
-    context_mode: ConversationContextMode = Field(
-        default=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
-        description="Resolved context mode for this session. "
-        "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
+    x_correlation_id: str
+    num_turns: int
+    conversation: Conversation
+    url_index: int | None = None
+    turn_list: list[Turn] = msgspec.field(default_factory=list)
+    turn_index: int = 0
+    context_mode: ConversationContextMode = (
+        ConversationContextMode.DELTAS_WITHOUT_RESPONSES
     )
 
     def advance_turn(self, turn_index: int) -> Turn:

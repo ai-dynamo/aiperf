@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
@@ -18,7 +17,9 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.config import BenchmarkRun
 from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit, CreditContext, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -49,11 +50,22 @@ async def _async_true(*args, **kwargs) -> bool:
 
 @dataclass
 class MockCreditRouter:
+    """Test double for StickyCreditRouter that captures sent credits."""
+
     sent_credits: list[Credit] = field(default_factory=list)
+    """Credits that have been sent through this router."""
+
     auto_return: bool = False
+    """When True, automatically returns credits after sending."""
+
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
+    """Callback invoked when a credit is returned."""
+
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
+    """Callback invoked on first token arrival."""
+
     _pending: list[asyncio.Task] = field(default_factory=list)
+    """Pending auto-return tasks."""
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
@@ -101,8 +113,13 @@ class MockCreditRouter:
 
 @dataclass
 class OrchestratorHarness:
+    """Test harness wrapping a PhaseOrchestrator and its mock router."""
+
     orchestrator: PhaseOrchestrator
+    """The phase orchestrator under test."""
+
     router: MockCreditRouter
+    """Mock credit router capturing sent credits."""
 
     @property
     def sent_credits(self) -> list[Credit]:
@@ -205,8 +222,10 @@ def make_credit(
     turn: int = 0,
     num_turns: int | None = None,
     is_final: bool | None = None,
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     corr_id: str | None = None,
+    url_index: int | None = None,
+    allow_worker_migration: bool = False,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -222,6 +241,8 @@ def make_credit(
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
+        url_index=url_index,
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -230,12 +251,16 @@ def make_turn(
     turn: int = 0,
     num_turns: int = 1,
     corr_id: str | None = None,
+    url_index: int | None = None,
+    allow_worker_migration: bool = False,
 ) -> TurnToSend:
     return TurnToSend(
         conversation_id=conv_id,
         x_correlation_id=corr_id or f"corr-{conv_id}",
         turn_index=turn,
         num_turns=num_turns,
+        url_index=url_index,
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -305,7 +330,7 @@ def make_dataset_with_schedule(
 
 
 def make_phase_config(
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
     request_count: int | None = None,
     num_sessions: int | None = None,
@@ -348,7 +373,7 @@ def make_phase_config(
 
 def make_timing_config(
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     request_count: int | None = None,
     num_sessions: int | None = None,
     duration_sec: float | None = None,
@@ -402,11 +427,11 @@ def make_timing_config(
 
 def profiling_stats_from_config(cfg: TimingConfig) -> CreditPhaseStats:
     pc = next(
-        (p for p in cfg.phase_configs if p.phase == CreditPhase.PROFILING),
+        (p for p in cfg.phase_configs if p.phase == "profiling"),
         cfg.phase_configs[0] if cfg.phase_configs else None,
     )
     return CreditPhaseStats(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         start_ns=time.time_ns(),
         total_expected_requests=pc.total_expected_requests if pc else None,
     )
@@ -441,14 +466,10 @@ class InstantWorker(Worker):
 
 
 class TimingHarness:
-    def __init__(self, service_config: ServiceConfig, user_config) -> None:
-        from aiperf.credit.sticky_router import StickyCreditRouter
-
+    def __init__(self, run: BenchmarkRun) -> None:
         self.bus = FakeCommunicationBus()
         FakeCommunication.set_shared_bus(self.bus)
-        self.router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        self.router = StickyCreditRouter(run=run, service_id="test-router")
         self.publisher = PhasePublisher(
             pub_client=self.router.comms.create_pub_client(
                 CommAddress.EVENT_BUS_PROXY_FRONTEND
@@ -456,8 +477,7 @@ class TimingHarness:
             service_id="test-service",
         )
         self._worker = InstantWorker(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id="instant-worker-1",
         )
 
@@ -517,10 +537,8 @@ class MockCreditSender:
 
 
 @pytest.fixture
-def timing_harness(
-    service_config, user_config, skip_service_registration
-) -> TimingHarness:
-    return TimingHarness(service_config=service_config, user_config=user_config)
+def timing_harness(run, skip_service_registration) -> TimingHarness:
+    return TimingHarness(run=run)
 
 
 @pytest.fixture
@@ -529,10 +547,10 @@ def mock_credit_sender() -> MockCreditSender:
 
 
 @pytest.fixture
-def router_with_worker(service_config):
+def router_with_worker(run):
     from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 
-    router = StickyCreditRouter(service_config=service_config, service_id="test-router")
+    router = StickyCreditRouter(run=run, service_id="test-router")
     router._workers = {
         "worker-1": WorkerLoad(worker_id="worker-1", in_flight_credits=0)
     }
@@ -582,7 +600,7 @@ def mock_stop_checker() -> MagicMock:
 @pytest.fixture
 def mock_progress_tracker() -> MagicMock:
     m = MagicMock()
-    m.increment_sent = MagicMock(return_value=(1, False))
+    m.increment_sent = MagicMock(return_value=(1, 0, False))
     m.increment_returned = MagicMock(return_value=False)
     m.increment_prefill_released = m.freeze_sent_counts = m.freeze_completed_counts = (
         m.create_stats

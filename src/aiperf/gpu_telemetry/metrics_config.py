@@ -198,9 +198,16 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
         }
         existing_dcgm_fields = set(constants.DCGM_TO_FIELD_MAPPING.keys())
 
+        if not custom_csv_path.exists():
+            raise FileNotFoundError(
+                f"Custom GPU metrics CSV file not found: {custom_csv_path}"
+            )
+
         try:
             custom_metrics = self.parse_custom_metrics_csv(custom_csv_path)
-        except Exception as e:
+        except FileNotFoundError:
+            raise
+        except (OSError, ValueError, UnicodeDecodeError) as e:
             self.error(f"Failed to parse {custom_csv_path}: {e}")
             return ([], {})
 

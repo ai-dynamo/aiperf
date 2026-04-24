@@ -6,19 +6,13 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import (
     EmbeddingResponseData,
     InferenceServerResponse,
 )
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.endpoints.conftest import _wrap_run, create_config
 
 
 class TestEmbeddingsEndpointParseResponse:
@@ -27,19 +21,10 @@ class TestEmbeddingsEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create an EmbeddingsEndpoint instance for parsing tests."""
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="embeddings-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.EMBEDDINGS,
-                base_url="http://localhost:8000",
-            ),
-        )
+        cfg = create_config(EndpointType.EMBEDDINGS, model_name="embeddings-model")
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            return EmbeddingsEndpoint(model_endpoint=model_endpoint)
+            return EmbeddingsEndpoint(run=_wrap_run(cfg))
 
     def test_parse_response_single_embedding(self, endpoint):
         """Test parsing response with single embedding."""

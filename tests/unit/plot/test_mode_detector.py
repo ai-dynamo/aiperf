@@ -516,3 +516,63 @@ class TestSymlinkEdgeCases:
         # Should find all 3 runs through symlink
         runs = mode_detector.find_run_directories([parent_symlink])
         assert len(runs) == 3
+
+
+class TestZstRunDirectoryDetection:
+    """Tests for .zst variant detection in _is_run_directory."""
+
+    def _write_zst(self, path: Path, content: bytes) -> None:
+        import zstandard
+
+        cctx = zstandard.ZstdCompressor()
+        path.write_bytes(cctx.compress(content))
+
+    def test_zst_files_detected_as_run_directory(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Directory with only .zst marker files is a valid run directory."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        self._write_zst(run_dir / "profile_export.jsonl.zst", b'{"test": "data"}\n')
+        self._write_zst(run_dir / "profile_export_aiperf.json.zst", b'{"test": "data"}')
+
+        assert mode_detector._is_run_directory(run_dir) is True
+        mode, run_dirs = mode_detector.detect_mode([run_dir])
+        assert mode == VisualizationMode.SINGLE_RUN
+        assert len(run_dirs) == 1
+
+    def test_mixed_zst_and_raw_detected(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Directory with one raw and one .zst marker file is a valid run directory."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "profile_export.jsonl").write_text('{"test": "raw"}\n')
+        self._write_zst(run_dir / "profile_export_aiperf.json.zst", b'{"test": "data"}')
+
+        assert mode_detector._is_run_directory(run_dir) is True
+        mode, run_dirs = mode_detector.detect_mode([run_dir])
+        assert mode == VisualizationMode.SINGLE_RUN
+
+    def test_multi_run_zst_via_recursive_discovery(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Recursive discovery through ns/job_id/ layout with .zst files."""
+        ns_dir = tmp_path / "ns" / "job_id"
+        ns_dir.mkdir(parents=True)
+
+        for i in range(2):
+            run_dir = ns_dir / f"run{i}"
+            run_dir.mkdir()
+            self._write_zst(
+                run_dir / "profile_export.jsonl.zst",
+                f'{{"run": {i}}}\n'.encode(),
+            )
+            self._write_zst(
+                run_dir / "profile_export_aiperf.json.zst",
+                f'{{"run": {i}}}'.encode(),
+            )
+
+        mode, run_dirs = mode_detector.detect_mode([tmp_path])
+        assert mode == VisualizationMode.MULTI_RUN
+        assert len(run_dirs) == 2

@@ -5,7 +5,9 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums import CreditPhase, MetricType, ModelSelectionStrategy
+from typing import Any
+
+from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
@@ -14,36 +16,42 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
 )
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.types import MetricTagT
+from aiperf.config import BenchmarkConfig
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.plugin.enums import EndpointType
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    """Create a BenchmarkConfig with minimal defaults."""
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
 
 
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
     """Create a RequestInfo for testing metrics."""
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=[],
         turn_index=0,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id="test-conversation",

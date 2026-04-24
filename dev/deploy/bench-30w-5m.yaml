@@ -1,0 +1,24 @@
+# 5-minute benchmark with 30 workers against mock server
+endpoint:
+  model_names: ["mock-model"]
+  urls: ["http://aiperf-mock-server.default.svc.cluster.local:8000/v1"]
+  type: chat
+
+loadgen:
+  concurrency: 1000
+  benchmark_duration: 300
+  benchmark_grace_period: 30
+  warmup_request_count: 30
+
+tokenizer:
+  name: gpt2
+
+dataset:
+  sequence_length:
+    distribution: uniform
+    min: 50
+    max: 100
+  output_tokens:
+    distribution: uniform
+    min: 10
+    max: 50

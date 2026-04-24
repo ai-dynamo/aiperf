@@ -10,11 +10,10 @@ from aiperf.common.environment import Environment
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
-    import multiprocessing
-
-    from aiperf.common.config import ServiceConfig, UserConfig
-    from aiperf.common.models import ServiceRunInfo
+    from aiperf.common.error_queue import ErrorQueue
+    from aiperf.common.logging import LogQueue
     from aiperf.common.types import ServiceTypeT
+    from aiperf.config import BenchmarkRun
 
 
 @runtime_checkable
@@ -27,14 +26,14 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
-        log_queue: multiprocessing.Queue | None = None,
+        run: BenchmarkRun,
+        log_queue: LogQueue | None = None,
+        error_queue: ErrorQueue | None = None,
     ): ...
 
     required_services: dict[ServiceTypeT, int]
-    service_map: dict[ServiceTypeT, list[ServiceRunInfo]]
-    service_id_map: dict[str, ServiceRunInfo]
+    pod_failure_abort_event: asyncio.Event
+    pod_failure_abort_reason: str
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -42,6 +41,8 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
 
     async def run_services(self, service_types: dict[ServiceTypeT, int]) -> None: ...
     async def run_required_services(self) -> None: ...
+    def notify_shutdown(self) -> None: ...
+    def activate_heartbeat_monitoring(self) -> None: ...
     async def shutdown_all_services(self) -> list[BaseException | None]: ...
     async def kill_all_services(self) -> list[BaseException | None]: ...
     async def stop_service(
@@ -52,12 +53,25 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     ) -> list[BaseException | None]: ...
     async def wait_for_all_services_registration(
         self,
-        stop_event: asyncio.Event,
         timeout_seconds: float = Environment.SERVICE.REGISTRATION_TIMEOUT,
     ) -> None: ...
 
-    async def wait_for_all_services_start(
-        self,
-        stop_event: asyncio.Event,
-        timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
-    ) -> None: ...
+    async def wait_for_api_subprocess(self) -> None:
+        """Block until the API service runtime terminates (Kubernetes mode only)."""
+        ...
+
+    def activate_pod_monitoring(self) -> None:
+        """Enable Kubernetes pod health monitoring during startup."""
+        ...
+
+    def get_pod_summary(self) -> dict[str, str]:
+        """Get pod state summary for diagnostics (Kubernetes mode only).
+
+        Returns a dict mapping pod_index to a human-readable status string.
+        Empty dict in non-Kubernetes modes.
+        """
+        ...
+
+    async def check_pods_healthy(self) -> None:
+        """Verify all tracked pods are healthy before starting profiling."""
+        ...

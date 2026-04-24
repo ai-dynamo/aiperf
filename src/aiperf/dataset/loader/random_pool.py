@@ -1,21 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +89,24 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self,
         *,
         filename: str,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         num_conversations: int = 1,
         **kwargs,
     ):
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
         self.num_conversations = (
             num_conversations if num_conversations is not None else 100
         )
-        self.batch_size_image = user_config.input.image.batch_size
-        self.batch_size_text = user_config.input.prompt.batch_size
-        self.batch_size_audio = user_config.input.audio.batch_size
-        self.batch_size_video = user_config.input.video.batch_size
+        dataset_config = run.cfg.get_default_dataset()
+        images_config = getattr(dataset_config, "images", None)
+        prompts_config = getattr(dataset_config, "prompts", None)
+        audio_config = getattr(dataset_config, "audio", None)
+        video_config = getattr(dataset_config, "video", None)
+        self.batch_size_image = images_config.batch_size if images_config else 1
+        self.batch_size_text = prompts_config.batch_size if prompts_config else 1
+        self.batch_size_audio = audio_config.batch_size if audio_config else 1
+        self.batch_size_video = video_config.batch_size if video_config else 1
 
     @staticmethod
     def _validate_path(path: Path) -> int:

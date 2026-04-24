@@ -22,7 +22,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
-        self._endpoint_type = exporter_config.user_config.endpoint.type
+        self._endpoint_type = exporter_config.config.endpoint.type
 
     async def export(self, console: Console) -> None:
         if not self._results.records:
@@ -80,7 +80,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
             if isinstance(value, datetime):
                 value = value.strftime("%Y-%m-%d %H:%M:%S")
-            elif isinstance(value, int | float):
+            elif isinstance(value, (int, float)):
                 value = f"{value:,.2f}"
             else:
                 value = str(value)

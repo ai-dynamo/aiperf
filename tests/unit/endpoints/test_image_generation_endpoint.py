@@ -8,9 +8,9 @@ from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_image_generation import ImageGenerationEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -20,15 +20,13 @@ class TestImageGenerationEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for image generation."""
-        return create_model_endpoint(
-            EndpointType.IMAGE_GENERATION, model_name="dall-e-3"
-        )
+        """Create a test BenchmarkConfig for image generation."""
+        return create_config(EndpointType.IMAGE_GENERATION, model_name="dall-e-3")
 
     @pytest.fixture
     def streaming_model_endpoint(self):
-        """Create a test ModelEndpointInfo with streaming enabled."""
-        return create_model_endpoint(
+        """Create a test BenchmarkConfig with streaming enabled."""
+        return create_config(
             EndpointType.IMAGE_GENERATION, model_name="dall-e-3", streaming=True
         )
 
@@ -54,7 +52,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A sunset over mountains"])],
             model="dall-e-3",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -73,7 +71,7 @@ class TestImageGenerationEndpoint:
             model="dall-e-3",
         )
         request_info = create_request_info(
-            model_endpoint=streaming_model_endpoint, turns=[turn]
+            config=streaming_model_endpoint, turns=[turn]
         )
 
         payload = streaming_endpoint.format_payload(request_info)
@@ -83,15 +81,15 @@ class TestImageGenerationEndpoint:
 
     def test_format_payload_with_extra_inputs(self):
         """Test payload formatting with extra inputs."""
-        model_endpoint_with_extra = create_model_endpoint(
+        model_endpoint_with_extra = create_config(
             EndpointType.IMAGE_GENERATION,
             model_name="dall-e-3",
-            extra=[
-                ("size", "1024x1024"),
-                ("quality", "hd"),
-                ("style", "vivid"),
-                ("n", 2),
-            ],
+            extra={
+                "size": "1024x1024",
+                "quality": "hd",
+                "style": "vivid",
+                "n": 2,
+            },
         )
         endpoint = create_endpoint_with_mock_transport(
             ImageGenerationEndpoint, model_endpoint_with_extra
@@ -102,7 +100,7 @@ class TestImageGenerationEndpoint:
             model="dall-e-3",
         )
         request_info = create_request_info(
-            model_endpoint=model_endpoint_with_extra, turns=[turn]
+            config=model_endpoint_with_extra, turns=[turn]
         )
 
         payload = endpoint.format_payload(request_info)
@@ -118,7 +116,7 @@ class TestImageGenerationEndpoint:
             texts=[Text(contents=["A tree"])],
             model="custom-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -126,7 +124,7 @@ class TestImageGenerationEndpoint:
 
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
         """Test that missing turns raises ValueError."""
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(config=model_endpoint, turns=[])
 
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
@@ -134,7 +132,7 @@ class TestImageGenerationEndpoint:
     def test_format_payload_no_text_raises(self, endpoint, model_endpoint):
         """Test that missing text raises ValueError."""
         turn = Turn(texts=[], model="dall-e-3")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)
@@ -142,7 +140,7 @@ class TestImageGenerationEndpoint:
     def test_format_payload_empty_text_contents_raises(self, endpoint, model_endpoint):
         """Test that empty text contents raises ValueError."""
         turn = Turn(texts=[Text(contents=[])], model="dall-e-3")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)

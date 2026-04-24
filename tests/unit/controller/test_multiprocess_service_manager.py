@@ -3,20 +3,26 @@
 
 import asyncio
 from multiprocessing import Process
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.exceptions import AIPerfError
+from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
+from aiperf.common.exceptions import (
+    ServiceProcessDiedError,
+    ServiceRegistrationTimeoutError,
+)
+from aiperf.common.service_registry import ServiceRegistry
+from aiperf.common.subprocess_manager import SubprocessInfo
 from aiperf.controller.multiprocess_service_manager import (
-    MultiProcessRunInfo,
     MultiProcessServiceManager,
 )
 from aiperf.plugin.enums import ServiceType
 
 
 class TestMultiProcessServiceManager:
-    """Test MultiProcessServiceManager process failure scenarios."""
+    """Test MultiProcessServiceManager process lifecycle and monitoring."""
 
     @pytest.fixture
     def mock_dead_process(self) -> MagicMock:
@@ -36,7 +42,8 @@ class TestMultiProcessServiceManager:
 
     @pytest.fixture
     def service_manager(
-        self, service_config, user_config
+        self,
+        run,
     ) -> MultiProcessServiceManager:
         """Create a MultiProcessServiceManager instance for testing."""
         return MultiProcessServiceManager(
@@ -44,202 +51,246 @@ class TestMultiProcessServiceManager:
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.TIMING_MANAGER: 1,
             },
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
         )
 
     @pytest.mark.asyncio
-    async def test_process_dies_before_registration_raises_error(
+    async def test_monitor_detects_dead_required_process_and_fails_registry(
         self, service_manager: MultiProcessServiceManager, mock_dead_process: MagicMock
     ):
-        """Test that MultiProcessServiceManager raises AIPerfError when a process dies before registering.
+        """Test that _monitor_processes detects a dead required process and calls fail_service."""
+        ServiceRegistry.expect_service("dead_service_123", ServiceType.DATASET_MANAGER)
 
-        This test verifies the critical safety mechanism where:
-        1. A process is started but dies before it can register with the system controller
-        2. During the registration wait loop, the service manager detects the dead process
-        3. An AIPerfError is raised with a descriptive message about the failed process
+        service_manager._subprocess_manager.subprocesses = [
+            SubprocessInfo(
+                process=mock_dead_process,
+                service_type=ServiceType.DATASET_MANAGER,
+                service_id="dead_service_123",
+            )
+        ]
 
-        This prevents the system from hanging indefinitely waiting for a dead process to register.
-        """
-        # Create a process info with a dead process
-        dead_process_info = MultiProcessRunInfo.model_construct(
-            process=mock_dead_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="dead_service_123",
-        )
-        service_manager.multi_process_info = [dead_process_info]
+        mock_metadata = MagicMock()
+        mock_metadata.required = True
 
-        # Expect an error due to the dead process
-        with pytest.raises(
-            AIPerfError,
-            match="Service process dead_service_123 died before registering",
+        with patch(
+            "aiperf.plugin.plugins.get_service_metadata",
+            return_value=mock_metadata,
         ):
+            await service_manager._monitor_processes()
+
+        # The process should have been cleaned up
+        assert len(service_manager._subprocess_manager.subprocesses) == 0
+
+        # The registry should have a failure recorded
+        with pytest.raises(ServiceProcessDiedError, match="dead_service_123"):
+            ServiceRegistry._raise_on_failure()
+
+    @pytest.mark.asyncio
+    async def test_monitor_detects_dead_optional_process_and_forgets(
+        self, service_manager: MultiProcessServiceManager, mock_dead_process: MagicMock
+    ):
+        """Test that _monitor_processes forgets optional dead processes without failing."""
+        ServiceRegistry.expect_service("optional_123", ServiceType.DATASET_MANAGER)
+
+        service_manager._subprocess_manager.subprocesses = [
+            SubprocessInfo(
+                process=mock_dead_process,
+                service_type=ServiceType.DATASET_MANAGER,
+                service_id="optional_123",
+            )
+        ]
+
+        mock_metadata = MagicMock()
+        mock_metadata.required = False
+
+        with patch(
+            "aiperf.plugin.plugins.get_service_metadata",
+            return_value=mock_metadata,
+        ):
+            await service_manager._monitor_processes()
+
+        assert len(service_manager._subprocess_manager.subprocesses) == 0
+        assert ServiceRegistry.get_service("optional_123") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.looptime
+    async def test_wait_for_all_times_out_when_no_services_register(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Test that wait_for_all raises TimeoutError when services don't register."""
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+
+        with pytest.raises(ServiceRegistrationTimeoutError):
             await service_manager.wait_for_all_services_registration(
-                stop_event=asyncio.Event(),
-                timeout_seconds=1.0,
+                timeout_seconds=1,
             )
 
     @pytest.mark.asyncio
-    async def test_mixed_alive_and_dead_processes_raises_error_for_dead_one(
+    async def test_wait_for_all_succeeds_when_services_register(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Test that wait_for_all completes when expected services register."""
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+
+        # Simulate registration after a short delay
+        async def register_service():
+            await asyncio.sleep(0.05)
+            ServiceRegistry.register(
+                "dm_001",
+                ServiceType.DATASET_MANAGER,
+                first_seen_ns=1000,
+                state=LifecycleState.RUNNING,
+            )
+
+        asyncio.create_task(register_service())
+
+        await service_manager.wait_for_all_services_registration(
+            timeout_seconds=2.0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_service_calls_expect_service(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Test that run_service registers expectations with ServiceRegistry."""
+        mock_metadata = MagicMock()
+        mock_metadata.replicable = False
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 9999
+        mock_context = MagicMock()
+        mock_context.Process.return_value = mock_proc
+
+        with (
+            patch(
+                "aiperf.plugin.plugins.get_service_metadata",
+                return_value=mock_metadata,
+            ),
+            patch(
+                "aiperf.common.subprocess_manager.get_mp_context",
+                return_value=mock_context,
+            ),
+        ):
+            await service_manager.run_service(ServiceType.DATASET_MANAGER)
+
+        # ServiceRegistry should have the expectation
+        assert ServiceType.DATASET_MANAGER in ServiceRegistry.expected_by_type
+        assert ServiceRegistry.expected_by_type[ServiceType.DATASET_MANAGER] == 1
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_monitor_detects_stale_services(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Stale services should be marked as failed by heartbeat monitor
+        after two consecutive stale ticks (two-strike verification)."""
+        import time
+
+        old_ns = time.time_ns() - 60_000_000_000
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+        ServiceRegistry.register(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            first_seen_ns=old_ns,
+            state=LifecycleState.RUNNING,
+        )
+
+        service_manager.activate_heartbeat_monitoring()
+        # First tick: suspected but not failed (first strike).
+        await service_manager._monitor_heartbeats()
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+        assert "dm_0" in service_manager._suspected_stale
+
+        # Second tick: now failed (second strike).
+        await service_manager._monitor_heartbeats()
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_monitor_two_strike_clears_on_fresh_heartbeat(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """A service stale on one tick then heartbeats before next tick is NOT failed."""
+        import time
+
+        old_ns = time.time_ns() - 60_000_000_000
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+        ServiceRegistry.register(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            first_seen_ns=old_ns,
+            state=LifecycleState.RUNNING,
+        )
+
+        service_manager.activate_heartbeat_monitoring()
+        # First tick: first strike recorded, service NOT failed.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" in service_manager._suspected_stale
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+
+        # Simulate a fresh heartbeat arriving before the next tick.
+        ServiceRegistry.update_service(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            last_seen_ns=time.time_ns(),
+            state=LifecycleState.RUNNING,
+        )
+
+        # Second tick: service is no longer stale — strike cleared, still not failed.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" not in service_manager._suspected_stale
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_monitor_skips_on_catch_up_tick(
         self,
         service_manager: MultiProcessServiceManager,
-        mock_alive_process: MagicMock,
-        mock_dead_process: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
-        """Test that the manager raises error for dead process even when other processes are alive."""
-        # Create mix of alive and dead processes
-        alive_process_info = MultiProcessRunInfo.model_construct(
-            process=mock_alive_process,
-            service_type=ServiceType.TIMING_MANAGER,
-            service_id="alive_service_456",
-        )
-        dead_process_info = MultiProcessRunInfo.model_construct(
-            process=mock_dead_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="dead_service_789",
-        )
-        service_manager.multi_process_info = [alive_process_info, dead_process_info]
+        """If the monitor tick was delayed (controller stall), death decisions
+        are skipped for this iteration and a WARNING is logged."""
+        import logging
+        import time
 
-        # Should raise error about the dead process
-        with pytest.raises(
-            AIPerfError,
-            match="Service process dead_service_789 died before registering",
+        old_ns = time.time_ns() - 60_000_000_000
+        ServiceRegistry.expect_services({ServiceType.DATASET_MANAGER: 1})
+        ServiceRegistry.register(
+            "dm_0",
+            ServiceType.DATASET_MANAGER,
+            first_seen_ns=old_ns,
+            state=LifecycleState.RUNNING,
+        )
+
+        service_manager.activate_heartbeat_monitoring()
+        # First tick: records strike 1 and the tick time.
+        await service_manager._monitor_heartbeats()
+        assert "dm_0" in service_manager._suspected_stale
+
+        # Simulate a long stall: backdate the last tick time so the gap
+        # exceeds HEARTBEAT_INTERVAL * 2.
+        interval_ns = int(Environment.SERVICE.HEARTBEAT_INTERVAL * 1_000_000_000)
+        service_manager._last_heartbeat_tick_ns = time.time_ns() - (interval_ns * 5)
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(ServiceRegistry, "fail_service") as mock_fail,
         ):
-            await service_manager.wait_for_all_services_registration(
-                stop_event=asyncio.Event(), timeout_seconds=1.0
-            )
+            await service_manager._monitor_heartbeats()
+            assert mock_fail.call_count == 0
 
-    @pytest.mark.asyncio
-    async def test_none_process_raises_error(
-        self, service_manager: MultiProcessServiceManager
-    ):
-        """Test that a None process (failed to start) is treated as dead."""
-        # Create a process info with None process (failed to start)
-        none_process_info = MultiProcessRunInfo.model_construct(
-            process=None,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="failed_to_start_service",
+        assert any(
+            "watchdog tick delayed" in record.message.lower()
+            for record in caplog.records
         )
-        service_manager.multi_process_info = [none_process_info]
-
-        # Should raise error about the failed process
-        with pytest.raises(
-            AIPerfError,
-            match="Service process failed_to_start_service died before registering",
-        ):
-            await service_manager.wait_for_all_services_registration(
-                stop_event=asyncio.Event(), timeout_seconds=1.0
-            )
-
-    @pytest.mark.asyncio
-    async def test_stop_event_cancels_registration_wait(
-        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
-    ):
-        """Test that setting the stop event cancels the registration wait gracefully."""
-        # Sleep for a fraction of the time for faster test execution
-        # Create an alive process that won't register (to test cancellation)
-        alive_process_info = MultiProcessRunInfo.model_construct(
-            process=mock_alive_process,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="alive_but_not_registering",
-        )
-        service_manager.multi_process_info = [alive_process_info]
-
-        stop_event = asyncio.Event()
-
-        # Set the stop event after a short delay (use longer delay for CI stability)
-        async def set_stop_event():
-            await asyncio.sleep(0.1)
-            stop_event.set()
-
-        asyncio.create_task(set_stop_event())
-
-        # This should exit early when the stop event is set, not wait for full timeout
-        await service_manager.wait_for_all_services_registration(
-            stop_event=stop_event, timeout_seconds=5.0
-        )
-
-
-class TestWaitForProcess:
-    """Test _wait_for_process graceful shutdown and SIGKILL escalation."""
-
-    @pytest.fixture
-    def service_manager(
-        self, service_config, user_config
-    ) -> MultiProcessServiceManager:
-        return MultiProcessServiceManager(
-            required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
-        )
-
-    @pytest.fixture
-    def _make_process_info(self) -> "callable":
-        def _factory(
-            *, is_alive_sequence: list[bool], pid: int = 12345
-        ) -> MultiProcessRunInfo:
-            mock_process = MagicMock(spec=Process)
-            mock_process.is_alive.side_effect = is_alive_sequence
-            mock_process.pid = pid
-            mock_process.join.return_value = None
-            return MultiProcessRunInfo.model_construct(
-                process=mock_process,
-                service_type=ServiceType.DATASET_MANAGER,
-                service_id="test_service",
-            )
-
-        return _factory
-
-    @pytest.mark.asyncio
-    async def test_skips_already_dead_process(
-        self, service_manager: MultiProcessServiceManager
-    ):
-        """Process that is already dead should be skipped entirely."""
-        info = MultiProcessRunInfo.model_construct(
-            process=MagicMock(spec=Process, is_alive=MagicMock(return_value=False)),
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="already_dead",
-        )
-        await service_manager._wait_for_process(info)
-        info.process.terminate.assert_not_called()
-        info.process.kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_none_process(
-        self, service_manager: MultiProcessServiceManager
-    ):
-        """None process (never started) should be skipped entirely."""
-        info = MultiProcessRunInfo.model_construct(
-            process=None,
-            service_type=ServiceType.DATASET_MANAGER,
-            service_id="none_process",
-        )
-        await service_manager._wait_for_process(info)
-
-    @pytest.mark.asyncio
-    async def test_terminate_succeeds_no_kill(
-        self, service_manager: MultiProcessServiceManager, _make_process_info
-    ):
-        """Process that exits after SIGTERM should not be killed."""
-        # First is_alive=True (guard check), second is_alive=False (after join)
-        info = _make_process_info(is_alive_sequence=[True, False])
-
-        await service_manager._wait_for_process(info)
-
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
-        info.process.kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_terminate_fails_escalates_to_kill(
-        self, service_manager: MultiProcessServiceManager, _make_process_info
-    ):
-        """Process still alive after join timeout should be killed with SIGKILL."""
-        # First is_alive=True (guard check), second is_alive=True (after join — still running)
-        info = _make_process_info(is_alive_sequence=[True, True])
-
-        await service_manager._wait_for_process(info)
-
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
-        info.process.kill.assert_called_once()
+        # Suspected-stale state must be cleared so we don't carry forward
+        # a bogus strike from the stalled window.
+        assert service_manager._suspected_stale == {}
+        info = ServiceRegistry.get_service("dm_0")
+        assert info is not None
+        assert info.state == LifecycleState.RUNNING

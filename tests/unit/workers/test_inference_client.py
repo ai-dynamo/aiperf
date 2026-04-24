@@ -2,23 +2,49 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.dataset_models import Text, Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.common.redact import REDACTED_VALUE
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.config import BenchmarkConfig, BenchmarkRun
+from aiperf.plugin.enums import TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _make_run(**overrides: Any) -> BenchmarkRun:
+    config = _make_config(**overrides)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 @pytest.fixture
@@ -111,21 +137,12 @@ class TestInferenceClient:
     """Tests for InferenceClient functionality."""
 
     @pytest.fixture
-    def model_endpoint(self):
-        """Create a test ModelEndpointInfo."""
-        return ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        )
+    def benchmark_run(self):
+        """Create a test BenchmarkRun."""
+        return _make_run()
 
     @pytest.fixture
-    def inference_client(self, model_endpoint, mock_http_transport_entry):
+    def inference_client(self, benchmark_run, mock_http_transport_entry):
         """Create an InferenceClient instance."""
         mock_transport = MagicMock()
         mock_endpoint = MagicMock()
@@ -150,18 +167,13 @@ class TestInferenceClient:
                 return_value=[mock_http_transport_entry],
             ),
         ):
-            return InferenceClient(
-                model_endpoint=model_endpoint, service_id="test-service-id"
-            )
+            return InferenceClient(run=benchmark_run, service_id="test-service-id")
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_headers(
-        self, inference_client, model_endpoint, sample_request_info
+        self, inference_client, sample_request_info
     ):
         """Test that send_request sets endpoint_headers on request_info and redacts after transport."""
-        model_endpoint.endpoint.api_key = "test-key"
-        model_endpoint.endpoint.headers = [("X-Custom", "value")]
-
         request_info = sample_request_info
 
         expected_headers = {
@@ -183,11 +195,9 @@ class TestInferenceClient:
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_params(
-        self, inference_client, model_endpoint, sample_request_info
+        self, inference_client, sample_request_info
     ):
         """Test that send_request sets endpoint_params on request_info."""
-        model_endpoint.endpoint.url_params = {"api-version": "v1", "timeout": "30"}
-
         request_info = sample_request_info
 
         expected_params = {"api-version": "v1", "timeout": "30"}
@@ -206,7 +216,6 @@ class TestInferenceClient:
     async def test_send_request_calls_transport(
         self,
         inference_client,
-        model_endpoint,
         sample_request_info,
         sample_request_record,
     ):
@@ -226,14 +235,15 @@ class TestInferenceClient:
         assert record == expected_record
 
     @pytest.mark.asyncio
-    async def test_send_request_raises_on_empty_turns(self, inference_client):
+    async def test_send_request_raises_on_empty_turns(
+        self, inference_client, benchmark_run
+    ):
         """Test that send_request raises ValueError when turns is empty."""
         request_info = RequestInfo(
-            model_endpoint=inference_client.model_endpoint,
             turns=[],
             turn_index=0,
             credit_num=42,
-            credit_phase=CreditPhase.PROFILING,
+            credit_phase="profiling",
             x_request_id="test-id",
             x_correlation_id="test-corr",
             conversation_id="test-conv",
@@ -242,7 +252,9 @@ class TestInferenceClient:
         with pytest.raises(ValueError, match="no turns"):
             await inference_client.send_request(request_info)
 
-    def test_enrich_request_record_uses_last_turn_model(self, inference_client):
+    def test_enrich_request_record_uses_last_turn_model(
+        self, inference_client, benchmark_run
+    ):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 
         In MESSAGE_ARRAY_WITH_RESPONSES mode, turn_list has only 1 element
@@ -255,11 +267,10 @@ class TestInferenceClient:
             model="standalone-model",
         )
         request_info = RequestInfo(
-            model_endpoint=inference_client.model_endpoint,
             turns=[turn],
             turn_index=3,
             credit_num=0,
-            credit_phase=CreditPhase.PROFILING,
+            credit_phase="profiling",
             x_request_id="test-id",
             x_correlation_id="test-corr",
             conversation_id="test-conv",

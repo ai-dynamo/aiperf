@@ -50,7 +50,7 @@ class BaseRankingsEndpoint(BaseEndpoint):
             raise ValueError("Rankings endpoint only supports one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         if turn.max_tokens:
             self.warning("Max_tokens is provided but is not supported for rankings.")
@@ -87,8 +87,8 @@ class BaseRankingsEndpoint(BaseEndpoint):
                 "Consider adding a Text object with name='passages' containing texts to rank."
             )
 
-        extra = model_endpoint.endpoint.extra or []
-        model_name = turn.model or model_endpoint.primary_model_name
+        extra = model_endpoint.endpoint.extra
+        model_name = turn.model or model_endpoint.get_model_names()[0]
 
         payload = self.build_payload(query_text, passage_texts, model_name)
         if extra:

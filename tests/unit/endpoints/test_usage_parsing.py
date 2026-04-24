@@ -10,9 +10,9 @@ from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
 )
 
 
@@ -30,7 +30,7 @@ class TestUsageParsing:
     @pytest.fixture
     def endpoint(self, endpoint_type, endpoint_class):
         """Create endpoint instance."""
-        model_endpoint = create_model_endpoint(endpoint_type)
+        model_endpoint = create_config(endpoint_type)
         return create_endpoint_with_mock_transport(endpoint_class, model_endpoint)
 
     def test_parse_with_standard_usage(
@@ -104,7 +104,7 @@ class TestChatEndpointUsageSpecific:
     @pytest.fixture
     def endpoint(self):
         """Create a ChatEndpoint instance."""
-        model_endpoint = create_model_endpoint(EndpointType.CHAT)
+        model_endpoint = create_config(EndpointType.CHAT)
         return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
 
     def test_parse_with_nested_reasoning_tokens(self, endpoint):

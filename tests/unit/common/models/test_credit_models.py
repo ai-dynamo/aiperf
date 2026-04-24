@@ -5,7 +5,6 @@ import time
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
     CreditPhaseStats,
@@ -19,7 +18,7 @@ def base_phase_stats():
     """Factory for BasePhaseStats instances."""
 
     def _create(**kwargs) -> BasePhaseStats:
-        defaults = {"phase": CreditPhase.WARMUP}
+        defaults = {"phase": "warmup"}
         defaults.update(kwargs)
         return BasePhaseStats(**defaults)
 
@@ -31,7 +30,7 @@ def credit_phase_stats():
     """Factory for CreditPhaseStats instances."""
 
     def _create(**kwargs) -> CreditPhaseStats:
-        defaults = {"phase": CreditPhase.PROFILING}
+        defaults = {"phase": "profiling"}
         defaults.update(kwargs)
         return CreditPhaseStats(**defaults)
 
@@ -43,7 +42,7 @@ def phase_records_stats():
     """Factory for PhaseRecordsStats instances."""
 
     def _create(**kwargs) -> PhaseRecordsStats:
-        defaults = {"phase": CreditPhase.PROFILING}
+        defaults = {"phase": "profiling"}
         defaults.update(kwargs)
         return PhaseRecordsStats(**defaults)
 
@@ -106,44 +105,12 @@ class TestBasePhaseStatsProperties:
 
 
 class TestBasePhaseStatsValidation:
-    """Test BasePhaseStats field validation."""
+    """Test BasePhaseStats construction requirements."""
 
     def test_requires_phase(self) -> None:
-        with pytest.raises(ValueError, match="Field required"):
+        # msgspec raises TypeError when a required field is missing.
+        with pytest.raises(TypeError, match="phase"):
             BasePhaseStats()
-
-    @pytest.mark.parametrize("field", ["start_ns", "sent_end_ns", "requests_end_ns"])
-    def test_timestamp_fields_must_be_non_negative(
-        self, base_phase_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            base_phase_stats(**{field: -1})
-
-    @pytest.mark.parametrize(
-        "field",
-        ["total_expected_requests", "expected_duration_sec", "expected_num_sessions"],
-    )
-    def test_expected_fields_must_be_positive(self, base_phase_stats, field) -> None:
-        with pytest.raises(ValueError, match="greater than 0"):
-            base_phase_stats(**{field: 0})
-
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "final_requests_sent",
-            "final_requests_completed",
-            "final_requests_cancelled",
-            "final_request_errors",
-            "final_sent_sessions",
-            "final_completed_sessions",
-            "final_cancelled_sessions",
-        ],
-    )
-    def test_final_count_fields_must_be_non_negative(
-        self, base_phase_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            base_phase_stats(**{field: -1})
 
 
 class TestCreditPhaseStatsProperties:
@@ -322,27 +289,6 @@ class TestCreditPhaseStatsRequestsProgressPercent:
         assert stats.requests_progress_percent == 100.0
 
 
-class TestCreditPhaseStatsValidation:
-    """Test CreditPhaseStats field validation."""
-
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "requests_sent",
-            "requests_completed",
-            "requests_cancelled",
-            "request_errors",
-            "sent_sessions",
-            "completed_sessions",
-            "cancelled_sessions",
-            "total_session_turns",
-        ],
-    )
-    def test_count_fields_must_be_non_negative(self, credit_phase_stats, field) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            credit_phase_stats(**{field: -1})
-
-
 class TestPhaseRecordsStatsProperties:
     """Test PhaseRecordsStats property methods."""
 
@@ -437,21 +383,6 @@ class TestPhaseRecordsStatsRecordsProgressPercent:
         assert stats.records_progress_percent is None
 
 
-class TestPhaseRecordsStatsValidation:
-    """Test PhaseRecordsStats field validation."""
-
-    @pytest.mark.parametrize("field", ["success_records", "error_records"])
-    def test_record_fields_must_be_non_negative(
-        self, phase_records_stats, field
-    ) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            phase_records_stats(**{field: -1})
-
-    def test_records_end_ns_must_be_non_negative(self, phase_records_stats) -> None:
-        with pytest.raises(ValueError, match="greater than or equal to 0"):
-            phase_records_stats(records_end_ns=-1)
-
-
 class TestProcessingStatsProperties:
     """Test ProcessingStats property methods."""
 
@@ -486,14 +417,14 @@ class TestCreditPhaseStatsIntegration:
         start_ns = time.time_ns()
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP, start_ns=start_ns, total_expected_requests=100
+            phase="warmup", start_ns=start_ns, total_expected_requests=100
         )
         assert stats.is_started
         assert not stats.is_sending_complete
         assert not stats.is_requests_complete
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             total_expected_requests=100,
             requests_sent=50,
@@ -503,7 +434,7 @@ class TestCreditPhaseStatsIntegration:
         assert stats.requests_progress_percent == 30.0
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             sent_end_ns=start_ns + (5 * NANOS_PER_SECOND),
             total_expected_requests=100,
@@ -514,7 +445,7 @@ class TestCreditPhaseStatsIntegration:
         assert stats.in_flight_requests == 0
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             sent_end_ns=start_ns + (5 * NANOS_PER_SECOND),
             requests_end_ns=start_ns + (10 * NANOS_PER_SECOND),
@@ -535,7 +466,7 @@ class TestPhaseRecordsStatsIntegration:
         start_ns = time.time_ns()
 
         stats = phase_records_stats(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             start_ns=start_ns,
             final_requests_completed=100,
             success_records=60,
@@ -549,7 +480,7 @@ class TestPhaseRecordsStatsIntegration:
         time_traveler.advance_time(5.0)
         end_ns = time.time_ns()
         stats = phase_records_stats(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             start_ns=start_ns,
             records_end_ns=end_ns,
             final_requests_completed=100,

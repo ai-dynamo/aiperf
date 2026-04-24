@@ -3,6 +3,7 @@
 """Tests for macOS-specific terminal FD redirection in bootstrap.py"""
 
 import os
+import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -11,7 +12,9 @@ from aiperf.common.bootstrap import (
     _redirect_stdio_to_devnull,
     bootstrap_and_run_service,
 )
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config import BenchmarkRun
+
+_HF_ENV_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
 
 
 class TestBootstrapMacOSRedirect:
@@ -24,12 +27,17 @@ class TestBootstrapMacOSRedirect:
         mock_setup_child_process_logging,
         register_dummy_services,
     ):
-        pass
+        saved = {k: os.environ.get(k) for k in _HF_ENV_VARS}
+        yield
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     def test_redirect_called_in_macos_child_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: BenchmarkRun,
         mock_log_queue,
         mock_darwin_child_process,
     ):
@@ -39,8 +47,7 @@ class TestBootstrapMacOSRedirect:
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=service_config_no_uvloop,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
@@ -48,8 +55,7 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_not_called_in_main_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: BenchmarkRun,
         mock_log_queue,
         mock_darwin_main_process,
     ):
@@ -59,32 +65,34 @@ class TestBootstrapMacOSRedirect:
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=service_config_no_uvloop,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
             mock_redirect.assert_not_called()
 
-    def test_redirect_not_called_on_linux(
+    def test_redirect_called_in_linux_child_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        service_config_no_uvloop: BenchmarkRun,
         mock_log_queue,
         mock_linux_child_process,
     ):
-        """_redirect_stdio_to_devnull is NOT called on Linux."""
+        """_redirect_stdio_to_devnull is also called on Linux child processes.
+
+        Required so the parent's captured stdout/stderr pipes close promptly
+        when aiperf exits, otherwise harnesses doing process.communicate()
+        can hang indefinitely.
+        """
         with patch(
             "aiperf.common.bootstrap._redirect_stdio_to_devnull"
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                run=service_config_no_uvloop,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
-            mock_redirect.assert_not_called()
+            mock_redirect.assert_called_once()
 
 
 class TestRedirectStdioToDevnull:
@@ -143,8 +151,6 @@ class TestRedirectStdioToDevnull:
             patch("sys.stdout"),
             patch("sys.stderr"),
         ):
-            import sys
-
             _redirect_stdio_to_devnull()
 
             mock_fdopen.assert_any_call(0, "r", closefd=False)

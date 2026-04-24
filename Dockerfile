@@ -11,7 +11,7 @@ RUN groupadd -r $USERNAME \
     && useradd -r -g $USERNAME $USERNAME
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /uvx /bin/
 
 # Create virtual environment
 RUN mkdir /opt/$APP_NAME \

@@ -2,27 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Data models for multi-run orchestration."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import JsonMetricResult
-
-
-class RunConfig(AIPerfBaseModel):
-    """Configuration for a single benchmark run."""
-
-    config: UserConfig = Field(description="The benchmark configuration to execute")
-    label: str = Field(
-        description="Human-readable label for this run (e.g., 'run_0001')"
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata about this run (e.g., trial number, parameter values)",
-    )
 
 
 class RunResult(AIPerfBaseModel):

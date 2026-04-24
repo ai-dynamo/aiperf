@@ -36,4 +36,9 @@ src/aiperf/plugin/enums.pyi
 # Cursor - ignore user settings
 .cursor/*
 !.cursor/rules/
+.superpowers/
 .worktrees/
+.loop_integration_state/
+
+# mem_validate_kind live-run output (reference captures are in results-n*/)
+tools/mem_validate_kind/results/

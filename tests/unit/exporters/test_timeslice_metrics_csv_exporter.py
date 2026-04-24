@@ -10,25 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.exporters.timeslice_metrics_csv_exporter import TimesliceMetricsCsvExporter
-from aiperf.plugin.enums import EndpointType
 
 
 @pytest.fixture
-def mock_user_config():
-    """Create mock UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="custom_endpoint",
-        )
-    )
+def mock_user_config(config):
+    """Alias for config fixture for backwards compatibility."""
+    return config
 
 
 @pytest.fixture
@@ -132,13 +124,12 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify _file_path is set to {base_filename}_timeslices.csv."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
             # Note: profile_export_csv_file is already set by default config
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -153,12 +144,11 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify raises DataExporterDisabled when no timeslice data."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_without_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -172,13 +162,12 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify uses base filename from configured CSV path."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
             # The default profile_export_csv_file should have a base name we can check
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -197,12 +186,11 @@ class TestTimesliceMetricsCsvExporterGetExportInfo:
     ):
         """Verify export_type and file_path are correct."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -221,12 +209,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     ):
         """Verify CSV has correct header and tidy format."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -271,12 +258,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -313,12 +299,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -365,12 +350,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -420,12 +404,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -470,12 +453,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -506,12 +488,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -542,12 +523,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -583,12 +563,11 @@ class TestTimesliceMetricsCsvExporterFormatNumber:
     ):
         """Test _format_number with various input types."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -606,12 +585,11 @@ class TestTimesliceMetricsCsvExporterIntegration:
     ):
         """Verify export creates a valid CSV file."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -667,12 +645,11 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -705,12 +682,11 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.output.artifact_directory = Path(temp_dir)
+            mock_user_config.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 

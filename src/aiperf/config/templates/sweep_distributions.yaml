@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Grid Sweep + Multi-Run
+# description: Cartesian product sweep over ISL x rate with statistical multi-run aggregation.
+# category: Sweep & Multi-Run
+# tags: sweep, grid, multi-run, statistics
+# difficulty: intermediate
+# features: grid sweep, multi-run, confidence intervals
+#
+# Sweep + Distributions
+# =====================
+# Combines distribution types with sweep strategies to systematically
+# explore how workload shape affects server performance.
+#
+# Three sweep approaches demonstrated:
+# 1. Grid sweep: Cartesian product of ISL x rate
+# 2. Scenario sweep: Hand-picked workload profiles
+# 3. Magic lists: Inline sweep shorthand
+#
+# Run: aiperf profile --config sweep_distributions.yaml
+
+randomSeed: 42
+
+model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+endpoint:
+  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+  type: chat
+  streaming: true
+  timeout: ${TIMEOUT:600.0}
+
+# --- APPROACH 1: Grid Sweep ---
+# Sweep across ISL sizes and request rates.
+# ISL is set as a scalar (FixedDistribution), so the grid varies the fixed value.
+# Result: 3 ISL values x 3 rates = 9 benchmark runs.
+
+datasets:
+  profiling:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: 512  # Overridden by sweep
+      osl: {mean: 128, stddev: 25}
+
+phases:
+  warmup:
+    type: concurrency
+    requests: 50
+    concurrency: 8
+    excludeFromResults: true
+
+  profiling:
+    type: poisson
+    rate: 20.0  # Overridden by sweep
+    duration: 120
+    concurrency: 64
+    seamless: true
+    gracePeriod: 60
+
+sweep:
+  type: grid
+  variables:
+    datasets.profiling.prompts.isl: [128, 512, 2048]
+    phases.profiling.rate: [10.0, 30.0, 50.0]
+
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 15.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
+
+artifacts:
+  dir: ./artifacts/sweep_distributions
+  summary: [json]
+  records: [jsonl, csv]

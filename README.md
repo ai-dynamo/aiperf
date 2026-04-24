@@ -114,6 +114,11 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ## Tutorials and Feature Guides
 
+### Configuration
+- [YAML Config Reference](docs/tutorials/yaml-config.md) - Complete guide to the YAML config system
+- [Distribution Types](docs/tutorials/distributions.md) - Statistical distributions for workload modeling
+- [Sweeps and Multi-Run](docs/tutorials/sweeps.md) - Parameter sweeps and confidence intervals
+
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
@@ -168,6 +173,14 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
+
+### Kubernetes
+- [Getting Started on Kubernetes](docs/kubernetes/getting-started.md) - Install operator, run first benchmark, retrieve results
+- [Kubernetes Configuration](docs/kubernetes/configuration.md) - CRD fields, CLI flags, Helm chart, config patterns
+- [Monitoring and Troubleshooting](docs/kubernetes/monitoring.md) - Watch, debug, logs, and common issues
+- [Production Deployments](docs/kubernetes/production.md) - CI/CD, Kueue, secrets, GitOps, multi-tenant
+- [AI Agent Deployment Guide](docs/kubernetes/ai-deployment-guide.md) - Step-by-step deployment playbook with JSON gates for AI agents
+- [AI Agent Debugging Guide](docs/kubernetes/ai-debugging-guide.md) - Machine-parseable diagnostics and decision trees for AI agents
 
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis

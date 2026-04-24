@@ -1,41 +1,104 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Simple test for WorkerManager max workers functionality.
+Tests for WorkerManager health monitoring and worker scaling calculations.
 """
 
 import time
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-from aiperf.common.config.worker_config import WorkersConfig
-from aiperf.common.enums import WorkerStatus
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
+from aiperf.common.messages.worker_messages import (
+    WorkerStartupStateMessage,
+    WorkerStatusSummaryMessage,
+)
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.workers.scaling import calculate_worker_count
 from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
 
 DEFAULT_MEMORY = 1024 * 1024 * 100
 WORKER_ID = "test-worker-1"
 
 
+def _make_config(
+    concurrency: int | None = None,
+    max_workers: int | None = None,
+    request_rate: float | None = None,
+    request_count: int | None = None,
+) -> AIPerfConfig:
+    """Helper to build an AIPerfConfig for WorkerManager tests."""
+    if concurrency is not None:
+        # Concurrency mode
+        req = request_count or max(concurrency, 10)
+        phases = {
+            "default": {
+                "type": "concurrency",
+                "requests": req,
+                "concurrency": concurrency,
+            }
+        }
+    elif request_rate is not None:
+        # Request rate mode (no concurrency cap on workers)
+        phases = {
+            "default": {
+                "type": "poisson",
+                "requests": request_count or 100,
+                "rate": request_rate,
+            }
+        }
+    else:
+        # Default: concurrency of 1
+        phases = {
+            "default": {
+                "type": "concurrency",
+                "requests": request_count or 10,
+                "concurrency": 1,
+            }
+        }
+
+    runtime = {}
+    if max_workers is not None:
+        runtime["workers"] = max_workers
+
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases=phases,
+        **({"runtime": runtime} if runtime else {}),
+    )
+
+
+def _make_run(**config_overrides) -> BenchmarkRun:
+    """Helper to build a BenchmarkRun for WorkerManager tests."""
+    config = _make_config(**config_overrides)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
 @pytest.fixture
 def worker_manager() -> WorkerManager:
     """Create a WorkerManager instance for testing."""
-    service_config = ServiceConfig(workers=WorkersConfig(max=4))
-    user_config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        loadgen=LoadGeneratorConfig(concurrency=10),
-    )
-    with patch(
-        "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=8
-    ):
+    run = _make_run(concurrency=10, max_workers=4)
+    with patch("aiperf.workers.scaling.multiprocessing.cpu_count", return_value=8):
         manager = WorkerManager(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id="test-worker-manager",
         )
         manager.warning = MagicMock()
@@ -80,8 +143,8 @@ def create_health_message(
     )
 
 
-class TestMaxWorkers:
-    """Test the max workers calculation logic in WorkerManager."""
+class TestCalculateWorkerCount:
+    """Test the calculate_worker_count function in aiperf.workers.scaling."""
 
     @pytest.mark.parametrize(
         "cpus,concurrency,max_workers,expected",
@@ -106,25 +169,16 @@ class TestMaxWorkers:
     def test_max_workers_combinations(self, cpus, concurrency, max_workers, expected):
         """Test max workers calculation with different CPU counts, concurrency, and max_workers settings."""
         with patch(
-            "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
+            "aiperf.workers.scaling.multiprocessing.cpu_count", return_value=cpus
         ):
-            service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
-            # Set request_count to be >= concurrency to avoid validation error
             request_count = max(concurrency or 10, 10)
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(
-                    concurrency=concurrency, request_count=request_count
-                ),
+            run = _make_run(
+                concurrency=concurrency,
+                max_workers=max_workers,
+                request_count=request_count,
             )
 
-            worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
-                service_id="test-worker-manager",
-            )
-
-            assert worker_manager.max_workers == expected
+            assert calculate_worker_count(run.cfg) == expected
 
     @pytest.mark.parametrize(
         "cpus,request_rate,max_workers,expected",
@@ -145,21 +199,14 @@ class TestMaxWorkers:
     ):
         """Test max workers calculation with request_rate mode where concurrency is 0/None."""
         with patch(
-            "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
+            "aiperf.workers.scaling.multiprocessing.cpu_count", return_value=cpus
         ):
-            service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                loadgen=LoadGeneratorConfig(request_rate=request_rate),
+            run = _make_run(
+                request_rate=request_rate,
+                max_workers=max_workers,
             )
 
-            worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
-                service_id="test-worker-manager",
-            )
-
-            assert worker_manager.max_workers == expected
+            assert calculate_worker_count(run.cfg) == expected
 
 
 class TestHighCPUWarning:
@@ -229,8 +276,6 @@ class TestHighCPUWarning:
         assert worker_info.status == WorkerStatus.HIGH_LOAD
         assert worker_manager.warning.call_count == 1
 
-        # Simulate time passing by manually updating the worker_info timestamp
-        # (the actual implementation uses time.time_ns() internally)
         worker_manager._update_worker_status(
             worker_info,
             create_health_message(cpu_usage=92.0, uptime=102.0, total=12, completed=6),
@@ -290,3 +335,68 @@ class TestHighCPUWarning:
         assert worker_info.health.memory_usage == DEFAULT_MEMORY * 2
         assert worker_info.task_stats.total == 20
         assert worker_info.task_stats.completed == 15
+
+
+class TestWorkerStartupStates:
+    """Test worker startup-state tracking in WorkerManager."""
+
+    @pytest.mark.asyncio
+    async def test_startup_state_creates_worker_and_publishes_summary(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Startup-state messages should create worker info and publish a summary."""
+        worker_manager.publish = AsyncMock()
+        message = WorkerStartupStateMessage(
+            service_id=WORKER_ID,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+        )
+
+        await worker_manager._on_worker_startup_state(message)
+
+        info = worker_manager.worker_infos[WORKER_ID]
+        assert info.startup_state == WorkerStartupState.WAITING_FOR_DATASET
+
+        summary = worker_manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_statuses == {WORKER_ID: WorkerStatus.IDLE}
+        assert summary.worker_startup_states == {
+            WORKER_ID: WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_report_worker_status_summary_command_publishes_summary(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Controller refresh requests should trigger an immediate summary publish."""
+        worker_manager.publish = AsyncMock()
+        worker_manager.worker_infos[WORKER_ID] = WorkerStatusInfo(
+            worker_id=WORKER_ID,
+            status=WorkerStatus.IDLE,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+        )
+
+        await worker_manager._on_report_worker_status_summary(
+            Command(cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY, cid="cid")
+        )
+
+        summary = worker_manager.publish.await_args.args[0]
+        assert isinstance(summary, WorkerStatusSummaryMessage)
+        assert summary.worker_startup_states == {
+            WORKER_ID: WorkerStartupState.WAITING_FOR_DATASET
+        }
+
+    @pytest.mark.asyncio
+    async def test_recent_startup_state_does_not_mark_worker_stale(
+        self, worker_manager: WorkerManager
+    ) -> None:
+        """Startup-state activity should count as liveness before the first health tick."""
+        worker_manager.worker_infos[WORKER_ID] = WorkerStatusInfo(
+            worker_id=WORKER_ID,
+            status=WorkerStatus.IDLE,
+            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+            startup_state_updated_ns=time.time_ns(),
+        )
+
+        await worker_manager._worker_status_loop()
+
+        assert worker_manager.worker_infos[WORKER_ID].status == WorkerStatus.IDLE

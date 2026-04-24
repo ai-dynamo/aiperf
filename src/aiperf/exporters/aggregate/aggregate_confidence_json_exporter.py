@@ -52,6 +52,7 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         Returns:
             JsonExportData with aggregate metrics and metadata
         """
+        from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as get_version
 
         from aiperf.common.models.export_models import JsonExportData
@@ -59,7 +60,7 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         # Get AIPerf version (same approach as MetricsJsonExporter)
         try:
             aiperf_version = get_version("aiperf")
-        except Exception:
+        except PackageNotFoundError:
             aiperf_version = "unknown"
 
         # Create base export data with standard metadata

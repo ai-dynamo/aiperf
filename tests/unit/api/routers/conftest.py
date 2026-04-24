@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult
+from aiperf.config import AIPerfConfig, BenchmarkRun
 
 
 def make_latency_metric(
@@ -34,15 +36,22 @@ def make_latency_metric(
 
 
 @pytest.fixture
-def router_service_config() -> ServiceConfig:
-    """ServiceConfig for router testing."""
-    return ServiceConfig(api_port=9999, api_host="127.0.0.1")
-
-
-@pytest.fixture
-def router_user_config() -> UserConfig:
-    """UserConfig for router testing."""
-    return UserConfig(
-        benchmark_id="test-bench",
-        endpoint=EndpointConfig(model_names=["test-model"]),
+def router_config() -> BenchmarkRun:
+    """BenchmarkRun for router testing."""
+    config = AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    )
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
     )

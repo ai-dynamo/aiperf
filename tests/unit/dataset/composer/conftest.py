@@ -1,28 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
 
-from aiperf.common.config import (
-    AudioConfig,
-    AudioLengthConfig,
-    ConversationConfig,
-    EndpointConfig,
-    ImageConfig,
-    ImageHeightConfig,
-    ImageWidthConfig,
-    InputConfig,
-    InputTokensConfig,
-    PrefixPromptConfig,
-    PromptConfig,
-    TurnConfig,
-    TurnDelayConfig,
-    UserConfig,
-)
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.config import AIPerfConfig, BenchmarkRun
 
 
 @pytest.fixture(autouse=True)
@@ -55,128 +40,121 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 
 # ============================================================================
+# Base config helpers
+# ============================================================================
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
+def _config(**dataset_overrides) -> AIPerfConfig:
+    """Build an AIPerfConfig with a single synthetic dataset, merging overrides."""
+    dataset = {"type": "synthetic", "entries": 100, "prompts": {"isl": 128, "osl": 64}}
+    dataset.update(dataset_overrides)
+    return AIPerfConfig(**_BASE, datasets={"default": dataset})
+
+
+# ============================================================================
 # Synthetic Composer Fixtures
 # ============================================================================
 
 
 @pytest.fixture
-def synthetic_config() -> UserConfig:
+def synthetic_config() -> BenchmarkRun:
     """Basic synthetic configuration for testing."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=5),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=5,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def image_config() -> UserConfig:
+def image_config() -> BenchmarkRun:
     """Synthetic configuration with image generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=3),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-            image=ImageConfig(
-                batch_size=1,
-                width=ImageWidthConfig(mean=10),
-                height=ImageHeightConfig(mean=10),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=3,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            images={
+                "batch_size": 1,
+                "width": {"mean": 10},
+                "height": {"mean": 10},
+            },
+        )
     )
-    return config
 
 
 @pytest.fixture
-def audio_config() -> UserConfig:
+def audio_config() -> BenchmarkRun:
     """Synthetic configuration with audio generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=3),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-            ),
-            audio=AudioConfig(
-                batch_size=1,
-                length=AudioLengthConfig(mean=2),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=3,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            audio={"batch_size": 1, "length": {"mean": 2}},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def prefix_prompt_config() -> UserConfig:
+def prefix_prompt_config() -> BenchmarkRun:
     """Synthetic configuration with prefix prompts enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=5),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=3, length=20),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=5,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            prefix_prompts={"pool_size": 3, "length": 20},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def multimodal_config() -> UserConfig:
+def multimodal_config() -> BenchmarkRun:
     """Synthetic configuration with multimodal data generation enabled."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(num_dataset_entries=2),
-            prompt=PromptConfig(
-                batch_size=2,
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=2, length=15),
-            ),
-            image=ImageConfig(
-                batch_size=2,
-                width=ImageWidthConfig(mean=10),
-                height=ImageHeightConfig(mean=10),
-            ),
-            audio=AudioConfig(
-                batch_size=2,
-                length=AudioLengthConfig(mean=2),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=2,
+            prompts={
+                "isl": {"mean": 10, "stddev": 2},
+                "osl": 64,
+                "batch_size": 2,
+            },
+            prefix_prompts={"pool_size": 2, "length": 15},
+            images={
+                "batch_size": 2,
+                "width": {"mean": 10},
+                "height": {"mean": 10},
+            },
+            audio={"batch_size": 2, "length": {"mean": 2}},
+        )
     )
-    return config
 
 
 @pytest.fixture
-def multiturn_config():
+def multiturn_config() -> BenchmarkRun:
     """Synthetic configuration with multiturn settings."""
-    config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(
-            conversation=ConversationConfig(
-                num=3,
-                num_dataset_entries=4,
-                turn=TurnConfig(
-                    mean=2,
-                    stddev=0,
-                    delay=TurnDelayConfig(mean=1500, stddev=0),
-                ),
-            ),
-            prompt=PromptConfig(
-                input_tokens=InputTokensConfig(mean=10, stddev=2),
-                prefix_prompt=PrefixPromptConfig(pool_size=0),
-            ),
-        ),
+    return _make_run(
+        _config(
+            entries=4,
+            prompts={"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+            turns={"mean": 2, "stddev": 0},
+            turn_delay={"mean": 1500, "stddev": 0},
+        )
     )
-    return config
 
 
 # ============================================================================
@@ -185,27 +163,34 @@ def multiturn_config():
 
 
 @pytest.fixture
-def custom_config() -> UserConfig:
+def custom_config() -> BenchmarkRun:
     """Basic custom configuration for testing."""
-    # Use model_construct to bypass validation for testing
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="test_data.jsonl",
-            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
-            conversation=ConversationConfig(num_dataset_entries=5),
-        ),
+    return _make_run(
+        AIPerfConfig(
+            **_BASE,
+            datasets={
+                "default": {
+                    "type": "file",
+                    "path": "test_data.jsonl",
+                    "format": "single_turn",
+                }
+            },
+        )
     )
 
 
 @pytest.fixture
-def trace_config() -> UserConfig:
+def trace_config() -> BenchmarkRun:
     """Configuration for TRACE dataset type."""
-    # Use model_construct to bypass validation for testing
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig.model_construct(
-            file="trace_data.jsonl",
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
-        ),
+    return _make_run(
+        AIPerfConfig(
+            **_BASE,
+            datasets={
+                "default": {
+                    "type": "file",
+                    "path": "trace_data.jsonl",
+                    "format": "mooncake_trace",
+                }
+            },
+        )
     )

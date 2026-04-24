@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.hooks import AIPerfHook
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.mixins.realtime_telemetry_metrics_mixin import (
@@ -19,9 +18,8 @@ class TestRealtimeTelemetryMetricsMixin:
     """Test suite for RealtimeTelemetryMetricsMixin functionality."""
 
     @pytest.fixture
-    def mocked_mixin(self):
+    def mocked_mixin(self, run):
         """Create a RealtimeTelemetryMetricsMixin instance with mocked dependencies."""
-        service_config = ServiceConfig()
         mock_controller = MagicMock()
 
         # Mock the MessageBusClientMixin.__init__ to avoid initialization issues
@@ -29,9 +27,7 @@ class TestRealtimeTelemetryMetricsMixin:
             "aiperf.common.mixins.message_bus_mixin.MessageBusClientMixin.__init__",
             return_value=None,
         ):
-            mixin = RealtimeTelemetryMetricsMixin(
-                service_config=service_config, controller=mock_controller
-            )
+            mixin = RealtimeTelemetryMetricsMixin(run=run, controller=mock_controller)
             # Manually set attributes that would be set by parent __init__
             mixin._controller = mock_controller
             mixin._telemetry_metrics = []

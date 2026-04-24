@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Git
@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg-info/
 .Python
 .coverage
 htmlcov/
@@ -33,6 +34,7 @@ ENV/
 *.log
 .editorconfig
 .DS_Store
+.pre-commit-config.yaml
 
 # CI
 .github/
@@ -48,3 +50,18 @@ archive/
 artifacts/
 dist/
 *.jsonl
+
+# Directories not needed by any Dockerfile
+docs/
+notebooks/
+tools/
+dev/
+CLAUDE.md
+CONTRIBUTING.md
+DCO.md
+SECURITY.md
+mkdocs.yml
+
+# Tests (except mock server, needed by Dockerfile.mock-server)
+tests/
+!tests/aiperf_mock_server/

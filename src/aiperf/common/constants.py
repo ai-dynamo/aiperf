@@ -8,9 +8,9 @@ BYTES_PER_MIB = 1024 * 1024
 
 STAT_KEYS = [
     "avg",
+    "sum",
     "min",
     "max",
-    "sum",
     "p1",
     "p5",
     "p10",

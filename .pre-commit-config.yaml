@@ -24,6 +24,8 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
@@ -74,6 +76,40 @@ repos:
         files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
         pass_filenames: false
         args: []
+      - id: validate-template-metadata
+        name: validate-template-metadata
+        entry: make validate-template-metadata
+        language: python
+        files: (^src/aiperf/config/templates/.*\.yaml$|^src/aiperf/config/templates\.py$|^tools/validate_template_metadata\.py$)
+        pass_filenames: false
+        args: []
+      - id: validate-config-examples
+        name: validate-config-examples
+        entry: make validate-config-examples
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/config/templates/.*\.yaml$|^tools/validate_config_examples\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-config-schema
+        name: generate-config-schema
+        entry: make generate-config-schema
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^tools/generate_config_schema\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-crd
+        name: generate-crd
+        entry: make generate-crd
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
+      - id: helm-lint
+        name: helm-lint
+        entry: helm lint deploy/helm/aiperf-operator
+        language: system
+        files: ^deploy/helm/
+        pass_filenames: false
       - id: test-imports
         name: test-imports
         entry: make test-imports
@@ -81,10 +117,34 @@ repos:
         files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
+      - id: check-ergonomics
+        name: check-ergonomics
+        description: >-
+          LLM-ergonomics checks — file size, function size, nesting depth,
+          module-level mutable state, duplicate class names, wide positional
+          signatures, Pydantic field count, stdlib-json ban, isinstance
+          tuple-form. Pre-existing violations are grandfathered via
+          tools/ergonomics_baseline.json.
+        entry: python tools/check_ergonomics.py
+        language: python
+        files: ^src/aiperf/.*\.py$
+        pass_filenames: true
+      - id: check-ruff-baseline-drift
+        name: check-ruff-baseline-drift
+        description: >-
+          Run ruff for the LLM-ergonomics rules (PLR0915, PLR0912, C901,
+          TID251) and filter through the out-of-band baseline at
+          tools/ruff_baseline.json (keyed on (rule, file, function-name) —
+          no # noqa comments or per-file ignores). New violations fail the
+          commit; pre-existing grandfathered ones don't.
+        entry: python tools/ruff_baselined.py
+        language: system
+        files: ^src/aiperf/.*\.py$
+        pass_filenames: true
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8
+    rev: v0.14.14
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
         types_or: [python, pyi]
       - id: ruff-format

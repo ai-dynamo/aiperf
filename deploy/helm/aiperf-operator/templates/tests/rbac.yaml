@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- /* ServiceAccount + minimal RBAC for `helm test` hook pods. These are
+       regular chart-managed resources (not test-phase hooks) so that
+       `helm test --logs` only iterates the actual Pod hooks. They also
+       get cleaned up by `helm uninstall` alongside the rest of the release. */ -}}
+{{- $testSA := include "aiperf-operator.testServiceAccountName" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $testSA }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $testSA }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+rules:
+# test-operator-health lists the operator pod to discover its PodIP
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $testSA }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $testSA }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $testSA }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $testSA }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+rules:
+# test-crd-installed reads only the AIPerfJob CRD (resourceNames restricts to this one)
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  resourceNames: ["aiperfjobs.aiperf.nvidia.com"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $testSA }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $testSA }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $testSA }}
+  namespace: {{ .Release.Namespace }}

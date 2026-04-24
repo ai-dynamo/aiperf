@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the connection probe loop in MessageBusClientMixin."""
+"""Tests for the PUB/SUB connection probe loop in MessageBusClientMixin."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.environment import Environment
-from aiperf.common.messages.command_messages import ConnectionProbeMessage
+from aiperf.common.messages import ConnectionProbeMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 
 SERVICE_ID = "test-service-1"
 
-# Warning thresholds hard-coded in _wait_for_successful_probe
+# Warning thresholds hard-coded in _run_connection_probes
 INITIAL_WARNING_THRESHOLD = 5.0
 WARNING_INTERVAL = 10.0
 
@@ -28,6 +28,7 @@ def _bind_probe_methods(mock: MagicMock) -> None:
     """Bind the real probe methods from MessageBusClientMixin onto a mock."""
     for name in (
         "_wait_for_successful_probe",
+        "_run_connection_probes",
         "_probe_and_wait_for_response",
         "_process_connection_probe_message",
     ):
@@ -75,12 +76,14 @@ def mixin(mock_pub_client):
     mock.info = MagicMock()
     mock.warning = MagicMock()
     mock.publish = AsyncMock()
+    mock.pub_client = MagicMock(address="tcp://controller:5555")
+    mock.sub_client = MagicMock(address="tcp://controller:5556")
     _bind_probe_methods(mock)
     return mock
 
 
 # ---------------------------------------------------------------------------
-# Tests: _wait_for_successful_probe
+# Tests: _wait_for_successful_probe / _run_connection_probes (PUB/SUB only)
 # ---------------------------------------------------------------------------
 
 
@@ -119,7 +122,6 @@ class TestProbeLoopSuccess:
         msg = mock_pub_client.publish_calls[0]
         assert isinstance(msg, ConnectionProbeMessage)
         assert msg.service_id == SERVICE_ID
-        assert msg.target_service_id == SERVICE_ID
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
@@ -166,7 +168,6 @@ class TestProbeLoopTimeout:
         """Overall timeout raises TimeoutError when probe never responds."""
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 5.0)
-        # publish is AsyncMock — never sets the event
 
         with pytest.raises(TimeoutError):
             await mixin._wait_for_successful_probe()
@@ -183,7 +184,6 @@ class TestProbeLoopWarnings:
     ) -> None:
         """A warning is logged once elapsed time >= 5s."""
         probe_interval = 1.0
-        # 5 timeouts * 1.0s = 5.0s elapsed → triggers initial_warning_threshold
         respond_after = 6
         monkeypatch.setattr(
             Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", probe_interval
@@ -203,15 +203,15 @@ class TestProbeLoopWarnings:
     @pytest.mark.parametrize(
         ("respond_after", "expected_warnings"),
         [
-            (6, 1),  # 5s elapsed  → 1 warning  (at 5s)
-            (16, 2),  # 15s elapsed → 2 warnings (at 5s, 15s)
-            (26, 3),  # 25s elapsed → 3 warnings (at 5s, 15s, 25s)
+            (6, 1),
+            (16, 2),
+            (26, 3),
         ],
     )
     async def test_warning_escalation_at_intervals(
         self, mixin, mock_pub_client, monkeypatch, respond_after, expected_warnings
     ) -> None:
-        """Warnings are logged at 5s, then every 10s after that."""
+        """Warnings are logged at 5s, then every 10s."""
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
         _make_responder(mixin, mock_pub_client, respond_after=respond_after)
@@ -226,7 +226,6 @@ class TestProbeLoopWarnings:
         self, mixin, mock_pub_client, monkeypatch
     ) -> None:
         """No warnings emitted when probe succeeds within the initial threshold."""
-        # 4 timeouts * 1.0s = 4.0s < 5.0s threshold
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
         _make_responder(mixin, mock_pub_client, respond_after=5)
@@ -252,7 +251,6 @@ class TestProbeLoopStopRequested:
 
         await mixin._wait_for_successful_probe()
 
-        # No success info because we didn't get a probe response
         mixin.info.assert_not_called()
 
 
@@ -269,9 +267,7 @@ class TestProcessConnectionProbeMessage:
         """Processing a probe message sets the connection probe event."""
         assert not mixin._connection_probe_event.is_set()
 
-        probe_msg = ConnectionProbeMessage(
-            service_id=SERVICE_ID, target_service_id=SERVICE_ID
-        )
+        probe_msg = ConnectionProbeMessage(service_id=SERVICE_ID)
         await mixin._process_connection_probe_message(probe_msg)
 
         assert mixin._connection_probe_event.is_set()

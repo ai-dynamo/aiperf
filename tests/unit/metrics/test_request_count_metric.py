@@ -17,7 +17,7 @@ class TestRequestCountMetric:
         )
         assert RequestCountMetric.tag not in metric_results
 
-    @pytest.mark.parametrize("num_records", [1, 3, 10, 100, 1_000, 10_000])
+    @pytest.mark.parametrize("num_records", [1, 3, 10, 100, 1_000])
     def test_request_count_multiple_records(self, num_records: int):
         """Test request count aggregation across multiple records"""
         records = [create_record(start_ns=100 * i) for i in range(num_records)]

@@ -18,10 +18,19 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class TokenizerErrorInsight:
+    """Diagnostic insight for a tokenizer loading error."""
+
     title: str
+    """Short human-readable title for the error category."""
+
     causes: list[str]
+    """Possible root causes of the error."""
+
     investigation: list[str]
+    """Steps the user can take to investigate the issue."""
+
     fixes: list[str]
+    """Suggested fixes or workarounds."""
 
 
 # Exception type -> insight mapping
@@ -218,12 +227,14 @@ def _detect_error(
 
 
 def is_tokenizer_error(cause_chain: list[str] | None = None) -> bool:
+    """Return True if any entry in the exception cause chain is a known tokenizer exception type."""
     return bool(cause_chain) and any(
         t in _TOKENIZER_EXCEPTION_TYPES for t in cause_chain
     )
 
 
 def extract_tokenizer_name_from_error(error_message: str) -> str | None:
+    """Extract the tokenizer model name from a HuggingFace-style error message, or None if no match."""
     for pattern in _TOKENIZER_NAME_PATTERNS:
         if match := pattern.search(error_message):
             return match.group(1)
@@ -232,9 +243,16 @@ def extract_tokenizer_name_from_error(error_message: str) -> str | None:
 
 @dataclass(slots=True)
 class TokenizerDisplayEntry:
+    """Display entry for a validated tokenizer result."""
+
     original_name: str
+    """The tokenizer name as provided by the user."""
+
     resolved_name: str
+    """The fully-qualified tokenizer name after resolution."""
+
     was_resolved: bool
+    """Whether the name was resolved from a short name to a full identifier."""
 
 
 def log_tokenizer_validation_results(
@@ -242,6 +260,7 @@ def log_tokenizer_validation_results(
     logger: AIPerfLogger,
     elapsed_seconds: float | None = None,
 ) -> None:
+    """Log a summary of tokenizer validation results to the given logger."""
     if not results:
         return
 
@@ -292,6 +311,7 @@ def display_tokenizer_ambiguous_name(
     suggestions: list[tuple[str, int]],
     console: Console | None = None,
 ) -> None:
+    """Render a panel listing HuggingFace models that matched an ambiguous tokenizer name."""
     suggestions_text = "\n".join(
         f"  • [cyan]{model_id}[/cyan] [dim]({_format_downloads(downloads)} downloads)[/dim]"
         for model_id, downloads in suggestions[:5]
@@ -320,18 +340,20 @@ def _reproduce_traceback(name: str) -> str | None:
         from transformers import AutoTokenizer
 
         AutoTokenizer.from_pretrained(name, trust_remote_code=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - diagnostic helper: we deliberately capture whatever transformers raises
         return traceback.format_exc()
     return None
 
 
 def display_tokenizer_validation_error(
     name: str,
+    *,
     cause_chain: list[str] | None = None,
     error_message: str | None = None,
     cause_message: str | None = None,
     console: Console | None = None,
 ) -> None:
+    """Render a rich error panel explaining why tokenizer loading failed, with suggested fixes."""
     combined = "\n".join(filter(None, [error_message, cause_message]))
     insight = _detect_error(cause_chain, combined or None)
     is_fallback = insight is _FALLBACK_INSIGHT

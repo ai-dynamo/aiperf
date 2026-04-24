@@ -7,15 +7,14 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import GenericMetricUnit, MetricTimeUnit
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config import AIPerfConfig
 from aiperf.exporters.console_osl_mismatch_exporter import (
     ConsoleOSLMismatchExporter,
 )
 from aiperf.metrics.types.osl_mismatch_metrics import OSLMismatchCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
-from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import create_exporter_config
 
 
@@ -25,13 +24,23 @@ class TestConsoleOSLMismatchExporter:
 
     @pytest.fixture
     def mock_user_config(self):
-        """Create a mock user config."""
-        return UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="custom_endpoint",
-            )
+        """Create a mock config."""
+        return AIPerfConfig(
+            models=["test-model"],
+            endpoint={
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": "chat",
+            },
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
         )
 
     def _create_profile_results(

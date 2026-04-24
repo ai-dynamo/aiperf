@@ -150,10 +150,19 @@ class RequestCtx:
     """Request context - all fields directly accessible."""
 
     request_id: str
+    """Unique identifier for this request."""
+
     model: str
+    """Model name from the request."""
+
     tokenized: TokenizedText
+    """Tokenized input and generated output."""
+
     usage: dict[str, Any]
+    """Token usage statistics for the response."""
+
     latency_sim: LatencySimulator
+    """Latency simulator for TTFT and ITL timing."""
 
     @property
     def tokens(self) -> list[str]:

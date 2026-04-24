@@ -30,7 +30,7 @@ class VideoInferenceTimeMetric(BaseRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         """Extract inference_time_s from VideoResponseData."""
-        for response in record.responses:
+        for response in record.responses or ():
             if (
                 isinstance(response.data, VideoResponseData)
                 and response.data.inference_time_s is not None
@@ -60,7 +60,7 @@ class VideoPeakMemoryMetric(BaseRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         """Extract peak_memory_mb from VideoResponseData."""
-        for response in record.responses:
+        for response in record.responses or ():
             if (
                 isinstance(response.data, VideoResponseData)
                 and response.data.peak_memory_mb is not None

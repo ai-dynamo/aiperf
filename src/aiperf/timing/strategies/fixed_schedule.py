@@ -169,3 +169,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(turn),
             )
+
+    async def handle_session_ended(self, credit: Credit) -> None:
+        """No strategy-local cleanup is needed when a session ends."""

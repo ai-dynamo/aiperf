@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter
@@ -22,7 +21,7 @@ def cfg(
     reqs: int | None = None, sessions: int | None = None, dur: float | None = None
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=reqs,
         expected_num_sessions=sessions,

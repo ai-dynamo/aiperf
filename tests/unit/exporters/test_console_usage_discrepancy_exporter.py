@@ -4,10 +4,8 @@
 from io import StringIO
 from unittest.mock import patch
 
-import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import GenericMetricUnit, MetricTimeUnit
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.console_usage_discrepancy_exporter import (
@@ -15,23 +13,11 @@ from aiperf.exporters.console_usage_discrepancy_exporter import (
 )
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.usage_diff_metrics import UsageDiscrepancyCountMetric
-from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import create_exporter_config
 
 
 class TestConsoleUsageDiscrepancyExporter:
     """Tests for ConsoleUsageDiscrepancyExporter."""
-
-    @pytest.fixture
-    def mock_user_config(self):
-        """Create a mock user config."""
-        return UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="custom_endpoint",
-            )
-        )
 
     def _create_profile_results(
         self, count: int, total_records: int = 100, include_discrepancy: bool = True
@@ -88,7 +74,7 @@ class TestConsoleUsageDiscrepancyExporter:
         await exporter.export(console)
         return output.getvalue()
 
-    async def test_no_discrepancies_no_output(self, mock_user_config):
+    async def test_no_discrepancies_no_output(self, config):
         """Test that no warning is displayed when there are no discrepancies."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -97,14 +83,14 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=0, total_records=100),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "Token Count Discrepancy Warning" not in output
             assert "requests" not in output
 
-    async def test_discrepancies_display_warning(self, mock_user_config):
+    async def test_discrepancies_display_warning(self, config):
         """Test that warning is displayed when discrepancies exist."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -113,7 +99,7 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=15, total_records=100),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)
@@ -122,7 +108,7 @@ class TestConsoleUsageDiscrepancyExporter:
             assert "(15.0%)" in output
             assert "10%" in output  # threshold
 
-    async def test_warning_includes_investigation_steps(self, mock_user_config):
+    async def test_warning_includes_investigation_steps(self, config):
         """Test that warning includes investigation steps and causes."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -131,7 +117,7 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=20, total_records=100),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)
@@ -145,7 +131,7 @@ class TestConsoleUsageDiscrepancyExporter:
             assert "usage_*_diff_pct" in output
             assert "AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD" in output
 
-    async def test_custom_threshold_displayed(self, mock_user_config):
+    async def test_custom_threshold_displayed(self, config):
         """Test that custom threshold value is displayed in warning."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -154,14 +140,14 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=10, total_records=100),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "5%" in output  # custom threshold
             assert "AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD=5" in output
 
-    async def test_high_discrepancy_percentage(self, mock_user_config):
+    async def test_high_discrepancy_percentage(self, config):
         """Test warning with high percentage of discrepancies."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -170,27 +156,27 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=75, total_records=100),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)
             assert "75 of 100 requests" in output
             assert "(75.0%)" in output
 
-    async def test_no_discrepancy_metric_no_output(self, mock_user_config):
+    async def test_no_discrepancy_metric_no_output(self, config):
         """Test that no warning is displayed when discrepancy metric is absent."""
         exporter = ConsoleUsageDiscrepancyExporter(
             create_exporter_config(
                 self._create_profile_results(
                     count=0, total_records=100, include_discrepancy=False
                 ),
-                mock_user_config,
+                config,
             )
         )
         output = await self._get_export_output(exporter)
         assert "Token Count Discrepancy Warning" not in output
 
-    async def test_formatting_with_large_numbers(self, mock_user_config):
+    async def test_formatting_with_large_numbers(self, config):
         """Test that large numbers are formatted with commas."""
         with patch(
             "aiperf.exporters.console_usage_discrepancy_exporter.Environment.METRICS.USAGE_PCT_DIFF_THRESHOLD",
@@ -199,7 +185,7 @@ class TestConsoleUsageDiscrepancyExporter:
             exporter = ConsoleUsageDiscrepancyExporter(
                 create_exporter_config(
                     self._create_profile_results(count=1250, total_records=10000),
-                    mock_user_config,
+                    config,
                 )
             )
             output = await self._get_export_output(exporter)

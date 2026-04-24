@@ -58,8 +58,11 @@ class RealisticLatencyConfig:
     Must match the values in the realistic_latency fixture.
     """
 
-    ttft_ms: float = 5.0  # Time to first token (prefill phase)
-    itl_ms: float = 1.0  # Inter-token latency (decode phase)
+    ttft_ms: float = 5.0
+    """Time to first token in milliseconds (prefill phase)."""
+
+    itl_ms: float = 1.0
+    """Inter-token latency in milliseconds (decode phase)."""
 
     @property
     def ttft_sec(self) -> float:
@@ -107,12 +110,25 @@ class TimingTestConfig:
     """Configuration for a timing test scenario."""
 
     num_sessions: int
+    """Number of concurrent sessions to simulate."""
+
     qps: float
+    """Target queries per second (0 for burst mode)."""
+
     turns_per_session: int = 1
+    """Number of turns per session."""
+
     concurrency: int | None = None
+    """Maximum total concurrent requests, or None for unlimited."""
+
     prefill_concurrency: int | None = None
+    """Maximum concurrent prefill requests, or None for unlimited."""
+
     osl: int = 50
+    """Output sequence length in tokens."""
+
     timeout: float = 60.0
+    """Test timeout in seconds."""
 
     @property
     def expected_requests(self) -> int:

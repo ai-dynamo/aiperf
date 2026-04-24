@@ -60,6 +60,8 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
 | `AIPERF_DATASET_MMAP_BASE_PATH` | `None` | — | Base path for memory-mapped dataset files. If None, uses system temp directory. Set to a shared filesystem path for Kubernetes mounted volumes. Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/ |
+| `AIPERF_DATASET_DOWNLOAD_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Maximum number of retries for dataset download in Kubernetes worker pods |
+| `AIPERF_DATASET_DOWNLOAD_RETRY_DELAY` | `2.0` | ≥ 0.1, ≤ 60.0 | Initial delay in seconds between dataset download retries (doubles each retry) |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
@@ -73,6 +75,7 @@ GPU telemetry collection configuration. Controls GPU metrics collection frequenc
 | `AIPERF_GPU_COLLECTION_INTERVAL` | `0.333` | ≥ 0.01, ≤ 300.0 | GPU telemetry metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_GPU_DEFAULT_DCGM_ENDPOINTS` | `['http://localhost:9400/metrics', 'http://localhost:9401/metrics']` | — | Default DCGM endpoint URLs to check for GPU telemetry (comma-separated string or JSON array) |
 | `AIPERF_GPU_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for telemetry record export results processor |
+| `AIPERF_GPU_EXPORT_FLUSH_INTERVAL` | `2.0` | ≥ 0.1, ≤ 300.0 | Maximum seconds telemetry JSONL records may remain buffered before being flushed to disk |
 | `AIPERF_GPU_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking GPU telemetry endpoint reachability during init |
 | `AIPERF_GPU_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down GPU telemetry service to allow command response transmission |
 | `AIPERF_GPU_THREAD_JOIN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for joining GPU telemetry collection threads during shutdown |
@@ -129,10 +132,14 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RECORD_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for record export results processor |
+| `AIPERF_RECORD_EXPORT_FLUSH_INTERVAL` | `2.0` | ≥ 0.1, ≤ 300.0 | Maximum seconds record JSONL data may remain buffered before being flushed to disk |
 | `AIPERF_RECORD_RAW_EXPORT_BATCH_SIZE` | `10` | ≥ 1, ≤ 1000000 | Batch size for raw record writer processor |
-| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
+| `AIPERF_RECORD_INGEST_BATCH_SIZE` | `64` | ≥ 1, ≤ 1000000 | Batch size for record-processor to records-manager ingestion |
+| `AIPERF_RECORD_INGEST_BATCH_FLUSH_INTERVAL` | `0.01` | ≥ 0.001, ≤ 300.0 | Maximum seconds metric records may remain buffered before ingestion flush |
+| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers. Default: 1 record processor for every 4 workers. |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
+| `AIPERF_RECORD_CHECKPOINT_INTERVAL` | `30.0` | ≥ 1.0, ≤ 3600.0 | Interval in seconds between controller-side partial checkpoint writes |
 
 ## SERVERMETRICS
 
@@ -143,6 +150,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | `2.0` | ≥ 0.0, ≤ 30.0 | Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize before shutting down (default: 2.0s) |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
+| `AIPERF_SERVER_METRICS_EXPORT_FLUSH_INTERVAL` | `2.0` | ≥ 0.1, ≤ 300.0 | Maximum seconds server metrics JSONL records may remain buffered before being flushed to disk |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down server metrics service to allow command response transmission |
 
@@ -154,22 +162,29 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 |----------------------|---------|-------------|-------------|
 | `AIPERF_SERVICE_COMMAND_RESPONSE_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for command responses |
 | `AIPERF_SERVICE_COMMS_REQUEST_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for requests from req_clients to rep_clients |
-| `AIPERF_SERVICE_CONNECTION_PROBE_INTERVAL` | `0.1` | ≥ 0.1, ≤ 600.0 | Interval in seconds for connection probes while waiting for initial connection to the zmq message bus |
+| `AIPERF_SERVICE_CONNECTION_PROBE_INTERVAL` | `0.01` | ≥ 0.01, ≤ 600.0 | Interval in seconds for connection probes while waiting for initial connection to the zmq message bus |
 | `AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus |
 | `AIPERF_SERVICE_CREDIT_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 1, ≤ 100000.0 | Interval in seconds between credit progress report messages |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
+| `AIPERF_SERVICE_MULTIPROCESSING_START_METHOD` | `None` | — | Multiprocessing start method. 'spawn' is safest (default on macOS/Windows), 'fork' is faster but unsafe with threads, 'forkserver' is a compromise. None uses the platform default. |
 | `AIPERF_SERVICE_HEARTBEAT_INTERVAL` | `5.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between heartbeat messages for component services |
+| `AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD` | `3` | ≥ 1, ≤ 100 | Number of missed heartbeat intervals before a service is considered stale |
+| `AIPERF_SERVICE_POD_FAILURE_ABORT_THRESHOLD_PERCENT` | `100` | ≥ 0, ≤ 100 | Percentage of worker pods that must fail before aborting the benchmark. For example, 50 means abort when 50%+ of worker pods have failed. Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort. |
+| `AIPERF_SERVICE_PROCESS_MONITOR_INTERVAL` | `0.5` | ≥ 0.1, ≤ 30.0 | Interval in seconds between process liveness checks in MultiProcessServiceManager |
+| `AIPERF_SERVICE_SHUTDOWN_PROPAGATION_DELAY` | `0.5` | ≥ 0.0, ≤ 10.0 | Delay in seconds after broadcasting shutdown command to allow message propagation before stopping services |
+| `AIPERF_SERVICE_FAILURE_SHUTDOWN_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 300.0 | Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task cancellation) does not complete within this window after a failed on_init/on_start transition, the process hard-exits via os._exit(1). Prevents silent zombie containers when cleanup blocks on a cancelled C-ext call. |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
-| `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
+| `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for waiting for workers to become ready and for profile start commands |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |
-| `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `1.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between registration attempts for component services |
-| `AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS` | `10` | ≥ 1, ≤ 100000 | Maximum number of registration attempts before giving up |
+| `AIPERF_SERVICE_RAW_RECORD_UPLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds to wait for worker pods to upload raw record files to the controller API after benchmark completion. |
+| `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `0.1` | ≥ 0.001, ≤ 100000.0 | Interval in seconds between registration attempts for component services |
 | `AIPERF_SERVICE_REGISTRATION_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service registration |
 | `AIPERF_SERVICE_START_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service start operations |
 | `AIPERF_SERVICE_TASK_CANCEL_TIMEOUT_SHORT` | `2.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for simple tasks to complete when cancelling |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED` | `True` | — | Enable event loop health monitoring to detect blocked event loops. When enabled, TimingManager and Worker services periodically check if the event loop is responsive and log warnings when latency exceeds the threshold. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_INTERVAL` | `0.25` | ≥ 0.05, ≤ 10.0 | Interval in seconds between event loop health checks (default: 250ms). The monitor sleeps for this duration and measures actual elapsed time to detect blocking. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS` | `25.0` | > 1.0, ≤ 10000.0 | Warning threshold in milliseconds for event loop latency (default: 25ms). If the actual sleep duration exceeds the expected duration by this amount, a warning is logged. |
+| `AIPERF_SERVICE_EVENT_LOOP_HEALTH_STACKTRACE` | `False` | — | Enable watchdog thread that captures event loop thread stack traces when blocked. A daemon thread pings the event loop and captures sys._current_frames() when it fails to respond within the warning threshold. Adds minimal overhead (one thread per monitored service). |
 | `AIPERF_SERVICE_HEALTH_ENABLED` | `False` | — | Enable the lightweight health server for Kubernetes liveness/readiness probes. When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints. |
 | `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
 | `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
@@ -183,6 +198,7 @@ Timing manager configuration. Controls timing-related settings for credit phase 
 |----------------------|---------|-------------|-------------|
 | `AIPERF_TIMING_CANCEL_DRAIN_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for waiting for cancelled credits to drain after phase timeout |
 | `AIPERF_TIMING_RATE_RAMP_UPDATE_INTERVAL` | `0.1` | ≥ 0.01, ≤ 10.0 | Update interval in seconds for continuous rate ramping (default 0.1s = 100ms) |
+| `AIPERF_TIMING_RECONCILIATION_INTERVAL` | `5.0` | ≥ 1.0, ≤ 300.0 | Interval in seconds between credit reconciliation cycles. The router periodically checks that workers agree on which credits are in-flight. Credits missing for two consecutive cycles are treated as orphaned. |
 
 ## UI
 
@@ -196,6 +212,7 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `5.0` | ≥ 1.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
+| `AIPERF_UI_STATUS_LOG_INTERVAL` | `30.0` | ≥ 1.0, ≤ 3600.0 | Interval in seconds between periodic status log messages when using --ui none |
 
 ## WORKER
 
@@ -212,6 +229,7 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_MAX_WORKERS_CAP` | `32` | ≥ 1, ≤ 10000 | Absolute maximum number of workers to spawn, regardless of CPU count |
 | `AIPERF_WORKER_STALE_TIME` | `10.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last status report before worker is considered stale |
 | `AIPERF_WORKER_STATUS_SUMMARY_INTERVAL` | `0.5` | ≥ 0.1, ≤ 1000.0 | Interval in seconds between worker status summary messages |
+| `AIPERF_WORKER_DEFAULT_WORKERS_PER_POD` | `10` | ≥ 1, ≤ 100 | Default number of worker subprocesses per Kubernetes worker pod. Each pod downloads the dataset once and shares it across workers via mmap. |
 
 ## ZMQ
 
@@ -226,12 +244,12 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 | `AIPERF_ZMQ_STREAMING_DEALER_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received messages from ZMQ streaming DEALER clients. Prevents event loop starvation during message bursts. 0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc. |
 | `AIPERF_ZMQ_STREAMING_ROUTER_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received messages from ZMQ streaming ROUTER clients. Prevents event loop starvation during message bursts. 0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc. |
 | `AIPERF_ZMQ_SUB_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received messages from ZMQ SUB clients. Prevents event loop starvation during message bursts. 0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc. |
-| `AIPERF_ZMQ_PULL_MAX_CONCURRENCY` | `100000` | ≥ 1, ≤ 10000000 | Maximum concurrency for ZMQ PULL clients |
+| `AIPERF_ZMQ_PULL_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 10000000 | Maximum concurrency for ZMQ PULL clients |
 | `AIPERF_ZMQ_PUSH_MAX_RETRIES` | `2` | ≥ 1, ≤ 100 | Maximum number of retry attempts when pushing messages to ZMQ PUSH socket |
 | `AIPERF_ZMQ_PUSH_RETRY_DELAY` | `0.1` | ≥ 0.1, ≤ 1000.0 | Delay in seconds between retry attempts for ZMQ PUSH operations |
 | `AIPERF_ZMQ_RCVTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket receive timeout in milliseconds (default: 5 minutes) |
 | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
-| `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
+| `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `10` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |
 
 ## DEV
@@ -241,7 +259,10 @@ Development and debugging configuration. Controls developer-focused features lik
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DEV_DEBUG_SERVICES` | `None` | — | List of services to enable DEBUG logging for (comma-separated or multiple flags) |
-| `AIPERF_DEV_ENABLE_YAPPI` | `False` | — | Enable yappi profiling (Yet Another Python Profiler) for performance analysis. Requires 'pip install yappi snakeviz' |
+| `AIPERF_DEV_ENABLE_YAPPI` | `False` | — | Enable yappi profiling (Yet Another Python Profiler) for performance analysis. Requires 'uv add yappi snakeviz' |
+| `AIPERF_DEV_MEMORY_PROFILE_ENABLED` | `False` | — | Enable memory profiling using tracemalloc. Logs memory usage and top allocators periodically. |
+| `AIPERF_DEV_MEMORY_PROFILE_INTERVAL` | `10.0` | ≥ 1.0, ≤ 3600.0 | Interval in seconds between memory profile snapshots when profiling is enabled. |
+| `AIPERF_DEV_MEMORY_PROFILE_TOP_N` | `10` | ≥ 1, ≤ 100 | Number of top memory allocators to log in each snapshot. |
 | `AIPERF_DEV_MODE` | `False` | — | Enable AIPerf Developer mode for internal metrics and debugging |
 | `AIPERF_DEV_SHOW_EXPERIMENTAL_METRICS` | `False` | — | [Developer use only] Show experimental metrics in output (requires DEV_MODE) |
 | `AIPERF_DEV_SHOW_INTERNAL_METRICS` | `False` | — | [Developer use only] Show internal and hidden metrics in output (requires DEV_MODE) |

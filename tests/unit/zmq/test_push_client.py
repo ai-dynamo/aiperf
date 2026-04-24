@@ -10,10 +10,17 @@ import pytest
 import zmq
 import zmq.asyncio
 
+from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError, NotInitializedError
-from aiperf.common.messages import Message
+from aiperf.common.message_codecs import get_message_codec
+from aiperf.common.messages import ConnectionProbeMessage
+from aiperf.common.metric_records_wire import (
+    MetricRecordMetadata,
+    MetricRecordsWireMessage,
+    build_metric_records_wire_message,
+)
 from aiperf.zmq.push_client import ZMQPushClient
 
 
@@ -51,28 +58,77 @@ class TestZMQPushClientPush:
         mock_zmq_socket.send.assert_called_once()
         sent_data = mock_zmq_socket.send.call_args[0][0]
         # sent_data is bytes, so decode to string for comparison
-        assert sample_message.message_type.value.encode() in sent_data
+        assert str(sample_message.message_type).encode() in sent_data
 
     @pytest.mark.asyncio
     async def test_push_serializes_message_correctly(
         self, mock_zmq_socket, mock_zmq_context
     ):
-        """Test that push serializes message as JSON."""
+        """Test that push serializes through the default msgpack codec."""
         client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
-        message = Message(message_type=MessageType.HEARTBEAT, request_id="test-123")
+        message = ConnectionProbeMessage(service_id="test", request_id="test-123")
 
         await client.push(message)
 
         sent_data = mock_zmq_socket.send.call_args[0][0]
-        # Verify it's valid JSON containing our data (sent_data is bytes)
-        sent_str = sent_data.decode()
-        assert (
-            '"message_type":"heartbeat"' in sent_str
-            or '"message_type": "heartbeat"' in sent_str
+        decoded = get_message_codec().decode(sent_data)
+        assert isinstance(decoded, ConnectionProbeMessage)
+        assert decoded.service_id == "test"
+        assert decoded.request_id == "test-123"
+
+    @pytest.mark.asyncio
+    async def test_push_uses_custom_codec(self, mock_zmq_socket, mock_zmq_context):
+        """Test that push encodes bytes through the configured codec."""
+        client = ZMQPushClient(
+            address="tcp://127.0.0.1:5555",
+            bind=True,
+            codec=RECORDS_CODEC,
         )
-        assert "test-123" in sent_str
+        await client.initialize()
+
+        message = build_metric_records_wire_message(
+            service_id="record-processor-1",
+            metadata=MetricRecordMetadata(
+                request_num=1,
+                session_num=1,
+                conversation_id="conversation-1",
+                turn_index=0,
+                request_start_ns=100,
+                request_end_ns=200,
+                worker_id="worker-1",
+                record_processor_id="rp-1",
+                benchmark_phase="profiling",
+            ),
+            metrics={"request_latency": 3.14},
+            trace_data=None,
+            error=None,
+        )
+
+        await client.push(message)
+
+        sent_data = mock_zmq_socket.send.call_args[0][0]
+        assert isinstance(sent_data, bytes)
+        assert b'"message_type"' not in sent_data
+
+        decoded = RECORDS_CODEC.decode(sent_data)
+        assert isinstance(decoded, MetricRecordsWireMessage)
+        assert decoded.message_type == MessageType.METRIC_RECORDS
+        assert decoded.metrics == {"request_latency": 3.14}
+
+    @pytest.mark.asyncio
+    async def test_push_raw_sends_pre_serialized_bytes_unchanged(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that push_raw bypasses codec serialization and sends the provided bytes."""
+        client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
+        await client.initialize()
+
+        payload = b"\x82\xa1t\xa4test"
+        await client.push_raw(payload)
+
+        mock_zmq_socket.send.assert_called_once_with(payload)
 
     @pytest.mark.asyncio
     async def test_push_retries_on_zmq_again(self, mock_zmq_context):
@@ -91,7 +147,7 @@ class TestZMQPushClientPush:
             client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
             await client.initialize()
 
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should succeed after retry
             await client.push(message)
@@ -118,7 +174,7 @@ class TestZMQPushClientPush:
             client = ZMQPushClient(address="tcp://127.0.0.1:5555", bind=True)
             await client.initialize()
 
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to push data after"):
                 await client.push(message)
@@ -129,7 +185,7 @@ class TestZMQPushClientPush:
         async with push_test_helper.create_client(
             send_side_effect=graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should not raise, just return
             await client.push(message)
@@ -142,7 +198,7 @@ class TestZMQPushClientPush:
         async with push_test_helper.create_client(
             send_side_effect=non_graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to push data"):
                 await client.push(message)
@@ -170,7 +226,7 @@ class TestZMQPushClientEdgeCases:
         await client.initialize()
 
         messages = [
-            Message(message_type=MessageType.HEARTBEAT, request_id=f"req-{i}")
+            ConnectionProbeMessage(service_id="test", request_id=f"req-{i}")
             for i in range(5)
         ]
 

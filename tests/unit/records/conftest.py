@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for records tests."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
     RequestInfo,
@@ -17,15 +17,31 @@ from aiperf.common.models import (
     TextResponse,
     Turn,
 )
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.plugin.enums import EndpointType
+from aiperf.config import BenchmarkConfig
 from aiperf.records.inference_result_parser import InferenceResultParser
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    """Create a BenchmarkConfig with minimal defaults."""
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
 
 
 def create_test_request_info(
@@ -36,20 +52,10 @@ def create_test_request_info(
 ) -> RequestInfo:
     """Create a RequestInfo for testing."""
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
@@ -69,14 +75,12 @@ def sample_turn():
 
 
 @pytest.fixture
-def inference_result_parser(user_config):
+def inference_result_parser(run):
     """Create an InferenceResultParser with mocked dependencies."""
 
-    def mock_communication_init(self, service_config, **kwargs):
-        from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
-
-        AIPerfLifecycleMixin.__init__(self, service_config=service_config, **kwargs)
-        self.service_config = service_config
+    def mock_communication_init(self, run, **kwargs):
+        AIPerfLifecycleMixin.__init__(self, run=run, **kwargs)
+        self.run = run
         self.comms = MagicMock()
         for method in [
             "trace_or_debug",
@@ -92,15 +96,11 @@ def inference_result_parser(user_config):
         patch(
             "aiperf.common.mixins.CommunicationMixin.__init__", mock_communication_init
         ),
-        patch(
-            "aiperf.common.models.model_endpoint_info.ModelEndpointInfo.from_user_config"
-        ),
         patch("aiperf.plugin.plugins.get_class"),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
         parser = InferenceResultParser(
-            service_config=ServiceConfig(),
-            user_config=user_config,
+            run=run,
         )
         return parser
 

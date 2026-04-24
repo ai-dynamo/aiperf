@@ -2,31 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from aiperf.common import random_generator as rng
-from aiperf.common.config import UserConfig
-from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.types import NormalDistribution
 from aiperf.dataset.composer.base import BaseDatasetComposer
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
-        super().__init__(config, tokenizer)
-        self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None):
+        super().__init__(run, tokenizer)
+        # Use dataset-specific random seed or fall back to global
+        seed = self.dataset_config.random_seed or run.cfg.random_seed
+        self.session_id_generator = SessionIDGenerator(seed=seed)
 
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")
         self._delay_sampler_rng = rng.derive("composer.conversation.turn_delay")
-
-        # Set default sampling strategy for synthetic datasets if not explicitly set
-        if self.config.input.dataset_sampling_strategy is None:
-            self.config.input.dataset_sampling_strategy = (
-                InputDefaults.DATASET_SAMPLING_STRATEGY
-            )
-            self.info(
-                f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
-            )
 
         if (
             not self.include_prompt
@@ -49,12 +46,15 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             list[Conversation]: A list of conversation objects.
         """
         conversations = []
-        for _ in range(self.config.input.conversation.num_dataset_entries):
+        num_entries = self.dataset_config.entries
+
+        turns_config = self.dataset_config.turns
+
+        for _ in range(num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
-            num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
-                self.config.input.conversation.turn.mean,
-                self.config.input.conversation.turn.stddev,
+            num_turns = (
+                turns_config.sample_int(self._turn_sampler_rng) if turns_config else 1
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -90,12 +90,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first and self.config.input.conversation.turn.delay.mean > 0:
-            delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                self.config.input.conversation.turn.delay.mean,
-                self.config.input.conversation.turn.delay.stddev,
-            )
-            turn.delay = delay * self.config.input.conversation.turn.delay.ratio
+        turn_delay_config = self.dataset_config.turn_delay
+        if not is_first and turn_delay_config and turn_delay_config.mean > 0:
+            delay = turn_delay_config.sample_int(self._delay_sampler_rng)
+            turn.delay = delay * self.dataset_config.turn_delay_ratio
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
@@ -133,16 +131,22 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
-        # Preserve original variance unless sequence distribution is active
-        stddev = (
-            0
-            if self._seq_distribution is not None
-            else self.config.input.prompt.input_tokens.stddev
-        )
+        # Get prompts config
+        prompts_config = getattr(self.dataset_config, "prompts", None)
 
-        for _ in range(self.config.input.prompt.batch_size):
+        isl_stddev = 0
+        if self._seq_distribution is None and prompts_config and prompts_config.isl:
+            isl_stddev = (
+                prompts_config.isl.stddev
+                if isinstance(prompts_config.isl, NormalDistribution)
+                else 0
+            )
+
+        batch_size = prompts_config.batch_size if prompts_config else 1
+
+        for _ in range(batch_size):
             # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+            content = self.prompt_generator.generate(mean=isl, stddev=isl_stddev)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:
@@ -161,7 +165,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Image: An image payload object.
         """
         image = Image(name="image_url")
-        for _ in range(self.config.input.image.batch_size):
+        images_config = getattr(self.dataset_config, "images", None)
+        batch_size = images_config.batch_size if images_config else 1
+        for _ in range(batch_size):
             data = self.image_generator.generate()
             image.contents.append(data)
         return image
@@ -174,7 +180,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Audio: An audio payload object.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self.config.input.audio.batch_size):
+        audio_config = getattr(self.dataset_config, "audio", None)
+        batch_size = audio_config.batch_size if audio_config else 1
+        for _ in range(batch_size):
             data = self.audio_generator.generate()
             audio.contents.append(data)
         return audio
@@ -187,7 +195,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             Video: A video payload object.
         """
         video = Video(name="video_url")
-        for _ in range(self.config.input.video.batch_size):
+        video_config = getattr(self.dataset_config, "video", None)
+        batch_size = video_config.batch_size if video_config else 1
+        for _ in range(batch_size):
             data = self.video_generator.generate()
             if data:  # Only append if video was actually generated
                 video.contents.append(data)
@@ -195,19 +205,30 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_prompt(self) -> bool:
-        return self.config.input.prompt.input_tokens.mean > 0
+        prompts_config = getattr(self.dataset_config, "prompts", None)
+        if not prompts_config or not prompts_config.isl:
+            return False
+        return prompts_config.isl.mean > 0
 
     @property
     def include_image(self) -> bool:
-        return (
-            self.config.input.image.width.mean > 0
-            and self.config.input.image.height.mean > 0
-        )
+        images_config = getattr(self.dataset_config, "images", None)
+        if not images_config:
+            return False
+        width_mean = images_config.width.mean
+        height_mean = images_config.height.mean
+        return width_mean > 0 and height_mean > 0
 
     @property
     def include_audio(self) -> bool:
-        return self.config.input.audio.length.mean > 0
+        audio_config = getattr(self.dataset_config, "audio", None)
+        if not audio_config:
+            return False
+        return audio_config.length.mean > 0
 
     @property
     def include_video(self) -> bool:
-        return bool(self.config.input.video.width and self.config.input.video.height)
+        video_config = getattr(self.dataset_config, "video", None)
+        if not video_config:
+            return False
+        return bool(video_config.width and video_config.height)

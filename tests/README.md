@@ -40,3 +40,30 @@ Unit tests for individual modules and components. The directory structure mirror
 
 ### [`unit/server/`](unit/server/)
 Unit tests exclusively for the aiperf-mock-server. See [`aiperf_mock_server/README.md`](aiperf_mock_server/README.md) for detailed information.
+
+## Auto-Selected Markers
+
+Several test suites are excluded by default via `-m 'not k8s and not gpu ...'` in `pyproject.toml` `addopts`. When you target one of these paths directly, the corresponding markers are automatically enabled so tests run instead of being silently skipped.
+
+| Path | Markers enabled |
+|---|---|
+| `tests/kubernetes/` | `k8s`, `gpu`, `vllm`, `dynamo` |
+| `tests/kubernetes/gpu/` | `k8s`, `gpu`, `vllm`, `dynamo` |
+| `tests/kubernetes/gpu/vllm/` | `k8s`, `gpu`, `vllm` |
+| `tests/kubernetes/gpu/dynamo/` | `k8s`, `gpu`, `dynamo` |
+| `tests/integration/` | `integration` |
+| `tests/component_integration/` | `component_integration` |
+
+Matching is hierarchical: targeting a child path enables its own markers plus all parent markers. Targeting a parent path enables markers for all children underneath it.
+
+```bash
+# These just work -- no need to pass -m manually:
+uv run pytest tests/kubernetes/
+uv run pytest tests/kubernetes/gpu/vllm/test_foo.py
+uv run pytest tests/integration/
+
+# Equivalent to manually overriding the marker expression:
+uv run pytest tests/kubernetes/ -m 'not integration and not component_integration'
+```
+
+The logic lives in `tests/conftest.py::pytest_configure`. To add a new auto-selected path, add an entry to `_PATH_MARKER_MAP`.

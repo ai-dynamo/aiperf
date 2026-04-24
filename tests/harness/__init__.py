@@ -5,6 +5,14 @@ from tests.harness.fake_dcgm import DCGMEndpoint, FakeDCGMMocker
 from tests.harness.fake_service_manager import FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport
+from tests.harness.k8s import (
+    build_mock_api,
+    build_sample_config,
+    build_sample_pod_template,
+    create_api_exception,
+    create_jobset_list_response,
+    patch_api_accessors,
+)
 from tests.harness.mock_plugin import mock_plugin
 
 __all__ = [
@@ -15,5 +23,11 @@ __all__ = [
     "FakeServiceManager",
     "FakeTokenizer",
     "FakeTransport",
+    "build_mock_api",
+    "build_sample_config",
+    "build_sample_pod_template",
+    "create_api_exception",
+    "create_jobset_list_response",
     "mock_plugin",
+    "patch_api_accessors",
 ]

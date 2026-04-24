@@ -85,12 +85,17 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                         await yield_to_event_loop()
 
             except zmq.Again:
-                self.debug("No data on dealer socket received, yielding to event loop")
+                self.trace("No data on dealer socket received, yielding to event loop")
                 await yield_to_event_loop()
             except asyncio.CancelledError:
                 self.debug("Dealer request client receiver task cancelled")
-                raise  # re-raise the cancelled error
-            except Exception as e:
+                raise
+            except zmq.ContextTerminated:
+                self.debug(
+                    "Dealer request client receiver task stopped (ZMQ context terminated)"
+                )
+                break
+            except (zmq.ZMQError, asyncio.TimeoutError) as e:
                 self.exception(
                     f"Exception receiving responses for client {self.client_id}: {e!r}"
                 )
@@ -131,6 +136,39 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                 f"Exception sending request: {e.__class__.__qualname__} {e}",
             ) from e
 
+    async def send(self, message: Message) -> None:
+        """Send a message without waiting for a response (fire-and-forget).
+
+        Unlike request(), this does not register a callback or wait for a reply.
+        Useful for one-way notifications like heartbeats where delivery confirmation
+        is not needed.
+
+        Args:
+            message: The message to send.
+
+        Raises:
+            CommunicationError: If the send fails.
+        """
+        await self._check_initialized()
+
+        if not isinstance(message, Message):
+            raise TypeError(
+                f"message must be an instance of Message, got {type(message).__name__}"
+            )
+
+        if not message.request_id:
+            message.request_id = str(uuid.uuid4())
+
+        request_json_bytes = message.to_json_bytes()
+        self.trace(lambda msg=request_json_bytes: f"Sending fire-and-forget: {msg}")
+
+        try:
+            await self.socket.send(request_json_bytes)
+        except Exception as e:
+            raise CommunicationError(
+                f"Exception sending message: {e.__class__.__qualname__} {e}",
+            ) from e
+
     async def request(
         self,
         message: Message,
@@ -160,4 +198,7 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                 )
 
         await self.request_async(message, callback)
-        return await asyncio.wait_for(future, timeout=timeout)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self.request_callbacks.pop(message.request_id, None)

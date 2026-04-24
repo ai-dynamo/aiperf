@@ -3,8 +3,8 @@
 
 from typing import Any
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 
@@ -43,7 +43,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         conversation_column: str,
         message_content_key: str = "content",
         image_column: str | None = None,
@@ -52,7 +52,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         self.conversation_column = conversation_column
         self.message_content_key = message_content_key
         self.image_column = image_column
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     def _extract_first_message(self, messages: list[Any]) -> str | None:
         """Extract the text of the first message, handling dataset-specific quirks.

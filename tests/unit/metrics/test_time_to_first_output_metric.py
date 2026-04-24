@@ -32,8 +32,6 @@ def create_response_record(
         responses: List of (timestamp, reasoning, content) tuples
     """
     request = RequestRecord(
-        conversation_id="test-conversation",
-        turn_index=0,
         model_name="test-model",
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
@@ -141,7 +139,7 @@ class TestTimeToFirstOutputMetric:
         """Test error when first non-reasoning token timestamp is before request start"""
         record = create_record(start_ns=100, responses=[90])
         metric = TimeToFirstOutputTokenMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="record is missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_ttfo_no_responses(self):
@@ -149,7 +147,7 @@ class TestTimeToFirstOutputMetric:
         record = create_record(start_ns=100)
         record.responses = []
         metric = TimeToFirstOutputTokenMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="record is missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())
 
     @pytest.mark.parametrize(

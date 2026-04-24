@@ -5,6 +5,7 @@
 import os
 
 import pytest
+from aiperf_mock_server import config as config_module
 from aiperf_mock_server.config import (
     MockServerConfig,
     _get_env_key,
@@ -131,8 +132,6 @@ class TestConfigHelpers:
         assert os.environ["MOCK_SERVER_TTFT"] == "15.0"
 
     def test_set_server_config(self, monkeypatch):
-        from aiperf_mock_server import config as config_module
-
         monkeypatch.delenv("MOCK_SERVER_PORT", raising=False)
 
         new_config = MockServerConfig(port=9999)

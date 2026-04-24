@@ -3,43 +3,69 @@
 
 import base64
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
 
-from aiperf.common.config import ImageConfig, ImageHeightConfig, ImageWidthConfig
+from aiperf.common import random_generator as rng
 from aiperf.common.enums import ImageFormat
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.generator import ImageGenerator
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
+
+
+def _make_config(**image_overrides) -> AIPerfConfig:
+    """Build an AIPerfConfig with a single synthetic dataset containing image config."""
+    images = {
+        "batch_size": 1,
+        "width": {"mean": 10, "stddev": 2},
+        "height": {"mean": 10, "stddev": 2},
+        "format": "png",
+    }
+    images.update(image_overrides)
+    return AIPerfConfig(
+        **_BASE,
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+                "images": images,
+            }
+        },
+    )
 
 
 @pytest.fixture
 def base_config():
     """Base configuration for ImageGenerator tests."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.PNG,
-    )
+    return _make_config()
 
 
 @pytest.fixture
 def config_random_format():
     """Configuration with no format specified (for random format selection)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=2),
-        height=ImageHeightConfig(mean=10, stddev=2),
-        format=ImageFormat.RANDOM,
-    )
+    return _make_config(format="random")
 
 
 @pytest.fixture
 def config_fixed_dimensions():
     """Configuration with fixed dimensions (stddev=0)."""
-    return ImageConfig(
-        width=ImageWidthConfig(mean=10, stddev=0),
-        height=ImageHeightConfig(mean=10, stddev=0),
-        format=ImageFormat.PNG,
+    return _make_config(
+        width={"mean": 10, "stddev": 0},
+        height={"mean": 10, "stddev": 0},
     )
 
 
@@ -82,26 +108,26 @@ def mock_file_system():
 
 @pytest.fixture(
     params=[
-        ImageConfig(
-            width=ImageWidthConfig(mean=50, stddev=5),
-            height=ImageHeightConfig(mean=75, stddev=8),
-            format=ImageFormat.JPEG,
+        dict(
+            width={"mean": 50, "stddev": 5},
+            height={"mean": 75, "stddev": 8},
+            format="jpeg",
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=200, stddev=20),
-            height=ImageHeightConfig(mean=150, stddev=15),
-            format=ImageFormat.RANDOM,
+        dict(
+            width={"mean": 200, "stddev": 20},
+            height={"mean": 150, "stddev": 15},
+            format="random",
         ),
-        ImageConfig(
-            width=ImageWidthConfig(mean=1024, stddev=0),
-            height=ImageHeightConfig(mean=768, stddev=0),
-            format=ImageFormat.PNG,
+        dict(
+            width={"mean": 1024, "stddev": 0},
+            height={"mean": 768, "stddev": 0},
+            format="png",
         ),
     ]
 )
 def various_configs(request):
-    """Parameterized fixture providing various ImageConfig configurations."""
-    return request.param
+    """Parameterized fixture providing various AIPerfConfig configurations."""
+    return _make_config(**request.param)
 
 
 @pytest.fixture(
@@ -114,10 +140,9 @@ def various_configs(request):
 def dimension_params(request):
     """Parameterized fixture providing various dimension configurations."""
     width_mean, width_stddev, height_mean, height_stddev = request.param
-    return ImageConfig(
-        width=ImageWidthConfig(mean=width_mean, stddev=width_stddev),
-        height=ImageHeightConfig(mean=height_mean, stddev=height_stddev),
-        format=ImageFormat.PNG,
+    return _make_config(
+        width={"mean": width_mean, "stddev": width_stddev},
+        height={"mean": height_mean, "stddev": height_stddev},
     )
 
 
@@ -126,14 +151,14 @@ class TestImageGenerator:
 
     def test_init_with_config(self, base_config):
         """Test ImageGenerator initialization with valid config."""
-        generator = ImageGenerator(base_config)
-        assert generator.config == base_config
+        generator = ImageGenerator(_make_run(base_config))
+        assert generator.run.cfg == base_config
         assert hasattr(generator, "logger")
 
     def test_init_with_different_configs(self, various_configs):
         """Test initialization with various config parameters."""
-        generator = ImageGenerator(various_configs)
-        assert generator.config == various_configs
+        generator = ImageGenerator(_make_run(various_configs))
+        assert generator.run.cfg == various_configs
 
     @patch(
         "aiperf.dataset.generator.image.utils.encode_image",
@@ -141,7 +166,7 @@ class TestImageGenerator:
     )
     def test_generate_with_specified_format(self, mock_encode, base_config):
         """Test generate method with a specified image format."""
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(_make_run(base_config))
         result = generator.generate()
 
         expected_result = "data:image/png;base64,fake_base64_string"
@@ -154,7 +179,7 @@ class TestImageGenerator:
         """Test generate method when format is random (random selection)."""
         mock_sample_image.return_value = mock_image[0]
 
-        generator = ImageGenerator(config_random_format)
+        generator = ImageGenerator(_make_run(config_random_format))
         result = generator.generate()
         assert result.startswith("data:image/")
         assert "random" not in result
@@ -164,14 +189,12 @@ class TestImageGenerator:
         self, mock_sample_image, base_config, test_image
     ):
         """Test that multiple generate calls can produce different results."""
-        from aiperf.common import random_generator as rng
-
         mock_sample_image.return_value = test_image
 
         # Initialize global random generator to make the test deterministic
         rng.reset()
         rng.init(42)
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(_make_run(base_config))
         image1 = generator.generate()
         image2 = generator.generate()
 
@@ -186,7 +209,7 @@ class TestImageGenerator:
             "/path/image3.gif",
         ]
 
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(_make_run(base_config))
 
         # Verify images were pre-loaded during init
         mocks["mock_glob"].assert_called_once()
@@ -204,7 +227,7 @@ class TestImageGenerator:
 
         # Error should be raised during initialization (pre-loading)
         with pytest.raises(ValueError) as exc_info:
-            ImageGenerator(base_config)
+            ImageGenerator(_make_run(base_config))
 
         assert "No source images found" in str(exc_info.value)
         mock_file_system["mock_glob"].assert_called_once()
@@ -214,7 +237,7 @@ class TestImageGenerator:
         mocks = mock_file_system
         mocks["mock_glob"].return_value = ["/path/single_image.jpg"]
 
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(_make_run(base_config))
 
         # Verify single image was pre-loaded
         mocks["mock_glob"].assert_called_once()
@@ -231,7 +254,7 @@ class TestImageGenerator:
         """Integration test using a real image (mocked filesystem)."""
         mock_sample_image.return_value = test_image
 
-        generator = ImageGenerator(base_config)
+        generator = ImageGenerator(_make_run(base_config))
         result = generator.generate()
 
         # Verify the result is a valid data URL
@@ -259,15 +282,15 @@ class TestImageGenerator:
         self, mock_sample_image, image_format, expected_prefix, test_image
     ):
         """Test generate method with different image formats."""
-        config = ImageConfig(
-            width=ImageWidthConfig(mean=100, stddev=0),
-            height=ImageHeightConfig(mean=100, stddev=0),
-            format=image_format,
+        config = _make_config(
+            width={"mean": 100, "stddev": 0},
+            height={"mean": 100, "stddev": 0},
+            format=image_format.name.lower(),
         )
 
         mock_sample_image.return_value = test_image
 
-        generator = ImageGenerator(config)
+        generator = ImageGenerator(_make_run(config))
         result = generator.generate()
 
         assert result.startswith(expected_prefix)
@@ -279,7 +302,7 @@ class TestImageGenerator:
         """Test generate method with various dimension configurations."""
         mock_sample_image.return_value = test_image
 
-        generator = ImageGenerator(dimension_params)
+        generator = ImageGenerator(_make_run(dimension_params))
         result = generator.generate()
 
         # Verify it's a valid data URL
@@ -299,14 +322,12 @@ class TestImageGenerator:
         self, mock_sample_image, base_config, test_image
     ):
         """Test that image generation is deterministic with same seed."""
-        from aiperf.common import random_generator as rng
-
         mock_sample_image.return_value = test_image
 
         def generate_with_seed(seed):
             rng.reset()
             rng.init(seed)
-            generator = ImageGenerator(base_config)
+            generator = ImageGenerator(_make_run(base_config))
             return generator.generate()
 
         # Generate with same seed twice - should be identical

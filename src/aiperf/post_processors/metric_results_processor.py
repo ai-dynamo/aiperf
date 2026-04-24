@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config import UserConfig
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.enums import (
+    ListMetricAggregationMode,
     MetricDictValueTypeT,
     MetricFlags,
     MetricType,
@@ -12,15 +14,26 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.metric_records_wire import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.list_metric_aggregation import (
+    ListMetricAggregator,
+    build_list_metric_aggregator,
+)
+from aiperf.metrics.metric_dicts import (
+    MetricArray,
+    MetricResultsDict,
+    MetricSeriesProtocol,
+)
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class MetricResultsProcessor(BaseMetricsProcessor):
@@ -30,8 +43,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     It is responsible for processing the results and returning them to the RecordsManager, as well as summarizing the results.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any):
+        super().__init__(run=run, **kwargs)
         # For derived metrics, we don't care about splitting up the error metrics
         # Note: _setup_metrics returns metrics in dependency order, which includes
         # non-derived dependencies. We filter to only include actual derived metrics.
@@ -46,6 +59,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
+        self._list_metric_aggregation_mode: ListMetricAggregationMode = (
+            run.cfg.metrics.list_metric_aggregation
+        )
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -81,33 +97,65 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         for tag, value in record_data.metrics.items():
             try:
-                metric_type = self._tags_to_types[tag]
-                if metric_type == MetricType.RECORD:
-                    if tag not in results_dict:
-                        results_dict[tag] = MetricArray()
-                    if isinstance(value, list):
-                        # NOTE: Right now we only support list-based metrics by extending the array.
-                        #       In the future, we possibly could support having nested arrays.
-                        results_dict[tag].extend(value)  # type: ignore
-                    else:
-                        results_dict[tag].append(value)  # type: ignore
-
-                elif metric_type == MetricType.AGGREGATE:
-                    metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
-                    metric.aggregate_value(value)
-                    results_dict[tag] = metric.current_value
-
-                else:
-                    raise ValueError(f"Metric '{tag}' is not a valid metric type")
+                self._process_metric(tag, value, instances_map, results_dict)
             except NoMetricValue as e:
                 self.trace(
                     lambda tag=tag, e=e: f"No metric value for metric '{tag}': {e!r}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad processing and continue
                 self.warning(f"Error processing metric '{tag}': {e!r}")
 
         if self.is_trace_enabled:
             self.trace(f"Results after processing incoming metrics: {results_dict}")
+
+    def _process_metric(
+        self,
+        tag: MetricTagT,
+        value: Any,
+        instances_map: dict[MetricTagT, BaseMetric],
+        results_dict: MetricResultsDict,
+    ) -> None:
+        """Dispatch a single incoming metric value to the appropriate accumulator."""
+        metric_type = self._tags_to_types[tag]
+        if metric_type == MetricType.RECORD:
+            self._process_record_metric(tag, value, results_dict)
+        elif metric_type == MetricType.AGGREGATE:
+            metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
+            metric.aggregate_value(value)
+            results_dict[tag] = metric.current_value
+        else:
+            raise ValueError(f"Metric '{tag}' is not a valid metric type")
+
+    def _process_record_metric(
+        self,
+        tag: MetricTagT,
+        value: Any,
+        results_dict: MetricResultsDict,
+    ) -> None:
+        """Append a RECORD-type metric value into its list or scalar accumulator."""
+        if isinstance(value, list):
+            existing_values = results_dict.get(tag)
+            if existing_values is None:
+                existing_values = build_list_metric_aggregator(
+                    self._list_metric_aggregation_mode
+                )
+                results_dict[tag] = existing_values
+            if not isinstance(existing_values, ListMetricAggregator):
+                raise TypeError(
+                    f"Expected ListMetricAggregator for list-valued metric '{tag}', got {type(existing_values)}"
+                )
+            existing_values.extend(value)
+            return
+
+        existing_values = results_dict.get(tag)
+        if existing_values is None:
+            existing_values = MetricArray()
+            results_dict[tag] = existing_values
+        if not isinstance(existing_values, MetricArray):
+            raise TypeError(
+                f"Expected MetricArray for scalar metric '{tag}', got {type(existing_values)}"
+            )
+        existing_values.append(value)
 
     async def get_instances_map(
         self, request_start_ns: int | None = None
@@ -136,7 +184,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 self._results[tag] = derive_func(self._results)
             except NoMetricValue as e:
                 self.debug(f"No metric value for derived metric '{tag}': {e!r}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-metric; skip bad derivation and continue
                 self.warning(f"Error deriving metric '{tag}': {e!r}")
 
     def _should_include_in_summary(self, tag: str) -> bool:
@@ -192,10 +240,10 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         metric_class = self._instances_map[tag]
 
-        if isinstance(values, MetricArray):
+        if isinstance(values, MetricSeriesProtocol):
             return values.to_result(tag, metric_class.header, str(metric_class.unit))
 
-        if isinstance(values, int | float):
+        if isinstance(values, (int, float)):
             return MetricResult(
                 tag=metric_class.tag,
                 header=metric_class.header,

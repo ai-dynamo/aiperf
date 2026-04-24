@@ -4,7 +4,6 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
@@ -18,16 +17,6 @@ from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMet
 from aiperf.metrics.types.output_token_count import OutputTokenCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
-from aiperf.plugin.enums import EndpointType
-
-
-@pytest.fixture
-def mock_endpoint_config():
-    return EndpointConfig(
-        type=EndpointType.CHAT,
-        streaming=True,
-        model_names=["test-model"],
-    )
 
 
 @pytest.fixture
@@ -76,8 +65,7 @@ def sample_records():
 
 
 @pytest.fixture
-def mock_exporter_config(sample_records, mock_endpoint_config):
-    input_config = UserConfig(endpoint=mock_endpoint_config)
+def mock_exporter_config(sample_records, config):
     return ExporterConfig(
         results=ProfileResults(
             records=sample_records,
@@ -85,8 +73,7 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
             end_ns=0,
             completed=0,
         ),
-        user_config=input_config,
-        service_config=ServiceConfig(),
+        config=config,
         telemetry_results=None,
     )
 
@@ -123,25 +110,22 @@ class TestConsoleExporter:
     )  # fmt: skip
     def test_should_show_metrics_based_on_flags(
         self,
-        mock_endpoint_config: EndpointConfig,
+        config,
         metric_tag,
         should_show,
     ):
         """Test that metrics are shown/hidden based on their flags"""
-        user_config = UserConfig(endpoint=mock_endpoint_config)
-        service_config = ServiceConfig()
-        config = ExporterConfig(
+        exporter_config = ExporterConfig(
             results=ProfileResults(
                 records=[],
                 start_ns=0,
                 end_ns=0,
                 completed=0,
             ),
-            user_config=user_config,
-            service_config=service_config,
+            config=config,
             telemetry_results=None,
         )
-        exporter = ConsoleMetricsExporter(config)
+        exporter = ConsoleMetricsExporter(exporter_config)
 
         record = MetricResult(
             tag=metric_tag,

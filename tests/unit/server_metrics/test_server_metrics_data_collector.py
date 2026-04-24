@@ -365,7 +365,7 @@ class TestAsyncLifecycle:
         assert collector._session is None
 
         with patch(
-            "aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector"
+            "aiperf.transports.aiohttp_client.create_tcp_connector"
         ) as mock_create:
             mock_connector = AsyncMock()
             mock_connector.close = AsyncMock()

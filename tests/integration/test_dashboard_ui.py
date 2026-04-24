@@ -39,7 +39,8 @@ class TestDashboardUI:
                     --image-width-mean 64 \
                     --image-height-mean 64 \
                     --audio-length-mean 0.1
-                """
+                """,
+                timeout=300.0,
             )
             # Verify benchmark completed and CSV contains duration config
             assert result.request_count >= 1

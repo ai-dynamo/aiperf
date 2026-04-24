@@ -11,23 +11,84 @@ import pytest
 import soundfile as sf
 from PIL import Image
 
-from aiperf.common.config import VideoAudioConfig, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.generator.video import VideoGenerator
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
+
+
+def _make_config(**video_overrides) -> AIPerfConfig:
+    """Build an AIPerfConfig with a single synthetic dataset containing video config."""
+    video = {
+        "batch_size": 1,
+        "width": 64,
+        "height": 64,
+        "duration": 0.5,
+        "fps": 2,
+        "format": "webm",
+        "codec": "libvpx-vp9",
+        "synth_type": VideoSynthType.MOVING_SHAPES,
+    }
+    video.update(video_overrides)
+    return AIPerfConfig(
+        **_BASE,
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+                "video": video,
+            }
+        },
+    )
+
+
+def _make_audio_config(
+    *,
+    channels: int = 1,
+    sample_rate: int = 44100,
+    codec: VideoAudioCodec | None = None,
+    depth: int = 16,
+    video_format: VideoFormat = VideoFormat.WEBM,
+    video_codec: str = "libvpx-vp9",
+    width: int = 64,
+    height: int = 64,
+    duration: float = 0.5,
+    fps: int = 2,
+) -> AIPerfConfig:
+    """Build an AIPerfConfig with a synthetic dataset containing video+audio config."""
+    audio: dict = {
+        "sample_rate": sample_rate,
+        "channels": channels,
+        "depth": depth,
+    }
+    if codec is not None:
+        audio["codec"] = codec
+    return _make_config(
+        width=width,
+        height=height,
+        duration=duration,
+        fps=fps,
+        format=video_format,
+        codec=video_codec,
+        audio=audio,
+    )
 
 
 @pytest.fixture
 def base_config():
     """Base configuration for VideoGenerator tests."""
-    return VideoConfig(
-        width=64,
-        height=64,
-        duration=0.5,
-        fps=2,
-        format=VideoFormat.WEBM,
-        codec="libvpx-vp9",
-        synth_type=VideoSynthType.MOVING_SHAPES,
-    )
+    return _make_config()
 
 
 class TestVideoGenerator:
@@ -35,8 +96,8 @@ class TestVideoGenerator:
 
     def test_init_with_config(self, base_config):
         """Test VideoGenerator initialization with valid config."""
-        generator = VideoGenerator(base_config)
-        assert generator.config == base_config
+        generator = VideoGenerator(_make_run(base_config))
+        assert generator.video_config is not None
 
     @pytest.mark.parametrize(
         "ffmpeg_path,expected",
@@ -48,7 +109,7 @@ class TestVideoGenerator:
     def test_check_ffmpeg_availability(self, base_config, ffmpeg_path, expected):
         """Test FFmpeg availability check."""
         with patch("shutil.which", return_value=ffmpeg_path):
-            generator = VideoGenerator(base_config)
+            generator = VideoGenerator(_make_run(base_config))
             assert generator._check_ffmpeg_availability() is expected
 
     @pytest.mark.parametrize(
@@ -76,7 +137,7 @@ class TestVideoGenerator:
     ):
         """Test platform-specific FFmpeg installation instructions."""
         patches_dict, expected_keyword = patches_and_expected
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
 
         with ExitStack() as stack:
             stack.enter_context(patch("platform.system", return_value=platform_name))
@@ -105,16 +166,8 @@ class TestVideoGenerator:
 
     def test_generate_with_disabled_video(self):
         """Test that generate returns empty string when video is disabled."""
-        config = VideoConfig(
-            width=None,
-            height=None,
-            duration=1.0,
-            fps=4,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-        )
-        generator = VideoGenerator(config)
+        config = _make_config(width=None, height=None)
+        generator = VideoGenerator(_make_run(config))
         result = generator.generate()
         assert result == ""
 
@@ -128,16 +181,14 @@ class TestVideoGenerator:
     )
     def test_generate_frames(self, synth_type, width, height, duration, fps):
         """Test frame generation for different synthesis types."""
-        config = VideoConfig(
+        config = _make_config(
             width=width,
             height=height,
             duration=duration,
             fps=fps,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
             synth_type=synth_type,
         )
-        generator = VideoGenerator(config)
+        generator = VideoGenerator(_make_run(config))
         frames = generator._generate_frames()
 
         expected_frame_count = int(duration * fps)
@@ -151,22 +202,22 @@ class TestVideoGenerator:
 
     def test_generate_frames_unknown_type(self, base_config):
         """Test that unknown synthesis type raises ValueError."""
-        base_config.synth_type = "unknown_type"
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
+        generator.video_config.synth_type = "unknown_type"
 
         with pytest.raises(ValueError, match="Unknown synthesis type"):
             generator._generate_frames()
 
     def test_encode_frames_to_base64_empty_frames(self, base_config):
         """Test encoding empty frame list returns empty string."""
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
         result = generator._encode_frames_to_base64([])
         assert result == ""
 
     def test_encode_frames_to_base64_unsupported_format(self, base_config):
         """Test that unsupported format raises ValueError."""
-        base_config.format = Mock(name="UNSUPPORTED", value="unsupported")
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
+        generator.video_config.format = Mock(name="UNSUPPORTED", value="unsupported")
         frames = [Image.new("RGB", (64, 64), (0, 0, 0))]
 
         with pytest.raises(ValueError, match="Unsupported video format"):
@@ -174,7 +225,7 @@ class TestVideoGenerator:
 
     def test_encode_frames_ffmpeg_not_available(self, base_config):
         """Test that encoding fails gracefully when FFmpeg is not available."""
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
         frames = [Image.new("RGB", (64, 64), (0, 0, 0))]
 
         with (
@@ -185,7 +236,7 @@ class TestVideoGenerator:
 
     def test_encode_frames_codec_error(self, base_config):
         """Test handling of codec errors."""
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
         frames = [Image.new("RGB", (64, 64), (0, 0, 0))]
 
         with (
@@ -206,7 +257,7 @@ class TestVideoGenerator:
 
     def test_create_video_with_pipes_fallback(self, base_config):
         """Test fallback to temp files when pipes fail."""
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
         mock_result = "data:video/webm;base64,FAKE_BASE64"
 
@@ -232,16 +283,15 @@ class TestVideoGenerator:
         self, video_format, codec, expected_movflags
     ):
         """Test that MP4 uses temp file output and WebM uses pipe output."""
-        config = VideoConfig(
+        config = _make_config(
             width=64,
             height=64,
             duration=0.5,
             fps=2,
             format=video_format,
             codec=codec,
-            synth_type=VideoSynthType.MOVING_SHAPES,
         )
-        generator = VideoGenerator(config)
+        generator = VideoGenerator(_make_run(config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
         file_data = b"file_video_data"
@@ -286,17 +336,8 @@ class TestVideoGenerator:
 
 @pytest.fixture
 def audio_config():
-    """VideoConfig with audio enabled (channels=1)."""
-    return VideoConfig(
-        width=64,
-        height=64,
-        duration=0.5,
-        fps=2,
-        format=VideoFormat.WEBM,
-        codec="libvpx-vp9",
-        synth_type=VideoSynthType.MOVING_SHAPES,
-        audio=VideoAudioConfig(sample_rate=44100, channels=1),
-    )
+    """AIPerfConfig with video+audio enabled (channels=1)."""
+    return _make_audio_config(channels=1, sample_rate=44100)
 
 
 class TestVideoGeneratorAudio:
@@ -304,7 +345,7 @@ class TestVideoGeneratorAudio:
 
     def test_generate_audio_data_produces_valid_wav(self, audio_config):
         """Audio data is valid WAV with non-empty content."""
-        generator = VideoGenerator(audio_config)
+        generator = VideoGenerator(_make_run(audio_config))
         wav_bytes = generator._generate_audio_data()
 
         assert len(wav_bytes) > 44  # WAV header is 44 bytes minimum
@@ -317,27 +358,18 @@ class TestVideoGeneratorAudio:
 
     def test_generate_audio_data_duration_matches_video(self, audio_config):
         """Audio duration approximately matches video duration."""
-        generator = VideoGenerator(audio_config)
+        generator = VideoGenerator(_make_run(audio_config))
         wav_bytes = generator._generate_audio_data()
 
         data, sr = sf.read(io.BytesIO(wav_bytes))
         audio_duration = len(data) / sr
-        assert abs(audio_duration - audio_config.duration) < 0.01
+        assert abs(audio_duration - generator.video_config.duration) < 0.01
 
     @pytest.mark.parametrize("channels", [1, 2])
     def test_generate_audio_data_channels(self, channels):
         """Mono produces 1D array, stereo produces 2D with shape[1]==2."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.5,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=channels),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=channels)
+        generator = VideoGenerator(_make_run(config))
         wav_bytes = generator._generate_audio_data()
 
         data, _ = sf.read(io.BytesIO(wav_bytes))
@@ -356,34 +388,21 @@ class TestVideoGeneratorAudio:
     )
     def test_resolve_audio_codec_auto_select(self, video_format, expected_codec):
         """Auto-selects correct codec based on video format."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.5,
-            fps=2,
-            format=video_format,
-            codec="libvpx-vp9" if video_format == VideoFormat.WEBM else "libx264",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, codec=None),
+        config = _make_audio_config(
+            channels=1,
+            codec=None,
+            video_format=video_format,
+            video_codec="libvpx-vp9" if video_format == VideoFormat.WEBM else "libx264",
         )
-        generator = VideoGenerator(config)
+        generator = VideoGenerator(_make_run(config))
         assert generator._resolve_audio_codec() == expected_codec
 
     def test_resolve_audio_codec_unsupported_format_raises(self):
         """Unsupported format without explicit codec raises ValueError."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.5,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, codec=None),
-        )
-        generator = VideoGenerator(config)
-        # Simulate an unsupported format by patching the config
-        generator.config.format = "avi"
+        config = _make_audio_config(channels=1, codec=None)
+        generator = VideoGenerator(_make_run(config))
+        # Simulate an unsupported format by patching the video_config
+        generator.video_config.format = "avi"
         with pytest.raises(ValueError, match="No default audio codec"):
             generator._resolve_audio_codec()
 
@@ -392,22 +411,13 @@ class TestVideoGeneratorAudio:
     )
     def test_resolve_audio_codec_explicit_override(self, explicit_codec):
         """Explicit codec beats auto-select."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.5,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, codec=explicit_codec),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=1, codec=explicit_codec)
+        generator = VideoGenerator(_make_run(config))
         assert generator._resolve_audio_codec() == explicit_codec
 
     def test_audio_disabled_no_acodec_in_ffmpeg(self, base_config):
         """When audio is disabled, ffmpeg.output is not called with acodec."""
-        generator = VideoGenerator(base_config)
+        generator = VideoGenerator(_make_run(base_config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
         with patch("aiperf.dataset.generator.video.ffmpeg") as mock_ffmpeg:
@@ -426,7 +436,7 @@ class TestVideoGeneratorAudio:
 
     def test_audio_enabled_adds_audio_stream(self, audio_config):
         """When audio is enabled, ffmpeg.output is called with both streams and acodec."""
-        generator = VideoGenerator(audio_config)
+        generator = VideoGenerator(_make_run(audio_config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
         with (
@@ -457,13 +467,13 @@ class TestVideoGeneratorAudio:
 
     def test_audio_generation_deterministic(self, audio_config):
         """Same seed produces same WAV bytes."""
-        generator1 = VideoGenerator(audio_config)
-        generator2 = VideoGenerator(audio_config)
+        generator1 = VideoGenerator(_make_run(audio_config))
+        generator2 = VideoGenerator(_make_run(audio_config))
         assert generator1._generate_audio_data() == generator2._generate_audio_data()
 
     def test_pipes_cleans_temp_dir(self, audio_config):
         """Temp directory is cleaned up via shutil.rmtree in finally block."""
-        generator = VideoGenerator(audio_config)
+        generator = VideoGenerator(_make_run(audio_config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
         temp_dir = "/tmp/aiperf_pipes_test"
 
@@ -488,17 +498,8 @@ class TestVideoGeneratorAudio:
 
     def test_temp_files_with_audio(self):
         """Temp files path muxes audio correctly when enabled."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.5,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=1)
+        generator = VideoGenerator(_make_run(config))
         frames = [Image.new("RGB", (64, 64), (255, 0, 0))]
 
         with (
@@ -549,17 +550,8 @@ class TestVideoAudioBitDepth:
         Regression test for 8-bit audio bug where PCM_S8 was incorrectly used
         instead of PCM_U8. WAV format requires unsigned 8-bit audio.
         """
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.1,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, depth=bit_depth),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=1, depth=bit_depth, duration=0.1)
+        generator = VideoGenerator(_make_run(config))
         wav_bytes = generator._generate_audio_data()
 
         with io.BytesIO(wav_bytes) as f:
@@ -569,17 +561,8 @@ class TestVideoAudioBitDepth:
     @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_video_audio_bit_depth_produces_valid_audio(self, bit_depth):
         """All supported bit depths produce valid, readable WAV audio."""
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.1,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, depth=bit_depth),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=1, depth=bit_depth, duration=0.1)
+        generator = VideoGenerator(_make_run(config))
         wav_bytes = generator._generate_audio_data()
 
         data, sr = sf.read(io.BytesIO(wav_bytes))
@@ -591,17 +574,8 @@ class TestVideoAudioBitDepth:
 
         This is a specific regression test for the PCM_U8 bug fix.
         """
-        config = VideoConfig(
-            width=64,
-            height=64,
-            duration=0.1,
-            fps=2,
-            format=VideoFormat.WEBM,
-            codec="libvpx-vp9",
-            synth_type=VideoSynthType.MOVING_SHAPES,
-            audio=VideoAudioConfig(channels=1, depth=8),
-        )
-        generator = VideoGenerator(config)
+        config = _make_audio_config(channels=1, depth=8, duration=0.1)
+        generator = VideoGenerator(_make_run(config))
         wav_bytes = generator._generate_audio_data()
 
         with io.BytesIO(wav_bytes) as f:

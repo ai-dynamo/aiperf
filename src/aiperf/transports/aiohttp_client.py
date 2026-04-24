@@ -53,11 +53,197 @@ class AioHttpClient(AIPerfLoggerMixin):
             await self.tcp_connector.close()
             self.tcp_connector = None
 
+    async def _consume_sse_response(
+        self,
+        response: aiohttp.ClientResponse,
+        record: RequestRecord,
+        *,
+        collect_chunks: bool,
+        first_token_callback: "FirstTokenCallback | None",
+    ) -> None:
+        """Parse an SSE content stream into record.responses with chunk timing."""
+
+        # iter_any() yields raw bytes as they arrive; manually track chunks because
+        # it bypasses aiohttp's trace callback system.
+        async def tracked_content_stream():
+            _trace = record.trace_data
+            _chunks_append = _trace.response_chunks.append if collect_chunks else None
+            awaiting_first_chunk = True
+            async for chunk in response.content.iter_any():
+                chunk_ns = time.perf_counter_ns()
+                chunk_len = len(chunk)
+                _trace.response_chunks_count += 1
+                _trace.response_bytes_total += chunk_len
+                if _chunks_append is not None:
+                    _chunks_append((chunk_ns, chunk_len))
+                if awaiting_first_chunk:
+                    _trace.response_receive_start_perf_ns = chunk_ns
+                    awaiting_first_chunk = False
+                _trace.response_receive_end_perf_ns = chunk_ns
+                yield chunk
+
+        if first_token_callback:
+            first_token_acquired = False
+            async for message in AsyncSSEStreamReader(tracked_content_stream()):
+                AsyncSSEStreamReader.inspect_message_for_error(message)
+                record.responses.append(message)
+                if not first_token_acquired:
+                    ttft_ns = message.perf_ns - record.start_perf_ns
+                    first_token_acquired = await first_token_callback(ttft_ns, message)
+        else:
+            # Fast path: no callback, just collect responses
+            async for message in AsyncSSEStreamReader(tracked_content_stream()):
+                AsyncSSEStreamReader.inspect_message_for_error(message)
+                record.responses.append(message)
+        record.end_perf_ns = time.perf_counter_ns()
+
+    async def _consume_non_sse_response(
+        self,
+        response: aiohttp.ClientResponse,
+        record: RequestRecord,
+    ) -> None:
+        """Read a non-SSE response (JSON/text or binary) into record.responses."""
+        response_start_ns = time.perf_counter_ns()
+
+        content_type = response.content_type or ""
+        is_binary = (
+            content_type.startswith("video/")
+            or content_type.startswith("image/")
+            or content_type.startswith("audio/")
+            or content_type == "application/octet-stream"
+        )
+
+        if is_binary:
+            raw_bytes = await response.read()
+            record.end_perf_ns = time.perf_counter_ns()
+            record.responses.append(
+                BinaryResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    raw_bytes=raw_bytes,
+                )
+            )
+        else:
+            raw_response = await response.text()
+            record.end_perf_ns = time.perf_counter_ns()
+            record.responses.append(
+                TextResponse(
+                    perf_ns=record.end_perf_ns,
+                    content_type=content_type,
+                    text=raw_response,
+                )
+            )
+
+        if record.trace_data.response_receive_start_perf_ns is None:
+            record.trace_data.response_receive_start_perf_ns = response_start_ns
+        # Note: response.text()/read() should trigger aiohttp trace callbacks,
+        # but we set response_receive_end_perf_ns explicitly for consistency
+        record.trace_data.response_receive_end_perf_ns = record.end_perf_ns
+
+    def _build_session(
+        self,
+        headers: dict[str, str],
+        *,
+        connector: aiohttp.TCPConnector | None,
+        connector_owner: bool,
+        trace_config: aiohttp.TraceConfig,
+    ) -> aiohttp.ClientSession:
+        """Create a ClientSession configured for a single request."""
+        return aiohttp.ClientSession(
+            connector=connector or self.tcp_connector,
+            timeout=self.timeout,
+            headers=headers,
+            skip_auto_headers=[
+                *list(headers.keys()),
+                "User-Agent",
+                "Accept-Encoding",
+            ],
+            connector_owner=connector_owner,
+            trace_configs=[trace_config],
+            trust_env=AioHttpDefaults.TRUST_ENV,
+        )
+
+    async def _dispatch_response(
+        self,
+        response: aiohttp.ClientResponse,
+        record: RequestRecord,
+        *,
+        method: str,
+        collect_chunks: bool,
+        first_token_callback: "FirstTokenCallback | None",
+    ) -> None:
+        """Populate record from response, handling error status and SSE vs non-SSE bodies."""
+        record.status = response.status
+
+        # Treat the full 2xx range as success so async job APIs can
+        # return accepted/created responses without being rejected.
+        if response.status < 200 or response.status >= 300:
+            error_text = await response.text()
+            record.error = ErrorDetails(
+                code=response.status,
+                type=response.reason,
+                message=error_text,
+            )
+            return
+
+        record.recv_start_perf_ns = time.perf_counter_ns()
+
+        if method == "POST" and response.content_type == "text/event-stream":
+            await self._consume_sse_response(
+                response,
+                record,
+                collect_chunks=collect_chunks,
+                first_token_callback=first_token_callback,
+            )
+        else:
+            await self._consume_non_sse_response(response, record)
+
+    async def _execute_request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        record: RequestRecord,
+        *,
+        data: bytes | aiohttp.FormData | None,
+        connector: aiohttp.TCPConnector | None,
+        connector_owner: bool,
+        trace_config: aiohttp.TraceConfig,
+        collect_chunks: bool,
+        first_token_callback: "FirstTokenCallback | None",
+        **kwargs: Any,
+    ) -> None:
+        """Open a session, issue the request, and populate record from the response."""
+        async with self._build_session(
+            headers,
+            connector=connector,
+            connector_owner=connector_owner,
+            trace_config=trace_config,
+        ) as session:
+            record.start_perf_ns = time.perf_counter_ns()
+            async with session.request(
+                method, url, data=data, headers=headers, **kwargs
+            ) as response:
+                await self._dispatch_response(
+                    response,
+                    record,
+                    method=method,
+                    collect_chunks=collect_chunks,
+                    first_token_callback=first_token_callback,
+                )
+                if record.error is None:
+                    self.debug(
+                        lambda: (
+                            f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
+                        )
+                    )
+
     async def _request(
         self,
         method: str,
         url: str,
         headers: dict[str, str],
+        *,
         data: bytes | aiohttp.FormData | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
@@ -68,193 +254,41 @@ class AioHttpClient(AIPerfLoggerMixin):
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
 
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            url: The URL to send the request to
-            headers: Request headers
-            data: Request payload (for POST, PUT, etc.)
-            on_request_sent: Optional event to set when the full request is sent
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
-            trace_data: Optional trace data to populate (for cancellation scenarios)
-            connector: Optional TCP connector to use instead of the shared pool.
-                If None, uses self.tcp_connector (shared pool).
-            connector_owner: If True, the session will close the connector when done.
-                Use True for per-request connections that should be closed after use.
-            **kwargs: Additional arguments to pass to the request
-
-        Returns:
-            RequestRecord with the response data
+        trace_data may be supplied so callers (e.g. the cancellation wrapper) can
+        observe trace state even if the task is cancelled before returning.
+        connector_owner=True lets the session close the per-request connector;
+        False (default) keeps it in the shared pool.
         """
         self.debug(lambda: f"Sending {method} request to {url}")
 
-        # Use provided trace_data or create new one
         if trace_data is None:
             trace_data = AioHttpTraceData()
-
         record: RequestRecord = RequestRecord(
             start_perf_ns=time.perf_counter_ns(),
             trace_data=trace_data,
         )
-
-        # Create trace config for comprehensive timing
-        # Pass expected body size for chunk-based completion detection
-        expected_request_body_size = len(data) if isinstance(data, bytes) else None
         collect_chunks = self.collect_trace_chunks
         trace_config = create_aiohttp_trace_config(
             record.trace_data,
             on_request_sent_event=on_request_sent,
-            expected_request_body_size=expected_request_body_size,
+            expected_request_body_size=len(data) if isinstance(data, bytes) else None,
             collect_chunks=collect_chunks,
         )
 
         try:
-            # Make raw HTTP request with precise timing using aiohttp
-            # Create a new session for each request with unique trace config
-            # connector_owner controls whether session closes the connector:
-            # - False (default): connector is shared/pooled, don't close it
-            # - True: connector is owned by this request, close when done
-            async with aiohttp.ClientSession(
-                connector=connector or self.tcp_connector,
-                timeout=self.timeout,
-                headers=headers,
-                skip_auto_headers=[
-                    *list(headers.keys()),
-                    "User-Agent",
-                    "Accept-Encoding",
-                ],
+            await self._execute_request(
+                method,
+                url,
+                headers,
+                record,
+                data=data,
+                connector=connector,
                 connector_owner=connector_owner,
-                trace_configs=[trace_config],
-                trust_env=AioHttpDefaults.TRUST_ENV,
-            ) as session:
-                record.start_perf_ns = time.perf_counter_ns()
-                async with session.request(
-                    method, url, data=data, headers=headers, **kwargs
-                ) as response:
-                    record.status = response.status
-
-                    # Treat the full 2xx range as success so async job APIs can
-                    # return accepted/created responses without being rejected.
-                    if response.status < 200 or response.status >= 300:
-                        error_text = await response.text()
-                        record.error = ErrorDetails(
-                            code=response.status,
-                            type=response.reason,
-                            message=error_text,
-                        )
-                        return record
-
-                    record.recv_start_perf_ns = time.perf_counter_ns()
-
-                    if (
-                        method == "POST"
-                        and response.content_type == "text/event-stream"
-                    ):
-                        # Parse SSE stream with optimal performance
-                        # Wrap the content stream to track chunks for trace data
-                        async def tracked_content_stream():
-                            """Wrapper that tracks chunk timing while yielding chunks for SSE parsing."""
-                            # iter_any() yields raw bytes immediately as they arrive from the network,
-                            # unlike default iteration which buffers until newlines. Critical for
-                            # accurate chunk timing measurements.
-                            #
-                            # Note: We manually track chunks here because iter_any() bypasses aiohttp's
-                            # trace callback system. We also set response_receive_start/end_perf_ns
-                            # since on_response_chunk_received won't be called.
-                            _trace = record.trace_data
-                            _collect = collect_chunks
-                            _chunks_append = (
-                                _trace.response_chunks.append if _collect else None
-                            )
-                            awaiting_first_chunk = True
-                            async for chunk in response.content.iter_any():
-                                chunk_ns = time.perf_counter_ns()
-                                chunk_len = len(chunk)
-                                _trace.response_chunks_count += 1
-                                _trace.response_bytes_total += chunk_len
-                                if _chunks_append is not None:
-                                    _chunks_append((chunk_ns, chunk_len))
-                                if awaiting_first_chunk:
-                                    _trace.response_receive_start_perf_ns = chunk_ns
-                                    awaiting_first_chunk = False
-                                _trace.response_receive_end_perf_ns = chunk_ns
-                                yield chunk
-
-                        # Separate code paths for performance: avoid callback checks
-                        # when no callback is registered
-                        if first_token_callback:
-                            first_token_acquired = False
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
-                                record.responses.append(message)
-                                # Fire callback until it returns True (meaningful content found)
-                                if not first_token_acquired:
-                                    ttft_ns = message.perf_ns - record.start_perf_ns
-                                    first_token_acquired = await first_token_callback(
-                                        ttft_ns, message
-                                    )
-                        else:
-                            # Fast path: no callback, just collect responses
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
-                                record.responses.append(message)
-                        record.end_perf_ns = time.perf_counter_ns()
-                    else:
-                        # Non-SSE response (e.g., JSON or binary)
-                        response_start_ns = time.perf_counter_ns()
-
-                        # Check if content type is binary (video, image, audio, octet-stream)
-                        content_type = response.content_type or ""
-                        is_binary = (
-                            content_type.startswith("video/")
-                            or content_type.startswith("image/")
-                            or content_type.startswith("audio/")
-                            or content_type == "application/octet-stream"
-                        )
-
-                        if is_binary:
-                            raw_bytes = await response.read()
-                            record.end_perf_ns = time.perf_counter_ns()
-                            record.responses.append(
-                                BinaryResponse(
-                                    perf_ns=record.end_perf_ns,
-                                    content_type=content_type,
-                                    raw_bytes=raw_bytes,
-                                )
-                            )
-                        else:
-                            raw_response = await response.text()
-                            record.end_perf_ns = time.perf_counter_ns()
-                            record.responses.append(
-                                TextResponse(
-                                    perf_ns=record.end_perf_ns,
-                                    content_type=content_type,
-                                    text=raw_response,
-                                )
-                            )
-
-                        if record.trace_data.response_receive_start_perf_ns is None:
-                            record.trace_data.response_receive_start_perf_ns = (
-                                response_start_ns
-                            )
-                        # Note: response.text()/read() should trigger aiohttp trace callbacks,
-                        # but we set response_receive_end_perf_ns explicitly for consistency
-                        record.trace_data.response_receive_end_perf_ns = (
-                            record.end_perf_ns
-                        )
-
-                    self.debug(
-                        lambda: (
-                            f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
-                        )
-                    )
-        except SSEResponseError as e:
-            record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in SSE response: {e!r}")
-            record.error = ErrorDetails.from_exception(e)
+                trace_config=trace_config,
+                collect_chunks=collect_chunks,
+                first_token_callback=first_token_callback,
+                **kwargs,
+            )
         except asyncio.CancelledError:
             # Task was cancelled externally (e.g., credit cancellation from router)
             # Record the cancellation and re-raise to allow proper cleanup
@@ -267,9 +301,12 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
             self.debug("Request cancelled by external signal")
             raise
-        except Exception as e:
+        except (SSEResponseError, Exception) as e:  # noqa: BLE001 - per-request; attach ErrorDetails and return record
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in aiohttp request: {e!r}")
+            label = (
+                "SSE response" if isinstance(e, SSEResponseError) else "aiohttp request"
+            )
+            self.error(f"Error in {label}: {e!r}")
             record.error = ErrorDetails.from_exception(e)
 
         return record
@@ -288,19 +325,9 @@ class AioHttpClient(AIPerfLoggerMixin):
     ) -> RequestRecord:
         """Send a POST request to the specified URL.
 
-        Args:
-            url: Target URL
-            payload: Request body as bytes or FormData for multipart
-            headers: Request headers
-            cancel_after_ns: If set, cancel the request this many nanoseconds after
-                it's fully sent. The request is always sent before cancellation.
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
-            connector: Optional TCP connector to use instead of the shared pool.
-            connector_owner: If True, the session will close the connector when done.
-            **kwargs: Additional arguments passed to aiohttp
-
-        Returns:
-            RequestRecord with response data, timing, and any errors
+        If cancel_after_ns is set, cancel the request that many ns after it is
+        fully sent. The request is always sent before cancellation.
+        Returns a RequestRecord with response data, timing, and any errors.
         """
         if cancel_after_ns is None:
             return await self._request(
@@ -329,6 +356,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         payload: bytes | aiohttp.FormData,
         headers: dict[str, str],
         cancel_after_ns: int,
+        *,
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
@@ -366,17 +394,38 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
         )
 
-        # Wait for request to be sent, then apply cancellation timeout.
-        # Use wait_for with a safety net timeout - the request_task should complete
-        # (with error) or set the event on exception, but if something goes wrong
-        # we don't want to hang forever.
+        send_timeout_result = await self._await_request_sent(
+            request_task, request_sent, start_perf_ns, trace_data
+        )
+        if send_timeout_result is not None:
+            return send_timeout_result
+
+        # Check if request already completed (e.g., with connection error)
+        if request_task.done():
+            return await request_task
+
+        try:
+            return await asyncio.wait_for(request_task, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return await self._cancel_after_timeout(
+                request_task, start_perf_ns, timeout_s, trace_data
+            )
+
+    async def _await_request_sent(
+        self,
+        request_task: "asyncio.Task[RequestRecord]",
+        request_sent: asyncio.Event,
+        start_perf_ns: int,
+        trace_data: AioHttpTraceData,
+    ) -> RequestRecord | None:
+        """Wait for the request to be fully sent; return an error record on timeout, else None."""
         send_timeout = (
             self.timeout.total or Environment.HTTP.REQUEST_CANCELLATION_SEND_TIMEOUT
         )
         try:
             await asyncio.wait_for(request_sent.wait(), timeout=send_timeout)
+            return None
         except asyncio.TimeoutError:
-            # Request never got sent - cancel and return error
             request_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await request_task
@@ -392,30 +441,31 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ),
             )
 
-        # Check if request already completed (e.g., with connection error)
-        if request_task.done():
-            return await request_task
+    async def _cancel_after_timeout(
+        self,
+        request_task: "asyncio.Task[RequestRecord]",
+        start_perf_ns: int,
+        timeout_s: float,
+        trace_data: AioHttpTraceData,
+    ) -> RequestRecord:
+        """Cancel the in-flight request task and return a cancellation RequestRecord."""
+        request_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await request_task
 
-        try:
-            return await asyncio.wait_for(request_task, timeout=timeout_s)
-        except asyncio.TimeoutError:
-            request_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await request_task
-
-            end_perf_ns = time.perf_counter_ns()
-            self.debug(f"Request cancelled {timeout_s:.3f}s after being sent")
-            return RequestRecord(
-                start_perf_ns=start_perf_ns,
-                end_perf_ns=end_perf_ns,
-                cancellation_perf_ns=end_perf_ns,
-                trace_data=trace_data,
-                error=ErrorDetails(
-                    type="RequestCancellationError",
-                    message=f"Request cancelled {timeout_s:.3f}s after being sent",
-                    code=499,  # Client Closed Request
-                ),
-            )
+        end_perf_ns = time.perf_counter_ns()
+        self.debug(f"Request cancelled {timeout_s:.3f}s after being sent")
+        return RequestRecord(
+            start_perf_ns=start_perf_ns,
+            end_perf_ns=end_perf_ns,
+            cancellation_perf_ns=end_perf_ns,
+            trace_data=trace_data,
+            error=ErrorDetails(
+                type="RequestCancellationError",
+                message=f"Request cancelled {timeout_s:.3f}s after being sent",
+                code=499,  # Client Closed Request
+            ),
+        )
 
     async def get_request(
         self, url: str, headers: dict[str, str], **kwargs: Any

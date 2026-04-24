@@ -13,6 +13,7 @@ from pytest import param
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.models import MetricResult
 from aiperf.metrics.prometheus_formatter import (
+    _UNIT_REPLACE_MAP,
     GAUGE_STATS,
     QUANTILE_STATS,
     _escape_help_text,
@@ -564,28 +565,24 @@ class TestReplaceMap:
 
     def test_slash_replaced_with_per(self) -> None:
         """Test that forward slashes in unit suffixes become _per_."""
-        from aiperf.metrics.prometheus_formatter import _UNIT_REPLACE_MAP
 
         assert "/" in _UNIT_REPLACE_MAP
         assert _UNIT_REPLACE_MAP["/"] == "_per_"
 
     def test_tokens_per_sec_replaced_with_tps(self) -> None:
         """Test that tokens_per_sec becomes tps."""
-        from aiperf.metrics.prometheus_formatter import _UNIT_REPLACE_MAP
 
         assert "tokens_per_sec" in _UNIT_REPLACE_MAP
         assert _UNIT_REPLACE_MAP["tokens_per_sec"] == "tps"
 
     def test_double_underscore_collapsed(self) -> None:
         """Test that double underscores are collapsed to single."""
-        from aiperf.metrics.prometheus_formatter import _UNIT_REPLACE_MAP
 
         assert "__" in _UNIT_REPLACE_MAP
         assert _UNIT_REPLACE_MAP["__"] == "_"
 
     def test_percent_replaced(self) -> None:
         """Test that % in unit becomes percent."""
-        from aiperf.metrics.prometheus_formatter import _UNIT_REPLACE_MAP
 
         assert "%" in _UNIT_REPLACE_MAP
         assert _UNIT_REPLACE_MAP["%"] == "percent"

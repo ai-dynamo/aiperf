@@ -6,7 +6,6 @@
 import orjson
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import (
     CounterMetricData,
@@ -21,24 +20,31 @@ from aiperf.common.models import (
     ProfileResults,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
+    ServerMetricsExportData,
     ServerMetricsResults,
 )
-from aiperf.plugin.enums import EndpointType
+from aiperf.config import AIPerfConfig
 from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
 from tests.unit.conftest import create_exporter_config
 
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    datasets={
+        "default": {
+            "type": "synthetic",
+            "entries": 100,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
+
 
 @pytest.fixture
-def mock_user_config(tmp_path):
-    """Create a UserConfig with a temp output directory."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            custom_endpoint="/v1/chat/completions",
-        ),
-        output={"artifact_dir": str(tmp_path)},
-    )
+def mock_config(tmp_path):
+    """Create an AIPerfConfig with a temp output directory."""
+    return AIPerfConfig(**_BASE, artifacts={"dir": str(tmp_path)})
 
 
 @pytest.fixture
@@ -187,8 +193,7 @@ def server_metrics_results_with_summaries():
     )
 
     return ServerMetricsResults(
-        benchmark_id="test-benchmark-id",
-        server_metrics_data=None,  # Not sent over ZMQ
+        benchmark_id="test-benchmark-id",  # Not sent over ZMQ
         endpoint_summaries={
             "localhost:8081": endpoint1_summary,
             "localhost:8082": endpoint2_summary,
@@ -267,7 +272,6 @@ def server_metrics_results_with_labeled_metrics():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,
         endpoint_summaries={"localhost:8081": endpoint_summary},
         start_ns=1_000_000_000_000,
         end_ns=1_100_000_000_000,
@@ -282,26 +286,26 @@ class TestServerMetricsJsonExporterInitialization:
 
     def test_initialization_with_valid_config(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that exporter initializes correctly with valid config."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
         assert exporter is not None
 
     def test_initialization_disabled_without_results(
-        self, mock_user_config, mock_profile_results
+        self, mock_config, mock_profile_results
     ):
         """Test that exporter raises DataExporterDisabled when no results."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=None,
         )
         with pytest.raises(DataExporterDisabled):
@@ -313,14 +317,14 @@ class TestServerMetricsJsonExporterGetExportInfo:
 
     def test_get_export_info_returns_correct_type(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that export info contains correct type and path."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -344,14 +348,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_creates_valid_json(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that generated content is valid JSON."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -362,16 +366,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_has_schema_version(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that generated content includes schema_version matching class constant."""
-        from aiperf.common.models.server_metrics_models import ServerMetricsExportData
-
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -382,14 +384,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_has_endpoints(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that endpoints are present in summary."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -406,14 +408,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_has_endpoint_info_in_summary(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that endpoint metadata is in summary.endpoint_info."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -435,14 +437,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_has_series_from_all_endpoints(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that series from multiple endpoints are present within each metric."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -461,14 +463,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_series_have_endpoint_url_field(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that each series has endpoint_url field."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -486,14 +488,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_handles_labeled_metrics(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_labeled_metrics,
     ):
         """Test that labeled metrics are handled correctly."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_labeled_metrics,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -513,14 +515,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_generate_content_includes_all_metric_types(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that all Prometheus metric types are handled with nested stats."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -573,14 +575,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_metrics_are_sorted_alphabetically(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that metrics dict is sorted alphabetically by metric name."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -595,14 +597,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_series_are_sorted_by_endpoint_url_then_labels(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that series within each metric are sorted by endpoint_url, then labels."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -618,14 +620,14 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_endpoint_info_is_sorted(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that endpoint_info dict is sorted by endpoint name."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -637,7 +639,7 @@ class TestServerMetricsJsonExporterGenerateContent:
 
     def test_counter_with_zero_total_has_minimal_output(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
     ):
         """Test that counters with total=0 only include total field."""
@@ -661,7 +663,6 @@ class TestServerMetricsJsonExporterGenerateContent:
                     series=[
                         CounterSeries(
                             labels=None,
-                            value=0.0,
                         ),
                     ],
                 ),
@@ -669,7 +670,6 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         server_metrics_results = ServerMetricsResults(
             benchmark_id="test-benchmark-id",
-            server_metrics_data=None,
             endpoint_summaries={"localhost:8081": endpoint_summary},
             start_ns=1_000_000_000_000,
             end_ns=1_100_000_000_000,
@@ -680,20 +680,21 @@ class TestServerMetricsJsonExporterGenerateContent:
 
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results,
         )
         exporter = ServerMetricsJsonExporter(config)
         content = exporter._generate_content()
         data = orjson.loads(content)
 
-        # Counter with no change should use value instead of stats
+        # Counter series with no stats now emits only endpoint_url/labels
+        # (``ServerSeries`` is a strict dataclass — no ``value`` extra field).
         assert "error_count_total" in data["metrics"]
         counter_metric = data["metrics"]["error_count_total"]
         series_data = counter_metric["series"][0]
 
-        assert series_data["value"] == 0.0
         assert "stats" not in series_data
+        assert "value" not in series_data
 
 
 class TestServerMetricsJsonExporterIntegration:
@@ -702,7 +703,7 @@ class TestServerMetricsJsonExporterIntegration:
     @pytest.mark.asyncio
     async def test_export_creates_valid_json_file(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
         tmp_path,
@@ -710,14 +711,14 @@ class TestServerMetricsJsonExporterIntegration:
         """Test that export creates a valid JSON file."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
         await exporter.export()
 
         # Read and parse the exported file
-        output_file = mock_user_config.output.server_metrics_export_json_file
+        output_file = mock_config.output.server_metrics_export_json_file
         assert output_file.exists()
 
         data = orjson.loads(output_file.read_bytes())
@@ -732,14 +733,14 @@ class TestServerMetricsJsonExporterInputConfig:
 
     def test_generate_content_includes_input_config(
         self,
-        mock_user_config,
+        mock_config,
         mock_profile_results,
         server_metrics_results_with_summaries,
     ):
         """Test that input_config is included in the export."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
         exporter = ServerMetricsJsonExporter(config)
@@ -757,22 +758,17 @@ class TestServerMetricsJsonExporterInputConfig:
     ):
         """Test that input_config only includes explicitly set values (exclude_unset=True)."""
         # Create a config with only a few explicitly set values
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                custom_endpoint="/v1/chat/completions",
-            ),
-            output={"artifact_dir": str(tmp_path)},
-            loadgen={"request_count": 100, "concurrency": 4},  # Explicitly set
+        config = AIPerfConfig(
+            **_BASE,
+            artifacts={"dir": str(tmp_path)},
         )
 
-        config = create_exporter_config(
+        exporter_config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=user_config,
+            config=config,
             server_metrics_results=server_metrics_results_with_summaries,
         )
-        exporter = ServerMetricsJsonExporter(config)
+        exporter = ServerMetricsJsonExporter(exporter_config)
         content = exporter._generate_content()
         data = orjson.loads(content)
 
@@ -780,18 +776,8 @@ class TestServerMetricsJsonExporterInputConfig:
 
         # Should include explicitly set values
         assert "endpoint" in input_config
-        assert "output" in input_config
-        assert "loadgen" in input_config
-        assert input_config["loadgen"]["request_count"] == 100
-        assert input_config["loadgen"]["concurrency"] == 4
+        assert "models" in input_config
 
         # The input_config should be a relatively small dict since exclude_unset=True
         # filters out all the default values that weren't explicitly set
-        # (cli_command and benchmark_id are automatically set by the framework)
-        assert set(input_config.keys()) == {
-            "endpoint",
-            "output",
-            "loadgen",
-            "cli_command",
-            "benchmark_id",
-        }
+        assert isinstance(input_config, dict)

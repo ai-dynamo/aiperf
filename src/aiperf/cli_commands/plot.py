@@ -2,23 +2,58 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI command for generating visualizations from AIPerf profiling data."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from cyclopts import App
+from cyclopts import App, Parameter
 
 app = App(name="plot")
 
 
 @app.default
 def plot(
-    paths: list[str] | None = None,
-    output: str | None = None,
-    theme: Literal["light", "dark"] = "light",
-    config: str | None = None,
-    verbose: bool = False,
-    dashboard: bool = False,
-    host: str = "127.0.0.1",
-    port: int = 8050,
+    *,
+    paths: Annotated[
+        list[str] | None,
+        Parameter(
+            help="Paths to profiling run directories. Defaults to ./artifacts if not specified."
+        ),
+    ] = None,
+    output: Annotated[
+        str | None,
+        Parameter(
+            help="Directory to save generated plots. Defaults to <first_path>/plots if not specified."
+        ),
+    ] = None,
+    theme: Annotated[
+        Literal["light", "dark"],
+        Parameter(
+            help="Plot theme: 'light' (white background) or 'dark' (dark background)."
+        ),
+    ] = "light",
+    config: Annotated[
+        str | None,
+        Parameter(
+            help="Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml."
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        Parameter(
+            help="Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log)."
+        ),
+    ] = False,
+    dashboard: Annotated[
+        bool,
+        Parameter(
+            help="Launch interactive dashboard server instead of generating static PNGs."
+        ),
+    ] = False,
+    host: Annotated[
+        str, Parameter(help="Host for dashboard server (only used with --dashboard).")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int, Parameter(help="Port for dashboard server (only used with --dashboard).")
+    ] = 8050,
 ) -> None:
     """Generate visualizations from AIPerf profiling data.
 
@@ -39,16 +74,6 @@ def plot(
 
         # Show detailed error tracebacks
         aiperf plot --verbose
-
-    Args:
-        paths: Paths to profiling run directories. Defaults to ./artifacts if not specified.
-        output: Directory to save generated plots. Defaults to <first_path>/plots if not specified.
-        theme: Plot theme to use: 'light' (white background) or 'dark' (dark background). Defaults to 'light'.
-        config: Path to custom plot configuration YAML file. If not specified, auto-creates and uses ~/.aiperf/plot_config.yaml.
-        verbose: Show detailed error tracebacks in console (errors are always logged to ~/.aiperf/plot.log).
-        dashboard: Launch interactive dashboard server instead of generating static PNGs.
-        host: Host for dashboard server (only used with --dashboard). Defaults to 127.0.0.1.
-        port: Port for dashboard server (only used with --dashboard). Defaults to 8050.
     """
     from aiperf.cli_utils import exit_on_error
 

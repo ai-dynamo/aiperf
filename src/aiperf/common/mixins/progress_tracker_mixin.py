@@ -1,11 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import time
 
-from pydantic import ConfigDict, Field
+from __future__ import annotations
+
+import dataclasses
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
+
+from pydantic import ConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config import ServiceConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
@@ -15,6 +20,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import CreditPhaseStats, PhaseRecordsStats
+from aiperf.common.models.credit_models import BasePhaseStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -22,36 +28,165 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
 )
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
+
 _logger = AIPerfLogger(__name__)
 
 
-class CombinedPhaseStats(CreditPhaseStats, PhaseRecordsStats):
-    """Combined progress for a single phase for requests and records."""
+@dataclass(slots=True, kw_only=True, frozen=True)
+class CombinedPhaseStats(BasePhaseStats):
+    """Combined progress for a single phase: requests + records + computed rates.
 
-    model_config = ConfigDict(frozen=True)
+    Slotted dataclass — the flattened shape is a shared type usable in both
+    msgspec contexts (if ever embedded in a Message) and Pydantic
+    (``JobProgress.phases`` — FastAPI operator API response) without a
+    compat shim.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    # Credit progress fields (mirror CreditPhaseStats)
+    requests_sent: int = 0
+    requests_completed: int = 0
+    requests_cancelled: int = 0
+    request_errors: int = 0
+    sent_sessions: int = 0
+    completed_sessions: int = 0
+    cancelled_sessions: int = 0
+    total_session_turns: int = 0
+
+    # Records progress fields (mirror PhaseRecordsStats)
+    records_end_ns: int | None = None
+    success_records: int = 0
+    error_records: int = 0
 
     # Computed fields
-    requests_per_second: float | None = Field(
-        default=None, description="The number of requests processed per second."
-    )
-    records_per_second: float | None = Field(
-        default=None, description="The number of records processed per second."
-    )
-    requests_eta_sec: float | None = Field(
-        default=None,
-        description="The estimated time remaining to complete the requests in the phase in seconds.",
-    )
-    records_eta_sec: float | None = Field(
-        default=None,
-        description="The estimated time remaining to complete the records in the phase in seconds.",
-    )
+    requests_per_second: float | None = None
+    records_per_second: float | None = None
+
+    # Credit progress fields (mirror CreditPhaseStats)
+    requests_sent: int = 0
+    requests_completed: int = 0
+    requests_cancelled: int = 0
+    request_errors: int = 0
+    sent_sessions: int = 0
+    completed_sessions: int = 0
+    cancelled_sessions: int = 0
+    total_session_turns: int = 0
+
+    # Records progress fields (mirror PhaseRecordsStats)
+    records_end_ns: int | None = None
+    success_records: int = 0
+    error_records: int = 0
+
+    # Computed fields
+    requests_per_second: float | None = None
+    records_per_second: float | None = None
+    requests_eta_sec: float | None = None
+    records_eta_sec: float | None = None
 
     # Timestamp fields
-    last_update_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The last update time in nanoseconds (time.time_ns()).",
-    )
+    last_update_ns: int | None = None
+
+    # --- Properties mirrored from CreditPhaseStats ---
+
+    @property
+    def in_flight_sessions(self) -> int:
+        """Sessions started but not yet finished (no final turn returned)."""
+        return self.sent_sessions - self.completed_sessions - self.cancelled_sessions
+
+    @property
+    def in_flight_requests(self) -> int:
+        """Number of in-flight requests (sent but not completed)."""
+        return self.requests_sent - self.requests_completed - self.requests_cancelled
+
+    @property
+    def requests_elapsed_time(self) -> float:
+        """Get the elapsed time for requests."""
+        if self.start_ns is None:
+            return 0.0
+        if self.requests_end_ns is not None:
+            return (self.requests_end_ns - self.start_ns) / NANOS_PER_SECOND
+        return (time.time_ns() - self.start_ns) / NANOS_PER_SECOND
+
+    @property
+    def requests_error_percent(self) -> float:
+        """Error percentage of the requests completed."""
+        if self.final_requests_completed is not None:
+            if self.final_requests_completed == 0:
+                return 0.0
+            return (self.final_request_errors / self.final_requests_completed) * 100
+
+        if self.requests_completed == 0:
+            return 0.0
+        return (self.request_errors / self.requests_completed) * 100
+
+    @property
+    def requests_progress_percent(self) -> float | None:
+        """Progress percentage of the requests completed."""
+        if self.start_ns is None:
+            return None
+
+        if self.is_requests_complete:
+            return 100
+
+        percentages = []
+        if self.total_expected_requests:
+            percentages.append(
+                (self.requests_completed / self.total_expected_requests) * 100
+            )
+        if self.expected_duration_sec:
+            elapsed_ns = time.time_ns() - self.start_ns
+            expected_duration_ns = self.expected_duration_sec * NANOS_PER_SECOND
+            percentages.append((elapsed_ns / expected_duration_ns) * 100)
+        if self.expected_num_sessions:
+            percentages.append(
+                (self.completed_sessions / self.expected_num_sessions) * 100
+            )
+
+        if not percentages:
+            return None
+
+        return min(max(percentages), 100)
+
+    # --- Properties mirrored from PhaseRecordsStats ---
+
+    @property
+    def total_records(self) -> int:
+        """Total number of records processed (success + errors)."""
+        return self.success_records + self.error_records
+
+    @property
+    def records_elapsed_time(self) -> float:
+        """Get the elapsed time for records."""
+        if self.start_ns is None:
+            return 0.0
+        if self.records_end_ns is not None:
+            return (self.records_end_ns - self.start_ns) / NANOS_PER_SECOND
+        return (time.time_ns() - self.start_ns) / NANOS_PER_SECOND
+
+    @property
+    def records_error_percent(self) -> float:
+        """Error percentage of the records processed."""
+        if self.total_records == 0:
+            return 0.0
+        return (self.error_records / self.total_records) * 100
+
+    @property
+    def records_progress_percent(self) -> float | None:
+        """Progress percent of the records processed."""
+        if self.final_requests_completed:
+            return (self.total_records / self.final_requests_completed) * 100
+
+        if self.total_expected_requests:
+            return (self.total_records / self.total_expected_requests) * 100
+
+        return None
+
+    @property
+    def is_records_complete(self) -> bool:
+        return self.records_end_ns is not None
 
 
 class ProgressTracker:
@@ -95,13 +230,13 @@ class ProgressTracker:
             # (progress % remaining) / (progress % per second)
             eta_sec = (100 - pct) / (pct / dur_sec)
 
-        updates = stats.model_dump()
+        updates = dataclasses.asdict(stats)
         updates["last_update_ns"] = last_update_ns
         updates[f"{prefix}_per_second"] = per_second
         updates[f"{prefix}_eta_sec"] = eta_sec
 
         current = self._get_phase_progress(stats.phase)
-        self._phases[stats.phase] = current.model_copy(update=updates)
+        self._phases[stats.phase] = dataclasses.replace(current, **updates)
         return self._phases[stats.phase]
 
     def update_requests_stats(self, stats: CreditPhaseStats) -> CombinedPhaseStats:
@@ -130,32 +265,27 @@ class ProgressTracker:
 
 @provides_hooks(
     AIPerfHook.ON_RECORDS_PROGRESS,
-    AIPerfHook.ON_PROFILING_PROGRESS,
-    AIPerfHook.ON_WARMUP_PROGRESS,
+    AIPerfHook.ON_PHASE_PROGRESS,
 )
 class ProgressTrackerMixin(MessageBusClientMixin):
     """A progress tracker that tracks the progress of the entire benchmark suite."""
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
-        super().__init__(service_config=service_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
         self._progress_tracker = ProgressTracker()
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage):
         """Update the progress from a credit phase start message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
     async def _on_credit_phase_progress(self, message: CreditPhaseProgressMessage):
         """Update the progress from a credit phase progress message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -163,17 +293,13 @@ class ProgressTrackerMixin(MessageBusClientMixin):
     ):
         """Update the progress from a credit phase sending complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(self, message: CreditPhaseCompleteMessage):
         """Update the progress from a credit phase complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.PROCESSING_STATS)
@@ -189,23 +315,14 @@ class ProgressTrackerMixin(MessageBusClientMixin):
 
     async def _update_requests_stats(
         self,
-        phase: CreditPhase,
         phase_progress: CombinedPhaseStats,
         request_ns: int | None,
     ):
         """Update the requests stats based on the TimingManager stats."""
-        if phase == CreditPhase.WARMUP:
-            await self.run_hooks(
-                AIPerfHook.ON_WARMUP_PROGRESS,
-                warmup_stats=phase_progress,
-            )
-        elif phase == CreditPhase.PROFILING:
-            await self.run_hooks(
-                AIPerfHook.ON_PROFILING_PROGRESS,
-                profiling_stats=phase_progress,
-            )
-        else:
-            self.warning(f"Unsupported phase: {phase}")
+        await self.run_hooks(
+            AIPerfHook.ON_PHASE_PROGRESS,
+            phase_stats=phase_progress,
+        )
 
     async def _update_records_stats(
         self, phase_progress: CombinedPhaseStats, request_ns: int | None

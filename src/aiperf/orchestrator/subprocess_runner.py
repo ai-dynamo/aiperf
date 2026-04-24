@@ -14,25 +14,14 @@ import orjson
 
 
 def main() -> None:
-    """Run a single benchmark from a JSON config file.
-
-    This function is the entry point for subprocess execution. It:
-    1. Loads serialized config from a JSON file (path passed as argv[1])
-    2. Deserializes into UserConfig and ServiceConfig using Pydantic
-    3. Calls _run_single_benchmark() which runs the SystemController
-    4. SystemController calls os._exit() at the end, terminating this subprocess
+    """Run a single benchmark from a BenchmarkRun JSON file.
 
     Usage:
-        python -m aiperf.orchestrator.subprocess_runner /path/to/config.json
-
-    Exit codes:
-        0: Benchmark completed successfully
-        1: Benchmark failed (errors occurred)
-        Other: Unexpected error or signal
+        python -m aiperf.orchestrator.subprocess_runner /path/to/run_config.json
     """
     if len(sys.argv) != 2:
         print(
-            "Usage: python -m aiperf.orchestrator.subprocess_runner <config.json>",
+            "Usage: python -m aiperf.orchestrator.subprocess_runner <run_config.json>",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -43,24 +32,17 @@ def main() -> None:
         print(f"Error: Config file not found: {config_file}", file=sys.stderr)
         sys.exit(1)
 
-    # Import here to avoid loading heavy modules at import time
-    # This keeps the subprocess startup fast
     from aiperf.cli_runner import _run_single_benchmark
-    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.config import BenchmarkRun
 
     try:
-        # Load config from JSON file
         with open(config_file, "rb") as f:
-            config_data = orjson.loads(f.read())
+            data = orjson.loads(f.read())
 
-        # Deserialize using Pydantic validation
-        user_config = UserConfig.model_validate(config_data["user_config"])
-        service_config = ServiceConfig.model_validate(config_data["service_config"])
-
-        # Run the benchmark
+        run = BenchmarkRun.model_validate(data)
         # Note: _run_single_benchmark() will call SystemController which calls os._exit()
         # at the end, so this function will never return normally
-        _run_single_benchmark(user_config, service_config)
+        _run_single_benchmark(run)
 
     except KeyError as e:
         print(f"Error: Missing required config key: {e}", file=sys.stderr)
@@ -68,7 +50,7 @@ def main() -> None:
     except orjson.JSONDecodeError as e:
         print(f"Error: Invalid JSON in config file: {e}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - subprocess entry point: final safety net so the parent orchestrator gets a nonzero exit + traceback rather than an opaque crash
         print(f"Error: Failed to run benchmark: {e}", file=sys.stderr)
         import traceback
 

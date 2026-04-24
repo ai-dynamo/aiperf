@@ -3,18 +3,54 @@
 
 import base64
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import AudioConfig, AudioLengthConfig
 from aiperf.common.enums import AudioFormat
-from aiperf.common.exceptions import ConfigurationError
+from aiperf.common.exceptions import AIPerfConfigurationError
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.generator import (
     AudioGenerator,
 )
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
+
+
+def _make_config(**audio_overrides) -> AIPerfConfig:
+    """Build an AIPerfConfig with a single synthetic dataset containing audio config."""
+    audio = {
+        "batch_size": 1,
+        "length": {"mean": 3.0, "stddev": 0.4},
+        "sample_rates": [44.1],
+        "depths": [16],
+        "format": "wav",
+        "channels": 1,
+    }
+    audio.update(audio_overrides)
+    return AIPerfConfig(
+        **_BASE,
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+                "audio": audio,
+            }
+        },
+    )
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -37,16 +73,7 @@ def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
 
 @pytest.fixture
 def base_config():
-    return AudioConfig(
-        length=AudioLengthConfig(
-            mean=3.0,
-            stddev=0.4,
-        ),
-        sample_rates=[44.1],
-        depths=[16],
-        format=AudioFormat.WAV,
-        num_channels=1,
-    )
+    return _make_config()
 
 
 @pytest.mark.parametrize(
@@ -57,10 +84,10 @@ def base_config():
     ],
 )
 def test_different_audio_length(expected_audio_length, base_config):
-    base_config.length.mean = expected_audio_length
-    base_config.length.stddev = 0.0  # make it deterministic
+    audio_generator = AudioGenerator(_make_run(base_config))
+    audio_generator.audio_config.length.mean = expected_audio_length
+    audio_generator.audio_config.length.stddev = 0.0  # make it deterministic
 
-    audio_generator = AudioGenerator(base_config)
     data_uri = audio_generator.generate()
 
     audio_data, sample_rate = decode_audio(data_uri)
@@ -71,10 +98,10 @@ def test_different_audio_length(expected_audio_length, base_config):
 
 
 def test_negative_length_raises_error(base_config):
-    base_config.length.mean = -1.0
-    audio_generator = AudioGenerator(base_config)
+    audio_generator = AudioGenerator(_make_run(base_config))
+    audio_generator.audio_config.length.mean = -1.0
 
-    with pytest.raises(ConfigurationError):
+    with pytest.raises(AIPerfConfigurationError):
         audio_generator.generate()
 
 
@@ -86,22 +113,25 @@ def test_negative_length_raises_error(base_config):
     ],
 )
 def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_config):
-    base_config.length.mean = mean
-    base_config.length.stddev = stddev
-    base_config.sample_rates = [sampling_rate]
-    base_config.depths = [bit_depth]
-
     # First generation with seed 123
     rng.reset()
     rng.init(123)
-    audio_generator1 = AudioGenerator(base_config)
-    data_uri1 = audio_generator1.generate()
+    generator1 = AudioGenerator(_make_run(base_config))
+    generator1.audio_config.length.mean = mean
+    generator1.audio_config.length.stddev = stddev
+    generator1.audio_config.sample_rates = [sampling_rate]
+    generator1.audio_config.depths = [bit_depth]
+    data_uri1 = generator1.generate()
 
     # Second generation with same seed 123
     rng.reset()
     rng.init(123)
-    audio_generator2 = AudioGenerator(base_config)
-    data_uri2 = audio_generator2.generate()
+    generator2 = AudioGenerator(_make_run(base_config))
+    generator2.audio_config.length.mean = mean
+    generator2.audio_config.length.stddev = stddev
+    generator2.audio_config.sample_rates = [sampling_rate]
+    generator2.audio_config.depths = [bit_depth]
+    data_uri2 = generator2.generate()
 
     # Compare the actual audio data
     audio_data1, _ = decode_audio(data_uri1)
@@ -112,9 +142,9 @@ def test_generator_deterministic(mean, stddev, sampling_rate, bit_depth, base_co
 @pytest.mark.parametrize("audio_format", [AudioFormat.WAV, AudioFormat.MP3])
 def test_audio_format(audio_format, base_config):
     # use sample rate supported by all formats (44.1kHz)
-    base_config.format = audio_format
+    audio_generator = AudioGenerator(_make_run(base_config))
+    audio_generator.audio_config.format = audio_format
 
-    audio_generator = AudioGenerator(base_config)
     data_uri = audio_generator.generate()
 
     # Check data URI format
@@ -128,10 +158,10 @@ def test_audio_format(audio_format, base_config):
 
 
 def test_unsupported_bit_depth(base_config):
-    base_config.depths = [12]  # Unsupported bit depth
+    audio_generator = AudioGenerator(_make_run(base_config))
+    audio_generator.audio_config.depths = [12]  # Unsupported bit depth
 
-    with pytest.raises(ConfigurationError) as exc_info:
-        audio_generator = AudioGenerator(base_config)
+    with pytest.raises(AIPerfConfigurationError) as exc_info:
         audio_generator.generate()
 
     assert "Supported bit depths are:" in str(exc_info.value)
@@ -139,9 +169,9 @@ def test_unsupported_bit_depth(base_config):
 
 @pytest.mark.parametrize("channels", [1, 2])
 def test_channels(channels, base_config):
-    base_config.num_channels = channels
+    config = _make_config(channels=channels)
 
-    audio_generator = AudioGenerator(base_config)
+    audio_generator = AudioGenerator(_make_run(config))
     data_uri = audio_generator.generate()
 
     audio_data, _ = decode_audio(data_uri)
@@ -161,10 +191,10 @@ def test_channels(channels, base_config):
     ],
 )
 def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
-    base_config.sample_rates = [sampling_rate_khz]
-    base_config.depths = [bit_depth]
+    audio_generator = AudioGenerator(_make_run(base_config))
+    audio_generator.audio_config.sample_rates = [sampling_rate_khz]
+    audio_generator.audio_config.depths = [bit_depth]
 
-    audio_generator = AudioGenerator(base_config)
     data_uri = audio_generator.generate()
 
     _, sample_rate = decode_audio(data_uri)
@@ -175,7 +205,7 @@ def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
     "config_changes,expected_error",
     [
         ({"sample_rates": [96], "format": AudioFormat.MP3}, "MP3 format only supports"),
-        ({"num_channels": 3}, r"mono \(1\) and stereo \(2\)"),
+        ({"channels": 3}, r"mono \(1\) and stereo \(2\)"),
         (
             {"length": {"mean": 0.005, "stddev": 0.0}},
             "must be greater than 0.01 seconds",
@@ -185,17 +215,17 @@ def test_audio_parameters(sampling_rate_khz, bit_depth, base_config):
 )
 def test_audio_validation_errors(base_config, config_changes, expected_error):
     """Test that invalid configurations raise appropriate ConfigurationErrors."""
+    audio_generator = AudioGenerator(_make_run(base_config))
+
     # Apply configuration changes
     for key, value in config_changes.items():
         if key == "length":
-            base_config.length.mean = value["mean"]
-            base_config.length.stddev = value["stddev"]
+            audio_generator.audio_config.length.mean = value["mean"]
+            audio_generator.audio_config.length.stddev = value["stddev"]
         else:
-            setattr(base_config, key, value)
+            setattr(audio_generator.audio_config, key, value)
 
-    audio_generator = AudioGenerator(base_config)
-
-    with pytest.raises(ConfigurationError, match=expected_error):
+    with pytest.raises(AIPerfConfigurationError, match=expected_error):
         audio_generator.generate()
 
 
@@ -217,14 +247,14 @@ class TestAudioBitDepth:
         Regression test for 8-bit audio bug where PCM_S8 was incorrectly used
         instead of PCM_U8. WAV format requires unsigned 8-bit audio.
         """
-        config = AudioConfig(
-            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+        config = _make_config(
+            length={"mean": 0.1, "stddev": 0.0},
             sample_rates=[16.0],
             depths=[bit_depth],
-            format=AudioFormat.WAV,
-            num_channels=1,
+            format="wav",
+            channels=1,
         )
-        generator = AudioGenerator(config)
+        generator = AudioGenerator(_make_run(config))
         data_uri = generator.generate()
 
         _, b64_data = data_uri.split(",")
@@ -237,14 +267,14 @@ class TestAudioBitDepth:
     @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_wav_bit_depth_produces_valid_audio(self, bit_depth):
         """All supported bit depths produce valid, readable WAV audio."""
-        config = AudioConfig(
-            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+        config = _make_config(
+            length={"mean": 0.1, "stddev": 0.0},
             sample_rates=[16.0],
             depths=[bit_depth],
-            format=AudioFormat.WAV,
-            num_channels=1,
+            format="wav",
+            channels=1,
         )
-        generator = AudioGenerator(config)
+        generator = AudioGenerator(_make_run(config))
         data_uri = generator.generate()
 
         audio_data, sample_rate = decode_audio(data_uri)
@@ -254,14 +284,14 @@ class TestAudioBitDepth:
     @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_mp3_ignores_bit_depth_uses_lossy_encoding(self, bit_depth):
         """MP3 format works with all bit depths (lossy encoding ignores PCM subtype)."""
-        config = AudioConfig(
-            length=AudioLengthConfig(mean=0.1, stddev=0.0),
+        config = _make_config(
+            length={"mean": 0.1, "stddev": 0.0},
             sample_rates=[44.1],
             depths=[bit_depth],
-            format=AudioFormat.MP3,
-            num_channels=1,
+            format="mp3",
+            channels=1,
         )
-        generator = AudioGenerator(config)
+        generator = AudioGenerator(_make_run(config))
         data_uri = generator.generate()
 
         assert data_uri.startswith("mp3,")

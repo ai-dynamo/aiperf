@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends
 from starlette.requests import HTTPConnection
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class BaseRouter(AIPerfLifecycleMixin):
@@ -24,13 +27,10 @@ class BaseRouter(AIPerfLifecycleMixin):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig | None = None,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
-        self.user_config = user_config
-        self.service_config = service_config
+        super().__init__(run=run, **kwargs)
 
     @abstractmethod
     def get_router(self) -> APIRouter:

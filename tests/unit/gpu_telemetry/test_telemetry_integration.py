@@ -8,15 +8,19 @@ Tests the end-to-end flow from DCGMTelemetryCollector through GPUTelemetryAccumu
 with realistic mock data and callback mechanisms.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.endpoint_config import EndpointConfig
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.gpu_telemetry.accumulator import GPUTelemetryAccumulator
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
 
 
 class TestGPUTelemetryIntegration:
@@ -80,18 +84,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 """
 
     @pytest.fixture
-    def user_config(self):
-        """User configuration for telemetry processing."""
-        return UserConfig(
-            endpoint=EndpointConfig(
-                url="http://localhost:8000", model_names=["test-model"]
-            )
-        )
-
-    @pytest.fixture
-    def service_config(self):
-        """Service configuration for telemetry processing."""
-        return ServiceConfig()
+    def user_config(self, config):
+        """AIPerfConfig for telemetry processing."""
+        return config
 
     @pytest.fixture
     def mock_pub_client(self):
@@ -123,7 +118,6 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         mock_dcgm_response_node1,
         mock_dcgm_response_node2,
         user_config,
-        service_config,
         mock_pub_client,
     ):
         """
@@ -174,8 +168,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             )
 
             processor = GPUTelemetryAccumulator(
-                user_config=user_config,
-                service_config=service_config,
+                run=_make_run(user_config),
                 pub_client=mock_pub_client,
             )
 
@@ -256,7 +249,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
     @pytest.mark.asyncio
     async def test_callback_pipeline_error_handling(
-        self, mock_dcgm_response_node1, user_config, service_config, mock_pub_client
+        self, mock_dcgm_response_node1, user_config, mock_pub_client
     ):
         """Test error handling in the callback pipeline during processing.
 
@@ -266,8 +259,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
         # Create a processor that will fail during processing
         faulty_processor = GPUTelemetryAccumulator(
-            user_config=user_config,
-            service_config=service_config,
+            run=_make_run(user_config),
             pub_client=mock_pub_client,
         )
 
@@ -347,9 +339,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             )
 
     @pytest.mark.asyncio
-    async def test_empty_dcgm_response_handling(
-        self, user_config, service_config, mock_pub_client
-    ):
+    async def test_empty_dcgm_response_handling(self, user_config, mock_pub_client):
         def mock_aiohttp_get_empty(url, **kwargs):
             mock_context_manager = AsyncMock()
             mock_response = AsyncMock()
@@ -370,8 +360,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             )
 
             processor = GPUTelemetryAccumulator(
-                user_config=user_config,
-                service_config=service_config,
+                run=_make_run(user_config),
                 pub_client=mock_pub_client,
             )
 
@@ -388,9 +377,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             assert len(self.collection_errors) == 0
 
     @pytest.mark.asyncio
-    async def test_metric_unit_scaling_in_pipeline(
-        self, user_config, service_config, mock_pub_client
-    ):
+    async def test_metric_unit_scaling_in_pipeline(self, user_config, mock_pub_client):
         mock_response = """# HELP DCGM_FI_DEV_FB_USED Framebuffer memory used (in MiB).
 # TYPE DCGM_FI_DEV_FB_USED gauge
 DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-test-1234",device="nvidia0",modelName="Test GPU",Hostname="testnode"} 1024.0
@@ -419,8 +406,7 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             )
 
             processor = GPUTelemetryAccumulator(
-                user_config=user_config,
-                service_config=service_config,
+                run=_make_run(user_config),
                 pub_client=mock_pub_client,
             )
 

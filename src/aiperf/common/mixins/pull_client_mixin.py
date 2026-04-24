@@ -1,9 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from abc import ABC
+from __future__ import annotations
 
-from aiperf.common.config import ServiceConfig
+from abc import ABC
+from typing import TYPE_CHECKING
+
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -11,8 +13,12 @@ from aiperf.common.hooks import (
     on_init,
     provides_hooks,
 )
+from aiperf.common.message_codecs import MessageCodecProtocol
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
 from aiperf.common.types import MessageTypeT
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 @provides_hooks(AIPerfHook.ON_PULL_MESSAGE)
@@ -25,20 +31,23 @@ class PullClientMixin(CommunicationMixin, ABC):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         pull_client_address: CommAddress,
+        *,
         pull_client_bind: bool = False,
         max_pull_concurrency: int | None = None,
         pull_client_additional_bind_address: str | None = None,
+        pull_client_codec: MessageCodecProtocol | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+        super().__init__(run=run, **kwargs)
         # NOTE: The communication base class will automatically manage the pull client's lifecycle.
         self.pull_client = self.comms.create_pull_client(
             pull_client_address,
             bind=pull_client_bind,
             max_pull_concurrency=max_pull_concurrency,
             additional_bind_address=pull_client_additional_bind_address,
+            codec=pull_client_codec,
         )
 
     @on_init

@@ -5,40 +5,43 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import OutputConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
+from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.timeslice_metric_results_processor import (
     TimesliceMetricResultsProcessor,
 )
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import _make_run, create_metric_records_message
 
 
 class TestTimesliceMetricResultsProcessor:
     """Test cases for TimesliceMetricResultsProcessor."""
 
     def test_initialization_without_slice_duration_raises_exception(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that processor initialization fails when slice_duration is not set."""
         # Ensure slice_duration is None
-        mock_user_config.output.slice_duration = None
+        mock_user_config.artifacts.slice_duration = None
 
-        with pytest.raises(PostProcessorDisabled, match="requires slice_duration"):
-            TimesliceMetricResultsProcessor(mock_user_config)
+        with pytest.raises(
+            PostProcessorDisabled, match="requires artifacts.slice_duration"
+        ):
+            TimesliceMetricResultsProcessor(_make_run(mock_user_config))
 
     def test_initialization_with_slice_duration(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test processor initialization sets up timeslice-specific data structures."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
 
         assert hasattr(processor, "_timeslice_instances_maps")
         assert hasattr(processor, "_timeslice_results")
@@ -47,33 +50,33 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_get_instances_map_requires_request_start_ns(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that get_instances_map raises ValueError when request_start_ns is None."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
 
         with pytest.raises(ValueError, match="must be passed a request_start_ns"):
             await processor.get_instances_map(None)
 
     @pytest.mark.asyncio
     async def test_get_results_requires_request_start_ns(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that get_results raises ValueError when request_start_ns is None."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
 
         with pytest.raises(ValueError, match="must be passed a request_start_ns"):
             await processor.get_results(None)
 
     @pytest.mark.asyncio
     async def test_process_result_separates_by_timeslice(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that metrics are separated into different timeslices based on timestamp."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0  # 1 second
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process request in first timeslice (0.5 seconds)
@@ -100,11 +103,11 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_process_result_accumulates_in_same_timeslice(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that metrics in the same timeslice are accumulated together."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0  # 1 second
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process two requests in same timeslice (both in first second)
@@ -127,12 +130,53 @@ class TestTimesliceMetricResultsProcessor:
         assert list(processor._timeslice_results[0]["test_record"].data) == [10.0, 20.0]
 
     @pytest.mark.asyncio
+    async def test_summarize_list_metric_per_timeslice(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """Test list-valued metrics summarize independently per timeslice."""
+        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
+
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
+        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
+        processor._instances_map = {
+            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
+        }
+
+        message1 = create_metric_records_message(
+            x_request_id="test-1",
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
+            results=[{InterChunkLatencyMetric.tag: [10_000_000.0, 20_000_000.0]}],
+        )
+        await processor.process_result(message1.to_data())
+
+        message2 = create_metric_records_message(
+            x_request_id="test-2",
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
+            results=[{InterChunkLatencyMetric.tag: [30_000_000.0, 40_000_000.0]}],
+        )
+        await processor.process_result(message2.to_data())
+
+        results = await processor.summarize()
+
+        assert results[0][0].tag == InterChunkLatencyMetric.tag
+        assert results[0][0].unit == "ms"
+        assert results[0][0].count == 2
+        assert results[0][0].sum == pytest.approx(30.0)
+        assert results[0][0].avg == pytest.approx(15.0)
+        assert results[1][0].tag == InterChunkLatencyMetric.tag
+        assert results[1][0].unit == "ms"
+        assert results[1][0].count == 2
+        assert results[1][0].sum == pytest.approx(70.0)
+        assert results[1][0].avg == pytest.approx(35.0)
+
+    @pytest.mark.asyncio
     async def test_process_result_aggregate_metric_per_timeslice(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that aggregate metrics work correctly per timeslice."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0  # 1 second
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
 
         # First timeslice - two requests
@@ -164,11 +208,11 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_timeslice_boundary_conditions(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test behavior at timeslice boundaries."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)  # 1 second
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0  # 1 second
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Request at 0.999s (should be in timeslice 0)
@@ -201,7 +245,7 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics_per_timeslice(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that derived metrics are computed per timeslice."""
 
@@ -209,8 +253,8 @@ class TestTimesliceMetricResultsProcessor:
             # Simple derive func that returns a constant based on existence of data
             return 100.0 if results_dict else 0.0
 
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor.derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
 
         # Set up some dummy results in different timeslices
@@ -225,15 +269,15 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_no_metric_value(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that NoMetricValue exceptions are caught and logged gracefully per timeslice."""
 
         def failing_derive_func(results_dict: MetricResultsDict):
             raise NoMetricValue("Cannot derive value")
 
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
         processor._timeslice_results[0]["base_metric"] = 42
 
@@ -249,15 +293,15 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_update_derived_metrics_handles_value_error(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that derived metrics handle ValueError exceptions gracefully."""
 
         def failing_derive_func(results_dict: MetricResultsDict):
             raise ValueError("Calculation error")
 
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor.derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
         processor._timeslice_results[0]["base_metric"] = 42
 
@@ -270,11 +314,11 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_returns_dict_of_timeslices(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test summarize returns dict mapping timeslice indices to metric results."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
 
         # Set up results in multiple timeslices
@@ -311,11 +355,11 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_summarize_with_empty_timeslices(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test summarize handles empty timeslices correctly."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
 
         # No data processed
         results = await processor.summarize()
@@ -326,12 +370,12 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_multiple_timeslices_with_different_slice_duration(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that a different slice_duration value works correctly."""
         # Test with 500ms slices (different from default 1000ms)
-        mock_user_config.output = OutputConfig(slice_duration=0.5)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 0.5
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         # Process requests across multiple 0.5s slices
@@ -353,11 +397,11 @@ class TestTimesliceMetricResultsProcessor:
 
     @pytest.mark.asyncio
     async def test_timeslice_instances_map_creates_separate_instances(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test that each timeslice gets its own metric instances."""
-        mock_user_config.output = OutputConfig(slice_duration=1.0)
-        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        mock_user_config.artifacts.slice_duration = 1.0
+        processor = TimesliceMetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
 
         # Get instances for two different timestamps in different timeslices

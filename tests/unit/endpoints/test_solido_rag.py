@@ -12,9 +12,9 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
 from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -39,8 +39,8 @@ class TestSolidoEndpointFormatPayload:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for SOLIDO."""
-        return create_model_endpoint(EndpointType.SOLIDO_RAG, model_name="solido-model")
+        """Create a test BenchmarkConfig for SOLIDO."""
+        return create_config(EndpointType.SOLIDO_RAG, model_name="solido-model")
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
@@ -70,7 +70,7 @@ class TestSolidoEndpointFormatPayload:
             ],
             model="solido-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -82,7 +82,7 @@ class TestSolidoEndpointFormatPayload:
             texts=[Text(contents=["Valid query", "", "Another query"])],
             model="solido-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -103,7 +103,7 @@ class TestSolidoEndpointFormatPayload:
             texts=[Text(contents=["Test query"])],
             model=turn_model,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -111,11 +111,11 @@ class TestSolidoEndpointFormatPayload:
 
     def test_format_payload_with_extra_params(self):
         """Test that extra parameters are merged into payload."""
-        extra_params = [
-            ("temperature", 0.7),
-            ("max_new_tokens", 200),
-        ]
-        model_endpoint = create_model_endpoint(
+        extra_params = {
+            "temperature": 0.7,
+            "max_new_tokens": 200,
+        }
+        model_endpoint = create_config(
             EndpointType.SOLIDO_RAG,
             model_name="solido-model",
             extra=extra_params,
@@ -142,8 +142,8 @@ class TestSolidoEndpointFormatPayload:
     )
     def test_format_payload_custom_filters_override_defaults(self, custom_filters):
         """Test that custom filters completely replace default filters."""
-        extra_params = [("filters", custom_filters)]
-        model_endpoint = create_model_endpoint(
+        extra_params = {"filters": custom_filters}
+        model_endpoint = create_config(
             EndpointType.SOLIDO_RAG,
             model_name="solido-model",
             extra=extra_params,
@@ -162,7 +162,7 @@ class TestSolidoEndpointFormatPayload:
 
     def test_format_payload_no_turns_raises_error(self, endpoint, model_endpoint):
         """Test that missing turns raises ValueError."""
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(config=model_endpoint, turns=[])
 
         with pytest.raises(
             ValueError, match="SOLIDO endpoint requires at least one turn"
@@ -175,7 +175,7 @@ class TestSolidoEndpointFormatPayload:
         turn2 = Turn(texts=[Text(contents=["Second"])], model="model2")
 
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=[turn1, turn2],
         )
 
@@ -191,7 +191,7 @@ class TestSolidoEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create a SolidoEndpoint instance for parsing tests."""
-        model_endpoint = create_model_endpoint(EndpointType.SOLIDO_RAG)
+        model_endpoint = create_config(EndpointType.SOLIDO_RAG)
         return create_endpoint_with_mock_transport(SolidoEndpoint, model_endpoint)
 
     def test_parse_response_with_content(self, endpoint):
@@ -308,8 +308,8 @@ class TestSolidoEndpointIntegration:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for SOLIDO."""
-        return create_model_endpoint(
+        """Create a test BenchmarkConfig for SOLIDO."""
+        return create_config(
             EndpointType.SOLIDO_RAG,
             model_name="solido-model",
             base_url="http://localhost:8080",

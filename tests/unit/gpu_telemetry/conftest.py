@@ -8,34 +8,53 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.models.telemetry_models import (
-    TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.config import AIPerfConfig
 from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
 
 
 @pytest.fixture
 def base_user_config():
-    """Create a minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(url="http://localhost:8000", model_names=["test-model"])
+    """Create a minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
-def create_user_config(
-    gpu_telemetry: list[str] | None = None,
-    no_gpu_telemetry: bool = False,
-) -> UserConfig:
-    """Helper to create UserConfig with GPU telemetry settings."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            url="http://localhost:8000", model_names=["test-model"]
-        ),
+def create_config(
+    gpu_telemetry_urls: list[str] | None = None,
+    gpu_telemetry_enabled: bool = True,
+) -> AIPerfConfig:
+    """Helper to create AIPerfConfig with GPU telemetry settings."""
+    gpu_telemetry = None
+    if gpu_telemetry_urls is not None or not gpu_telemetry_enabled:
+        gpu_telemetry = {
+            "enabled": gpu_telemetry_enabled,
+            "urls": gpu_telemetry_urls or [],
+        }
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
         gpu_telemetry=gpu_telemetry,
-        no_gpu_telemetry=no_gpu_telemetry,
     )
 
 
@@ -87,12 +106,12 @@ def sample_telemetry_records():
             pci_bus_id="00000000:02:00.0",
             device="nvidia0",
             hostname="ed7e7a5e585f",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=22.582,
-                energy_consumption=955.287014,
-                gpu_utilization=1.0,
-                gpu_memory_used=45.521,  # 46614 MiB / 1024 ≈ 45.521 GB
-            ),
+            telemetry_data={
+                "gpu_power_usage": 22.582,
+                "energy_consumption": 955.287014,
+                "gpu_utilization": 1.0,
+                "gpu_memory_used": 45.521,  # 46614 MiB / 1024 ≈ 45.521 GB
+            },
         ),
     ]
 
@@ -118,13 +137,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:02:00.0",
                 device="nvidia0",
                 hostname="ed7e7a5e585f",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=70.0 + (i % 30),  # Varying power 70-99W
-                    energy_consumption=(280000000 + (i * 2000000))
-                    / 1e6,  # Increasing energy
-                    gpu_utilization=float(80 + (i % 20)),  # 80-99%
-                    gpu_memory_used=15.0 + (i % 5),  # 15-19 GB
-                ),
+                telemetry_data={
+                    "gpu_power_usage": 70.0 + (i % 30),  # Varying power 70-99W
+                    "energy_consumption": (280000000 + (i * 2000000)) / 1e6,
+                    "gpu_utilization": float(80 + (i % 20)),  # 80-99%
+                    "gpu_memory_used": 15.0 + (i % 5),  # 15-19 GB
+                },
             )
         )
 
@@ -139,13 +157,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:03:00.0",
                 device="nvidia1",
                 hostname="ed7e7a5e585f",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=42.0 + (i % 3),  # Idle power 42-44W
-                    energy_consumption=(230000000 + (i * 500000))
-                    / 1e6,  # Slower energy growth
-                    gpu_utilization=0.0,
-                    gpu_memory_used=0.0,
-                ),
+                telemetry_data={
+                    "gpu_power_usage": 42.0 + (i % 3),  # Idle power 42-44W
+                    "energy_consumption": (230000000 + (i * 500000)) / 1e6,
+                    "gpu_utilization": 0.0,
+                    "gpu_memory_used": 0.0,
+                },
             )
         )
 
@@ -160,12 +177,12 @@ def multi_gpu_telemetry_records():
                 pci_bus_id="00000000:04:00.0",
                 device="nvidia2",
                 hostname="ed7e7a5e585f",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=200.0 + (i % 50),  # Higher power 200-249W
-                    energy_consumption=(250000000 + (i * 3000000)) / 1e6,
-                    gpu_utilization=float(50 + (i % 30)),  # 50-79%
-                    gpu_memory_used=40.0 + (i % 10),  # 40-49 GB
-                ),
+                telemetry_data={
+                    "gpu_power_usage": 200.0 + (i % 50),  # Higher power 200-249W
+                    "energy_consumption": (250000000 + (i * 3000000)) / 1e6,
+                    "gpu_utilization": float(50 + (i % 30)),  # 50-79%
+                    "gpu_memory_used": 40.0 + (i % 10),  # 40-49 GB
+                },
             )
         )
 

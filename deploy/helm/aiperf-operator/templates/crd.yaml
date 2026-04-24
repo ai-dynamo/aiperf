@@ -1,0 +1,323 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: aiperfjobs.aiperf.nvidia.com
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  group: aiperf.nvidia.com
+  names:
+    kind: AIPerfJob
+    listKind: AIPerfJobList
+    plural: aiperfjobs
+    singular: aiperfjob
+    shortNames:
+    - apj
+    - aiperf
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Stage
+      type: string
+      jsonPath: .status.currentPhase
+      description: Current benchmark stage (warmup, profiling)
+    - name: Progress
+      type: string
+      jsonPath: .status.phases.profiling.requestsCompleted
+      description: Requests completed in profiling phase
+    - name: QPS
+      type: number
+      jsonPath: .status.phases.profiling.requestsPerSecond
+      description: Requests per second in profiling phase
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            description: |-
+              AIPerfJob specification.
+
+              spec.benchmark: AIPerfConfig fields (models, endpoint, datasets,
+              phases, etc.) in snake_case — identical to AIPerf CLI YAML.
+
+              Top-level deployment fields (image, podTemplate, scheduling, etc.)
+              use camelCase following Kubernetes API conventions.
+            properties:
+              image:
+                type: string
+                description: Container image
+                default: {{ .Values.defaults.image | quote }}
+              imagePullPolicy:
+                type: string
+                description: |-
+                  Kubernetes image pull policies.
+
+                  See https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy
+                enum:
+                - Always
+                - Never
+                - IfNotPresent
+              keepFailedPods:
+                type: boolean
+                description: Preserve failed JobSet pod attempts for debugging.
+                default: false
+              benchmark:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: |-
+                  Benchmark configuration (AIPerfConfig). Contains models, endpoint,
+                  datasets, phases, and all other benchmark parameters. Uses snake_case
+                  field names, identical to AIPerf CLI YAML config files.
+                  Shorthand forms (e.g. models: ['name'], single-phase dict) are accepted
+                  and normalized by the operator before validation.
+              resourceMode:
+                type: string
+                description: CPU/memory resource mode for controller and worker pods. 'guaranteed' applies requests==limits
+                  (Guaranteed QoS). 'burstable' sets requests only, no limits (Burstable QoS). 'none' omits CPU/memory requests
+                  and limits as an escape hatch.
+                enum:
+                - guaranteed
+                - burstable
+                - none
+                default: guaranteed
+              # -- Deployment fields (camelCase, K8s convention) ---------------
+              connectionsPerWorker:
+                type: integer
+                description: Maximum concurrent connections each worker handles. 100 keeps the asyncio event loop responsive
+                  while amortizing per-process overhead.
+                default: 100
+                minimum: 1
+              timeoutSeconds:
+                type: number
+                description: Job timeout in seconds (0 = no timeout)
+                default: 0
+                minimum: 0
+              ttlSecondsAfterFinished:
+                type: integer
+                description: TTL after finished (seconds)
+                default: 300
+              resultsTtlDays:
+                type: integer
+                minimum: 1
+                maximum: 365
+                description: Days to retain result files before cleanup
+              cancel:
+                type: boolean
+                description: Set to true to cancel the job
+                default: false
+              skipEndpointCheck:
+                type: boolean
+                description: Skip the operator-side endpoint reachability probe before deploying
+                default: false
+              podTemplate:
+                type: object
+                description: Pod template configuration
+                properties:
+                  env:
+                    type: array
+                    description: Environment variables in K8s EnvVar format
+                    items:
+                      type: object
+                      additionalProperties: true
+                  volumes:
+                    type: array
+                    description: Pod volumes in K8s Volume format
+                    items:
+                      type: object
+                      additionalProperties: true
+                  volumeMounts:
+                    type: array
+                    description: Volume mounts in K8s VolumeMount format
+                    items:
+                      type: object
+                      additionalProperties: true
+                  nodeSelector:
+                    type: object
+                    description: Node selector labels
+                    additionalProperties:
+                      type: string
+                  tolerations:
+                    type: array
+                    description: Pod tolerations for scheduling on tainted nodes
+                    items:
+                      type: object
+                      additionalProperties: true
+                  annotations:
+                    type: object
+                    description: Additional pod annotations
+                    additionalProperties:
+                      type: string
+                  labels:
+                    type: object
+                    description: Additional pod labels
+                    additionalProperties:
+                      type: string
+                  imagePullSecrets:
+                    type: array
+                    description: Image pull secret names
+                    items:
+                      type: string
+                  serviceAccountName:
+                    type: string
+                    description: Service account name for pods
+                  containerSecurityContext:
+                    type: object
+                    description: Container securityContext overrides (merged into each container spec)
+                    additionalProperties: true
+                  shareProcessNamespace:
+                    type: boolean
+                    description: When true, all containers in the pod share a single PID namespace. Enables kubectl exec cross-container
+                      kills for chaos tests. Keep false in production.
+                    default: false
+              scheduling:
+                type: object
+                description: Kueue scheduling configuration
+                properties:
+                  queueName:
+                    type: string
+                    description: Kueue LocalQueue name for gang-scheduling
+                  priorityClass:
+                    type: string
+                    description: Kueue WorkloadPriorityClass name for scheduling priority
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+                description: Generation of the spec that was last processed
+              phase:
+                type: string
+                description: Current job phase
+                enum:
+                - Pending
+                - Queued
+                - Initializing
+                - Running
+                - Completed
+                - Failed
+                - Cancelled
+              jobId:
+                type: string
+                description: Unique job identifier
+              startTime:
+                type: string
+                format: date-time
+                description: Time when job started
+              completionTime:
+                type: string
+                format: date-time
+                description: Time when job completed
+              jobSetName:
+                type: string
+                description: Name of the managed JobSet
+              error:
+                type: string
+                description: Error message if failed
+              workers:
+                type: object
+                description: Controller-authored aggregate worker status.
+                properties:
+                  ready:
+                    type: integer
+                    description: Dispatch-ready worker count.
+                  total:
+                    type: integer
+                    description: Declared worker count.
+                  dispatchable:
+                    type: integer
+                    description: Workers eligible to receive credits.
+                  routerConnected:
+                    type: integer
+                    description: Workers connected to the router.
+                  readyRecordProcessors:
+                    type: integer
+                    description: Ready record processors.
+                  declaredRecordProcessors:
+                    type: integer
+                    description: Declared record processors.
+                  readyPods:
+                    type: integer
+                    description: Usable worker pods.
+                  totalPods:
+                    type: integer
+                    description: Observed worker pods.
+                  degradedPods:
+                    type: integer
+                    description: Usable but degraded worker pods.
+              phases:
+                type: object
+                description: Progress tracking for each benchmark phase
+                additionalProperties:
+                  type: object
+                  description: Phase progress stats
+                  x-kubernetes-preserve-unknown-fields: true
+              currentPhase:
+                type: string
+                description: Current benchmark phase (warmup, profiling, etc)
+              liveMetrics:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: Live metrics updated during benchmark run
+              serverMetrics:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: Server-side metrics from inference server
+              results:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: Final benchmark results and metrics
+              resultsPath:
+                type: string
+                description: Path to stored results on operator PVC
+              liveSummary:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: Live summary metrics updated during benchmark run
+              summary:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                description: Final summary metrics after benchmark completion
+              resultsTtlDays:
+                type: integer
+                description: Days to retain result files before cleanup
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                      enum:
+                      - 'True'
+                      - 'False'
+                      - Unknown
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                description: Detailed status conditions

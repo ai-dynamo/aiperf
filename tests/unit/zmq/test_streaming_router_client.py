@@ -5,6 +5,7 @@ Tests for streaming_router_client.py - ZMQStreamingRouterClient class.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import msgspec.msgpack
 import pytest
@@ -13,8 +14,10 @@ import zmq
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import (
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerToRouterMessage,
+    WorkerUndispatchable,
 )
 from aiperf.credit.structs import (
     Credit,
@@ -162,6 +165,21 @@ class TestZMQStreamingRouterClientSendTo:
             sent_data = mock_socket.send_multipart.call_args[0][0]
             assert sent_data[0] == special_identity.encode()
 
+    @pytest.mark.asyncio
+    async def test_send_to_preserves_non_utf8_identity_bytes(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """Test that send_to round-trips identities decoded with surrogateescape."""
+        async with streaming_router_test_helper.create_client() as client:
+            mock_socket = client.socket
+            identity_bytes = b"\x00\xe4<\x98l"
+            identity = identity_bytes.decode("utf-8", "surrogateescape")
+
+            await client.send_to(identity, sample_credit)
+
+            sent_data = mock_socket.send_multipart.call_args[0][0]
+            assert sent_data[0] == identity_bytes
+
 
 class TestZMQStreamingRouterClientReceiver:
     """Test ZMQStreamingRouterClient receiver background task."""
@@ -175,26 +193,40 @@ class TestZMQStreamingRouterClientReceiver:
             assert client.state == LifecycleState.RUNNING
 
     @pytest.mark.asyncio
-    async def test_receiver_calls_handler_on_worker_ready(
-        self, streaming_router_test_helper, sample_worker_ready, create_callback_tracker
+    @pytest.mark.parametrize(
+        "message_fixture,expected_type",
+        [
+            ("sample_worker_connected", WorkerConnected),
+            ("sample_worker_ready", WorkerDispatchable),
+            ("sample_worker_undispatchable", WorkerUndispatchable),
+        ],
+        ids=["worker_connected", "worker_dispatchable", "worker_undispatchable"],
+    )  # fmt: skip
+    async def test_receiver_calls_handler_on_worker_state_message(
+        self,
+        streaming_router_test_helper,
+        request,
+        message_fixture,
+        expected_type,
+        create_callback_tracker,
     ):
-        """Test that receiver calls handler when WorkerReady arrives."""
+        """Test that receiver decodes worker state messages from DEALER clients."""
         identity = "worker-1"
         callback, event, received = create_callback_tracker()
+        message = request.getfixturevalue(message_fixture)
 
         async def test_handler(
             recv_identity: str, message: WorkerToRouterMessage
         ) -> None:
             await callback((recv_identity, message))
 
-        # Setup mock to return message once then block forever
         call_count = 0
 
         async def mock_recv():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [identity.encode(), msgspec.msgpack.encode(sample_worker_ready)]
+                return [identity.encode(), msgspec.msgpack.encode(message)]
             await asyncio.Future()  # Block forever after first call
 
         streaming_router_test_helper.setup_mock_socket(
@@ -202,7 +234,6 @@ class TestZMQStreamingRouterClientReceiver:
         )
 
         async with streaming_router_test_helper.create_client() as client:
-            # Register handler BEFORE starting to avoid race condition
             client.register_receiver(test_handler)
             await client.start()
 
@@ -210,8 +241,8 @@ class TestZMQStreamingRouterClientReceiver:
             assert len(received) == 1
             recv_identity, recv_message = received[0]
             assert recv_identity == identity
-            assert isinstance(recv_message, WorkerReady)
-            assert recv_message.worker_id == sample_worker_ready.worker_id
+            assert isinstance(recv_message, expected_type)
+            assert recv_message == message
 
     @pytest.mark.asyncio
     async def test_receiver_warns_when_no_handler_registered(
@@ -324,6 +355,167 @@ class TestZMQStreamingRouterClientReceiver:
             assert len(received) == 1
             recv_identity, _ = received[0]
             assert recv_identity == ""  # Empty identity
+
+    @pytest.mark.asyncio
+    async def test_receiver_handles_non_utf8_identity(
+        self, streaming_router_test_helper, sample_worker_ready, create_callback_tracker
+    ):
+        """Test receiver preserves arbitrary ROUTER identity bytes."""
+        callback, event, received = create_callback_tracker()
+        identity_bytes = b"\x00\xe4<\x98l"
+        expected_identity = identity_bytes.decode("utf-8", "surrogateescape")
+
+        async def test_handler(identity: str, message: WorkerToRouterMessage) -> None:
+            await callback((identity, message))
+
+        call_count = 0
+
+        async def mock_recv():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [identity_bytes, msgspec.msgpack.encode(sample_worker_ready)]
+            await asyncio.Future()
+
+        streaming_router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=mock_recv
+        )
+
+        async with streaming_router_test_helper.create_client() as client:
+            client.register_receiver(test_handler)
+            await client.start()
+
+            await asyncio.wait_for(event.wait(), timeout=1.0)
+            assert len(received) == 1
+            recv_identity, recv_message = received[0]
+            assert recv_identity == expected_identity
+            assert isinstance(recv_message, WorkerDispatchable)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "errno",
+        [zmq.EHOSTUNREACH, zmq.ENOTCONN],
+        ids=["host_unreachable", "not_connected"],
+    )  # fmt: skip
+    async def test_dispatch_message_does_not_recreate_socket_on_peer_gone(
+        self, streaming_router_test_helper, sample_credit, errno
+    ):
+        """Peer-gone errors don't break socket state; no recreation needed."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = zmq.ZMQError(errno)
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerDispatchable(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_message_recreates_socket_on_efsm(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """EFSM means broken socket state machine; recreation is required."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = zmq.ZMQError(zmq.EFSM)
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerDispatchable(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_message_does_not_recreate_socket_on_generic_error(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """Test non-ZMQ send errors do not trigger socket recreation."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = RuntimeError("boom")
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerDispatchable(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_not_awaited()
+
+
+class TestZMQStreamingRouterClientRecovery:
+    """Test ROUTER recovery behavior."""
+
+    @pytest.mark.asyncio
+    async def test_recreate_socket_unbinds_old_addresses_before_rebind(
+        self, mock_zmq_context
+    ) -> None:
+        """Bound ROUTER recovery should unbind old addresses before rebinding."""
+        old_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        old_socket.bind = Mock()
+        old_socket.unbind = Mock()
+        old_socket.close = Mock()
+        old_socket.setsockopt = Mock()
+
+        new_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        new_socket.bind = Mock()
+        new_socket.setsockopt = Mock()
+
+        mock_zmq_context.socket.side_effect = [new_socket]
+
+        client = ZMQStreamingRouterClient(
+            address="tcp://0.0.0.0:5667",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-router.ipc",
+        )
+        client.socket = old_socket
+        client.context = mock_zmq_context
+
+        await client._recreate_socket()
+
+        old_socket.unbind.assert_any_call("tcp://0.0.0.0:5667")
+        old_socket.unbind.assert_any_call("ipc:///tmp/test-router.ipc")
+        old_socket.close.assert_called_once_with(linger=0)
+        new_socket.bind.assert_any_call("tcp://0.0.0.0:5667")
+        new_socket.bind.assert_any_call("ipc:///tmp/test-router.ipc")
+
+    @pytest.mark.asyncio
+    async def test_recreate_socket_closes_even_when_unbind_fails(
+        self, mock_zmq_context
+    ) -> None:
+        """Socket must be closed even if unbind raises, so the port is released."""
+        old_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        old_socket.bind = Mock()
+        old_socket.unbind = Mock(side_effect=zmq.ZMQError(zmq.ENOTSOCK))
+        old_socket.close = Mock()
+        old_socket.setsockopt = Mock()
+
+        new_socket = AsyncMock(spec=zmq.asyncio.Socket)
+        new_socket.bind = Mock()
+        new_socket.setsockopt = Mock()
+
+        mock_zmq_context.socket.side_effect = [new_socket]
+
+        client = ZMQStreamingRouterClient(
+            address="tcp://0.0.0.0:5667",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-router.ipc",
+        )
+        client.socket = old_socket
+        client.context = mock_zmq_context
+
+        await client._recreate_socket()
+
+        old_socket.close.assert_called_once_with(linger=0)
+        new_socket.bind.assert_any_call("tcp://0.0.0.0:5667")
 
 
 class TestZMQStreamingRouterClientLifecycle:

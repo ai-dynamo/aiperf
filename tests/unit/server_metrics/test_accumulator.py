@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from pathlib import Path
+
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.models import ErrorDetails
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -13,20 +15,29 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     ServerMetricsResults,
 )
-from aiperf.plugin.enums import EndpointType
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
 
 
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+
+
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    """Provide minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        )
+def mock_config() -> AIPerfConfig:
+    """Provide minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
@@ -81,28 +92,28 @@ def sample_server_metrics_record(
 class TestServerMetricsResultsProcessor:
     """Test cases for ServerMetricsResultsProcessor."""
 
-    async def test_initialization(self, mock_user_config: UserConfig) -> None:
+    async def test_initialization(self, mock_config: AIPerfConfig) -> None:
         """Test processor initialization sets up hierarchy."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         assert isinstance(processor._server_metrics_hierarchy, ServerMetricsHierarchy)
 
     async def test_process_server_metrics_record(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test processing a server metrics record adds it to the hierarchy."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         await processor.process_server_metrics_record(sample_server_metrics_record)
 
         endpoint_url = sample_server_metrics_record.endpoint_url
         assert endpoint_url in processor._server_metrics_hierarchy.endpoints
 
-    async def test_export_results_no_data(self, mock_user_config: UserConfig) -> None:
+    async def test_export_results_no_data(self, mock_config: AIPerfConfig) -> None:
         """Test export_results returns None when no data collected."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         result = await processor.export_results(
             start_ns=1_000_000_000,
@@ -113,10 +124,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_data(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
     ) -> None:
         """Test export_results returns ServerMetricsResults with collected data."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         # Add multiple records
         for i in range(5):
@@ -148,21 +159,17 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_error_summary(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
         sample_server_metrics_record: ServerMetricsRecord,
     ) -> None:
         """Test export_results includes error summary when provided."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         await processor.process_server_metrics_record(sample_server_metrics_record)
 
-        from aiperf.common.models import ErrorDetails
-
         error_summary = [
             ErrorDetailsCount(
-                error_details=ErrorDetails(
-                    error_type="ConnectionError", message="Failed"
-                ),
+                error_details=ErrorDetails(type="ConnectionError", message="Failed"),
                 count=5,
             )
         ]
@@ -178,10 +185,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_time_filter(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
     ) -> None:
         """Test export_results includes the provided time filter."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         # Add records
         for i in range(5):
@@ -211,10 +218,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_multiple_endpoints(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
     ) -> None:
         """Test export_results handles multiple endpoints correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         endpoints = ["http://node1:8081/metrics", "http://node2:8081/metrics"]
 
@@ -246,10 +253,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_with_labeled_metrics(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
     ) -> None:
         """Test export_results handles metrics with labels correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         for i in range(3):
             gauge = MetricFamily(
@@ -280,10 +287,10 @@ class TestServerMetricsResultsProcessor:
 
     async def test_export_results_computes_endpoint_metadata(
         self,
-        mock_user_config: UserConfig,
+        mock_config: AIPerfConfig,
     ) -> None:
         """Test export_results computes duration, scrape count, and latency correctly."""
-        processor = ServerMetricsAccumulator(mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         # Add 5 records with known timing
         scrape_latency_ns = 10_000_000  # 10ms
@@ -321,10 +328,10 @@ class TestServerMetricsResultsProcessor:
         assert summary.info.median_update_interval_ms == 1000.0
 
     async def test_export_results_median_robust_to_outliers(
-        self, mock_user_config: UserConfig
+        self, mock_config: AIPerfConfig
     ):
         """Test that median_update_interval_ms is robust to outliers."""
-        processor = ServerMetricsAccumulator(user_config=mock_user_config)
+        processor = ServerMetricsAccumulator(run=_make_run(mock_config))
 
         # Create records with non-uniform intervals:
         # Intervals: 1s, 1s, 1s, 5s (outlier)
@@ -371,17 +378,24 @@ class TestSliceDurationConfig:
     async def test_slice_duration_controls_window_size(self):
         """Test that slice_duration from config is used for windowed stats."""
         # Create config with custom slice_duration
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            )
+        config = AIPerfConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
         )
         # Set slice_duration to 2 seconds
         config.output.slice_duration = 2.0
 
-        processor = ServerMetricsAccumulator(user_config=config)
+        processor = ServerMetricsAccumulator(run=_make_run(config))
         assert processor._slice_duration == 2.0
 
         # Add counter samples at 1 second intervals (10 samples = 9 seconds of data)
@@ -429,16 +443,23 @@ class TestSliceDurationConfig:
 
     async def test_default_window_size_is_1_second(self):
         """Test that default window size is 1 second when slice_duration is None."""
-        config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                streaming=False,
-            )
+        config = AIPerfConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
         )
         # Ensure slice_duration is None (default)
         config.output.slice_duration = None
 
-        processor = ServerMetricsAccumulator(user_config=config)
+        processor = ServerMetricsAccumulator(run=_make_run(config))
         # When None, windowed stats are not computed
         assert processor._slice_duration is None

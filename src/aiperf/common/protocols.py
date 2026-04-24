@@ -12,8 +12,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import Any
 
-    from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.enums import LifecycleState
+    from aiperf.common.message_codecs import MessageCodecProtocol
     from aiperf.common.models import (
         MessageCallbackMapT,
         MessageOutputT,
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         MessageTypeT,
     )
     from aiperf.common.types import CommAddressType, ServiceTypeT
+    from aiperf.config import BenchmarkRun
     from aiperf.plugin.enums import CommClientType
 
 
@@ -67,6 +68,7 @@ class TaskManagerProtocol(AIPerfLoggerProtocol, Protocol):
     def start_background_task(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,
@@ -136,6 +138,7 @@ class PullClientProtocol(CommunicationClientProtocol, Protocol):
 @runtime_checkable
 class PushClientProtocol(CommunicationClientProtocol, Protocol):
     async def push(self, message: MessageT) -> None: ...
+    async def push_raw(self, data: bytes) -> None: ...
 
 
 @runtime_checkable
@@ -145,11 +148,15 @@ class ReplyClientProtocol(CommunicationClientProtocol, Protocol):
         service_id: str,
         message_type: MessageTypeT,
         handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
+        *,
+        fire_and_forget: bool = False,
     ) -> None: ...
 
 
 @runtime_checkable
 class RequestClientProtocol(CommunicationClientProtocol, Protocol):
+    async def send(self, message: MessageT) -> None: ...
+
     async def request(
         self,
         message: MessageT,
@@ -169,7 +176,7 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
 
     def register_receiver(
         self,
-        handler: Callable[[str, MessageT], Coroutine[Any, Any, None]],
+        handler: Callable[[str, MessageT], Coroutine[Any, Any, MessageOutputT | None]],
     ) -> None:
         """
         Register handler for incoming messages from DEALER clients.
@@ -187,6 +194,10 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
             identity: The DEALER client's identity (routing key)
             message: The message to send
         """
+        ...
+
+    async def request_to(self, identity: str, message: MessageT, timeout: float) -> Any:
+        """Send request to specific DEALER client and wait for a response."""
         ...
 
 
@@ -213,6 +224,10 @@ class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
         Args:
             message: The message to send
         """
+        ...
+
+    async def request(self, message: MessageT, timeout: float) -> Any:
+        """Send request to ROUTER and wait for a response."""
         ...
 
 
@@ -249,6 +264,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         self,
         client_type: CommClientType,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
@@ -283,6 +299,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PushClientProtocol:
         """Create a PUSH client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -291,10 +308,12 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_pull_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        codec: MessageCodecProtocol | None = None,
     ) -> PullClientProtocol:
         """Create a PULL client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -315,6 +334,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         """Create a REPLY client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -323,23 +343,46 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        Args:
+            address: The address to bind or connect to.
+            bind: Whether to bind (True) or connect (False) the socket.
+            socket_ops: Additional socket options to set.
+            additional_bind_address: Optional second address to bind to for dual-bind mode
+                (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
+            decode_type: The msgspec type (or union) to decode incoming messages.
+                If None, defaults to WorkerToRouterMessage.
+        """
         ...
 
     def create_streaming_dealer_client(
         self,
         address: CommAddressType,
         identity: str,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        Args:
+            address: The address to bind or connect to.
+            identity: Unique identity for this DEALER (used by ROUTER for routing).
+            bind: Whether to bind (True) or connect (False) the socket.
+            socket_ops: Additional socket options to set.
+            decode_type: The msgspec type (or union) to decode incoming messages.
+                If None, defaults to RouterToWorkerMessage.
+        """
         ...
 
 
@@ -364,8 +407,7 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None: ...

@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from aiperf.accuracy.models import BenchmarkProblem, GradingResult
-    from aiperf.common.config import UserConfig
+    from aiperf.config import BenchmarkRun
 
 
 @runtime_checkable
 class AccuracyGraderProtocol(Protocol):
     """Protocol for accuracy graders that evaluate LLM responses against ground truth."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
 
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs
@@ -27,7 +27,7 @@ class AccuracyGraderProtocol(Protocol):
 class AccuracyBenchmarkProtocol(Protocol):
     """Protocol for accuracy benchmark loaders that provide problems from standard datasets."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None: ...
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None: ...
 
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool

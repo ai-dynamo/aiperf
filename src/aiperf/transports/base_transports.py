@@ -14,9 +14,9 @@ from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
+from aiperf.config import BenchmarkRun
 from aiperf.plugin.schema.schemas import TransportMetadata
 
 FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
@@ -63,9 +63,9 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     Transports handle the protocol layer (HTTP, gRPC, etc.).
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.model_endpoint: ModelEndpointInfo = model_endpoint
+        self.run: BenchmarkRun = run
         from aiperf import __version__
 
         self.user_agent: str = f"aiperf/{__version__}"

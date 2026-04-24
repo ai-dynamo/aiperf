@@ -18,14 +18,20 @@ from aiperf.common.tokenizer_validator import validate_tokenizer_early
 
 @pytest.fixture
 def mock_user_config() -> MagicMock:
-    """Create a mock UserConfig with tokenizer requiring endpoints."""
+    """Create a mock BenchmarkConfig with tokenizer-requiring endpoint.
+
+    Uses k8s's BenchmarkConfig surface: get_model_names() and
+    get_default_dataset() are methods, not attributes; endpoint.type is a
+    string; tokenizer is a sub-config.
+    """
     config = MagicMock()
     config.endpoint.type = "openai_chat"
-    config.endpoint.model_names = ["gpt-4o", "gpt-4o-mini"]
     config.endpoint.use_server_token_count = False
-    config.input.public_dataset = None
-    config.input.custom_dataset_type = None
-    config.input.file = None
+    config.get_model_names.return_value = ["gpt-4o", "gpt-4o-mini"]
+    # Default to synthetic dataset so server-token-count skip does not trigger
+    default_dataset = MagicMock()
+    default_dataset.type = "synthetic"
+    config.get_default_dataset.return_value = default_dataset
     config.tokenizer.name = None
     config.tokenizer.trust_remote_code = False
     config.tokenizer.revision = "main"

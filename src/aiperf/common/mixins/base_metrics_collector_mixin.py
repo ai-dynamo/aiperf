@@ -11,122 +11,24 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 import aiohttp
 
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.common.mixins.http_trace_timing import FetchResult, HttpTraceTiming
 from aiperf.common.models import ErrorDetails
-from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
-
-@dataclass(slots=True)
-class HttpTraceTiming:
-    """Timing data captured from aiohttp TraceConfig for HTTP request lifecycle.
-
-    Captures precise timestamps at key points in the HTTP request lifecycle using
-    aiohttp's trace hooks. Combines wall clock (time.time_ns) and monotonic
-    (time.perf_counter_ns) timestamps to enable both absolute timing and accurate
-    duration measurements.
-
-    The dual timestamp approach handles clock adjustments:
-    - start_ns: Wall clock for absolute correlation with other system events
-    - start_perf_ns/first_byte_perf_ns/end_perf_ns: Monotonic for accurate durations
-
-    This enables accurate correlation between:
-    - Client request timestamps (when requests were sent)
-    - Server metric timestamps (when server generated the metrics)
-    - Request latencies (how long requests took)
-
-    Args:
-        start_ns: Wall clock timestamp when request headers sent (time.time_ns)
-        start_perf_ns: Monotonic timestamp when request headers sent (time.perf_counter_ns)
-        first_byte_perf_ns: Monotonic timestamp when first response byte received (TTFB)
-        end_perf_ns: Monotonic timestamp when response fully received
-
-    Properties:
-        first_byte_ns: Wall clock timestamp of first byte (start_ns + TTFB offset)
-        latency_ns: Total request latency in nanoseconds (end - start)
-
-    Example:
-        >>> # Captured automatically by aiohttp TraceConfig
-        >>> timing = HttpTraceTiming(
-        ...     start_ns=1_700_000_000_000_000_000,
-        ...     start_perf_ns=100_000_000_000,
-        ...     first_byte_perf_ns=100_050_000_000,  # +50ms
-        ...     end_perf_ns=100_100_000_000  # +100ms total
-        ... )
-        >>> timing.latency_ns
-        100_000_000  # 100ms
-        >>> timing.first_byte_ns
-        1_700_000_000_050_000_000  # Wall clock + 50ms
-    """
-
-    start_ns: int | None = None
-    start_perf_ns: int | None = None
-    first_byte_perf_ns: int | None = None
-    end_perf_ns: int | None = None
-
-    @property
-    def first_byte_ns(self) -> int | None:
-        """Get wall clock timestamp of first byte received (best proxy for server snapshot time).
-
-        Computes wall clock timestamp by adding TTFB offset to the request start
-        wall clock time. This is the most accurate timestamp for when the server
-        generated the metrics, as it represents when the server began sending data.
-
-        Returns:
-            Wall clock timestamp in nanoseconds (time.time_ns scale), or None if
-            timing data is incomplete.
-        """
-        if any(
-            attr is None
-            for attr in [self.start_ns, self.start_perf_ns, self.first_byte_perf_ns]
-        ):
-            return None
-        return self.start_ns + (self.first_byte_perf_ns - self.start_perf_ns)
-
-    @property
-    def latency_ns(self) -> int | None:
-        """Get the total HTTP request latency in nanoseconds.
-
-        Computes latency using monotonic timestamps (perf_counter_ns) to avoid
-        issues with system clock adjustments during the request.
-
-        Returns:
-            Total latency from request start to response completion in nanoseconds,
-            or None if timing data is incomplete.
-        """
-        if any(
-            attr is None
-            for attr in [self.start_ns, self.start_perf_ns, self.end_perf_ns]
-        ):
-            return None
-        return self.end_perf_ns - self.start_perf_ns
-
-
-@dataclass(frozen=True)
-class FetchResult:
-    """Result of fetching metrics from an HTTP endpoint with timing metadata.
-
-    Encapsulates both the fetched content and timing information in a single
-    immutable object. The is_duplicate flag enables efficient handling of
-    unchanged metrics (common when scraping faster than server update rate).
-
-    Args:
-        text: Raw metrics text from HTTP endpoint (Prometheus exposition format)
-        trace_timing: Precise timing data captured via aiohttp TraceConfig hooks
-        is_duplicate: True if response content hash matches previous fetch,
-                     indicating metrics haven't changed. Callers can skip parsing
-                     when True to save CPU on repetitive data.
-    """
-
-    text: str | None
-    trace_timing: HttpTraceTiming
-    is_duplicate: bool = False
+__all__ = [
+    "BaseMetricsCollectorMixin",
+    "FetchResult",
+    "HttpTraceTiming",
+    "TErrorCallback",
+    "TRecord",
+    "TRecordCallback",
+]
 
 
 # Type variables for records returned by collectors
@@ -184,6 +86,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
     def __init__(
         self,
+        *,
         endpoint_url: str,
         collection_interval: float,
         reachability_timeout: float,
@@ -247,6 +150,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             connect=self._reachability_timeout,  # Fast connection timeout only
         )
         trace_config = self._create_trace_config()
+        from aiperf.transports.aiohttp_client import create_tcp_connector
+
         self._connector = create_tcp_connector()
         self._session = aiohttp.ClientSession(
             connector=self._connector,
@@ -362,6 +267,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         else:
             # Create a temporary session for reachability check with proper connector
             timeout = aiohttp.ClientTimeout(total=self._reachability_timeout)
+            from aiperf.transports.aiohttp_client import create_tcp_connector
+
             connector = create_tcp_connector()
             try:
                 async with aiohttp.ClientSession(
@@ -430,14 +337,14 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         """
         try:
             await self._collect_and_process_metrics()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - collection loop must survive any collector failure to keep running across intervals
             if self._error_callback:
                 try:
                     await self._error_callback(
                         ErrorDetails.from_exception(e),
                         self.id,
                     )
-                except Exception as callback_error:
+                except Exception as callback_error:  # noqa: BLE001 - user-provided callback may raise; must not crash the loop
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Metrics collection error: {e}")
@@ -523,5 +430,5 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         if records and self._record_callback:
             try:
                 await self._record_callback(records, self.id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - user-provided callback may raise anything; log and continue
                 self.error(f"Failed to send records via callback: {e!r}", exc_info=True)

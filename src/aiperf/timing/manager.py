@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
+from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, MessageType
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import InvalidStateError
@@ -15,12 +19,7 @@ from aiperf.common.hooks import (
     on_message,
     on_stop,
 )
-from aiperf.common.messages import (
-    CommandMessage,
-    DatasetConfiguredNotification,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
-)
+from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.timing.config import TimingConfig
@@ -42,17 +41,17 @@ class TimingManager(BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
+            **kwargs,
         )
         self.debug("Timing manager __init__")
-        self.config = TimingConfig.from_user_config(self.user_config)
+        self.timing_config = TimingConfig.from_config(self.run.cfg)
 
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
@@ -66,11 +65,14 @@ class TimingManager(BaseComponentService):
         # worker lifecycle. Created early to handle worker connections
         # immediately, as well as attaching to the lifecycle.
         self.sticky_router: StickyCreditRouter = StickyCreditRouter(
-            service_config=service_config,
+            run=run,
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
-        self.event_loop_monitor = EventLoopMonitor(self.service_id)
+        self.event_loop_monitor = EventLoopMonitor(
+            self.service_id,
+            artifact_dir=self.run.cfg.output.artifact_directory,
+        )
 
         self._phase_orchestrator: PhaseOrchestrator | None = None
 
@@ -82,16 +84,14 @@ class TimingManager(BaseComponentService):
         self.debug(
             lambda: f"Received dataset configured notification: "
             f"{len(message.metadata.conversations)} conversations, "
-            f"{message.metadata.sampling_strategy.value} sampling strategy"
+            f"{message.metadata.sampling_strategy} sampling strategy"
         )
 
         self._dataset_metadata = message.metadata
         self._dataset_configured_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Create and configure phase orchestrator."""
         self.info("Waiting for dataset to be configured before configuring timing")
         await asyncio.wait_for(
@@ -106,7 +106,7 @@ class TimingManager(BaseComponentService):
 
         # Create orchestrator that executes phases
         self._phase_orchestrator = PhaseOrchestrator(
-            config=self.config,
+            config=self.timing_config,
             phase_publisher=self.phase_publisher,
             credit_router=self.sticky_router,
             dataset_metadata=self._dataset_metadata,
@@ -114,7 +114,7 @@ class TimingManager(BaseComponentService):
         await self._phase_orchestrator.initialize()
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, _message: CommandMessage) -> None:
+    async def _on_start_profiling(self, _message: Command) -> None:
         """Start credit issuance. Disables GC for stable timing."""
         if not self._phase_orchestrator:
             raise InvalidStateError("No phase orchestrator configured")
@@ -126,9 +126,7 @@ class TimingManager(BaseComponentService):
         self.execute_async(self._phase_orchestrator.start())
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Cancel credit issuance gracefully.
 
         Stops new credits and cancels in-flight requests.

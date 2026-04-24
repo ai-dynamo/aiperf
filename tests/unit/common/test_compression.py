@@ -18,6 +18,9 @@ from aiperf.common.compression import (
     select_encoding,
     stream_file_compressed,
 )
+
+if is_zstd_available():
+    import zstandard
 from aiperf.common.environment import Environment
 
 
@@ -94,8 +97,6 @@ class TestFileStreaming:
     @pytest.mark.skipif(not is_zstd_available(), reason="zstandard not installed")
     async def test_stream_file_compressed_zstd(self, temp_file: pathlib.Path) -> None:
         """Test zstd file compression streaming."""
-        import zstandard
-
         chunks = []
         async for chunk in stream_file_compressed(temp_file, CompressionEncoding.ZSTD):
             chunks.append(chunk)

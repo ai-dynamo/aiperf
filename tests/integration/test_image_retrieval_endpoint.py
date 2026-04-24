@@ -25,13 +25,15 @@ class TestImageRetrievalEndpoint:
                 --url {aiperf_mock_server.url} \
                 --endpoint-type image_retrieval \
                 --endpoint /v1/image/infer \
+                --image-batch-size 1 \
                 --image-width-mean 64 \
                 --image-height-mean 64 \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
-            """
+            """,
+            timeout=300.0,
         )
         assert result.request_count == defaults.request_count
         assert result.json.time_to_first_token is None

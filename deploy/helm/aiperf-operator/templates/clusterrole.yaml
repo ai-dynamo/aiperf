@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aiperf-operator.fullname" . }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+rules:
+# CRD discovery (required by kopf)
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list", "watch"]
+
+# AIPerfJob CRD - full access for operator
+- apiGroups: ["aiperf.nvidia.com"]
+  resources: ["aiperfjobs", "aiperfjobs/status", "aiperfjobs/finalizers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# JobSets - create and manage benchmark job sets
+- apiGroups: ["jobset.x-k8s.io"]
+  resources: ["jobsets"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+- apiGroups: ["jobset.x-k8s.io"]
+  resources: ["jobsets/status"]
+  verbs: ["get", "list", "watch"]
+
+# Kueue Workloads - monitor admission status for gang-scheduling
+- apiGroups: ["kueue.x-k8s.io"]
+  resources: ["workloads"]
+  verbs: ["get", "list", "watch"]
+
+# Jobs - monitor JobSet-created Jobs
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch"]
+
+# Deployments - preflight checks for JobSet controller and other operators
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+
+# ServiceAccounts - preflight verifies custom SA existence
+# ResourceQuotas - preflight inspects quotas before scheduling
+# Secrets - preflight verifies referenced imagePullSecrets / env secrets
+- apiGroups: [""]
+  resources: ["serviceaccounts", "resourcequotas", "secrets"]
+  verbs: ["get", "list", "watch"]
+
+# NetworkPolicies - preflight checks benchmark-namespace network policies
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch"]
+
+# ConfigMaps - store benchmark configuration
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Services and endpoints - headless services for pod DNS, endpoint monitoring
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["create", "delete", "get", "list", "watch"]
+
+# RBAC - create Roles and RoleBindings for benchmark pods
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["create", "delete", "get", "list", "watch"]
+
+# Namespaces - access for AIPerfJob resources
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+
+# Pods - monitor pod status and restarts
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+
+# Nodes - query GPU count for UI cluster endpoint
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+
+# Events - emit Kubernetes events and allow benchmark pods to read them
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch", "create", "patch"]
+
+# Leases - kopf leader election
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+{{- end }}

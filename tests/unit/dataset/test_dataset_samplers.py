@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.dataset.dataset_samplers import (
     RandomSampler,
     SequentialSampler,
@@ -59,7 +60,6 @@ class TestRandomSampler:
 
     def test_seed_reproducibility(self, conversation_ids: list[str]) -> None:
         """Test that using the same seed produces identical sequences."""
-        from aiperf.common import random_generator as rng
 
         rng.reset()
         rng.init(42)
@@ -77,7 +77,6 @@ class TestRandomSampler:
         self, conversation_ids: list[str]
     ) -> None:
         """Test that different global seeds produce different sequences."""
-        from aiperf.common import random_generator as rng
 
         rng.reset()
         rng.init(42)
@@ -132,7 +131,6 @@ class TestShuffleSampler:
 
     def test_seed_reproducibility(self, conversation_ids: list[str]) -> None:
         """Test that using the same seed produces identical sequences."""
-        from aiperf.common import random_generator as rng
 
         rng.reset()
         rng.init(42)

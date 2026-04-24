@@ -3,8 +3,8 @@
 
 from typing import Any
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 
@@ -26,12 +26,12 @@ class MMVUDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         video_column: str = "video",
         **kwargs,
     ) -> None:
         self.video_column = video_column
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     @staticmethod
     def _format_prompt(row: dict[str, Any]) -> str:

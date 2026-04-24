@@ -1,11 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from aiperf.common.config import UserConfig
+from aiperf.common.environment import Environment
+from aiperf.common.hooks import background_task
+from aiperf.common.messages import RealtimeServerMetricsMessage
+from aiperf.plugin.enums import UIType
+
+if TYPE_CHECKING:
+    from aiperf.common.protocols import PubClientProtocol
+    from aiperf.config import BenchmarkRun
 from aiperf.common.constants import (
     MILLIS_PER_SECOND,
     NANOS_PER_MILLIS,
@@ -66,11 +77,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         PostProcessorDisabled: If --no-server-metrics flag is set
 
     Example:
-        >>> from aiperf.common.config import UserConfig
+        >>> from aiperf.config import BenchmarkConfig
         >>> from aiperf.common.models import ServerMetricsRecord, MetricFamily, MetricSample
         >>> # Create accumulator
-        >>> config = UserConfig(...)
-        >>> accumulator = ServerMetricsAccumulator(user_config=config)
+        >>> config = BenchmarkConfig(...)
+        >>> accumulator = ServerMetricsAccumulator(config=config)
         >>>
         >>> # Process records from collection
         >>> record = ServerMetricsRecord(
@@ -95,17 +106,28 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         CounterMetricData(description="Total HTTP requests", series=[...])
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        if user_config.server_metrics_disabled:
+    def __init__(
+        self,
+        run: BenchmarkRun,
+        pub_client: PubClientProtocol | None = None,
+        **kwargs: Any,
+    ) -> None:
+        config = run.cfg
+        if config.server_metrics_disabled:
             raise PostProcessorDisabled(
                 "Server metrics results processor is disabled via --no-server-metrics"
             )
 
-        super().__init__(user_config=user_config, **kwargs)
+        self.pub_client = pub_client
+        super().__init__(run=run, **kwargs)
 
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
-        self._slice_duration: float | None = user_config.output.slice_duration
+        self._slice_duration: float | None = config.output.slice_duration
+        # Track last endpoint summaries hash to avoid duplicate publishes
+        self._last_summaries_hash: int | None = None
+        # Track profiling start time for realtime computations
+        self._profiling_start_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -160,7 +182,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
-            benchmark_id=self.user_config.benchmark_id,
+            benchmark_id=self.run.cfg.benchmark_id,
             endpoint_summaries=endpoint_summaries,
             start_ns=start_ns,
             end_ns=end_ns,
@@ -169,9 +191,20 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             error_summary=error_summary or [],
         )
 
-        # Export Parquet file directly from accumulator if format is enabled
+        # Parquet spans all endpoints with a single filter; widen to bracket
+        # any scrape data across endpoints so sub-scrape-interval benchmarks
+        # still emit rows. Matches the per-endpoint widening in
+        # _compute_endpoint_summaries.
+        parquet_start = start_ns
+        parquet_end = end_ns
+        for ts in self._server_metrics_hierarchy.endpoints.values():
+            if ts.last_update_ns:
+                parquet_end = max(parquet_end, ts.last_update_ns)
+                if ts.last_update_ns < parquet_start:
+                    parquet_start = ts.last_update_ns
+
         await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+            TimeRangeFilter(start_ns=parquet_start, end_ns=parquet_end)
         )
 
         return results
@@ -181,6 +214,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         profiling_start_ns: int,
         profiling_end_ns: int,
         slice_duration: float | None = None,
+        fast_histogram_percentiles: bool = False,
     ) -> dict[str, ServerMetricsEndpointSummary]:
         """Compute all server metrics summaries with per-endpoint time filters.
 
@@ -199,6 +233,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             profiling_end_ns: Profiling phase end time (benchmark completion time)
             slice_duration: Duration of each timeslice window in seconds for time-sliced stats.
                            If None, timeslice analysis is skipped (saves computation).
+            fast_histogram_percentiles: Algorithm selection for histogram percentile estimation.
+                                        True = Prometheus linear interpolation (fast, for realtime).
+                                        False = Polynomial histogram (accurate, for final export).
 
         Returns:
             Dict mapping endpoint display names (e.g., "localhost:8081") to
@@ -211,110 +248,134 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             time_series,
         ) in self._server_metrics_hierarchy.endpoints.items():
             endpoint_display = normalize_endpoint_display(endpoint_url)
-
-            # Construct per-endpoint TimeFilter
-            # Use profiling_start_ns to exclude warmup period (reference point can be before start)
-            # Use max(profiling_end, last_update) as end to include final collection
-            # This ensures warmup metrics are excluded from aggregation
-            endpoint_start_ns = profiling_start_ns
-            endpoint_end_ns = max(profiling_end_ns, time_series.last_update_ns)
-            time_filter = TimeRangeFilter(
-                start_ns=endpoint_start_ns,
-                end_ns=endpoint_end_ns,
+            time_filter = self._build_endpoint_time_filter(
+                time_series, profiling_start_ns, profiling_end_ns
             )
-
-            metrics: dict[
-                str,
-                GaugeMetricData | CounterMetricData | HistogramMetricData,
-            ] = {}
-
-            for metric_key, metric_entry in time_series.metrics.items():
-                base_name = metric_key.name
-
-                series_stats = compute_stats(
-                    metric_entry.metric_type,
-                    metric_entry.data,
-                    time_filter,
-                    labels=metric_key.labels_dict,
-                    slice_duration=slice_duration,
-                )
-
-                if series_stats is None:
-                    continue
-
-                if base_name not in metrics:
-                    # Create appropriate type-specific metric data
-                    match metric_entry.metric_type:
-                        case PrometheusMetricType.GAUGE:
-                            metrics[base_name] = GaugeMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.COUNTER:
-                            metrics[base_name] = CounterMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.HISTOGRAM:
-                            metrics[base_name] = HistogramMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                else:
-                    metrics[base_name].series.append(series_stats)
-
-            # Unique update statistics
-            unique_count = time_series._unique_update_count
-            duration_seconds = (
-                (time_series.last_update_ns - time_series.first_update_ns)
-                / NANOS_PER_SECOND
-                if unique_count > 0
-                else 0.0
+            metrics = self._build_endpoint_metrics(
+                time_series,
+                time_filter,
+                slice_duration,
+                fast_histogram_percentiles,
             )
-            avg_update_interval_ms = (
-                (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
-                if unique_count > 1
-                else 0.0
-            )
-            # Compute median from actual intervals (more robust to outliers)
-            median_update_interval_ms: float | None = None
-            if time_series._update_intervals_ns:
-                intervals_ns = np.array(
-                    time_series._update_intervals_ns, dtype=np.int64
-                )
-                median_update_interval_ms = (
-                    float(np.median(intervals_ns)) / NANOS_PER_MILLIS
-                )
-
-            # Fetch statistics (all fetches including duplicates)
-            avg_fetch_latency_ms = (
-                sum(time_series._fetch_latencies_ns)
-                / len(time_series._fetch_latencies_ns)
-                / NANOS_PER_MILLIS
-                if time_series._fetch_latencies_ns
-                else 0.0
-            )
-
             summaries[endpoint_display] = ServerMetricsEndpointSummary(
                 endpoint_url=endpoint_url,
-                info=ServerMetricsEndpointInfo(
-                    # Fetch statistics
-                    total_fetches=time_series._total_fetch_count,
-                    first_fetch_ns=time_series.first_fetch_ns,
-                    last_fetch_ns=time_series.last_fetch_ns,
-                    avg_fetch_latency_ms=avg_fetch_latency_ms,
-                    # Unique update statistics
-                    unique_updates=unique_count,
-                    first_update_ns=time_series.first_update_ns,
-                    last_update_ns=time_series.last_update_ns,
-                    duration_seconds=duration_seconds,
-                    avg_update_interval_ms=avg_update_interval_ms,
-                    median_update_interval_ms=median_update_interval_ms,
-                ),
+                info=self._build_endpoint_info(time_series),
                 metrics=metrics,
             )
 
         return summaries
+
+    @staticmethod
+    def _build_endpoint_time_filter(
+        time_series: Any,
+        profiling_start_ns: int,
+        profiling_end_ns: int,
+    ) -> TimeRangeFilter:
+        """Construct per-endpoint TimeRangeFilter, widened to include scrape data
+        straddling the profiling window (sub-scrape-interval benchmarks otherwise
+        drop counter/gauge stats while keeping histogram stats)."""
+        endpoint_start_ns = profiling_start_ns
+        endpoint_end_ns = max(profiling_end_ns, time_series.last_update_ns)
+        if (
+            time_series.last_update_ns
+            and time_series.last_update_ns < endpoint_start_ns
+        ):
+            endpoint_start_ns = time_series.last_update_ns
+        return TimeRangeFilter(start_ns=endpoint_start_ns, end_ns=endpoint_end_ns)
+
+    @staticmethod
+    def _build_endpoint_metrics(
+        time_series: Any,
+        time_filter: TimeRangeFilter,
+        slice_duration: float | None,
+        fast_histogram_percentiles: bool,
+    ) -> dict[str, GaugeMetricData | CounterMetricData | HistogramMetricData]:
+        """Compute per-metric stats for a single endpoint's time series."""
+        metrics: dict[
+            str,
+            GaugeMetricData | CounterMetricData | HistogramMetricData,
+        ] = {}
+
+        for metric_key, metric_entry in time_series.metrics.items():
+            base_name = metric_key.name
+
+            series_stats = compute_stats(
+                metric_entry.metric_type,
+                metric_entry.data,
+                time_filter=time_filter,
+                labels=metric_key.labels_dict,
+                slice_duration=slice_duration,
+                fast_histogram_percentiles=fast_histogram_percentiles,
+            )
+
+            if series_stats is None:
+                continue
+
+            if base_name not in metrics:
+                match metric_entry.metric_type:
+                    case PrometheusMetricType.GAUGE:
+                        metrics[base_name] = GaugeMetricData(
+                            description=metric_entry.description,
+                            series=[series_stats],
+                        )
+                    case PrometheusMetricType.COUNTER:
+                        metrics[base_name] = CounterMetricData(
+                            description=metric_entry.description,
+                            series=[series_stats],
+                        )
+                    case PrometheusMetricType.HISTOGRAM:
+                        metrics[base_name] = HistogramMetricData(
+                            description=metric_entry.description,
+                            series=[series_stats],
+                        )
+            else:
+                metrics[base_name].series.append(series_stats)
+
+        return metrics
+
+    @staticmethod
+    def _build_endpoint_info(time_series: Any) -> ServerMetricsEndpointInfo:
+        """Compute fetch/update collection metadata for a single endpoint."""
+        unique_count = time_series._unique_update_count
+        duration_seconds = (
+            (time_series.last_update_ns - time_series.first_update_ns)
+            / NANOS_PER_SECOND
+            if unique_count > 0
+            else 0.0
+        )
+        avg_update_interval_ms = (
+            (duration_seconds * MILLIS_PER_SECOND) / (unique_count - 1)
+            if unique_count > 1
+            else 0.0
+        )
+        # Median from actual intervals is more robust to outliers
+        median_update_interval_ms: float | None = None
+        if time_series._update_intervals_ns:
+            intervals_ns = np.array(time_series._update_intervals_ns, dtype=np.int64)
+            median_update_interval_ms = (
+                float(np.median(intervals_ns)) / NANOS_PER_MILLIS
+            )
+
+        avg_fetch_latency_ms = (
+            sum(time_series._fetch_latencies_ns)
+            / len(time_series._fetch_latencies_ns)
+            / NANOS_PER_MILLIS
+            if time_series._fetch_latencies_ns
+            else 0.0
+        )
+
+        return ServerMetricsEndpointInfo(
+            total_fetches=time_series._total_fetch_count,
+            first_fetch_ns=time_series.first_fetch_ns,
+            last_fetch_ns=time_series.last_fetch_ns,
+            avg_fetch_latency_ms=avg_fetch_latency_ms,
+            unique_updates=unique_count,
+            first_update_ns=time_series.first_update_ns,
+            last_update_ns=time_series.last_update_ns,
+            duration_seconds=duration_seconds,
+            avg_update_interval_ms=avg_update_interval_ms,
+            median_update_interval_ms=median_update_interval_ms,
+        )
 
     async def _export_parquet_if_enabled(self, time_filter: TimeRangeFilter) -> None:
         """Export server metrics to Parquet format if enabled.
@@ -327,7 +388,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             time_filter: Time range filter for the profiling period
         """
         # Check if Parquet format is enabled
-        if ServerMetricsFormat.PARQUET not in self.user_config.server_metrics_formats:
+        if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics_formats:
             self.debug("Parquet format not selected, skipping export")
             return
 
@@ -342,7 +403,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             self.debug(f"Parquet export disabled: {e}")
         except ImportError as e:
             self.warning(f"Failed to import Parquet exporter dependencies: {e}")
-        except Exception as e:
+        except (OSError, ValueError) as e:
+            self.error(f"Failed to export server metrics to Parquet: {e!r}")
+        except Exception as e:  # noqa: BLE001 - best-effort parquet export; pyarrow.lib.ArrowInvalid lives behind optional import
             self.error(f"Failed to export server metrics to Parquet: {e!r}")
 
     async def summarize(self) -> list[MetricResult]:
@@ -356,3 +419,79 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             Empty list (server metrics exported via export_results instead)
         """
         return []
+
+    def set_profiling_start(self, start_ns: int) -> None:
+        """Set the profiling start time for realtime computations.
+
+        Args:
+            start_ns: Profiling phase start time in nanoseconds
+        """
+        self._profiling_start_ns = start_ns
+
+    @background_task(interval=None, immediate=True)
+    async def _report_realtime_server_metrics_task(self) -> None:
+        """Report server metrics periodically for realtime dashboard display.
+
+        Only runs when dashboard UI is enabled and pub_client is available.
+        Uses a longer interval than telemetry since server metrics computation
+        is more expensive.
+        """
+        if not self.pub_client or not self.run:
+            return
+
+        # Only publish when there's a consumer: dashboard UI or API server
+        has_dashboard = self.run.cfg.ui_type == UIType.DASHBOARD
+        has_api = bool(self.run.cfg.runtime.api_port)
+        if not has_dashboard and not has_api:
+            return
+
+        while not self.stop_requested:
+            await self._report_realtime_server_metrics()
+            # Use 2x the normal interval since server metrics computation is heavier
+            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL * 2)
+
+    async def _report_realtime_server_metrics(self) -> None:
+        """Compute and publish realtime server metrics snapshot."""
+        if not self.pub_client:
+            return
+
+        if not self._server_metrics_hierarchy.endpoints:
+            return
+
+        # Use current time as end, and earliest data or profiling start as start
+        current_ns = time.time_ns()
+        start_ns = self._profiling_start_ns or 0
+
+        # Find earliest data timestamp if no profiling start set
+        if start_ns == 0:
+            for ts in self._server_metrics_hierarchy.endpoints.values():
+                if ts.first_update_ns and (
+                    start_ns == 0 or ts.first_update_ns < start_ns
+                ):
+                    start_ns = ts.first_update_ns
+
+        if start_ns == 0 or start_ns >= current_ns:
+            return
+
+        # Compute endpoint summaries for realtime display (no timeslices needed).
+        # Use fast Prometheus percentiles - accuracy matters less for live dashboard.
+        endpoint_summaries = self._compute_endpoint_summaries(
+            start_ns, current_ns, slice_duration=None, fast_histogram_percentiles=True
+        )
+
+        if not endpoint_summaries:
+            return
+
+        # Check if summaries changed using hash
+        summaries_hash = hash(str(endpoint_summaries))
+        if summaries_hash == self._last_summaries_hash:
+            return
+
+        self._last_summaries_hash = summaries_hash
+
+        await self.pub_client.publish(
+            RealtimeServerMetricsMessage(
+                service_id=self.id,
+                endpoint_summaries=endpoint_summaries,
+            )
+        )

@@ -13,10 +13,10 @@ from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.config import BenchmarkRun
 from tests.unit.api.routers.conftest import make_latency_metric
 
 
@@ -68,12 +68,9 @@ def make_process_records_result(
 
 
 @pytest.fixture
-def results_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> ResultsRouter:
+def results_router(mock_zmq, router_config: BenchmarkRun) -> ResultsRouter:
     return ResultsRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
+        run=router_config,
     )
 
 
@@ -192,7 +189,7 @@ class TestResultsListEndpoint:
     ) -> None:
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path / "nonexistent"
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -210,7 +207,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -235,7 +232,7 @@ class TestResultsFileEndpoints:
     ) -> None:
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -252,7 +249,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/profile_export.json",
@@ -270,7 +267,7 @@ class TestResultsFileEndpoints:
     ) -> None:
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -286,7 +283,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/metrics.json",
@@ -323,7 +320,7 @@ class TestResultsFileContentType:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             f"/api/results/files/{filename}",
@@ -343,7 +340,7 @@ class TestResultsFileContentType:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.user_config.output = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/data.json",
@@ -371,7 +368,7 @@ class TestFinalResultsHandler:
 
         assert results_router._final_results is not None
         assert results_router._final_results.results.completed == 200
-        assert results_router._benchmark_complete is True
+        assert results_router._benchmark_complete is False
 
     @pytest.mark.asyncio
     async def test_on_process_records_result_replaces_previous(
@@ -417,4 +414,4 @@ class TestFinalResultsHandler:
 
         assert results_router._final_results.results.completed == completed
         assert results_router._final_results.results.was_cancelled == was_cancelled
-        assert results_router._benchmark_complete is True
+        assert results_router._benchmark_complete is False

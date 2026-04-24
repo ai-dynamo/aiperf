@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Audio/Speech Model Benchmark
+# description: Benchmark speech-to-text or audio understanding models.
+# category: Multimodal
+# tags: audio, speech, multimodal
+# difficulty: intermediate
+# features: audio config, duration distributions
+#
+# Audio/Speech Multimodal Benchmark
+# ==================================
+# Generates synthetic audio clips and sends them as multimodal requests.
+# Audio is random noise at the configured sample rate — the content doesn't
+# matter, only the data size and processing overhead.
+#
+# Two datasets test different scenarios:
+#   short_audio  - Voice commands, quick queries (5-10s clips)
+#   long_audio   - Meeting transcription, podcast analysis (30-60s clips)
+#
+# Run: aiperf profile --config audio_multimodal.yaml
+
+randomSeed: 42
+
+model: openai/whisper-large-v3
+
+endpoint:
+  url: http://localhost:8000/v1/audio/transcriptions
+  type: chat
+  timeout: 180.0
+
+datasets:
+  short_audio:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: 50
+      osl: {mean: 200, stddev: 50}
+    audio:
+      batchSize: 1
+      length: {mean: 7.5, stddev: 2.5}
+      format: wav
+      sampleRates: [16.0]  # 16kHz — standard for speech recognition
+      depths: [16]          # 16-bit PCM
+      channels: 1
+
+  long_audio:
+    type: synthetic
+    entries: 200
+    prompts:
+      isl: 50
+      osl: {mean: 500, stddev: 100}
+    audio:
+      batchSize: 1
+      length: {mean: 45.0, stddev: 15.0}
+      format: wav
+      sampleRates: [16.0]
+      depths: [16]
+      channels: 1
+
+phases:
+  short_audio_test:
+    type: poisson
+    dataset: short_audio
+    requests: 500
+    concurrency: 8
+    rate: 5.0
+    duration: 300
+    gracePeriod: 120
+
+  long_audio_test:
+    type: poisson
+    dataset: long_audio
+    requests: 200
+    concurrency: 4    # Lower concurrency — each request is GPU-heavy
+    rate: 2.0
+    seamless: true
+    duration: 300
+    gracePeriod: 180  # Long clips take longer to process
+
+artifacts:
+  dir: ./artifacts/audio_multimodal
+  summary: [json]
+  records: [jsonl, csv]

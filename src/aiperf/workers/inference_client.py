@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -10,19 +11,19 @@ from urllib.parse import urlparse
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
-    ModelEndpointInfo,
     RequestInfo,
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, TransportType
 
 if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
     from aiperf.transports.base_transports import FirstTokenCallback
 
 
-def detect_transport_from_url(url: str) -> str:
+def detect_transport_from_url(url: str) -> TransportType:
     """Detect transport type from URL scheme.
 
     Looks up registered transports and matches their url_schemes metadata
@@ -32,7 +33,7 @@ def detect_transport_from_url(url: str) -> str:
         url: URL to detect transport for.
 
     Returns:
-        Transport plugin name (e.g., 'http').
+        TransportType enum member matching the URL scheme.
 
     Raises:
         ValueError: If no transport supports the URL scheme.
@@ -45,7 +46,7 @@ def detect_transport_from_url(url: str) -> str:
 
     for entry in plugins.list_entries(PluginType.TRANSPORT):
         if scheme in entry.metadata.get("url_schemes", []):
-            return entry.name
+            return TransportType(entry.name)
 
     raise ValueError(f"No transport found for URL scheme '{scheme}' in: {url}")
 
@@ -53,26 +54,23 @@ def detect_transport_from_url(url: str) -> str:
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, service_id: str, **kwargs):
-        super().__init__(model_endpoint=model_endpoint, service_id=service_id, **kwargs)
-        self.model_endpoint = model_endpoint
+    def __init__(self, run: BenchmarkRun, service_id: str, **kwargs):
+        super().__init__(run=run, service_id=service_id, **kwargs)
+        self.run = run
         self.service_id = service_id
 
-        # Detect and set transport type if not explicitly set
-        if not model_endpoint.transport:
-            model_endpoint.transport = detect_transport_from_url(
-                model_endpoint.endpoint.base_url,
-            )
+        # Detect transport type if not explicitly set
+        transport = run.cfg.endpoint.transport
+        if not transport:
+            transport = detect_transport_from_url(run.cfg.endpoint.urls[0])
 
         # Create endpoint and transport instances
         EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
+            PluginType.ENDPOINT, self.run.cfg.endpoint.type
         )
-        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
-        TransportClass = plugins.get_class(
-            PluginType.TRANSPORT, str(self.model_endpoint.transport)
-        )
-        self.transport = TransportClass(model_endpoint=self.model_endpoint)
+        self.endpoint = EndpointClass(run=self.run)
+        TransportClass = plugins.get_class(PluginType.TRANSPORT, str(transport))
+        self.transport = TransportClass(run=self.run)
         self.attach_child_lifecycle(self.transport)
 
     async def _send_request_to_transport(
@@ -135,9 +133,11 @@ class InferenceClient(AIPerfLifecycleMixin):
                     f"pre_send_perf_ns to start_perf_ns latency: {result.start_perf_ns - pre_send_perf_ns} ns"
                 )
             return result
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - transport error boundary; all errors captured as ErrorDetails in RequestRecord
             self.error(
-                f"Error calling inference server API at {self.model_endpoint.endpoint.base_url}: {e!r}"
+                f"Error calling inference server API at {self.run.cfg.endpoint.urls[0]}: {e!r}"
             )
             return RequestRecord(
                 request_info=request_info,
@@ -186,7 +186,7 @@ class InferenceClient(AIPerfLifecycleMixin):
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
         record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
+            request_info.turns[-1].model or self.run.cfg.get_model_names()[0]
         )
         record.request_info = request_info
 

@@ -4,7 +4,7 @@
 
 import platform
 
-import orjson
+import msgspec
 import pytest
 
 from aiperf.common.models.telemetry_models import TelemetryRecord
@@ -104,9 +104,9 @@ class TestGpuTelemetry:
         timestamps = []
 
         # Validate each line is valid JSON and can be parsed as TelemetryRecord
+        decoder = msgspec.json.Decoder(TelemetryRecord)
         for line in lines:
-            record_dict = orjson.loads(line)
-            record = TelemetryRecord.model_validate(record_dict)
+            record = decoder.decode(line)
 
             # Verify required fields are present
             assert record.timestamp_ns > 0
@@ -155,7 +155,7 @@ class TestGpuTelemetry:
             assert len(lines) > 0, "Export file should contain telemetry records"
 
             # Validate first record
-            first_record = TelemetryRecord.model_validate_json(lines[0])
+            first_record = msgspec.json.decode(lines[0], type=TelemetryRecord)
             assert first_record.timestamp_ns > 0
             assert first_record.dcgm_url is not None
 

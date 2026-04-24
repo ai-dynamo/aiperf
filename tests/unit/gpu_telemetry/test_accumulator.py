@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import (
@@ -14,29 +14,32 @@ from aiperf.common.models.telemetry_models import (
     TelemetryHierarchy,
     TelemetryRecord,
 )
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.gpu_telemetry.accumulator import (
     GPUTelemetryAccumulator,
 )
-from aiperf.plugin.enums import EndpointType
 from tests.unit.post_processors.conftest import make_telemetry_record
 
 
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+
+
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    """Provide minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        )
+def mock_config() -> AIPerfConfig:
+    """Provide minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
-
-
-@pytest.fixture
-def mock_service_config() -> ServiceConfig:
-    """Provide minimal ServiceConfig for testing."""
-    return ServiceConfig()
 
 
 @pytest.fixture
@@ -74,14 +77,12 @@ class TestGPUTelemetryAccumulator:
 
     def test_initialization(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
     ) -> None:
         """Test processor initialization sets up hierarchy and metric units."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -90,15 +91,13 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_process_telemetry_record(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
         sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test processing a telemetry record adds it to the hierarchy."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -113,15 +112,13 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_get_hierarchy(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
         sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test get_hierarchy returns accumulated data."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -141,15 +138,13 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_with_valid_data(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
         sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test summarize generates MetricResults for all metrics with data."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -181,14 +176,12 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_handles_no_metric_value(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
     ) -> None:
         """Test summarize logs debug message when metric has no data and continues."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -218,14 +211,12 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_handles_unexpected_exception(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
     ) -> None:
         """Test summarize logs exception with stack trace on unexpected errors."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -266,14 +257,12 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_continues_after_errors(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
     ) -> None:
         """Test summarize continues processing other metrics after encountering errors."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -326,15 +315,13 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_generates_correct_tags(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
         sample_telemetry_record: TelemetryRecord,
     ) -> None:
         """Test summarize generates properly formatted tags with DCGM URL and GPU info."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 
@@ -363,14 +350,12 @@ class TestGPUTelemetryAccumulator:
     @pytest.mark.asyncio
     async def test_summarize_multiple_gpus(
         self,
-        mock_user_config: UserConfig,
-        mock_service_config: ServiceConfig,
+        mock_config: AIPerfConfig,
         mock_pub_client,
     ) -> None:
         """Test summarize handles multiple GPUs correctly."""
         processor = GPUTelemetryAccumulator(
-            user_config=mock_user_config,
-            service_config=mock_service_config,
+            run=_make_run(mock_config),
             pub_client=mock_pub_client,
         )
 

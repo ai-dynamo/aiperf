@@ -1,94 +1,129 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.control_structs import Command, ServerMetricsStatus
+from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_command, on_stop
-from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
-    ServerMetricsRecordMessage,
-    ServerMetricsStatusMessage,
+from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.hooks import on_command, on_message, on_stop
+from aiperf.common.models import (
+    ErrorDetails,
+    ErrorTrackingState,
+    ServerMetricsRecord,
 )
-from aiperf.common.metric_utils import normalize_metrics_endpoint_url
-from aiperf.common.models import ErrorDetails, ServerMetricsRecord
-from aiperf.common.protocols import PushClientProtocol
+from aiperf.credit.messages import CreditPhaseStartMessage
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ServerMetricsProcessorType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+from aiperf.server_metrics.endpoint_resolver import EndpointResolver
+from aiperf.server_metrics.protocols import (
+    ServerMetricsAccumulatorProtocol,
+    ServerMetricsProcessorProtocol,
+)
+from aiperf.server_metrics.result_publisher import publish_server_metrics_result
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class ServerMetricsManager(BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 
-    The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
-    to collect server metrics from multiple Prometheus endpoints and send unified
-    ServerMetricsRecordsMessage to RecordsManager.
+    The ServerMetricsManager coordinates multiple ServerMetricsDataCollector
+    instances to collect server metrics from multiple Prometheus endpoints, fan
+    out each collected record to locally-loaded server metrics processors, and
+    publish the accumulated ProcessServerMetricsResultMessage when profiling
+    completes.
 
     This service:
     - Manages lifecycle of ServerMetricsDataCollector instances
     - Collects metrics from multiple Prometheus endpoints
-    - Sends ServerMetricsRecordsMessage to RecordsManager via message system
+    - Runs all configured server metrics processors (plugins registered under
+      SERVER_METRICS_PROCESSOR) locally on each collected record
+    - Accumulates results and publishes ProcessServerMetricsResultMessage on
+      PROFILE_COMPLETE
     - Handles errors gracefully with ErrorDetails
-    - Follows centralized architecture patterns
 
     Args:
-        service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including server_metrics endpoints
+        config: AIPerf configuration including server_metrics endpoints
         service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__(
-            service_config=service_config,
-            user_config=user_config,
-            service_id=service_id,
-        )
-
-        self.records_push_client: PushClientProtocol = self.comms.create_push_client(
-            CommAddress.RECORDS,
-        )
+        super().__init__(run=run, service_id=service_id, **kwargs)
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
-        self._server_metrics_disabled = user_config.server_metrics_disabled
 
-        # Collect metrics from all endpoint URLs (for multi-URL load balancing)
-        self._server_metrics_endpoints: list[str] = []
-        for url in user_config.endpoint.urls:
-            normalized_url = normalize_metrics_endpoint_url(url)
-            if normalized_url not in self._server_metrics_endpoints:
-                self._server_metrics_endpoints.append(normalized_url)
-        self.info(
-            f"Server Metrics: Discovered {len(self._server_metrics_endpoints)} endpoints: {self._server_metrics_endpoints}"
+        server_metrics_config = run.cfg.server_metrics
+        self._server_metrics_disabled = (
+            not server_metrics_config.enabled if server_metrics_config else True
         )
 
-        # Add user-specified URLs if provided
-        if user_config.server_metrics_urls:
-            # Add user URLs, avoiding duplicates
-            for url in user_config.server_metrics_urls:
-                normalized_url = normalize_metrics_endpoint_url(url)
-                if normalized_url not in self._server_metrics_endpoints:
-                    self._server_metrics_endpoints.append(normalized_url)
+        self._resolver = EndpointResolver(run)
+        self._server_metrics_endpoints = self._resolver.build_endpoints(
+            include_default_endpoints=True
+        )
+        self.info(
+            "Server Metrics: Configured "
+            f"{len(self._server_metrics_endpoints)} initial endpoint(s): "
+            f"{self._server_metrics_endpoints}"
+        )
 
-        # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
-
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
 
+        self._processors: list[ServerMetricsProcessorProtocol] = []
+        self._accumulator: ServerMetricsAccumulatorProtocol | None = None
+        self._error_state = ErrorTrackingState()
+        self._result_published: bool = False
+
+        self._init_processors()
+
+    def _init_processors(self) -> None:
+        """Instantiate all SERVER_METRICS_PROCESSOR plugins; skip disabled/failed ones."""
+        for entry in plugins.iter_entries(PluginType.SERVER_METRICS_PROCESSOR):
+            try:
+                ProcessorClass = plugins.get_class(
+                    PluginType.SERVER_METRICS_PROCESSOR, entry.name
+                )
+                processor = ProcessorClass(
+                    service_id=self.service_id,
+                    run=self.run,
+                    pub_client=self.pub_client,
+                )
+                self.attach_child_lifecycle(processor)
+                self._processors.append(processor)
+                if entry.name == ServerMetricsProcessorType.SERVER_METRICS_ACCUMULATOR:
+                    self._accumulator = processor
+                self.debug(
+                    f"Created server metrics processor: {entry.name}: "
+                    f"{processor.__class__.__name__}"
+                )
+            except PostProcessorDisabled:
+                self.debug(
+                    f"Server metrics processor {entry.name} is disabled and will not be used"
+                )
+            except Exception as e:  # noqa: BLE001 - per-plugin; skip bad processor and continue
+                self.error(
+                    f"Failed to create server metrics processor {entry.name}: {e}"
+                )
+
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the server metrics collectors but don't start them yet.
 
         Creates ServerMetricsDataCollector instances for each configured endpoint,
@@ -98,7 +133,6 @@ class ServerMetricsManager(BaseComponentService):
         Args:
             message: Profile configuration command from SystemController
         """
-        # Check if server metrics are disabled via CLI flag
         if self._server_metrics_disabled:
             await self._send_server_metrics_status(
                 enabled=False,
@@ -108,34 +142,8 @@ class ServerMetricsManager(BaseComponentService):
             )
             return
 
-        self._collectors.clear()
-
-        for endpoint_url in self._server_metrics_endpoints:
-            self.debug(
-                lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
-            )
-            collector = ServerMetricsDataCollector(
-                endpoint_url=endpoint_url,
-                collection_interval=self._collection_interval,
-                record_callback=self._on_server_metrics_records,
-                error_callback=self._on_server_metrics_error,
-                collector_id=endpoint_url,
-            )
-
-            try:
-                is_reachable = await collector.is_url_reachable()
-                if is_reachable:
-                    self._collectors[endpoint_url] = collector
-                    self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
-                    )
-                else:
-                    self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
-                    )
-            except Exception as e:
-                self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
-
+        await self._resolve_endpoints()
+        await self._probe_collectors()
         reachable_endpoints = list(self._collectors.keys())
 
         if not self._collectors:
@@ -148,7 +156,59 @@ class ServerMetricsManager(BaseComponentService):
             )
             return
 
-        # Capture baseline metrics before profiling starts
+        await self._capture_baseline_metrics()
+        await self._send_server_metrics_status(
+            enabled=True,
+            reason=None,
+            endpoints_configured=self._server_metrics_endpoints,
+            endpoints_reachable=reachable_endpoints,
+        )
+
+    async def _resolve_endpoints(self) -> None:
+        """Rebuild scrape targets and fold in auto-discovery results."""
+        self._server_metrics_endpoints = self._resolver.build_endpoints(
+            include_default_endpoints=self._resolver.should_include_default_endpoints(),
+        )
+
+        discovered_urls = await self._run_metrics_discovery()
+        added = 0
+        for url in discovered_urls:
+            if url not in self._server_metrics_endpoints:
+                self._server_metrics_endpoints.append(url)
+                added += 1
+        if added > 0:
+            self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
+
+    async def _probe_collectors(self) -> None:
+        """Create a collector per endpoint and keep only reachable ones."""
+        self._collectors.clear()
+        for endpoint_url in self._server_metrics_endpoints:
+            self.debug(
+                lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
+            )
+            collector = ServerMetricsDataCollector(
+                endpoint_url=endpoint_url,
+                collection_interval=self._collection_interval,
+                record_callback=self._on_server_metrics_records,
+                error_callback=self._on_server_metrics_error,
+                collector_id=endpoint_url,
+            )
+            try:
+                is_reachable = await collector.is_url_reachable()
+                if is_reachable:
+                    self._collectors[endpoint_url] = collector
+                    self.debug(
+                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
+                    )
+                else:
+                    self.debug(
+                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                    )
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip unreachable and continue
+                self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
+
+    async def _capture_baseline_metrics(self) -> None:
+        """Capture pre-profiling baseline scrape from every reachable collector."""
         self.info("Server Metrics: Capturing baseline metrics...")
         for endpoint_url, collector in self._collectors.items():
             try:
@@ -157,20 +217,13 @@ class ServerMetricsManager(BaseComponentService):
                 self.debug(
                     lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip baseline failure and continue
                 self.warning(
                     f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
                 )
 
-        await self._send_server_metrics_status(
-            enabled=True,
-            reason=None,
-            endpoints_configured=self._server_metrics_endpoints,
-            endpoints_reachable=reachable_endpoints,
-        )
-
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all server metrics collectors for profiling phase.
 
         Initializes and starts background collection tasks for each configured
@@ -194,7 +247,7 @@ class ServerMetricsManager(BaseComponentService):
             try:
                 await collector.start()
                 started_count += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-collector; skip start failure and continue
                 self.error(f"Failed to start collector for {endpoint_url}: {e}")
 
         total_collectors = len(self._collectors)
@@ -217,10 +270,36 @@ class ServerMetricsManager(BaseComponentService):
                 f"Server Metrics: Started {started_count} collector(s) successfully"
             )
 
+    @on_message(MessageType.CREDIT_PHASE_START)
+    async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
+        """Force a boundary scrape when profiling phase starts.
+
+        Captures a clean post-warmup reference point for counter/histogram delta
+        calculations. Without this, the reference may be the pre-warmup baseline
+        from PROFILE_CONFIGURE, causing warmup activity to leak into profiling deltas.
+
+        Args:
+            message: Credit phase start message from TimingManager
+        """
+        if message.config.phase != "profiling":
+            return
+        if not self._collectors:
+            return
+
+        self.info("Server Metrics: Capturing boundary metrics at profiling start...")
+        for endpoint_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=endpoint_url: f"Server Metrics: Captured boundary state from {url}"
+                )
+            except Exception as e:  # noqa: BLE001 - per-endpoint; skip boundary failure and continue
+                self.warning(
+                    f"Server Metrics: Failed to capture boundary state from {endpoint_url}: {e}"
+                )
+
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Performs one final metrics collection from all endpoints to capture
@@ -241,29 +320,62 @@ class ServerMetricsManager(BaseComponentService):
         # Idempotent check - skip if already stopped or no collectors
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
+        else:
+            self.info("Server Metrics: Profiling complete, capturing final metrics...")
+
+            # Trigger final scrape from all collectors
+            for endpoint_url, collector in list(self._collectors.items()):
+                try:
+                    await collector.collect_and_process_metrics()
+                    self.debug(
+                        lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
+                    )
+                except Exception as e:  # noqa: BLE001 - per-endpoint; skip final scrape failure and continue
+                    self.warning(
+                        f"Server Metrics: Failed to capture final state from {endpoint_url}: {e}"
+                    )
+
+            await self._stop_all_collectors()
+
+        if self._result_published:
+            self.debug(
+                "Server Metrics: PROFILE_COMPLETE re-entry, result already published"
+            )
             return
 
-        self.info("Server Metrics: Profiling complete, capturing final metrics...")
-
-        # Trigger final scrape from all collectors
-        for endpoint_url, collector in list(self._collectors.items()):
+        # RecordsManager sends the results time window in the PROFILE_COMPLETE
+        # payload. Fall back to current time if unavailable.
+        start_ns: int | None = None
+        end_ns: int | None = None
+        if message.payload:
             try:
-                await collector.collect_and_process_metrics()
-                self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
-                )
-            except Exception as e:
+                parsed = orjson.loads(message.payload)
+                start_ns = parsed.get("start_ns")
+                end_ns = parsed.get("end_ns")
+            except Exception as e:  # noqa: BLE001 - best-effort payload parse; fall back to current time
                 self.warning(
-                    f"Server Metrics: Failed to capture final state from {endpoint_url}: {e}"
+                    f"Failed to parse PROFILE_COMPLETE payload ({e!r}); "
+                    "using current time for start_ns/end_ns"
                 )
 
-        # Stop all collectors after final scrape
-        await self._stop_all_collectors()
+        await self._publish_server_metrics_result(start_ns=start_ns, end_ns=end_ns)
+
+    async def _publish_server_metrics_result(
+        self, start_ns: int | None, end_ns: int | None
+    ) -> None:
+        """Publish accumulated server metrics results to subscribers. Idempotent."""
+        # Latch before awaits so a failed publish still prevents republish on re-entry.
+        self._result_published = True
+        await publish_server_metrics_result(
+            publisher=self,
+            accumulator=self._accumulator,
+            error_state=self._error_state,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        )
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
@@ -305,98 +417,48 @@ class ServerMetricsManager(BaseComponentService):
         for endpoint_url, collector in collectors:
             try:
                 await collector.stop()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - per-collector; continue shutting others down
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
 
     async def _delayed_shutdown(self) -> None:
-        """Shutdown service after a delay to allow command response to be sent.
-
-        Waits before calling stop() to ensure the command response
-        has time to be published and transmitted to the SystemController.
-        """
+        """Sleep briefly so the command response flushes, then stop the service."""
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
     async def _on_server_metrics_records(
         self, records: list[ServerMetricsRecord], collector_id: str
     ) -> None:
-        """Async callback for receiving server metrics records from collectors.
+        """Fan out records to all loaded server metrics processors.
 
-        Called by ServerMetricsDataCollector instances when they successfully
-        collect metrics. Forwards records to RecordsManager via ZMQ push socket,
-        preserving all metadata for hierarchical storage and processing.
-
-        Handles errors gracefully by sending error messages to RecordsManager
-        instead of raising exceptions, ensuring collector continues operation
-        despite individual record processing failures.
-
-        Args:
-            records: List of ServerMetricsRecord objects from a collection cycle.
-                    Typically 1 record per successful scrape, may be empty if
-                    endpoint returned no metrics.
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+        A single flattened gather runs over every (processor, record) pair;
+        storage tolerates out-of-order ingestion.
         """
         if not records:
             return
 
-        for record in records:
-            try:
-                message = ServerMetricsRecordMessage(
-                    service_id=self.service_id,
-                    collector_id=collector_id,
-                    record=record,
-                    error=None,
-                )
-
-                await self.records_push_client.push(message)
-
-            except Exception as e:
-                self.error(
-                    f"Failed to send server metrics record from {collector_id}: {e}"
-                )
-                # Send error message to RecordsManager to track the failure
-                try:
-                    error_message = ServerMetricsRecordMessage(
-                        service_id=self.service_id,
-                        collector_id=collector_id,
-                        record=None,
-                        error=ErrorDetails.from_exception(e),
-                    )
-                    await self.records_push_client.push(error_message)
-                except Exception as nested_error:
-                    self.error(
-                        f"Failed to send error message after record send failure: {nested_error}"
-                    )
+        errors = await asyncio.gather(
+            *[
+                processor.process_server_metrics_record(record)
+                for processor in self._processors
+                for record in records
+            ],
+            return_exceptions=True,
+        )
+        for error in errors:
+            if isinstance(error, BaseException):
+                self.exception(f"Failed to process server metrics record: {error!r}")
+                self._error_state.error_counts[ErrorDetails.from_exception(error)] += 1
 
     async def _on_server_metrics_error(
         self, error: ErrorDetails, collector_id: str
     ) -> None:
-        """Async callback for receiving server metrics errors from collectors.
+        """Callback from collectors to record scrape errors into the local error state.
 
-        Called by ServerMetricsDataCollector when collection fails (e.g., network
-        timeout, HTTP error, parsing failure). Forwards error to RecordsManager
-        for tracking and reporting, allowing the system to continue operation
-        despite individual collector failures.
-
-        This callback-based error handling prevents exceptions from crashing
-        the collector's background task, enabling recovery on subsequent scrapes.
-
-        Args:
-            error: ErrorDetails describing the collection error with exception info
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+        Records flow into the ProcessServerMetricsResultMessage published on
+        PROFILE_COMPLETE; returning instead of raising keeps the collector's
+        background task alive across transient failures.
         """
-        try:
-            error_message = ServerMetricsRecordMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                record=None,
-                error=error,
-            )
-
-            await self.records_push_client.push(error_message)
-
-        except Exception as e:
-            self.error(f"Failed to send server metrics error message: {e}")
+        self._error_state.error_counts[error] += 1
 
     async def _send_server_metrics_status(
         self,
@@ -405,28 +467,20 @@ class ServerMetricsManager(BaseComponentService):
         endpoints_configured: list[str] | None = None,
         endpoints_reachable: list[str] | None = None,
     ) -> None:
-        """Send server metrics status message to SystemController.
-
-        Publishes ServerMetricsStatusMessage to inform SystemController about metrics
-        availability and endpoint reachability. Used during configuration phase and
-        when metrics are disabled due to errors.
-
-        Args:
-            enabled: Whether server metrics collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no Prometheus endpoints reachable")
-            endpoints_configured: List of Prometheus endpoint URLs configured
-            endpoints_reachable: List of Prometheus endpoint URLs that are accessible
-        """
+        """Publish ServerMetricsStatus to SystemController (config phase / disable paths)."""
         try:
-            status_message = ServerMetricsStatusMessage(
-                service_id=self.service_id,
-                enabled=enabled,
-                reason=reason,
-                endpoints_configured=endpoints_configured or [],
-                endpoints_reachable=endpoints_reachable or [],
+            await self.control_client.send(
+                ServerMetricsStatus(
+                    sid=self.service_id,
+                    enabled=enabled,
+                    reason=reason,
+                    endpoints_configured=tuple(endpoints_configured or []),
+                    endpoints_reachable=tuple(endpoints_reachable or []),
+                )
             )
-
-            await self.publish(status_message)
-
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort status publish
             self.error(f"Failed to send server metrics status message: {e}")
+
+    async def _run_metrics_discovery(self) -> list[str]:
+        """Run metrics endpoint auto-discovery; delegates to EndpointResolver."""
+        return await self._resolver.run_discovery(self)

@@ -1,7 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.models.auto_routed_model import AutoRoutedModel
+# MetricRecordMetadata is defined in aiperf.common.metric_records_wire, which
+# itself imports from aiperf.common.models.error_models. A direct top-level
+# re-export here forms a circular import when metric_records_wire is the
+# first-entry module in an import chain (e.g. pytest collection ordering or
+# tools that import it directly): loading models/__init__.py kicks off while
+# metric_records_wire is only at line 13, before MetricRecordMetadata is
+# defined, so the re-export fails and tears down both modules. Lazy-export via
+# PEP 562 __getattr__ keeps `from aiperf.common.models import MetricRecordMetadata`
+# working (documented public API, used in tutorials) without forcing
+# metric_records_wire to finish loading before this package init.
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
@@ -28,6 +37,7 @@ from aiperf.common.models.dataset_models import (
 from aiperf.common.models.error_models import (
     ErrorDetails,
     ErrorDetailsCount,
+    ErrorTrackingState,
     ExitErrorInfo,
 )
 from aiperf.common.models.export_models import (
@@ -44,13 +54,9 @@ from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
     IOCounters,
+    NumericAggregate,
     ProcessHealth,
-)
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
+    ProcessHealthAggregates,
 )
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
@@ -62,7 +68,6 @@ from aiperf.common.models.record_models import (
     ImageRetrievalResponseData,
     InferenceServerResponse,
     MetricRecordInfo,
-    MetricRecordMetadata,
     MetricResult,
     MetricValue,
     ParsedResponse,
@@ -106,6 +111,7 @@ from aiperf.common.models.server_metrics_models import (
     MetricFamily,
     MetricSample,
     ProcessServerMetricsResult,
+    ServerMetricData,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
     ServerMetricsExportData,
@@ -123,7 +129,6 @@ from aiperf.common.models.telemetry_models import (
     GpuTelemetrySnapshot,
     ProcessTelemetryResult,
     TelemetryHierarchy,
-    TelemetryMetrics,
     TelemetryRecord,
 )
 from aiperf.common.models.trace_models import (
@@ -140,7 +145,6 @@ __all__ = [
     "AioHttpTraceData",
     "AioHttpTraceDataExport",
     "Audio",
-    "AutoRoutedModel",
     "BasePhaseStats",
     "BaseResponseData",
     "BaseSeries",
@@ -162,9 +166,9 @@ __all__ = [
     "DistributionParser",
     "EmbeddingResponseData",
     "EndpointData",
-    "EndpointInfo",
     "ErrorDetails",
     "ErrorDetailsCount",
+    "ErrorTrackingState",
     "ExitErrorInfo",
     "GaugeMetricData",
     "GaugeSeries",
@@ -196,13 +200,12 @@ __all__ = [
     "MetricResult",
     "MetricSample",
     "MetricValue",
-    "ModelEndpointInfo",
-    "ModelInfo",
-    "ModelListInfo",
+    "NumericAggregate",
     "ParsedResponse",
     "ParsedResponseRecord",
     "PhaseRecordsStats",
     "ProcessHealth",
+    "ProcessHealthAggregates",
     "ProcessRecordsResult",
     "ProcessServerMetricsResult",
     "ProcessTelemetryResult",
@@ -218,6 +221,7 @@ __all__ = [
     "SSEMessage",
     "SequenceLengthDistribution",
     "SequenceLengthPair",
+    "ServerMetricData",
     "ServerMetricsEndpointInfo",
     "ServerMetricsEndpointSummary",
     "ServerMetricsExportData",
@@ -229,7 +233,6 @@ __all__ = [
     "SlimRecord",
     "TelemetryExportData",
     "TelemetryHierarchy",
-    "TelemetryMetrics",
     "TelemetryRecord",
     "TelemetrySummary",
     "Text",
@@ -249,3 +252,14 @@ __all__ = [
     "WorkerStats",
     "WorkerTaskStats",
 ]
+
+
+# Lazy re-export of MetricRecordMetadata to avoid a circular import when
+# aiperf.common.metric_records_wire is imported before this package. See the
+# note at the top of this file.
+def __getattr__(name: str):
+    if name == "MetricRecordMetadata":
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        return MetricRecordMetadata
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

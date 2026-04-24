@@ -5,25 +5,27 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
-from cyclopts import App
+from cyclopts import App, Parameter
 
 app = App(name="analyze-trace")
 
 
 @app.default
 def analyze_trace(
-    input_file: Path,
-    block_size: int = 512,
-    output_file: Path | None = None,
+    *,
+    input_file: Annotated[
+        Path, Parameter(help="Path to input mooncake trace JSONL file.")
+    ],
+    block_size: Annotated[
+        int, Parameter(help="KV cache block size for analysis.")
+    ] = 512,
+    output_file: Annotated[
+        Path | None, Parameter(help="Output path for analysis report (JSON).")
+    ] = None,
 ) -> None:
-    """Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
-
-    Args:
-        input_file: Path to input mooncake trace JSONL file
-        block_size: KV cache block size for analysis (default: 512)
-        output_file: Optional output path for analysis report (JSON)
-    """
+    """Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates."""
     from aiperf.dataset.synthesis.cli import analyze_trace as _analyze_trace
 
     _analyze_trace(input_file, block_size=block_size, output_file=output_file)

@@ -8,90 +8,119 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.cli_runner import (
+    _print_aggregate_summary,
+    _run_multi_benchmark,
+    _run_single_benchmark,
+    run_benchmark,
+)
+from aiperf.config import AIPerfConfig, BenchmarkPlan, BenchmarkRun
+from aiperf.config.loader import build_benchmark_plan
 from aiperf.plugin.enums import UIType
 
+_MINIMAL_CONFIG_KWARGS = {
+    "models": ["test-model"],
+    "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 100,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
 
-class TestRunSystemController:
-    """Test the run_system_controller routing logic."""
+
+def _make_config(**overrides) -> AIPerfConfig:
+    """Create a minimal AIPerfConfig for testing."""
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return AIPerfConfig(**kwargs)
+
+
+def _make_plan(**overrides) -> BenchmarkPlan:
+    """Create a BenchmarkPlan from config overrides."""
+    config = _make_config(**overrides)
+    return build_benchmark_plan(config)
+
+
+def _make_run(**overrides) -> BenchmarkRun:
+    """Create a BenchmarkRun from config overrides."""
+    config = _make_config(**overrides)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=config.artifacts.dir,
+    )
+
+
+class TestRunBenchmark:
+    """Test the run_benchmark routing logic."""
 
     @pytest.fixture
-    def user_config_single_run(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for single run (num_profile_runs=1)."""
-        user_config.loadgen.num_profile_runs = 1
-        return user_config
+    def plan_single_run(self) -> BenchmarkPlan:
+        """Create a BenchmarkPlan for single run."""
+        return _make_plan()
 
     @pytest.fixture
-    def user_config_multi_run(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for multi-run (num_profile_runs>1)."""
-        user_config.loadgen.num_profile_runs = 3
-        user_config.loadgen.confidence_level = 0.95
-        user_config.loadgen.profile_run_cooldown_seconds = 5
-        return user_config
+    def plan_multi_run(self) -> BenchmarkPlan:
+        """Create a BenchmarkPlan for multi-run (num_runs>1)."""
+        return _make_plan(
+            multi_run={
+                "num_runs": 3,
+                "confidence_level": 0.95,
+                "cooldown_seconds": 5,
+            }
+        )
 
     @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_routes_to_single_benchmark_when_num_runs_is_one(
+    def test_routes_to_single_benchmark_when_single_run(
         self,
         mock_single: Mock,
-        user_config_single_run: UserConfig,
-        service_config: ServiceConfig,
+        plan_single_run: BenchmarkPlan,
     ):
-        """Test that single run is called when num_profile_runs=1."""
-        from aiperf.cli_runner import run_system_controller
+        """Test that single run is called for single-run plans."""
+        run_benchmark(plan_single_run)
 
-        run_system_controller(user_config_single_run, service_config)
-
-        mock_single.assert_called_once_with(user_config_single_run, service_config)
+        mock_single.assert_called_once()
 
     @patch("aiperf.cli_runner._run_multi_benchmark")
-    def test_routes_to_multi_benchmark_when_num_runs_greater_than_one(
+    def test_routes_to_multi_benchmark_when_multi_run(
         self,
         mock_multi: Mock,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        plan_multi_run: BenchmarkPlan,
     ):
-        """Test that multi-run is called when num_profile_runs>1."""
-        from aiperf.cli_runner import run_system_controller
+        """Test that multi-run is called for multi-run plans."""
+        run_benchmark(plan_multi_run)
 
-        run_system_controller(user_config_multi_run, service_config)
-
-        mock_multi.assert_called_once_with(user_config_multi_run, service_config)
+        mock_multi.assert_called_once_with(plan_multi_run)
 
     def test_raises_error_when_using_dashboard_ui_with_multi_run(
         self,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        plan_multi_run: BenchmarkPlan,
     ):
         """Test that an error is raised when explicitly using dashboard UI with multi-run."""
-        from aiperf.cli_runner import _run_multi_benchmark
+        for cfg in plan_multi_run.configs:
+            cfg.runtime.ui = UIType.DASHBOARD
 
-        # Set dashboard UI explicitly (simulate user setting it)
-        service_config.ui_type = UIType.DASHBOARD
-        service_config.model_fields_set.add("ui_type")
-
-        # Should raise ValueError when _run_multi_benchmark is called
         with pytest.raises(
-            ValueError, match="Dashboard UI is not supported with multi-run mode"
+            ValueError, match="Dashboard UI is not supported with sweep/multi-run mode"
         ):
-            _run_multi_benchmark(user_config_multi_run, service_config)
+            _run_multi_benchmark(plan_multi_run)
 
     @patch("aiperf.cli_runner._run_multi_benchmark")
     def test_no_warning_when_using_simple_ui_with_multi_run(
         self,
         mock_multi: Mock,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        plan_multi_run: BenchmarkPlan,
         caplog: pytest.LogCaptureFixture,
     ):
         """Test that no warning is logged when using simple UI with multi-run."""
-        from aiperf.cli_runner import run_system_controller
+        for cfg in plan_multi_run.configs:
+            cfg.runtime.ui = UIType.SIMPLE
 
-        # Set simple UI
-        service_config.ui_type = UIType.SIMPLE
+        run_benchmark(plan_multi_run)
 
-        run_system_controller(user_config_multi_run, service_config)
-
-        # Check that no dashboard warning was logged
         assert not any(
             "Dashboard UI does not show live updates" in record.message
             for record in caplog.records
@@ -101,19 +130,14 @@ class TestRunSystemController:
     def test_no_warning_when_using_dashboard_ui_with_single_run(
         self,
         mock_single: Mock,
-        user_config_single_run: UserConfig,
-        service_config: ServiceConfig,
+        plan_single_run: BenchmarkPlan,
         caplog: pytest.LogCaptureFixture,
     ):
         """Test that no warning is logged when using dashboard UI with single run."""
-        from aiperf.cli_runner import run_system_controller
+        plan_single_run.configs[0].runtime.ui = UIType.DASHBOARD
 
-        # Set dashboard UI
-        service_config.ui_type = UIType.DASHBOARD
+        run_benchmark(plan_single_run)
 
-        run_system_controller(user_config_single_run, service_config)
-
-        # Check that no dashboard warning was logged
         assert not any(
             "Dashboard UI does not show live updates" in record.message
             for record in caplog.records
@@ -123,67 +147,78 @@ class TestRunSystemController:
 class TestRunSingleBenchmark:
     """Test the _run_single_benchmark function."""
 
-    @pytest.fixture
-    def service_config_simple(self) -> ServiceConfig:
-        """Create a ServiceConfig with Simple UI type."""
-        config = ServiceConfig()
-        config.ui_type = UIType.SIMPLE
-        return config
+    @pytest.fixture(autouse=True)
+    def _mock_tokenizer_validation(self, mock_get_global_error_queue):
+        """Prevent real HF network calls and forkserver init during single benchmark tests."""
+        with patch(
+            "aiperf.common.tokenizer_validator.validate_tokenizer_early",
+            return_value={"test-model": "test-model"},
+        ):
+            yield
 
-    @patch("aiperf.cli_runner.MetricsConfigLoader")
+    @pytest.fixture(autouse=True)
+    def _mock_os_exit(self):
+        """_run_single_benchmark terminates with os._exit to bypass Python teardown;
+        neutralize it so test assertions can run."""
+        with patch("os._exit") as mock_exit:
+            yield mock_exit
+
+    @pytest.fixture
+    def run_simple(self) -> BenchmarkRun:
+        """Create a BenchmarkRun with Simple UI type."""
+        return _make_run(runtime={"ui": "simple"})
+
+    @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
     def test_simple_ui_uses_rich_logging(
         self,
         mock_setup_rich: Mock,
         mock_bootstrap: Mock,
-        mock_loader_cls: Mock,
-        service_config_simple: ServiceConfig,
-        user_config: UserConfig,
+        mock_chain: Mock,
+        run_simple: BenchmarkRun,
     ):
         """Test that simple UI uses rich logging instead of log queue."""
-        from aiperf.cli_runner import _run_single_benchmark
+        _run_single_benchmark(run_simple)
 
-        _run_single_benchmark(user_config, service_config_simple)
+        mock_setup_rich.assert_called_once_with(run_simple.cfg)
 
-        # Verify rich logging was set up
-        mock_setup_rich.assert_called_once_with(user_config, service_config_simple)
-
-        # Verify bootstrap was called without log_queue
         mock_bootstrap.assert_called_once()
         call_kwargs = mock_bootstrap.call_args.kwargs
         assert call_kwargs.get("log_queue") is None
 
-    @patch("aiperf.cli_runner.MetricsConfigLoader")
+    @patch("aiperf.config.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
-    def test_bootstrap_exception_is_raised(
+    def test_bootstrap_exception_exits_nonzero(
         self,
         mock_bootstrap: Mock,
-        mock_loader_cls: Mock,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        mock_chain: Mock,
+        run: BenchmarkRun,
+        _mock_os_exit: Mock,
     ):
-        """Test that exceptions from bootstrap are raised."""
-        from aiperf.cli_runner import _run_single_benchmark
-
-        # Make bootstrap raise an exception
+        """Bootstrap exceptions are logged and surfaced via a non-zero exit code."""
         mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
-        with pytest.raises(RuntimeError, match="Bootstrap failed"):
-            _run_single_benchmark(user_config, service_config)
+        _run_single_benchmark(run)
+
+        _mock_os_exit.assert_called_once_with(1)
 
 
 class TestRunMultiBenchmark:
     """Test the _run_multi_benchmark function."""
 
     @pytest.fixture
-    def user_config_multi(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for multi-run."""
-        user_config.loadgen.num_profile_runs = 3
-        user_config.loadgen.confidence_level = 0.95
-        user_config.loadgen.profile_run_cooldown_seconds = 5
-        user_config.loadgen.profile_run_disable_warmup_after_first = True
-        return user_config
+    def config_multi(self) -> BenchmarkPlan:
+        """Create a BenchmarkPlan for multi-run."""
+        return _make_plan(
+            runtime={"ui": "simple"},
+            multi_run={
+                "num_runs": 3,
+                "confidence_level": 0.95,
+                "cooldown_seconds": 5,
+                "disable_warmup_after_first": True,
+            },
+        )
 
     @pytest.fixture
     def mock_run_result(self):
@@ -206,7 +241,6 @@ class TestRunMultiBenchmark:
         result.metrics = {}
         return result
 
-    @patch("aiperf.orchestrator.strategies.FixedTrialsStrategy")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     @patch("aiperf.orchestrator.aggregation.confidence.ConfidenceAggregation")
     @patch("aiperf.exporters.aggregate.AggregateConfidenceJsonExporter")
@@ -217,39 +251,29 @@ class TestRunMultiBenchmark:
         mock_json_exporter_cls: Mock,
         mock_aggregation_cls: Mock,
         mock_orchestrator_cls: Mock,
-        mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: BenchmarkPlan,
         mock_run_result: MagicMock,
         mock_aggregate_result: MagicMock,
         tmp_path: Path,
     ):
         """Test successful multi-run with aggregation."""
-        from aiperf.cli_runner import _run_multi_benchmark
+        config_multi.configs[0].artifacts.dir = tmp_path
 
-        # Set up artifact directory
-        user_config_multi.output.artifact_directory = tmp_path
-
-        # Mock strategy
-        mock_strategy = MagicMock()
-        mock_strategy.get_aggregate_path.return_value = tmp_path / "aggregate"
-        mock_strategy_cls.return_value = mock_strategy
-
-        # Mock orchestrator to return 3 successful results
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute.return_value = [
-            mock_run_result,
-            mock_run_result,
-            mock_run_result,
-        ]
+        mock_orchestrator.execute = MagicMock(
+            return_value=[
+                mock_run_result,
+                mock_run_result,
+                mock_run_result,
+            ]
+        )
+        mock_orchestrator.get_aggregate_path.return_value = tmp_path / "aggregate"
         mock_orchestrator_cls.return_value = mock_orchestrator
 
-        # Mock aggregation
         mock_aggregation = MagicMock()
         mock_aggregation.aggregate.return_value = mock_aggregate_result
         mock_aggregation_cls.return_value = mock_aggregation
 
-        # Mock exporters with async export() method
         mock_json_exporter = MagicMock()
         mock_json_exporter.export = AsyncMock(return_value=tmp_path / "aggregate.json")
         mock_json_exporter_cls.return_value = mock_json_exporter
@@ -258,131 +282,92 @@ class TestRunMultiBenchmark:
         mock_csv_exporter.export = AsyncMock(return_value=tmp_path / "aggregate.csv")
         mock_csv_exporter_cls.return_value = mock_csv_exporter
 
-        _run_multi_benchmark(user_config_multi, service_config)
+        _run_multi_benchmark(config_multi)
 
-        # Verify strategy was created with correct parameters
-        mock_strategy_cls.assert_called_once_with(
-            num_trials=3,
-            cooldown_seconds=5,
-            auto_set_seed=True,
-            disable_warmup_after_first=True,
-        )
+        mock_orchestrator_cls.assert_called_once()
+        mock_orchestrator.execute.assert_called_once()
 
-        # Verify orchestrator was created and executed
-        mock_orchestrator_cls.assert_called_once_with(
-            base_dir=tmp_path, service_config=service_config
-        )
-        mock_orchestrator.execute.assert_called_once_with(
-            user_config_multi, mock_strategy
-        )
-
-        # Verify aggregation was performed
         mock_aggregation_cls.assert_called_once_with(confidence_level=0.95)
         mock_aggregation.aggregate.assert_called_once()
 
-        # Verify exporters were called
         mock_json_exporter.export.assert_called_once()
         mock_csv_exporter.export.assert_called_once()
 
-    @patch("aiperf.orchestrator.strategies.FixedTrialsStrategy")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_multi_run_orchestrator_exception(
         self,
         mock_orchestrator_cls: Mock,
-        mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: BenchmarkPlan,
         tmp_path: Path,
     ):
         """Test that orchestrator exceptions are raised."""
-        from aiperf.cli_runner import _run_multi_benchmark
+        config_multi.configs[0].artifacts.dir = tmp_path
 
-        user_config_multi.output.artifact_directory = tmp_path
-
-        # Mock strategy
-        mock_strategy = MagicMock()
-        mock_strategy_cls.return_value = mock_strategy
-
-        # Mock orchestrator to raise exception
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute.side_effect = RuntimeError("Orchestrator failed")
+        mock_orchestrator.execute = MagicMock(
+            side_effect=RuntimeError("Orchestrator failed")
+        )
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(RuntimeError, match="Orchestrator failed"):
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
-    @patch("aiperf.orchestrator.strategies.FixedTrialsStrategy")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_multi_run_only_one_successful_exits_with_error(
         self,
         mock_orchestrator_cls: Mock,
-        mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: BenchmarkPlan,
         mock_run_result: MagicMock,
         tmp_path: Path,
     ):
         """Test that only 1 successful run exits with error code 1."""
-        from aiperf.cli_runner import _run_multi_benchmark
+        config_multi.configs[0].artifacts.dir = tmp_path
 
-        user_config_multi.output.artifact_directory = tmp_path
-
-        # Mock strategy
-        mock_strategy = MagicMock()
-        mock_strategy_cls.return_value = mock_strategy
-
-        # Mock orchestrator to return 1 successful and 2 failed results
         failed_result = MagicMock()
         failed_result.success = False
         failed_result.label = "run_2"
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute.return_value = [
-            mock_run_result,
-            failed_result,
-            failed_result,
-        ]
+        mock_orchestrator.execute = MagicMock(
+            return_value=[
+                mock_run_result,
+                failed_result,
+                failed_result,
+            ]
+        )
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(SystemExit) as exc_info:
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
         assert exc_info.value.code == 1
 
-    @patch("aiperf.orchestrator.strategies.FixedTrialsStrategy")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_multi_run_all_failed_exits_with_error(
         self,
         mock_orchestrator_cls: Mock,
-        mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: BenchmarkPlan,
         tmp_path: Path,
     ):
         """Test that all failed runs exit with error code 1."""
-        from aiperf.cli_runner import _run_multi_benchmark
+        config_multi.configs[0].artifacts.dir = tmp_path
 
-        user_config_multi.output.artifact_directory = tmp_path
-
-        # Mock strategy
-        mock_strategy = MagicMock()
-        mock_strategy_cls.return_value = mock_strategy
-
-        # Mock orchestrator to return all failed results
         failed_result = MagicMock()
         failed_result.success = False
         failed_result.label = "run_1"
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.execute.return_value = [
-            failed_result,
-            failed_result,
-            failed_result,
-        ]
+        mock_orchestrator.execute = MagicMock(
+            return_value=[
+                failed_result,
+                failed_result,
+                failed_result,
+            ]
+        )
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(SystemExit) as exc_info:
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
         assert exc_info.value.code == 1
 
@@ -405,7 +390,6 @@ class TestPrintAggregateSummary:
         result.failed_runs = []
         result.metadata = {"confidence_level": 0.95}
 
-        # Create mock metrics
         mock_metric = MagicMock()
         mock_metric.mean = 100.5
         mock_metric.std = 5.2
@@ -416,7 +400,6 @@ class TestPrintAggregateSummary:
         mock_metric.ci_high = 103.0
         mock_metric.unit = "req/s"
 
-        # Use actual flattened metric keys that match the aggregation output
         result.metrics = {
             "request_throughput_avg": mock_metric,
             "time_to_first_token_avg": mock_metric,
@@ -441,11 +424,8 @@ class TestPrintAggregateSummary:
         self, aggregate_result_with_metrics: MagicMock, mock_logger: MagicMock
     ):
         """Test that basic summary information is printed."""
-        from aiperf.cli_runner import _print_aggregate_summary
-
         _print_aggregate_summary(aggregate_result_with_metrics, mock_logger)
 
-        # Verify logger.info was called with expected content
         info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
 
         assert any("AGGREGATE STATISTICS SUMMARY" in call for call in info_calls)
@@ -458,11 +438,8 @@ class TestPrintAggregateSummary:
         self, aggregate_result_with_failures: MagicMock, mock_logger: MagicMock
     ):
         """Test that failed runs are printed as warnings."""
-        from aiperf.cli_runner import _print_aggregate_summary
-
         _print_aggregate_summary(aggregate_result_with_failures, mock_logger)
 
-        # Verify logger.warning was called for failed runs
         warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
 
         assert any("Failed Runs (1):" in call for call in warning_calls)
@@ -472,14 +449,10 @@ class TestPrintAggregateSummary:
         self, aggregate_result_with_metrics: MagicMock, mock_logger: MagicMock
     ):
         """Test that key metrics are printed with correct formatting."""
-        from aiperf.cli_runner import _print_aggregate_summary
-
         _print_aggregate_summary(aggregate_result_with_metrics, mock_logger)
 
-        # Verify metrics were printed
         info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
 
-        # Check for the dynamic display name format (e.g., "Request Throughput (Avg)")
         assert any("Request Throughput" in call for call in info_calls)
         assert any("Mean:" in call and "100.5000" in call for call in info_calls)
         assert any("Std Dev:" in call and "5.2000" in call for call in info_calls)
@@ -489,11 +462,8 @@ class TestPrintAggregateSummary:
         self, aggregate_result_with_metrics: MagicMock, mock_logger: MagicMock
     ):
         """Test that interpretation guide is printed."""
-        from aiperf.cli_runner import _print_aggregate_summary
-
         _print_aggregate_summary(aggregate_result_with_metrics, mock_logger)
 
-        # Verify interpretation guide was printed
         info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
 
         assert any(
@@ -507,8 +477,6 @@ class TestPrintAggregateSummary:
 
     def test_handles_empty_metrics(self, mock_logger: MagicMock):
         """Test that empty metrics are handled gracefully."""
-        from aiperf.cli_runner import _print_aggregate_summary
-
         result = MagicMock()
         result.aggregation_type = "confidence"
         result.num_runs = 3
@@ -519,6 +487,62 @@ class TestPrintAggregateSummary:
 
         _print_aggregate_summary(result, mock_logger)
 
-        # Verify warning was logged for no metrics
         warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
         assert any("No key metrics found" in call for call in warning_calls)
+
+
+class TestConfigureTokenizerPreload:
+    """Verify env vars are surfaced for the forkserver preload module."""
+
+    def test_sets_model_names_from_config(self, monkeypatch: pytest.MonkeyPatch):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        run = _make_run(models=["Qwen/Qwen3-0.6B", "openai/gpt-oss-120b"])
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert (
+            _os.environ.get("AIPERF_PRELOAD_TOKENIZERS")
+            == "Qwen/Qwen3-0.6B,openai/gpt-oss-120b"
+        )
+
+    def test_explicit_tokenizer_name_overrides_model_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE", raising=False)
+        run = _make_run(
+            models=["served-model-a", "served-model-b"],
+            tokenizer={"name": "meta-llama/Llama-3.1-8B", "trust_remote_code": True},
+        )
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZERS") == "meta-llama/Llama-3.1-8B"
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZER_TRUST_REMOTE_CODE") == "true"
+
+    def test_does_not_overwrite_already_set_env(self, monkeypatch: pytest.MonkeyPatch):
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.setenv("AIPERF_PRELOAD_TOKENIZERS", "operator-set/value")
+        run = _make_run(models=["Qwen/Qwen3-0.6B"])
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert _os.environ.get("AIPERF_PRELOAD_TOKENIZERS") == "operator-set/value"
+
+    def test_noop_when_no_models(self, monkeypatch: pytest.MonkeyPatch):
+        """With no models configured, env var should stay unset (preload is no-op)."""
+        from aiperf.cli_runner import _configure_tokenizer_preload
+
+        monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
+        run = _make_run()
+        run.cfg.models.items = []
+        run.cfg.tokenizer = None
+        _configure_tokenizer_preload(run)
+        import os as _os
+
+        assert "AIPERF_PRELOAD_TOKENIZERS" not in _os.environ

@@ -9,10 +9,11 @@ import logging
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import msgspec
 import pytest
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import InputsFile, SessionPayloads
+from aiperf.config.defaults import OutputDefaults
 from aiperf.plugin import plugins
 
 
@@ -90,7 +91,7 @@ class TestDatasetManagerInputsJsonGeneration:
         tmp_path: Path,
     ):
         """Test file creation in correct location and valid JSON output."""
-        populated_dataset_manager.user_config.output.artifact_directory = tmp_path
+        populated_dataset_manager.run.cfg.artifacts.dir = tmp_path
 
         await populated_dataset_manager._generate_inputs_json_file()
 
@@ -145,7 +146,7 @@ class TestDatasetManagerInputsJsonGeneration:
         await populated_dataset_manager._generate_inputs_json_file()
 
         written_json = json.loads(capture_file_writes.written_content)
-        inputs_file = InputsFile.model_validate(written_json)
+        inputs_file = msgspec.convert(written_json, InputsFile)
 
         assert isinstance(inputs_file, InputsFile)
         assert len(inputs_file.data) == 2

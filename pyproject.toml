@@ -9,6 +9,9 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build.targets.wheel]
+artifacts = ["aiperf/operator/ui/**"]
+
 [project]
 name = "aiperf"
 version = "0.7.0"
@@ -61,7 +64,12 @@ dependencies = [
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
   "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
+  "kopf>=1.42.0",
   "zstandard>=0.25.0",
+  "python-multipart>=0.0.22",
+  "kubernetes_asyncio>=32.0,<33.0",
+  "duckdb>=1.5.0",
+  "httpcore[http2]>=1.0.0",
 ]
 
 # CLI Entrypoints
@@ -76,6 +84,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",
+  "jsonschema>=4.23.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -84,13 +93,20 @@ dev = [
   "pytest-xdist>=3.8.0",
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
+  "pympler>=1.1",
+]
+
+[dependency-groups]
+dev = [
+    "playwright>=1.58.0",
+    "pytest-playwright-asyncio>=0.7.2",
 ]
 
 [tool.ruff]
 # Base settings for ruff
 line-length = 88
 indent-width = 4
-exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb"]
+exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb", "new_config", "demo.py", "validate_examples.py"]
 
 [tool.ruff.lint]
 select = [
@@ -111,11 +127,47 @@ select = [
 # can have some lines that are slightly over due to the way formatting works
 ignore = ["E501"]
 
+# LLM-ergonomics rules (PLR0915, PLR0912, C901, TID251) are deliberately
+# NOT in `select` above. They are enforced out-of-band via
+# ``tools/ruff_baselined.py``, which filters ruff's output through
+# ``tools/ruff_baseline.json`` (keyed on (rule, file, function-name)). This
+# avoids per-line ``# noqa`` noise and per-file exemptions while still
+# catching NEW violations in files that already have grandfathered ones.
+# The threshold/config blocks below are kept so that ``ruff check --select
+# PLR0915,...`` (invoked by the wrapper and available for ad-hoc runs)
+# honors the project's tunings.
+
+[tool.ruff.lint.pylint]
+# Match tools/check_ergonomics.py thresholds.
+max-statements = 50  # function-size proxy (custom tool targets 80 lines)
+max-branches = 12    # nesting proxy (custom tool targets depth 5)
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Enforce orjson over stdlib json (CLAUDE.md standard).
+"json.dumps".msg = "Use orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode() instead."
+"json.loads".msg = "Use orjson.loads instead."
+"json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
+"json.load".msg = "Use orjson.loads on file bytes instead."
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path manipulation before imports is required for direct script execution
+"dev/kube.py" = ["E402"]
+"dev/benchmarks/record_processing_benchmark.py" = ["E402"]
+
 [tool.pytest.ini_options]
 # Basic pytest configuration
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Default per-test timeout. Unit tests should finish in well under 60 s; the
+# cap exists to catch infinite retry/await loops that can otherwise exhaust
+# memory before pytest-xdist notices anything is wrong. Slow integration/k8s
+# tests override with ``@pytest.mark.timeout(...)``.
+timeout = 60
+timeout_method = "thread"
 markers = [
     "integration: marks tests as integration tests",
     "performance: marks tests as performance tests (deselected by default)",
@@ -123,18 +175,28 @@ markers = [
     "stress: marks tests as stress tests that generate high load (deselected by default)",
     "slow: marks tests as slow (>= 3s, run by default but can be skipped with -m 'not slow')",
     "component_integration: marks tests as component integration tests",
-    "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
+    "benchmark: marks tests as resource benchmarks for K8s sizing (deselected by default)",
+    "gpu: marks tests requiring a GPU Kubernetes cluster (deselected by default)",
+    "vllm: marks tests requiring a vLLM server (deselected by default)",
+    "dynamo: marks tests requiring a Dynamo deployment (deselected by default)",
+    "k8s: marks tests requiring a Kubernetes cluster",
+    "k8s_slow: marks k8s tests that are known to be slow",
+    "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
+    "sglang: marks tests requiring an SGLang server (deselected by default)",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
+    "e2e: marks tests as browser-based end-to-end UI tests (requires playwright chromium, deselected by default)",
+    "memory_limit(mb=N): cap this test's virtual address space at N MiB (default 4096)",
+    "no_memory_limit: disable the per-test virtual address space cap entirely",
 ]
 # Better console output
 console_output_style = "progress"
 verbosity_assertions = 2
 # Show extra test summary info
-# Deselect performance, ffmpeg, and stress, and statistical, and component_integration, and integration, and server_unit tests by default
-# To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
+# Deselect slow/infra test suites by default - opt in explicitly:
+#   pytest -m k8s, pytest -m gpu, pytest -m performance, pytest -m integration, etc.
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not gpu and not vllm and not dynamo and not trtllm and not sglang and not k8s and not fern and not e2e'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
@@ -144,5 +206,5 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
-ignore-words-list = "timeslice,timeslices"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,tests/_js_cache/*"
+ignore-words-list = "timeslice,timeslices,aks,ot"

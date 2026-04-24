@@ -12,8 +12,9 @@ from aiperf.common.models.record_models import (
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    _wrap_run,
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -39,8 +40,8 @@ class TestBaseEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo."""
-        return create_model_endpoint(
+        """Create a test BenchmarkConfig."""
+        return create_config(
             EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
         )
 
@@ -56,10 +57,10 @@ class TestBaseEndpoint:
             ("test-api-key-123", None, {"Authorization": "Bearer test-api-key-123"}),
             (
                 None,
-                [
-                    ("X-Custom-Header", "custom-value"),
-                    ("X-Another-Header", "another-value"),
-                ],
+                {
+                    "X-Custom-Header": "custom-value",
+                    "X-Another-Header": "another-value",
+                },
                 {
                     "X-Custom-Header": "custom-value",
                     "X-Another-Header": "another-value",
@@ -67,7 +68,7 @@ class TestBaseEndpoint:
             ),
             (
                 "secret-key",
-                [("Content-Language", "en-US"), ("X-Client-Version", "1.0.0")],
+                {"Content-Language": "en-US", "X-Client-Version": "1.0.0"},
                 {
                     "Authorization": "Bearer secret-key",
                     "Content-Language": "en-US",
@@ -76,40 +77,27 @@ class TestBaseEndpoint:
             ),
         ],
     )
-    def test_get_endpoint_headers(
-        self, endpoint, model_endpoint, api_key, custom_headers, expected_headers
-    ):
+    def test_get_endpoint_headers(self, api_key, custom_headers, expected_headers):
         """Test get_endpoint_headers with various combinations."""
-        model_endpoint.endpoint.api_key = api_key
-        model_endpoint.endpoint.headers = custom_headers
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+        cfg = create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000/v1/test",
+            api_key=api_key,
+            headers=custom_headers or {},
+        )
+        ep = create_endpoint_with_mock_transport(MockEndpoint, cfg)
+        request_info = create_request_info(config=cfg, turns=[])
 
-        headers = endpoint.get_endpoint_headers(request_info)
+        headers = ep.get_endpoint_headers(request_info)
 
         for key, value in expected_headers.items():
             assert headers[key] == value
 
-    @pytest.mark.parametrize(
-        "url_params,expected_params",
-        [
-            (None, {}),
-            ({}, {}),
-            (
-                {"api-version": "2024-10-01", "timeout": "60"},
-                {"api-version": "2024-10-01", "timeout": "60"},
-            ),
-        ],
-    )
-    def test_get_endpoint_params(
-        self, endpoint, model_endpoint, url_params, expected_params
-    ):
-        """Test get_endpoint_params with various URL parameters."""
-        model_endpoint.endpoint.url_params = url_params
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
-
+    def test_get_endpoint_params_returns_empty(self, endpoint, model_endpoint):
+        """Test get_endpoint_params returns empty dict by default."""
+        request_info = create_request_info(config=model_endpoint, turns=[])
         params = endpoint.get_endpoint_params(request_info)
-
-        assert params == expected_params
+        assert params == {}
 
     @pytest.mark.asyncio
     async def test_extract_response_data_single_response(self, endpoint):
@@ -203,7 +191,7 @@ class TestBaseEndpoint:
     @pytest.mark.asyncio
     async def test_format_payload_called(self, endpoint, model_endpoint):
         """Test that format_payload is implemented and callable."""
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+        request_info = create_request_info(config=model_endpoint, turns=[])
         payload = endpoint.format_payload(request_info)
         assert payload == {"test": "payload"}
 
@@ -227,13 +215,13 @@ class TestBaseEndpointAbstractMethods:
 
     @pytest.fixture
     def test_model_endpoint(self):
-        """Create a test ModelEndpointInfo for abstract method tests."""
-        return create_model_endpoint(EndpointType.CHAT, base_url="http://localhost")
+        """Create a test BenchmarkConfig for abstract method tests."""
+        return create_config(EndpointType.CHAT, base_url="http://localhost")
 
     def test_cannot_instantiate_base_endpoint(self, test_model_endpoint):
         """Test that BaseEndpoint cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            BaseEndpoint(model_endpoint=test_model_endpoint)
+            BaseEndpoint(run=_wrap_run(test_model_endpoint))
 
     def test_must_implement_format_payload(self, test_model_endpoint):
         """Test that subclasses must implement format_payload()."""
@@ -245,7 +233,7 @@ class TestBaseEndpointAbstractMethods:
                 return None
 
         with pytest.raises(TypeError):
-            IncompleteEndpoint(model_endpoint=test_model_endpoint)
+            IncompleteEndpoint(run=_wrap_run(test_model_endpoint))
 
     def test_must_implement_parse_response(self, test_model_endpoint):
         """Test that subclasses must implement parse_response()."""
@@ -256,4 +244,4 @@ class TestBaseEndpointAbstractMethods:
                 return {}
 
         with pytest.raises(TypeError):
-            IncompleteEndpoint(model_endpoint=test_model_endpoint)
+            IncompleteEndpoint(run=_wrap_run(test_model_endpoint))

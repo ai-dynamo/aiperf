@@ -5,56 +5,78 @@
 from pathlib import Path
 from typing import Annotated
 
-from cyclopts import App
+from cyclopts import App, Parameter
 
-from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.plugin.enums import ServiceType
 
 app = App(name="service")
 
 
+_ServiceTypeArg = Annotated[
+    ServiceType,
+    Parameter(
+        name="--type", show_env_var=False, negative=False, help="Service type to run."
+    ),
+]
+_BenchmarkRunArg = Annotated[
+    Path | None,
+    Parameter(
+        name="--benchmark-run",
+        show_env_var=False,
+        negative=False,
+        help="Path to a BenchmarkRun JSON file. "
+        "The service bootstraps with a fully-built BenchmarkRun "
+        "including metadata, variation, and trial info.",
+    ),
+]
+_ServiceIdArg = Annotated[
+    str | None,
+    Parameter(
+        show_env_var=False,
+        negative=False,
+        help="Unique identifier for the service instance. "
+        "Useful when running multiple instances of the same service type.",
+    ),
+]
+_HealthHostArg = Annotated[
+    str | None,
+    Parameter(
+        show_env_var=False,
+        negative=False,
+        help="Host to bind the health server to. "
+        "Falls back to AIPERF_SERVICE_HEALTH_HOST environment variable.",
+    ),
+]
+_HealthPortArg = Annotated[
+    int | None,
+    Parameter(
+        show_env_var=False,
+        negative=False,
+        help="HTTP port for health endpoints (/healthz, /readyz). "
+        "Required for Kubernetes liveness and readiness probes. "
+        "Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.",
+    ),
+]
+_ApiPortArg = Annotated[
+    int | None,
+    Parameter(
+        show_env_var=False,
+        negative=False,
+        help="HTTP port for API endpoints (e.g., /api/dataset, /api/progress). "
+        "Only used by services that expose HTTP APIs.",
+    ),
+]
+
+
 @app.default
 def service(
-    service_type: Annotated[
-        ServiceType, CLIParameter(name="--type", help="Service type to run.")
-    ],
-    user_config_file: Annotated[
-        Path | None,
-        CLIParameter(
-            help="Path to the user configuration file (JSON or YAML). "
-            "Falls back to AIPERF_CONFIG_USER_FILE environment variable."
-        ),
-    ] = None,
-    service_config_file: Annotated[
-        Path | None,
-        CLIParameter(
-            help="Path to the service configuration file (JSON or YAML). "
-            "Falls back to AIPERF_CONFIG_SERVICE_FILE environment variable, "
-            "then to default ServiceConfig if neither is set."
-        ),
-    ] = None,
-    service_id: Annotated[
-        str | None,
-        CLIParameter(
-            help="Unique identifier for the service instance. "
-            "Useful when running multiple instances of the same service type."
-        ),
-    ] = None,
-    health_host: Annotated[
-        str | None,
-        CLIParameter(
-            help="Host to bind the health server to. "
-            "Falls back to AIPERF_SERVICE_HEALTH_HOST environment variable."
-        ),
-    ] = None,
-    health_port: Annotated[
-        int | None,
-        CLIParameter(
-            help="HTTP port for health endpoints (/healthz, /readyz). "
-            "Required for Kubernetes liveness and readiness probes. "
-            "Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable."
-        ),
-    ] = None,
+    *,
+    service_type: _ServiceTypeArg,
+    benchmark_run_file: _BenchmarkRunArg = None,
+    service_id: _ServiceIdArg = None,
+    health_host: _HealthHostArg = None,
+    health_port: _HealthPortArg = None,
+    api_port: _ApiPortArg = None,
 ) -> None:
     """Run an AIPerf service in a single process.
 
@@ -67,26 +89,37 @@ def service(
 
     with exit_on_error(title=f"Error Running AIPerf Service {service_type}"):
         from aiperf.common.bootstrap import bootstrap_and_run_service
-        from aiperf.common.config.loader import load_service_config, load_user_config
-        from aiperf.common.environment import Environment
 
-        # Load configs (with fallback to environment variables)
-        user_config = load_user_config(user_config_file)
-        service_config = load_service_config(service_config_file)
-
-        if health_host is not None:
-            # CLI argument takes precedence over environment variable
-            Environment.SERVICE.HEALTH_ENABLED = True
-            Environment.SERVICE.HEALTH_HOST = health_host
-
-        if health_port is not None:
-            # CLI argument takes precedence over environment variable
-            Environment.SERVICE.HEALTH_ENABLED = True
-            Environment.SERVICE.HEALTH_PORT = health_port
+        run = _load_benchmark_run(benchmark_run_file)
+        _apply_health_overrides(health_host, health_port)
 
         bootstrap_and_run_service(
             service_type=service_type,
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
+            config=None,
             service_id=service_id,
+            api_port=api_port,
         )
+
+
+def _load_benchmark_run(benchmark_run_file: Path | None):
+    if benchmark_run_file is None:
+        return None
+
+    import orjson
+
+    from aiperf.config.benchmark import BenchmarkRun
+
+    return BenchmarkRun.model_validate(orjson.loads(benchmark_run_file.read_bytes()))
+
+
+def _apply_health_overrides(health_host: str | None, health_port: int | None) -> None:
+    from aiperf.common.environment import Environment
+
+    if health_host is not None:
+        Environment.SERVICE.HEALTH_ENABLED = True
+        Environment.SERVICE.HEALTH_HOST = health_host
+
+    if health_port is not None:
+        Environment.SERVICE.HEALTH_ENABLED = True
+        Environment.SERVICE.HEALTH_PORT = health_port

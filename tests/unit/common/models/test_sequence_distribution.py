@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from aiperf.common import random_generator as rng
+from aiperf.common.models import Turn
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,
@@ -23,6 +24,8 @@ from aiperf.common.models.sequence_distribution import (
     create_balanced_distribution,
     create_uniform_distribution,
 )
+from aiperf.config.dataset import PromptConfig
+from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 class TestSequenceLengthPair:
@@ -206,8 +209,6 @@ class TestSequenceLengthDistribution:
     def test_reproducible_sampling(self):
         """Test that sampling is reproducible with global RNG."""
         # Initialize the global RNG to ensure reproducibility
-        from aiperf.common import random_generator as rng
-
         rng.reset()
         rng.init(123)
         dist1 = SequenceLengthDistribution(self.multi_pair)
@@ -620,57 +621,57 @@ class TestIntegration:
 class TestPromptConfigIntegration:
     """Test integration with PromptConfig."""
 
-    def test_get_sequence_distribution_with_explicit_dist(self):
-        """Test getting distribution when sequence_distribution is set."""
-        from aiperf.common.config.prompt_config import PromptConfig
+    def test_sequence_distribution_with_entries(self):
+        """Test PromptConfig with sequence_distribution entries."""
+        config = PromptConfig(
+            sequence_distribution=[
+                {"isl": 256, "osl": 128, "probability": 60},
+                {"isl": 512, "osl": 256, "probability": 40},
+            ]
+        )
 
+        assert len(config.sequence_distribution) == 2
+        assert config.sequence_distribution[0].isl.mean == 256
+        assert config.sequence_distribution[0].osl.mean == 128
+        assert config.sequence_distribution[0].probability == 60
+        assert config.sequence_distribution[1].isl.mean == 512
+        assert config.sequence_distribution[1].osl.mean == 256
+        assert config.sequence_distribution[1].probability == 40
+
+    def test_sequence_distribution_with_stddev(self):
+        """Test PromptConfig with sequence_distribution entries including stddev."""
+        config = PromptConfig(
+            sequence_distribution=[
+                {
+                    "isl": {"mean": 256, "stddev": 20},
+                    "osl": {"mean": 128, "stddev": 10},
+                    "probability": 60,
+                },
+                {
+                    "isl": {"mean": 512, "stddev": 30},
+                    "osl": {"mean": 256, "stddev": 15},
+                    "probability": 40,
+                },
+            ]
+        )
+
+        assert len(config.sequence_distribution) == 2
+
+    def test_no_sequence_distribution_uses_isl_osl(self):
+        """Test that isl/osl are used when no distribution is set."""
+        config = PromptConfig(isl=512, osl=256)
+
+        assert config.sequence_distribution is None
+        assert config.isl is not None
+        assert config.osl is not None
+
+    def test_default_prompt_config_has_no_distribution(self):
+        """Test that default PromptConfig has no sequence_distribution."""
         config = PromptConfig()
-        config.sequence_distribution = "256,128:60;512,256:40"
 
-        dist = config.get_sequence_distribution()
-
-        assert len(dist.pairs) == 2
-        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0)
-        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0)
-
-    def test_get_sequence_distribution_with_stddev(self):
-        """Test getting distribution with standard deviations."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = "256|20,128|10:60;512|30,256|15:40"
-
-        dist = config.get_sequence_distribution()
-
-        assert len(dist.pairs) == 2
-        assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 20.0, 10.0)
-        assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 30.0, 15.0)
-
-    def test_get_sequence_distribution_fallback_to_isl_osl(self):
-        """Test that None is returned when no distribution is set."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = None
-        config.input_tokens.mean = 512
-        config.output_tokens.mean = 256
-
-        dist = config.get_sequence_distribution()
-
-        assert dist is None
-
-    def test_get_sequence_distribution_default_osl(self):
-        """Test that None is returned when no distribution is specified."""
-        from aiperf.common.config.prompt_config import PromptConfig
-
-        config = PromptConfig()
-        config.sequence_distribution = None
-        config.input_tokens.mean = 512
-        config.output_tokens.mean = None  # Not specified
-
-        dist = config.get_sequence_distribution()
-
-        assert dist is None
+        assert config.sequence_distribution is None
+        assert config.isl is None
+        assert config.osl is None
 
 
 class TestSequenceCaching:
@@ -678,9 +679,6 @@ class TestSequenceCaching:
 
     def test_turn_sequence_caching(self):
         """Test that sequence lengths are cached per turn for consistency."""
-
-        from aiperf.common.models import Turn
-        from aiperf.dataset.composer.base import BaseDatasetComposer
 
         # Create mock composer
         class MockComposer(BaseDatasetComposer):
@@ -721,9 +719,6 @@ class TestSequenceCaching:
 
     def test_different_turns_get_different_cache_entries(self):
         """Test that different turns can have different cached sequence lengths."""
-
-        from aiperf.common.models import Turn
-        from aiperf.dataset.composer.base import BaseDatasetComposer
 
         # Create mock composer
         class MockComposer(BaseDatasetComposer):

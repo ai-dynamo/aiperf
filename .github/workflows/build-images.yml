@@ -1,0 +1,159 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-arch container image build workflow (opt-in push).
+#
+# On pull_request and push-to-main, both deploy/Dockerfile.aiperf-slim and
+# deploy/Dockerfile.operator are BUILT for linux/amd64 + linux/arm64 as a CI
+# check. Nothing is pushed.
+#
+# To publish images, trigger this workflow manually ("Run workflow" /
+# workflow_dispatch) with:
+#   - push_to_registry: true
+#   - registry:         ghcr.io/ai-dynamo/aiperf  (or any other target)
+# and ensure the `REGISTRY_TOKEN` repository secret is set (PAT/registry token
+# with push rights). The login + push steps are gated on BOTH the input being
+# true AND the secret being present — if either is missing the workflow still
+# runs as a build-only check.
+name: "Build Container Images"
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      push_to_registry:
+        description: "Push built images to the registry (requires REGISTRY_TOKEN secret)"
+        type: boolean
+        default: false
+      registry:
+        description: "Destination registry/repo prefix for image tags"
+        type: string
+        default: "ghcr.io/ai-dynamo/aiperf"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: "build (${{ matrix.image.name }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: aiperf-slim
+            dockerfile: deploy/Dockerfile.aiperf-slim
+          - name: operator
+            dockerfile: deploy/Dockerfile.operator
+    env:
+      PUSH_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.push_to_registry == true }}
+      REGISTRY: ${{ (github.event_name == 'workflow_dispatch' && inputs.registry) || 'ghcr.io/ai-dynamo/aiperf' }}
+      HAS_REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN != '' }}
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: false
+
+      - uses: actions/checkout@v4
+
+      - name: Compute push flag
+        id: push
+        shell: bash
+        run: |
+          if [[ "${PUSH_REQUESTED}" == "true" && "${HAS_REGISTRY_TOKEN}" == "true" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "${PUSH_REQUESTED}" == "true" && "${HAS_REGISTRY_TOKEN}" != "true" ]]; then
+            echo "::warning::push_to_registry=true but REGISTRY_TOKEN secret is not set; falling back to build-only."
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.image.name }}
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=ref,event=pr,prefix=pr-
+            type=ref,event=branch,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+
+      - name: Log in to registry
+        if: steps.push.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Build${{ steps.push.outputs.enabled == 'true' && ' and push' || '' }} ${{ matrix.image.name }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.push.outputs.enabled == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Image build: \`${{ matrix.image.name }}\`"
+            echo ""
+            echo "- Dockerfile: \`${{ matrix.image.dockerfile }}\`"
+            echo "- Platforms: \`linux/amd64,linux/arm64\`"
+            echo "- Registry: \`${REGISTRY}\`"
+            echo "- Push requested: \`${PUSH_REQUESTED}\`"
+            echo "- Registry token present: \`${HAS_REGISTRY_TOKEN}\`"
+            echo "- Push enabled: \`${{ steps.push.outputs.enabled }}\`"
+            echo ""
+            echo "### Tags"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

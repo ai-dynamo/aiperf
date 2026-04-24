@@ -9,8 +9,8 @@ from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -20,10 +20,8 @@ class TestEmbeddingsEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for embeddings."""
-        return create_model_endpoint(
-            EndpointType.EMBEDDINGS, model_name="embeddings-model"
-        )
+        """Create a test BenchmarkConfig for embeddings."""
+        return create_config(EndpointType.EMBEDDINGS, model_name="embeddings-model")
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
@@ -36,7 +34,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=["Embed this text"])],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -52,7 +50,7 @@ class TestEmbeddingsEndpoint:
             ],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -67,7 +65,7 @@ class TestEmbeddingsEndpoint:
             ],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -81,7 +79,7 @@ class TestEmbeddingsEndpoint:
             model="embeddings-model",
             max_tokens=100,  # Not supported for embeddings
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with caplog.at_level(logging.ERROR):
             endpoint.format_payload(request_info)
@@ -94,19 +92,19 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=["Test"])],
             model=None,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["model"] == model_endpoint.primary_model_name
+        assert payload["model"] == model_endpoint.get_model_names()[0]
 
     def test_format_payload_extra_parameters(self):
         """Test extra parameters are included."""
-        extra_params = [
-            ("encoding_format", "float"),
-            ("dimensions", 1536),
-        ]
-        model_endpoint = create_model_endpoint(
+        extra_params = {
+            "encoding_format": "float",
+            "dimensions": 1536,
+        }
+        model_endpoint = create_config(
             EndpointType.EMBEDDINGS, model_name="embeddings-model", extra=extra_params
         )
         endpoint = create_endpoint_with_mock_transport(
@@ -114,7 +112,7 @@ class TestEmbeddingsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="embeddings-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -127,7 +125,7 @@ class TestEmbeddingsEndpoint:
             texts=[],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -139,7 +137,7 @@ class TestEmbeddingsEndpoint:
         turn2 = Turn(texts=[Text(contents=["Not me"])], model="model2")
 
         request_info = create_request_info(
-            model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
+            config=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
         # Should raise ValueError because embeddings endpoint only supports one turn
@@ -155,7 +153,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=[long_text])],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -169,7 +167,7 @@ class TestEmbeddingsEndpoint:
             texts=[Text(contents=[special_text])],
             model="embeddings-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 

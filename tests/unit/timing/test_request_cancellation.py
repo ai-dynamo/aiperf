@@ -4,7 +4,6 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.timing.config import RequestCancellationConfig
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 
@@ -59,38 +58,39 @@ class TestRequestCancellation:
             mk_sim(rate=100.0, delay=delay).next_cancellation_delay_ns() == expected_ns
         )
 
-    @pytest.mark.parametrize("phase,expect_cancel", [
-        (CreditPhase.WARMUP, False),
-        (CreditPhase.PROFILING, True),
-        (None, True),
+    @pytest.mark.parametrize("exclude_from_results,expect_cancel", [
+        (True, False),
+        (False, True),
     ])  # fmt: skip
     def test_phase_behavior(
-        self, phase: CreditPhase | None, expect_cancel: bool
+        self, exclude_from_results: bool, expect_cancel: bool
     ) -> None:
         sim = mk_sim(rate=100.0, delay=1.0)
-        result = sim.next_cancellation_delay_ns(phase=phase)
+        result = sim.next_cancellation_delay_ns(
+            phase="test", exclude_from_results=exclude_from_results
+        )
         if expect_cancel:
             assert result == NANOS_PER_SECOND
         else:
             assert result is None
 
-    def test_warmup_does_not_consume_rng(self) -> None:
-        """Verify warmup phase doesn't advance the RNG state."""
+    def test_excluded_phase_does_not_consume_rng(self) -> None:
+        """Verify excluded phases don't advance the RNG state."""
         rng.reset()
         rng.init(42)
         sim = mk_sim(rate=50.0, delay=1.0)
-        # Call during warmup multiple times - should not consume RNG
+        # Call during excluded phase multiple times - should not consume RNG
         for _ in range(10):
-            sim.next_cancellation_delay_ns(phase=CreditPhase.WARMUP)
+            sim.next_cancellation_delay_ns(phase="warmup", exclude_from_results=True)
         # First profiling call
-        r1 = sim.next_cancellation_delay_ns(phase=CreditPhase.PROFILING)
+        r1 = sim.next_cancellation_delay_ns(phase="profiling")
 
         # Reset and create new simulator - skip warmup calls
         rng.reset()
         rng.init(42)
         sim2 = mk_sim(rate=50.0, delay=1.0)
         # First profiling call without warmup calls
-        r2 = sim2.next_cancellation_delay_ns(phase=CreditPhase.PROFILING)
+        r2 = sim2.next_cancellation_delay_ns(phase="profiling")
 
         assert r1 == r2
 

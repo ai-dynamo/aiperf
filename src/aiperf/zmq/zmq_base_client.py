@@ -31,6 +31,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        *,
         client_id: str | None = None,
         additional_bind_address: str | None = None,
         **kwargs,
@@ -57,6 +58,8 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
         )
         self.scheduler: LoopScheduler | None = None
+        self._socket_recreate_lock = asyncio.Lock()
+        self._identity: bytes | None = None
         self.additional_bind_address: str | None = (
             additional_bind_address if bind else None
         )
@@ -99,13 +102,10 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
             if zmq.IDENTITY in self.socket_ops:
-                # IMPORTANT! Set IDENTITY socket option immediately after socket creation, BEFORE bind/connect
-                # otherwise it will not be properly set when the socket is bound/connected
-                self.socket.setsockopt(zmq.IDENTITY, self.socket_ops[zmq.IDENTITY])
-                self.debug(
-                    lambda: f"Set IDENTITY socket option: {self.socket_ops[zmq.IDENTITY]}"
-                )
-                del self.socket_ops[zmq.IDENTITY]
+                # IDENTITY must be set BEFORE bind/connect
+                self._identity = self.socket_ops.pop(zmq.IDENTITY)
+                self.socket.setsockopt(zmq.IDENTITY, self._identity)
+                self.debug(lambda: f"Set IDENTITY socket option: {self._identity}")
 
             if self.bind:
                 self.socket.bind(self.address)
@@ -134,6 +134,21 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
             self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
 
+            # ROUTER_HANDOVER: when a DEALER reconnects with the same identity,
+            # replace the stale routing entry instead of rejecting the connection.
+            # Without this, idle TCP connections dropped by Docker/K8s networking
+            # leave dead entries in the routing table, causing "stream is closed"
+            # when the controller tries to send commands to reconnected workers.
+            if self.socket_type == zmq.ROUTER:
+                self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
+
+            # Faster reconnection for connecting sockets (DEALER, SUB, etc.).
+            # Default 100ms is fine for initial, but cap the max backoff at 5s
+            # so dropped connections recover quickly in K8s environments.
+            if not self.bind:
+                self.socket.setsockopt(zmq.RECONNECT_IVL, 100)
+                self.socket.setsockopt(zmq.RECONNECT_IVL_MAX, 5000)
+
             # Set additional socket options requested by the caller
             for key, val in self.socket_ops.items():
                 self.socket.setsockopt(key, val)
@@ -155,9 +170,83 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
     def _cleanup_ipc_file(self) -> None:
-        """Remove the IPC socket file if this client bound to one."""
-        if self.bind and self.address.startswith("ipc://"):
-            Path(self.address.removeprefix("ipc://")).unlink(missing_ok=True)
+        """Remove IPC socket files if this client bound to any."""
+        if not self.bind:
+            return
+        for addr in (self.address, self.additional_bind_address):
+            if addr and addr.startswith("ipc://"):
+                Path(addr.removeprefix("ipc://")).unlink(missing_ok=True)
+
+    def _apply_common_socket_options(self) -> None:
+        """Apply default socket options shared between initial setup and socket recreation."""
+        self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+        self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+        self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
+        self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
+        self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
+        )
+        self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+        self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+
+        if self.socket_type == zmq.ROUTER:
+            self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
+
+        if not self.bind:
+            self.socket.setsockopt(zmq.RECONNECT_IVL, 100)
+            self.socket.setsockopt(zmq.RECONNECT_IVL_MAX, 5000)
+
+        for key, val in self.socket_ops.items():
+            self.socket.setsockopt(key, val)
+
+    def _close_old_socket_for_recreate(self, old_socket: zmq.asyncio.Socket) -> None:
+        """Unbind + close an existing socket as part of recreation."""
+        if self.bind:
+            for addr in (self.address, self.additional_bind_address):
+                if not addr:
+                    continue
+                try:
+                    old_socket.unbind(addr)
+                except (zmq.ZMQError, OSError):
+                    self.debug(f"Unbind failed for {addr}, continuing teardown")
+        old_socket.close(linger=0)
+
+    async def _recreate_socket(self) -> None:
+        """Close and recreate the socket with the same configuration.
+
+        Used to recover from silently broken connections (e.g., lost ZMQ subscriptions
+        when many TCP clients connect to an XPUB/XSUB proxy simultaneously).
+        """
+        async with self._socket_recreate_lock:
+            old_socket = self.socket
+            if old_socket:
+                self._close_old_socket_for_recreate(old_socket)
+
+            self.socket = None
+            self.socket = self.context.socket(self.socket_type)
+
+            if self._identity is not None:
+                self.socket.setsockopt(zmq.IDENTITY, self._identity)
+
+            if self.bind:
+                self.socket.bind(self.address)
+                if self.additional_bind_address:
+                    self.socket.bind(self.additional_bind_address)
+            else:
+                self.socket.connect(self.address)
+
+            self._apply_common_socket_options()
+
+            self.debug(
+                lambda: f"Recreated {self.socket_type_name} socket, {'bound' if self.bind else 'connected'} to {self.address} ({self.client_id})"
+            )
 
     @on_stop
     async def _shutdown_socket(self) -> None:
@@ -173,9 +262,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
                 lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
             )
             return
-        except Exception as e:
+        except zmq.ZMQError as e:
             self.exception(
-                f"Uncaught exception shutting down ZMQ socket: {e} ({self.client_id})"
+                f"Uncaught ZMQ error shutting down ZMQ socket: {e} ({self.client_id})"
             )
         finally:
             self._cleanup_ipc_file()

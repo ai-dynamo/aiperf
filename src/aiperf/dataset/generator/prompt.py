@@ -1,20 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import PromptConfig
-from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.exceptions import (
-    ConfigurationError,
+    AIPerfConfigurationError,
     InvalidStateError,
     NotInitializedError,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.base import BaseGenerator
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
@@ -31,8 +35,9 @@ class PromptGenerator(BaseGenerator):
     prompts that can be randomly selected.
     """
 
-    def __init__(self, config: PromptConfig, tokenizer: Tokenizer, **kwargs):
-        self.config = config
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer, **kwargs):
+        self.run = run
+        self.dataset_config = run.cfg.get_default_dataset()
         self.tokenizer = tokenizer
         self._tokenized_corpus = None
         self._corpus_size = 0
@@ -47,7 +52,7 @@ class PromptGenerator(BaseGenerator):
         self._corpus_rng = rng.derive("dataset.prompt.corpus")
         self._prefix_rng = rng.derive("dataset.prompt.prefix")
 
-        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
+        super().__init__(run=run, tokenizer=tokenizer, **kwargs)
 
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
@@ -61,12 +66,15 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             self._initialize_corpus()
 
+        # Get prefix prompts config from dataset config (if available)
+        prefix_config = getattr(self.dataset_config, "prefix_prompts", None)
+
         # Initialize prefix prompts pool if the pool size > 0
-        if self.config.prefix_prompt.pool_size > 0:
+        if prefix_config and (prefix_config.pool_size or 0) > 0:
             self._create_prefix_prompt_pool()
 
         # Initialize shared context prompts if configured
-        if self.config.prefix_prompt.shared_system_prompt_length is not None:
+        if prefix_config and prefix_config.shared_system_length is not None:
             self._generate_shared_system_prompt()
         # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
@@ -141,10 +149,16 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        self._prefix_prompts = [
-            self.generate_prompt(self.config.prefix_prompt.length)
-            for _ in range(self.config.prefix_prompt.pool_size)
-        ]
+        prefix_config = getattr(self.dataset_config, "prefix_prompts", None)
+        if prefix_config is None:
+            return
+
+        pool_size = (
+            prefix_config.pool_size if prefix_config.pool_size is not None else 0
+        )
+        length = prefix_config.length if prefix_config.length is not None else 128
+
+        self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
         self.debug(
             lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
         )
@@ -169,8 +183,12 @@ class PromptGenerator(BaseGenerator):
         if hash_ids:
             if mean is None:
                 raise ValueError("mean must be provided when hash_ids is set.")
+            # Get block_size from prompts config
+            prompts_config = getattr(self.dataset_config, "prompts", None)
             block_size = (
-                self.config.input_tokens.block_size or InputTokensDefaults.BLOCK_SIZE
+                prompts_config.block_size
+                if prompts_config and prompts_config.block_size
+                else 512
             )
             return self._generate_cached_prompt(mean, hash_ids, block_size)
 
@@ -223,7 +241,7 @@ class PromptGenerator(BaseGenerator):
             str: A synthetic prompt as a string.
 
         Raises:
-            ConfigurationError: If the input parameters are not compatible.
+            AIPerfConfigurationError: If the input parameters are not compatible.
         """
         # Check decoded string cache first to avoid redundant decode calls
         cache_key = (tuple(hash_ids), num_tokens, block_size)
@@ -260,7 +278,7 @@ class PromptGenerator(BaseGenerator):
             list[int]: A list of token IDs.
 
         Raises:
-            ConfigurationError: If the input parameters are not compatible.
+            AIPerfConfigurationError: If the input parameters are not compatible.
         """
         final_prompt: list[int] = []
         current_block_size = block_size
@@ -268,7 +286,7 @@ class PromptGenerator(BaseGenerator):
         # Sanity check the final block size
         final_block_size = num_tokens - ((len(hash_ids) - 1) * block_size)
         if final_block_size <= 0 or block_size < final_block_size:
-            raise ConfigurationError(
+            raise AIPerfConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
                 f"are not compatible. The final hash block size: {final_block_size} must be "
                 f"greater than 0 and less than or equal to {block_size}."
@@ -353,7 +371,11 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        length = self.config.prefix_prompt.shared_system_prompt_length
+        prefix_config = getattr(self.dataset_config, "prefix_prompts", None)
+        if prefix_config is None:
+            return
+
+        length = prefix_config.shared_system_length
         if length is None:
             return
 
@@ -395,11 +417,18 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
-        length = self.config.prefix_prompt.user_context_prompt_length
+        prefix_config = getattr(self.dataset_config, "prefix_prompts", None)
+        if prefix_config is None:
+            raise InvalidStateError(
+                "Prefix prompts config is not available. "
+                "Ensure prefix_prompts is configured in the dataset."
+            )
+
+        length = prefix_config.user_context_length
         if length is None:
             raise InvalidStateError(
                 "User context prompt length is not configured. "
-                "Ensure --user-context-prompt-length is specified."
+                "Ensure user_context_length is specified in prefix_prompts."
             )
 
         # Generate new prompts on-demand as needed

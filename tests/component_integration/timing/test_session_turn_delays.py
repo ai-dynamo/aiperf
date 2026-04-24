@@ -24,7 +24,6 @@ import statistics
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit
 from tests.component_integration.timing.conftest import defaults
 from tests.harness.analyzers import CreditFlowAnalyzer
@@ -232,11 +231,9 @@ class TestTurnDelayInteractions:
             p for p in runner.sent_payloads if isinstance(p.payload, Credit)
         ]
 
-        warmup_credits = [
-            p for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
-        ]
+        warmup_credits = [p for p in credit_payloads if p.payload.phase == "warmup"]
         profiling_credits = [
-            p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
+            p for p in credit_payloads if p.payload.phase == "profiling"
         ]
 
         # Warmup: 8 sessions × 3 turns = 24

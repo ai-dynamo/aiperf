@@ -39,6 +39,13 @@ from tools._core import (
 # =============================================================================
 
 ENV_FILE = Path("src/aiperf/common/environment.py")
+# _Xx_Settings subgroups were split into sibling private modules; scan those too.
+ENV_FILES = [
+    ENV_FILE,
+    Path("src/aiperf/common/_env_data.py"),
+    Path("src/aiperf/common/_env_network.py"),
+    Path("src/aiperf/common/_env_services.py"),
+]
 OUTPUT_FILE = Path("docs/environment-variables.md")
 
 # =============================================================================
@@ -247,27 +254,33 @@ class EnvVarsDocsGenerator(Generator):
     description = "Generate environment variable documentation for AIPerf"
 
     def generate(self) -> GeneratorResult:
-        if not ENV_FILE.exists():
+        missing = [f for f in ENV_FILES if not f.exists()]
+        if missing:
             raise ParseError(
-                f"Source file not found: {ENV_FILE}",
+                f"Source file(s) not found: {', '.join(str(f) for f in missing)}",
                 {
                     "hint": "Run from the project root directory",
                 },
             )
 
-        try:
-            settings_list = parse_settings_file(ENV_FILE)
-        except SyntaxError as e:
-            raise ParseError(
-                "Failed to parse environment.py",
-                {
-                    "error": str(e),
-                    "line": e.lineno,
-                },
-            ) from e
+        settings_list: list[Settings] = []
+        for env_file in ENV_FILES:
+            try:
+                settings_list.extend(parse_settings_file(env_file))
+            except SyntaxError as e:
+                raise ParseError(
+                    f"Failed to parse {env_file}",
+                    {
+                        "error": str(e),
+                        "line": e.lineno,
+                    },
+                ) from e
 
         if not settings_list:
-            raise ParseError("No settings classes found", {"file": str(ENV_FILE)})
+            raise ParseError(
+                "No settings classes found",
+                {"files": ", ".join(str(f) for f in ENV_FILES)},
+            )
 
         total_fields = sum(len(s.fields) for s in settings_list)
 

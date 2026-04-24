@@ -5,6 +5,7 @@ import pytest
 
 from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.models import ErrorDetails
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.input_sequence_length_metric import (
     ErrorInputSequenceLengthMetric,
@@ -96,8 +97,6 @@ class TestErrorInputSequenceLengthMetric:
     )
     def test_error_isl_parse_record(self, input_tokens, should_raise):
         """Test error input sequence length extraction."""
-        from aiperf.common.models import ErrorDetails
-
         record = create_record(
             input_tokens=input_tokens,
             error=ErrorDetails(code=500, message="Error", type="ServerError"),

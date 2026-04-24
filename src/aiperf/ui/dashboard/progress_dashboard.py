@@ -75,8 +75,7 @@ class ProgressDashboard(Container, MaximizableWidget):
         self.progress_widget: Static | None = None
         self.stats_widget: Static | None = None
         self.records_stats: CombinedPhaseStats | None = None
-        self.profiling_stats: CombinedPhaseStats | None = None
-        self.warmup_stats: CombinedPhaseStats | None = None
+        self._phase_stats: dict[str, CombinedPhaseStats] = {}
         self.refresh_timer: Timer | None = None
 
     def on_mount(self) -> None:
@@ -144,54 +143,25 @@ class ProgressDashboard(Container, MaximizableWidget):
             )
         return 0
 
-    def on_warmup_progress(self, warmup_stats: CombinedPhaseStats) -> None:
-        """Callback for warmup progress updates."""
-        if not self.warmup_stats:
-            self.query_one("#stats-display").remove_class("no-stats")
-        self.warmup_stats = warmup_stats
-        # During grace period, show progress based on duration or request completion
-        if warmup_stats.timeout_triggered:
-            # Mark the regular warmup bar as 100% complete first
-            self.create_or_update_progress(
-                "Warmup",
-                warmup_stats,
-                lambda stats: (100, True),
-            )
-            self.create_or_update_progress(
-                "Warmup Grace",
-                warmup_stats,
-                lambda stats: (
-                    self._get_grace_period_progress(stats),
-                    stats.is_requests_complete,
-                ),
-            )
-        else:
-            self.create_or_update_progress(
-                "Warmup",
-                warmup_stats,
-                lambda stats: (
-                    stats.requests_progress_percent,
-                    stats.is_requests_complete,
-                ),
-            )
-        self.update_display(CreditPhase.WARMUP, self.warmup_stats)
+    def on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
+        """Callback for any phase progress updates."""
+        phase = phase_stats.phase
+        is_new = phase not in self._phase_stats
+        self._phase_stats[phase] = phase_stats
 
-    def on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
-        """Callback for profiling progress updates."""
-        if not self.profiling_stats:
+        if is_new:
             self.query_one("#stats-display").remove_class("no-stats")
-        self.profiling_stats = profiling_stats
-        # During grace period, show progress based on duration or request completion
-        if profiling_stats.timeout_triggered:
-            # Mark the regular profiling bar as 100% complete first
+
+        label = phase.title()
+        if phase_stats.timeout_triggered:
             self.create_or_update_progress(
-                "Profiling",
-                profiling_stats,
+                label,
+                phase_stats,
                 lambda stats: (100, True),
             )
             self.create_or_update_progress(
-                "Grace Period",
-                profiling_stats,
+                f"{label} Grace",
+                phase_stats,
                 lambda stats: (
                     self._get_grace_period_progress(stats),
                     stats.is_requests_complete,
@@ -199,14 +169,14 @@ class ProgressDashboard(Container, MaximizableWidget):
             )
         else:
             self.create_or_update_progress(
-                "Profiling",
-                profiling_stats,
+                label,
+                phase_stats,
                 lambda stats: (
                     stats.requests_progress_percent,
                     stats.is_requests_complete,
                 ),
             )
-        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
+        self.update_display(phase, phase_stats)
 
     def on_records_progress(self, records_stats: CombinedPhaseStats) -> None:
         """Callback for records progress updates."""
@@ -224,8 +194,10 @@ class ProgressDashboard(Container, MaximizableWidget):
                     stats.is_records_complete,
                 ),
             )
-        # NOTE: Send the profiling stats to the display, not the records stats
-        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
+        # Use last non-excluded phase stats for the display
+        display_stats = self._get_latest_results_phase_stats()
+        if display_stats:
+            self.update_display(display_stats.phase, display_stats)
 
     def update_display(
         self, phase: CreditPhase, stats: CombinedPhaseStats | None = None
@@ -236,22 +208,36 @@ class ProgressDashboard(Container, MaximizableWidget):
         if self.stats_widget:
             self.stats_widget.update(self.create_stats_table(phase, stats))
 
+    def _get_latest_results_phase_stats(self) -> CombinedPhaseStats | None:
+        """Get the latest non-excluded phase stats."""
+        for stats in reversed(list(self._phase_stats.values())):
+            if not stats.exclude_from_results:
+                return stats
+        return None
+
     def _get_status(self) -> Text:
         """Get the status of the profile."""
         if self.records_stats and self.records_stats.is_records_complete:
             return Text("Complete", style="bold green")
-        elif self.profiling_stats and self.profiling_stats.is_requests_complete:
+
+        results_stats = self._get_latest_results_phase_stats()
+        if results_stats and results_stats.is_requests_complete:
             return Text("Processing", style="bold green")
-        elif self.profiling_stats and self.profiling_stats.timeout_triggered:
+        if results_stats and results_stats.timeout_triggered:
             return Text("Grace Period", style="bold yellow")
-        elif self.profiling_stats:
-            return Text("Profiling", style="bold yellow")
-        elif self.warmup_stats and self.warmup_stats.timeout_triggered:
-            return Text("Warmup Grace", style="bold yellow")
-        elif self.warmup_stats:
-            return Text("Warmup", style="bold yellow")
-        else:
+        if results_stats:
+            return Text(results_stats.phase.title(), style="bold yellow")
+
+        # Check for any excluded phase in progress
+        for stats in reversed(list(self._phase_stats.values())):
+            if stats.exclude_from_results:
+                if stats.timeout_triggered:
+                    return Text(f"{stats.phase.title()} Grace", style="bold yellow")
+                return Text(stats.phase.title(), style="bold yellow")
+
+        if not self._phase_stats:
             return Text("Waiting for profile data...", style="dim")
+        return Text("Running", style="bold yellow")
 
     def create_stats_table(
         self, phase: CreditPhase, stats: CombinedPhaseStats | None = None
@@ -265,7 +251,32 @@ class ProgressDashboard(Container, MaximizableWidget):
             return stats_table
 
         stats_table.add_row("Status:", self._get_status())
+        self._add_progress_row(stats_table, stats)
 
+        # Show live concurrency during profiling and grace period (until requests complete)
+        if not stats.is_requests_complete:
+            stats_table.add_row(
+                "Live Concurrency:",
+                f"{stats.in_flight_requests or 0:,} requests in flight",
+            )
+
+        self._add_errors_row(stats_table)
+
+        stats_table.add_row(
+            "Request Rate:", f"{stats.requests_per_second or 0:,.1f} requests/s"
+        )
+
+        if self.records_stats:
+            stats_table.add_row(
+                "Processing Rate:",
+                f"{self.records_stats.records_per_second or 0:,.1f} records/s",
+            )
+
+        self._add_timing_rows(stats_table, stats)
+        return stats_table
+
+    def _add_progress_row(self, stats_table: Table, stats: CombinedPhaseStats) -> None:
+        """Add the Progress row based on which expected bound is active."""
         # During grace period, show progress as completed+cancelled out of sent
         if stats.timeout_triggered:
             completed = stats.requests_completed + stats.requests_cancelled
@@ -294,38 +305,22 @@ class ProgressDashboard(Container, MaximizableWidget):
                 f"({stats.requests_progress_percent:.1f}%)",
             )
 
-        # Show live concurrency during profiling and grace period (until requests complete)
-        if not stats.is_requests_complete:
-            stats_table.add_row(
-                "Live Concurrency:",
-                f"{stats.in_flight_requests or 0:,} requests in flight",
-            )
-
-        if self.records_stats:
-            error_percent = self.records_stats.records_error_percent
-            error_color = (
-                "green"
-                if error_percent == 0
-                else "red"
-                if error_percent > 10
-                else "yellow"
-            )
-            stats_table.add_row(
-                "Errors:",
-                f"[{error_color}]{self.records_stats.error_records or 0:,} / {self.records_stats.total_records or 0:,} "
-                f"({error_percent:.1f}%)[/{error_color}]",
-            )
-
+    def _add_errors_row(self, stats_table: Table) -> None:
+        """Add the Errors row with color-coded percent when records stats exist."""
+        if not self.records_stats:
+            return
+        error_percent = self.records_stats.records_error_percent
+        error_color = (
+            "green" if error_percent == 0 else "red" if error_percent > 10 else "yellow"
+        )
         stats_table.add_row(
-            "Request Rate:", f"{stats.requests_per_second or 0:,.1f} requests/s"
+            "Errors:",
+            f"[{error_color}]{self.records_stats.error_records or 0:,} / {self.records_stats.total_records or 0:,} "
+            f"({error_percent:.1f}%)[/{error_color}]",
         )
 
-        if self.records_stats:
-            stats_table.add_row(
-                "Processing Rate:",
-                f"{self.records_stats.records_per_second or 0:,.1f} records/s",
-            )
-
+    def _add_timing_rows(self, stats_table: Table, stats: CombinedPhaseStats) -> None:
+        """Add Elapsed / Grace Period / ETA rows depending on request completion."""
         if not stats.is_requests_complete:
             # Display request stats while profiling
             if stats.start_ns:
@@ -353,5 +348,3 @@ class ProgressDashboard(Container, MaximizableWidget):
                 stats_table.add_row(
                     "Records ETA:", format_eta(self.records_stats.records_eta_sec)
                 )
-
-        return stats_table

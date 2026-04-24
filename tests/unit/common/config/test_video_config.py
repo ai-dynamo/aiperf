@@ -4,24 +4,22 @@
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import (
+from aiperf.common.enums import VideoAudioCodec, VideoFormat
+from aiperf.config import (
     VideoAudioConfig,
-    VideoAudioDefaults,
     VideoConfig,
-    VideoDefaults,
 )
-from aiperf.common.enums import VideoAudioCodec
 
 
 class TestVideoAudioConfigDefaults:
     """Test VideoAudioConfig default values."""
 
     def test_video_audio_config_defaults(self):
-        """Default values match VideoAudioDefaults."""
+        """Default values match expected defaults."""
         config = VideoAudioConfig()
-        assert config.sample_rate == VideoAudioDefaults.SAMPLE_RATE
-        assert config.channels == VideoAudioDefaults.CHANNELS
-        assert config.codec is VideoAudioDefaults.CODEC
+        assert config.sample_rate == 44100
+        assert config.channels == 0
+        assert config.codec is None
 
     def test_video_audio_config_disabled_by_default(self):
         """Default channels=0 means audio is disabled."""
@@ -100,8 +98,8 @@ class TestVideoConfigWithAudio:
     def test_video_config_preserves_existing_defaults(self):
         """Existing VideoConfig defaults are unchanged."""
         config = VideoConfig()
-        assert config.batch_size == VideoDefaults.BATCH_SIZE
-        assert config.duration == VideoDefaults.DURATION
-        assert config.fps == VideoDefaults.FPS
-        assert config.format == VideoDefaults.FORMAT
-        assert config.codec == VideoDefaults.CODEC
+        assert config.batch_size == 0
+        assert config.duration == 1.0
+        assert config.fps == 4
+        assert config.format is VideoFormat.WEBM
+        assert config.codec == "libvpx-vp9"

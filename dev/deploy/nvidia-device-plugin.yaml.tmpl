@@ -1,0 +1,46 @@
+# Template: replace ${DEVICE_PLUGIN_VERSION} before applying.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      runtimeClassName: nvidia
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: nvidia-device-plugin-ctr
+          image: nvcr.io/nvidia/k8s-device-plugin:${DEVICE_PLUGIN_VERSION}
+          env:
+            - name: FAIL_ON_INIT_ERROR
+              value: "false"
+            - name: NVIDIA_DRIVER_ROOT
+              value: "/"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins

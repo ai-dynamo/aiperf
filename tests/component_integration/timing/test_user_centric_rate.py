@@ -376,13 +376,13 @@ class TestUserCentricRateValidationErrors:
         result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
 
         assert result.exit_code == 1, "Expected CLI to fail with exit code 1"
-        assert (
-            "num-sessions" in result.stderr.lower()
-            or "num_sessions" in result.stderr.lower()
-        ), f"Expected error message about num-sessions, got: {result.stderr}"
-        assert (
-            "num-users" in result.stderr.lower() or "num_users" in result.stderr.lower()
-        ), f"Expected error message about num-users, got: {result.stderr}"
+        output = (result.stderr + result.stdout).lower()
+        assert "num-sessions" in output or "num_sessions" in output, (
+            f"Expected error message about num-sessions, got: {output}"
+        )
+        assert "num-users" in output or "num_users" in output, (
+            f"Expected error message about num-users, got: {output}"
+        )
 
     def test_request_count_less_than_num_users_fails(self, cli: AIPerfCLI):
         """Verify CLI fails when --request-count < --num-users.
@@ -400,13 +400,13 @@ class TestUserCentricRateValidationErrors:
         result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
 
         assert result.exit_code == 1, "Expected CLI to fail with exit code 1"
-        assert (
-            "request-count" in result.stderr.lower()
-            or "request_count" in result.stderr.lower()
-        ), f"Expected error message about request-count, got: {result.stderr}"
-        assert (
-            "num-users" in result.stderr.lower() or "num_users" in result.stderr.lower()
-        ), f"Expected error message about num-users, got: {result.stderr}"
+        output = (result.stderr + result.stdout).lower()
+        assert "request-count" in output or "request_count" in output, (
+            f"Expected error message about request-count, got: {output}"
+        )
+        assert "num-users" in output or "num_users" in output, (
+            f"Expected error message about num-users, got: {output}"
+        )
 
     def test_num_sessions_equals_num_users_succeeds(self, cli: AIPerfCLI):
         """Verify CLI succeeds when --num-sessions == --num-users (boundary case)."""
@@ -464,8 +464,9 @@ class TestUserCentricRateValidationErrors:
         assert result.exit_code == 1, (
             "Expected CLI to fail for single-turn user-centric mode"
         )
+        output = (result.stderr + result.stdout).lower()
         assert (
-            "multi-turn" in result.stderr.lower()
-            or "session-turns" in result.stderr.lower()
-            or "--request-rate" in result.stderr
-        ), f"Expected error message about multi-turn requirement, got: {result.stderr}"
+            "multi-turn" in output
+            or "session-turns" in output
+            or "--request-rate" in output
+        ), f"Expected error message about multi-turn requirement, got: {output}"

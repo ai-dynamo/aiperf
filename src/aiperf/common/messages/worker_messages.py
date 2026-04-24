@@ -1,41 +1,68 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import time
 
-from pydantic import Field
+import msgspec
 
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.enums import MessageType, WorkerStartupState, WorkerStatus
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
-from aiperf.common.types import MessageTypeT
 
 
-class WorkerHealthMessage(BaseServiceMessage):
-    """Message for a worker health check."""
+class WorkerHealthMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_HEALTH.value
+):
+    """Worker health check."""
 
-    message_type: MessageTypeT = MessageType.WORKER_HEALTH
-
-    health: ProcessHealth = Field(..., description="The health of the worker process")
-
-    # Worker specific fields
-    task_stats: WorkerTaskStats = Field(
-        ...,
-        description="Stats for the tasks that have been sent to the worker",
-    )
+    health: ProcessHealth
+    task_stats: WorkerTaskStats
 
     @property
     def error_rate(self) -> float:
-        """The error rate of the worker."""
         if self.task_stats.total == 0:
             return 0
         return self.task_stats.failed / self.task_stats.total
 
 
-class WorkerStatusSummaryMessage(BaseServiceMessage):
-    """Message for a worker status summary."""
+class WorkerStatusSummaryMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_STATUS_SUMMARY.value
+):
+    """Aggregate worker status by worker_id."""
 
-    message_type: MessageTypeT = MessageType.WORKER_STATUS_SUMMARY
-
-    worker_statuses: dict[str, WorkerStatus] = Field(
-        ...,
-        description="A mapping of worker IDs to their status",
+    worker_statuses: dict[str, WorkerStatus]
+    worker_startup_states: dict[str, WorkerStartupState] = msgspec.field(
+        default_factory=dict
     )
+
+
+class WorkerPodStateMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_POD_STATE.value
+):
+    """Controller-facing aggregate snapshot for a Kubernetes worker pod."""
+
+    pod_index: str
+    declared_workers: int
+    declared_record_processors: int
+    pod_state: str
+    admission_state: str
+    benchmark_generation: str | None = None
+    dataset_generation: str | None = None
+    router_connected_workers: int = 0
+    dispatchable_workers: int = 0
+    ready_workers: int = 0
+    ready_record_processors: int = 0
+    degraded_workers: int = 0
+    degraded_record_processors: int = 0
+
+
+class WorkerStartupStateMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_STARTUP_STATE.value
+):
+    """Worker startup lifecycle transition.
+
+    Inlines ``request_ns`` with a default_factory to avoid the
+    multi-Struct-inheritance pattern (see gotcha_msgspec_multiple_struct_inheritance).
+    """
+
+    startup_state: WorkerStartupState
+    request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]

@@ -9,8 +9,8 @@ from aiperf.common.models import Text, Turn
 from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -20,8 +20,8 @@ class TestCohereRankingsEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for Cohere rankings."""
-        return create_model_endpoint(EndpointType.COHERE_RANKINGS)
+        """Create a test BenchmarkConfig for Cohere rankings."""
+        return create_config(EndpointType.COHERE_RANKINGS)
 
     @pytest.fixture
     def converter(self, model_endpoint):
@@ -51,7 +51,7 @@ class TestCohereRankingsEndpoint:
     def test_format_payload_basic(self, converter, model_endpoint, basic_turn):
         """Test basic payload formatting with query and passages."""
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[basic_turn])
+            create_request_info(config=model_endpoint, turns=[basic_turn])
         )
 
         assert payload["model"] == "test-model"
@@ -70,7 +70,7 @@ class TestCohereRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(config=model_endpoint, turns=[turn])
         )
 
         assert payload["query"] == "What is Python?"
@@ -91,7 +91,7 @@ class TestCohereRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
         assert "Multiple query texts found" in caplog.text
@@ -106,7 +106,7 @@ class TestCohereRankingsEndpoint:
 
         with caplog.at_level(logging.WARNING):
             payload = converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
         assert "no passages to rank" in caplog.text
@@ -122,7 +122,7 @@ class TestCohereRankingsEndpoint:
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
             converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_empty_query_contents(self, converter, model_endpoint):
@@ -137,7 +137,7 @@ class TestCohereRankingsEndpoint:
 
         with pytest.raises(ValueError, match="requires a text with name 'query'"):
             converter.format_payload(
-                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+                create_request_info(config=model_endpoint, turns=[turn])
             )
 
     def test_format_payload_model_priority(self, converter, model_endpoint):
@@ -151,7 +151,7 @@ class TestCohereRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(config=model_endpoint, turns=[turn])
         )
         assert payload["model"] == "turn-model"
 
@@ -166,9 +166,9 @@ class TestCohereRankingsEndpoint:
         )
 
         payload = converter.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            create_request_info(config=model_endpoint, turns=[turn])
         )
-        assert payload["model"] == model_endpoint.primary_model_name
+        assert payload["model"] == model_endpoint.get_model_names()[0]
 
     def test_extract_rankings(self, converter):
         """Test extraction of ranking results from API response."""

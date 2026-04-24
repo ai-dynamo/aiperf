@@ -2,22 +2,36 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pytest configuration and shared fixtures for the aiohttp client test suite."""
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
-from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
+from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
+from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000"],
+        "path": "/v1/chat/completions",
+        "streaming": False,
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
 
 
 class MockStreamReader:
@@ -34,31 +48,41 @@ class MockStreamReader:
         return self.iter_any()
 
 
-def create_model_endpoint_info(
+def create_config(
     base_url: str = "http://localhost:8000",
-    custom_endpoint: str = "/v1/chat/completions",
+    custom_endpoint: str | None = "/v1/chat/completions",
     streaming: bool = False,
     model_name: str = "test-model",
     api_key: str | None = None,
-    headers: list[tuple[str, str]] | None = None,
-    connection_reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
-) -> ModelEndpointInfo:
-    """Factory function to create ModelEndpointInfo instances."""
-    return ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name=model_name)],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-        ),
-        endpoint=EndpointInfo(
-            type=EndpointType.CHAT,
-            base_urls=[base_url],
-            custom_endpoint=custom_endpoint,
-            streaming=streaming,
-            api_key=api_key,
-            headers=headers or [],
-            connection_reuse_strategy=connection_reuse_strategy,
-        ),
+    headers: dict[str, str] | None = None,
+    connection_reuse: ConnectionReuseStrategy | None = None,
+    connection_reuse_strategy: ConnectionReuseStrategy | None = None,
+) -> BenchmarkConfig:
+    """Factory function to create BenchmarkConfig instances for transport tests."""
+    endpoint: dict[str, Any] = {
+        "type": "chat",
+        "urls": [base_url],
+        "streaming": streaming,
+        "connection_reuse": connection_reuse_strategy
+        or connection_reuse
+        or ConnectionReuseStrategy.POOLED,
+    }
+    if custom_endpoint is not None:
+        endpoint["path"] = custom_endpoint
+    if api_key is not None:
+        endpoint["api_key"] = api_key
+    if headers:
+        endpoint["headers"] = headers
+    return BenchmarkConfig(
+        **{**_MINIMAL_CONFIG_KWARGS, "models": [model_name], "endpoint": endpoint}
     )
+
+
+def make_run(cfg: BenchmarkConfig | None = None, **config_kwargs: Any) -> BenchmarkRun:
+    """Wrap a BenchmarkConfig in a BenchmarkRun for transport tests."""
+    if cfg is None:
+        cfg = create_config(**config_kwargs)
+    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 
 
 @pytest.fixture
@@ -106,16 +130,24 @@ def edge_case_inputs() -> dict[str, str]:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    """Fixture providing a sample UserConfig."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            type=EndpointType.CHAT,
-            urls=["http://localhost:8000"],
-            timeout_seconds=600,
-            model_names=["gpt-4"],
-            api_key="test-api-key",
-        ),
+def user_config() -> AIPerfConfig:
+    """Fixture providing a sample AIPerfConfig for transports testing."""
+    return AIPerfConfig(
+        models=["gpt-4"],
+        endpoint={
+            "type": EndpointType.CHAT,
+            "urls": ["http://localhost:8000"],
+            "timeout": 600,
+            "api_key": "test-api-key",
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
@@ -288,12 +320,12 @@ def create_aiohttp_exception(
 
 
 @pytest.fixture
-def model_endpoint_non_streaming():
-    """Fixture providing non-streaming ModelEndpointInfo."""
-    return create_model_endpoint_info(streaming=False)
+def config_non_streaming():
+    """Fixture providing non-streaming BenchmarkRun."""
+    return make_run(streaming=False)
 
 
 @pytest.fixture
-def model_endpoint_streaming():
-    """Fixture providing streaming ModelEndpointInfo."""
-    return create_model_endpoint_info(streaming=True)
+def config_streaming():
+    """Fixture providing streaming BenchmarkRun."""
+    return make_run(streaming=True)

@@ -1,0 +1,38 @@
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: qwen3-vl-agg-benchmark
+spec:
+  benchmark:
+    models:
+    - Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+    endpoint:
+      urls:
+      - http://qwen3-vl-agg-frontend:8000
+      streaming: true
+      extra:
+        max_tokens: 150
+        min_tokens: 150
+        ignore_eos: true
+    datasets:
+      main:
+        type: file
+        path: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+        format: single_turn
+    warmup:
+      type: concurrency
+      concurrency: 64
+      requests: 3
+    profiling:
+      type: constant
+      concurrency: 64
+      requests: 1000
+      rate: 64.0
+  podTemplate:
+    volumes:
+    - name: perf-cache
+      persistentVolumeClaim:
+        claimName: perf-cache
+    volumeMounts:
+    - name: perf-cache
+      mountPath: /perf-cache

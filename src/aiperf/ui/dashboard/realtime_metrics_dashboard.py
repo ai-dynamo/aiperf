@@ -14,10 +14,10 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
+from aiperf.config import BenchmarkRun
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
 
@@ -34,12 +34,12 @@ class RealtimeMetricsTable(Widget):
     }
     """
 
-    STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
+    STATS_FIELDS: list[str] = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.data_table: NonFocusableDataTable | None = None
         self._columns_initialized = False
         self._column_keys: dict[str, ColumnKey] = {}
@@ -123,7 +123,7 @@ class RealtimeMetricsTable(Widget):
                 self.data_table.update_cell(  # type: ignore
                     row_key, self._column_keys[col_name], cell_value, update_width=True
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort UI cell update; any textual/rich error is logged and skipped
                 _logger.warning(
                     f"Error updating cell {col_name} with value {cell_value}: {e!r}"
                 )
@@ -162,7 +162,7 @@ class RealtimeMetricsTable(Widget):
 
         if isinstance(value, datetime):
             value_str = value.strftime("%Y-%m-%d %H:%M:%S")
-        elif isinstance(value, int | float):
+        elif isinstance(value, (int, float)):
             value_str = f"{value:,.2f}"
         else:
             value_str = str(value)
@@ -193,16 +193,16 @@ class RealtimeMetricsDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.service_config = service_config
+        self.run = run
         self.metrics_table: RealtimeMetricsTable | None = None
         self.metrics: list[MetricResult] = []
         self.border_title = "Real-Time Metrics"
 
     def compose(self) -> ComposeResult:
         self.metrics_table = RealtimeMetricsTable(
-            service_config=self.service_config, id="metrics-table", classes="hidden"
+            run=self.run, id="metrics-table", classes="hidden"
         )
         yield self.metrics_table
         yield Static(

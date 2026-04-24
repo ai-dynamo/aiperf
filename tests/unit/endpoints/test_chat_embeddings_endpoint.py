@@ -9,9 +9,9 @@ from aiperf.common.models.record_models import EmbeddingResponseData
 from aiperf.endpoints.chat_embeddings import ChatEmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -21,10 +21,8 @@ class TestChatEmbeddingsEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for chat embeddings."""
-        return create_model_endpoint(
-            EndpointType.CHAT_EMBEDDINGS, model_name="vlm2vec-model"
-        )
+        """Create a test BenchmarkConfig for chat embeddings."""
+        return create_config(EndpointType.CHAT_EMBEDDINGS, model_name="vlm2vec-model")
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
@@ -43,7 +41,7 @@ class TestChatEmbeddingsEndpoint:
             texts=[Text(contents=["Embed this text"])],
             model="vlm2vec-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -59,7 +57,7 @@ class TestChatEmbeddingsEndpoint:
             images=[Image(contents=["data:image/png;base64,abc123"])],
             model="vlm2vec-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -83,16 +81,16 @@ class TestChatEmbeddingsEndpoint:
             texts=[Text(contents=["Test"])],
             model=None,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["model"] == model_endpoint.primary_model_name
+        assert payload["model"] == model_endpoint.get_model_names()[0]
 
     def test_format_payload_extra_params(self):
         """Test extra parameters are included in payload."""
-        extra_params = [("encoding_format", "float"), ("dimensions", 1024)]
-        model_endpoint = create_model_endpoint(
+        extra_params = {"encoding_format": "float", "dimensions": 1024}
+        model_endpoint = create_config(
             EndpointType.CHAT_EMBEDDINGS, model_name="vlm2vec-model", extra=extra_params
         )
         endpoint = create_endpoint_with_mock_transport(
@@ -100,7 +98,7 @@ class TestChatEmbeddingsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="vlm2vec-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 

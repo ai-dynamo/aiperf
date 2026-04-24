@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Jinja2 Computed Config
+# description: Define variables once and compute derived values with Jinja2 expressions.
+# category: Advanced
+# tags: jinja2, variables, templating
+# difficulty: intermediate
+# features: Jinja2 templates, variables section, computed values
+#
+# Jinja2 Variables and Computed Config
+# =====================================
+# Demonstrates Jinja2 template rendering in YAML config files.
+# Define variables once, reference and compute throughout the config.
+#
+# Features used:
+# - variables: section for user-defined constants
+# - {{ var }} for variable references
+# - {{ var * N }} for computed expressions
+# - {{ var // N }} for integer division
+# - Combines with env vars: ${VAR:default} runs first, then {{ }}
+#
+# Run: aiperf profile --config jinja2_variables.yaml
+
+variables:
+  # Define once, use everywhere
+  base_concurrency: 16
+  target_rate: 30
+  isl_target: 512
+  osl_target: 128
+  test_duration: 120
+  dataset_multiplier: 10
+
+randomSeed: 42
+
+model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+endpoint:
+  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+  type: chat
+  streaming: true
+  timeout: 600.0
+
+datasets:
+  warmup:
+    type: synthetic
+    entries: "{{ base_concurrency * 5 }}"
+    prompts:
+      isl: "{{ isl_target // 2 }}"
+      osl: "{{ osl_target // 2 }}"
+
+  profiling:
+    type: synthetic
+    entries: "{{ base_concurrency * dataset_multiplier }}"
+    prompts:
+      isl:
+        mean: "{{ isl_target }}"
+        stddev: "{{ isl_target // 10 }}"
+      osl:
+        mean: "{{ osl_target }}"
+        stddev: "{{ osl_target // 5 }}"
+
+phases:
+  warmup:
+    type: concurrency
+    dataset: warmup
+    requests: "{{ base_concurrency * 5 }}"
+    concurrency: "{{ base_concurrency // 2 }}"
+    excludeFromResults: true
+
+  ramp_up:
+    type: poisson
+    dataset: profiling
+    rate: "{{ target_rate // 2 }}"
+    duration: "{{ test_duration // 4 }}"
+    concurrency: "{{ base_concurrency }}"
+    rateRamp: "{{ test_duration // 4 }}"
+    seamless: true
+    gracePeriod: 30
+
+  steady_state:
+    type: gamma
+    dataset: profiling
+    rate: "{{ target_rate }}"
+    smoothness: 1.5
+    duration: "{{ test_duration }}"
+    concurrency: "{{ base_concurrency * 4 }}"
+    seamless: true
+    gracePeriod: 60
+
+slos:
+  request_latency: 10000
+  time_to_first_token: 1000
+
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 15.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
+
+artifacts:
+  dir: ./artifacts/jinja2_variables
+  summary: [json]
+  records: [jsonl, csv]

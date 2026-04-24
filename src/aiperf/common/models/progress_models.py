@@ -2,24 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 """Models for tracking the progress of the benchmark suite."""
 
-from pydantic import Field
+from dataclasses import dataclass, field
+from typing import ClassVar
 
-from aiperf.common.enums import WorkerStatus
-from aiperf.common.models.base_models import AIPerfBaseModel
+from pydantic import ConfigDict
+
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models.credit_models import ProcessingStats
-from aiperf.common.models.health_models import ProcessHealth
+from aiperf.common.models.health_models import ProcessHealth, ProcessHealthAggregates
 from aiperf.common.models.worker_models import WorkerTaskStats
 
 
-class WorkerProcessingStats(AIPerfBaseModel):
-    """Model for worker processing stats. Tracks a worker's record processing progress."""
+@dataclass(slots=True, kw_only=True)
+class WorkerProcessingStats:
+    """Tracks a worker's record-processing progress.
 
-    success_records: int = Field(
-        default=0, ge=0, description="The number of records processed successfully."
-    )
-    error_records: int = Field(
-        default=0, ge=0, description="The number of records processed with errors."
-    )
+    Mutable slotted dataclass: ``success_records`` / ``error_records`` are
+    incremented in place by the records tracker, so not ``frozen``.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    success_records: int = 0
+    error_records: int = 0
 
     @property
     def total_records(self) -> int:
@@ -27,30 +32,27 @@ class WorkerProcessingStats(AIPerfBaseModel):
         return self.success_records + self.error_records
 
 
-class WorkerStats(AIPerfBaseModel):
-    """Stats for a worker."""
+@dataclass(slots=True, kw_only=True)
+class WorkerStats:
+    """Stats for a worker.
 
-    worker_id: str = Field(
-        ...,
-        description="The ID of the worker",
+    Mutable slotted dataclass — shared type usable natively in msgspec
+    contexts (the ``/api/workers`` HTTP payload encoded via msgspec) and
+    Pydantic contexts (``WorkersResponse``). The worker tracker rewrites
+    ``health``, ``task_stats``, ``status``, ``startup_state``, etc. as
+    messages arrive; not ``frozen``.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    worker_id: str
+    task_stats: WorkerTaskStats = field(default_factory=WorkerTaskStats)
+    processing_stats: ProcessingStats = field(default_factory=ProcessingStats)
+    health: ProcessHealth | None = None
+    health_aggregates: ProcessHealthAggregates = field(
+        default_factory=ProcessHealthAggregates
     )
-    task_stats: WorkerTaskStats = Field(
-        default_factory=WorkerTaskStats,
-        description="The task stats for the worker as reported by the Workers (total, completed, failed)",
-    )
-    processing_stats: ProcessingStats = Field(
-        default_factory=ProcessingStats,
-        description="The processing stats for the worker as reported by the RecordsManager (processed, errors)",
-    )
-    health: ProcessHealth | None = Field(
-        default=None,
-        description="The health of the worker as reported by the Workers",
-    )
-    status: WorkerStatus = Field(
-        default=WorkerStatus.IDLE,
-        description="The status of the worker",
-    )
-    last_update_ns: int | None = Field(
-        default=None,
-        description="The last time the worker was updated in nanoseconds",
-    )
+    status: WorkerStatus = WorkerStatus.IDLE
+    startup_state: WorkerStartupState | None = None
+    startup_state_updated_ns: int | None = None
+    last_update_ns: int | None = None

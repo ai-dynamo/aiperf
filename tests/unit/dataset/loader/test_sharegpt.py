@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.models import Conversation
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader import ShareGPTLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -17,12 +18,17 @@ class TestShareGPTLoader:
     @pytest.fixture
     async def sharegpt_loader(self, user_config, mock_tokenizer_cls):
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        return ShareGPTLoader(user_config, tokenizer)
+        run = BenchmarkRun(
+            benchmark_id="test",
+            cfg=user_config,
+            artifact_dir=Path("/tmp/test"),
+        )
+        return ShareGPTLoader(run, tokenizer)
 
     async def test_initialization(self, sharegpt_loader: ShareGPTLoader):
         """Test initialization of ShareGPTLoader"""
         assert sharegpt_loader.tokenizer is not None
-        assert sharegpt_loader.user_config is not None
+        assert sharegpt_loader.run is not None
         assert sharegpt_loader.turn_count == 0
         assert sharegpt_loader.tag == "ShareGPT"
         assert (
@@ -55,7 +61,13 @@ class TestShareGPTLoader:
     async def test_convert_to_conversations_validation(
         self, sharegpt_loader: ShareGPTLoader
     ):
-        """Test converting multiple entries dataset to conversations with validation"""
+        """Test converting multiple entries dataset to conversations with validation.
+
+        Entry 1 (short prompt "Hello" = 1 token) is always filtered.
+        Entry 2 (4 prompt tokens, 4 completion tokens) always passes.
+        Entry 3 (4 prompt tokens, 1 completion token) passes because
+        output_tokens_mean is set (osl=64), which skips the min output length check.
+        """
 
         dataset = [
             {
@@ -73,19 +85,25 @@ class TestShareGPTLoader:
             {
                 "conversations": [
                     {"value": "Hello how are you"},  # 4 prompt tokens
-                    {"value": "This"},  # 1 completion tokens (too short)
+                    {
+                        "value": "This"
+                    },  # 1 completion token (passes: osl skips min check)
                 ]
             },
         ]
         conversations = await sharegpt_loader.convert_to_conversations(dataset)
 
-        assert len(conversations) == 1
-        assert isinstance(conversations[0], Conversation)
+        assert len(conversations) == 2
 
-        turn = conversations[0].turns[0]
-        assert turn.texts[0].contents[0] == "Hello how are you"
-        assert turn.max_tokens == len(["This", "is", "test", "output"])
-        assert turn.model == "test-model"
+        turn0 = conversations[0].turns[0]
+        assert turn0.texts[0].contents[0] == "Hello how are you"
+        assert turn0.max_tokens == len(["This", "is", "test", "output"])
+        assert turn0.model == "test-model"
+
+        turn1 = conversations[1].turns[0]
+        assert turn1.texts[0].contents[0] == "Hello how are you"
+        assert turn1.max_tokens == len(["This"])
+        assert turn1.model == "test-model"
 
     async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader

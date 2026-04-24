@@ -1,21 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 import asyncio
 import base64
 import mimetypes
 from abc import abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasets import load_dataset as hf_load_dataset
 from PIL import Image as PILImage
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class BaseHFDatasetLoader(BasePublicDatasetLoader):
@@ -23,8 +26,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         hf_dataset_name: str,
+        *,
         hf_split: str = "train",
         hf_subset: str | None = None,
         streaming: bool = False,
@@ -34,7 +38,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         self.hf_split = hf_split
         self.hf_subset = hf_subset
         self.streaming = streaming
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """Load the dataset from HuggingFace."""
@@ -108,16 +112,21 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
         Returns None for non-streaming datasets.
 
-        For streaming datasets, caps at request_count when set, otherwise
-        num_dataset_entries (--num-prompts, default 100), to prevent fetching
-        the entire remote dataset in duration-based benchmarks.
+        For streaming datasets, caps at the default dataset's `entries` when
+        set, falling back to any phase-level request count, to prevent
+        fetching the entire remote dataset in duration-based benchmarks.
         """
         if not self.streaming:
             return None
-        request_count = self.user_config.loadgen.request_count
-        if request_count is not None:
-            return request_count
-        return self.user_config.input.conversation.num_dataset_entries
+        dataset = self.run.cfg.get_default_dataset()
+        entries = getattr(dataset, "entries", None)
+        if entries is not None:
+            return entries
+        for phase in self.run.cfg.phases.values():
+            requests = getattr(phase, "requests", None)
+            if requests is not None:
+                return requests
+        return None
 
     @abstractmethod
     async def convert_to_conversations(

@@ -5,20 +5,23 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+import msgspec
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from pydantic import Field
 
 from aiperf import __version__ as aiperf_version
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
 from aiperf.common.models import MetricResult
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.base_models import AIPerfBaseModel, _msgspec_enc_hook
+from aiperf.config.parsing import coerce_value
 from aiperf.metrics.prometheus_formatter import InfoLabels, format_as_prometheus
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig
 
 MetricsDep = Annotated["MetricsRouter", component_dependency("metrics")]
 
@@ -48,19 +51,15 @@ class MetricsRouter(RealtimeMetricsMixin, BaseRouter):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
         **kwargs,
     ) -> None:
-        super().__init__(
-            service_config=service_config, user_config=user_config, **kwargs
-        )
+        super().__init__(**kwargs)
         self._info_labels: InfoLabels | None = None
 
     def get_info_labels(self) -> InfoLabels:
         """Get cached info labels for metrics."""
         if self._info_labels is None:
-            self._info_labels = build_info_labels(self.user_config)
+            self._info_labels = build_info_labels(self.run.cfg)
         return self._info_labels
 
     def get_router(self) -> APIRouter:
@@ -84,35 +83,39 @@ async def json_metrics(component: MetricsDep) -> MetricsResponse:
     return format_metrics_json(
         metrics=list(component._metrics),
         info_labels=component.get_info_labels(),
-        benchmark_id=component.user_config.benchmark_id,
+        benchmark_id=component.run.cfg.benchmark_id,
     )
 
 
-def build_info_labels(user_config: UserConfig) -> InfoLabels:
-    """Build info labels for metrics from UserConfig.
+def build_info_labels(config: BenchmarkConfig) -> InfoLabels:
+    """Build info labels for metrics from BenchmarkConfig.
 
     These labels identify the benchmark and are included in Prometheus metrics.
 
     Args:
-        user_config: The user configuration for the benchmark.
+        config: The AIPerf configuration for the benchmark.
 
     Returns:
         Dictionary of label names to values for the info metric.
     """
     labels: InfoLabels = {}
 
-    if user_config.benchmark_id:
-        labels["benchmark_id"] = user_config.benchmark_id
+    if config.benchmark_id:
+        labels["benchmark_id"] = config.benchmark_id
 
-    labels["model"] = ",".join(sorted(user_config.endpoint.model_names))
-    labels["endpoint_type"] = user_config.endpoint.type
-    labels["streaming"] = str(user_config.endpoint.streaming).lower()
+    labels["model"] = ",".join(sorted(config.get_model_names()))
+    labels["endpoint_type"] = config.endpoint.type
+    labels["streaming"] = str(config.endpoint.streaming).lower()
 
-    if user_config.loadgen.concurrency is not None:
-        labels["concurrency"] = str(user_config.loadgen.concurrency)
-
-    if user_config.loadgen.request_rate is not None:
-        labels["request_rate"] = str(user_config.loadgen.request_rate)
+    # Get concurrency/rate from the first profiling phase (if any)
+    profiling_phases = config.get_profiling_phases()
+    if profiling_phases:
+        first_phase = next(iter(profiling_phases.values()))
+        if first_phase.concurrency is not None:
+            labels["concurrency"] = str(first_phase.concurrency)
+        rate = getattr(first_phase, "rate", None)
+        if rate is not None:
+            labels["request_rate"] = str(rate)
 
     return labels
 
@@ -142,9 +145,12 @@ def format_metrics_json(
 
     metrics_dict = {}
     for metric in metrics:
-        metrics_dict[metric.tag] = metric.model_dump(
-            mode="json", exclude_none=True, exclude={"tag"}
-        )
+        payload = msgspec.to_builtins(metric, enc_hook=_msgspec_enc_hook)
+        # Mirror the previous Pydantic ``exclude_none=True, exclude={"tag"}``:
+        # drop tag (used as the dict key) and any None values.
+        metrics_dict[metric.tag] = {
+            k: v for k, v in payload.items() if v is not None and k != "tag"
+        }
 
     return MetricsResponse(
         aiperf_version=aiperf_version,

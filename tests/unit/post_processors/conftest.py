@@ -9,18 +9,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
-    ExportLevel,
-    MessageType,
     MetricFlags,
     MetricValueTypeT,
-    ModelSelectionStrategy,
 )
 from aiperf.common.enums.metric_enums import GenericMetricUnit
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.metric_records_wire import MetricRecordMetadata, MetricRecordsData
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -28,22 +24,15 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestInfo,
     RequestRecord,
-    TelemetryMetrics,
     TelemetryRecord,
     TextResponse,
 )
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import (
-    MetricRecordMetadata,
     ProfileResults,
     TokenCounts,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkRun
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -60,6 +49,37 @@ from tests.unit.conftest import (
 )
 
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    """Create a BenchmarkConfig with minimal defaults."""
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=artifact_dir or Path("/tmp/test"),
+    )
 
 
 @asynccontextmanager
@@ -82,48 +102,67 @@ async def aiperf_lifecycle(instance: T) -> T:
 
 
 @asynccontextmanager
-async def raw_record_processor(service_id: str, user_config: UserConfig):
+async def raw_record_processor(service_id: str, config: AIPerfConfig):
     """Async context manager for RawRecordWriterProcessor lifecycle.
 
     Handles initialize, start, and stop automatically.
 
     Usage:
-        async with raw_record_processor("processor-1", user_config) as processor:
+        async with raw_record_processor("processor-1", config) as processor:
             await processor.process_record(record, metadata)
     """
 
     processor = RawRecordWriterProcessor(
         service_id=service_id,
-        user_config=user_config,
+        run=_make_run(config),
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        )
+def mock_user_config() -> AIPerfConfig:
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/completions"],
+            "type": EndpointType.COMPLETIONS,
+            "streaming": False,
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
-    """Create a UserConfig for raw record testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-            export_level=ExportLevel.RAW,
-        ),
+def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
+    """Create an AIPerfConfig for raw record testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/chat/completions"],
+            "type": EndpointType.CHAT,
+            "streaming": False,
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        artifacts={
+            "dir": str(tmp_artifact_dir),
+            "raw": True,
+            "records": ["jsonl"],
+        },
     )
 
 
@@ -135,20 +174,10 @@ def _create_test_request_info(
 ) -> RequestInfo:
     """Create a RequestInfo for testing post processors."""
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
@@ -253,11 +282,10 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
-def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+def create_exporter_config(config: AIPerfConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     return ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        config=config,
         results=ProfileResults(
             records=None,
             completed=0,
@@ -322,19 +350,19 @@ def setup_mock_registry_sequences(
 
 
 def create_results_processor_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
+    config: AIPerfConfig, *metrics: type[BaseMetric]
 ) -> MetricResultsProcessor:
     """Create a MetricResultsProcessor with pre-configured metrics.
 
     Args:
-        user_config: User configuration for the processor
+        config: AIPerfConfig for the processor
         metrics: list of metric classes
 
     Returns:
         Configured MetricResultsProcessor instance
     """
 
-    processor = MetricResultsProcessor(user_config)
+    processor = MetricResultsProcessor(_make_run(config))
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
     processor._instances_map = {metric.tag: metric() for metric in metrics}
     return processor
@@ -473,6 +501,7 @@ def dual_flag_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
 
 
 def create_metric_metadata(
+    request_num: int = 0,
     session_num: int = 0,
     conversation_id: str | None = None,
     turn_index: int = 0,
@@ -481,7 +510,7 @@ def create_metric_metadata(
     request_end_ns: int = 1_100_000_000,
     worker_id: str = "worker-1",
     record_processor_id: str = "processor-1",
-    benchmark_phase: CreditPhase = CreditPhase.PROFILING,
+    benchmark_phase: CreditPhase = "profiling",
     x_request_id: str | None = None,
     x_correlation_id: str | None = None,
 ) -> MetricRecordMetadata:
@@ -489,6 +518,7 @@ def create_metric_metadata(
     Create a MetricRecordMetadata object with sensible defaults.
 
     Args:
+        request_num: Sequential request index in the benchmark (0-based)
         session_num: Sequential session number in the benchmark
         conversation_id: Conversation ID (optional)
         turn_index: Turn index in conversation
@@ -505,6 +535,7 @@ def create_metric_metadata(
         MetricRecordMetadata object
     """
     return MetricRecordMetadata(
+        request_num=request_num,
         session_num=session_num,
         conversation_id=conversation_id,
         turn_index=turn_index,
@@ -527,36 +558,23 @@ def create_metric_records_message(
     x_request_id: str | None = None,
     trace_data: Any | None = None,
     **metadata_kwargs,
-) -> MetricRecordsMessage:
-    """
-    Create a MetricRecordsMessage with sensible defaults.
-
-    Args:
-        service_id: Service ID
-        results: List of metric result dictionaries
-        error: Error details if any
-        metadata: Pre-built metadata, or None to build from kwargs
-        x_request_id: Record ID (set as x_request_id in metadata if provided)
-        trace_data: HTTP trace data for the request (optional)
-        **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
-
-    Returns:
-        MetricRecordsMessage object
-    """
+) -> MetricRecordsData:
+    """Create msgspec MetricRecordsData with sensible defaults."""
     if results is None:
         results = []
 
+    metrics: dict[MetricTagT, MetricValueTypeT] = {}
+    for result in results:
+        metrics.update(result)
+
     if metadata is None:
-        # If x_request_id is provided, use it as x_request_id
         if x_request_id is not None and "x_request_id" not in metadata_kwargs:
             metadata_kwargs["x_request_id"] = x_request_id
         metadata = create_metric_metadata(**metadata_kwargs)
 
-    return MetricRecordsMessage(
-        message_type=MessageType.METRIC_RECORDS,
-        service_id=service_id,
+    return MetricRecordsData(
         metadata=metadata,
-        results=results,
+        metrics=metrics,
         error=error,
         trace_data=trace_data,
     )
@@ -581,6 +599,15 @@ def make_telemetry_record(
     power_violation: float | None = None,
 ) -> TelemetryRecord:
     """Factory for creating TelemetryRecord instances with sensible defaults."""
+    raw_metrics = {
+        "gpu_power_usage": gpu_power_usage,
+        "gpu_utilization": gpu_utilization,
+        "energy_consumption": energy_consumption,
+        "gpu_memory_used": gpu_memory_used,
+        "gpu_temperature": gpu_temperature,
+        "xid_errors": xid_errors,
+        "power_violation": power_violation,
+    }
     return TelemetryRecord(
         timestamp_ns=timestamp_ns,
         dcgm_url=dcgm_url,
@@ -590,13 +617,5 @@ def make_telemetry_record(
         hostname=hostname,
         pci_bus_id=pci_bus_id,
         device=device,
-        telemetry_data=TelemetryMetrics(
-            gpu_power_usage=gpu_power_usage,
-            gpu_utilization=gpu_utilization,
-            energy_consumption=energy_consumption,
-            gpu_memory_used=gpu_memory_used,
-            gpu_temperature=gpu_temperature,
-            xid_errors=xid_errors,
-            power_violation=power_violation,
-        ),
+        telemetry_data={k: v for k, v in raw_metrics.items() if v is not None},
     )

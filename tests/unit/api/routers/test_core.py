@@ -19,7 +19,8 @@ class TestConfigEndpoint:
         response = api_test_client.get("/api/config")
         assert response.status_code == 200
         data = response.json()
-        assert "benchmark_id" in data
+        assert "endpoint" in data
+        assert "models" in data
 
 
 class TestHealthzEndpoint:

@@ -14,22 +14,25 @@ class AggregateResult:
     """Results from aggregating multiple runs.
 
     Extensible: Different strategies can add strategy-specific fields.
-
-    Attributes:
-        aggregation_type: Type of aggregation (e.g., "confidence", "sweep")
-        num_runs: Total number of runs
-        num_successful_runs: Number of successful runs
-        failed_runs: List of failed runs with error details
-        metrics: Strategy-specific aggregated metrics
-        metadata: Strategy-specific metadata
     """
 
     aggregation_type: str
+    """Type of aggregation (e.g., "confidence", "sweep")."""
+
     num_runs: int
+    """Total number of runs."""
+
     num_successful_runs: int
+    """Number of runs that completed successfully."""
+
     failed_runs: list[dict[str, Any]] = field(default_factory=list)
+    """Failed runs with error details."""
+
     metrics: dict[str, Any] = field(default_factory=dict)
+    """Strategy-specific aggregated metrics."""
+
     metadata: dict[str, Any] = field(default_factory=dict)
+    """Strategy-specific metadata."""
 
 
 class AggregationStrategy(ABC):

@@ -425,7 +425,9 @@ class TestMultiRunConfidence:
                             for failed_run in agg_data["metadata"]["failed_runs"]:
                                 assert "label" in failed_run
                                 assert "error" in failed_run
-                                assert failed_run["label"].startswith("run_")
+                                assert failed_run["label"].startswith(
+                                    ("run_", "trial_")
+                                )
 
     async def test_multi_run_insufficient_successful_runs(
         self, cli: AIPerfCLI, mock_server_factory, temp_output_dir: Path
@@ -449,6 +451,7 @@ class TestMultiRunConfidence:
                     --workers-max {defaults.workers_max} \
                     --ui {defaults.ui}
                 """,
+                timeout=200.0,
                 assert_success=False,  # Don't raise on non-zero exit
             )
 
@@ -489,6 +492,7 @@ class TestMultiRunConfidence:
                     --workers-max {defaults.workers_max} \
                     --ui {defaults.ui}
                 """,
+                timeout=200.0,
                 assert_success=False,
             )
 
@@ -624,7 +628,9 @@ class TestMultiRunConfidence:
         assert result.exit_code != 0
         output = result.stdout + result.stderr
         assert (
-            "num-profile-runs" in output.lower() or "num_profile_runs" in output.lower()
+            "num-profile-runs" in output.lower()
+            or "num_profile_runs" in output.lower()
+            or "num_runs" in output.lower()
         )
 
     async def test_multi_run_exceeds_max_limit(

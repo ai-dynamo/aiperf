@@ -11,6 +11,7 @@ from typing import Any
 import orjson
 import pandas as pd
 import pytest
+import zstandard
 
 from aiperf.plot.core.data_loader import DataLoader, RunData, RunMetadata
 from aiperf.plot.exceptions import DataLoadError
@@ -147,6 +148,7 @@ class TestDataLoaderLoadJsonl:
                 orjson.dumps(
                     {
                         "metadata": {
+                            "request_num": 0,
                             "session_num": 0,
                             "request_start_ns": 1000000000,
                             "request_end_ns": 1500000000,
@@ -166,6 +168,7 @@ class TestDataLoaderLoadJsonl:
                 orjson.dumps(
                     {
                         "metadata": {
+                            "request_num": 1,
                             "session_num": 1,
                             "request_start_ns": 2000000000,
                             "request_end_ns": 2500000000,
@@ -1208,3 +1211,130 @@ class TestRunDataGetMetric:
             metric = run.get_metric("time_to_first_token")
             assert metric is not None
             assert hasattr(metric, "avg") or "avg" in metric
+
+
+class TestZstHelpers:
+    """Tests for zst-aware file resolution and reading helpers."""
+
+    def test_resolve_file_prefers_raw(self, tmp_path: Path) -> None:
+        (tmp_path / "data.json").write_text('{"raw": true}')
+        cctx = zstandard.ZstdCompressor()
+        (tmp_path / "data.json.zst").write_bytes(cctx.compress(b'{"raw": false}'))
+        loader = DataLoader()
+        result = loader._resolve_file(tmp_path, "data.json")
+        assert result == tmp_path / "data.json"
+
+    def test_resolve_file_falls_back_to_zst(self, tmp_path: Path) -> None:
+        cctx = zstandard.ZstdCompressor()
+        (tmp_path / "data.json.zst").write_bytes(cctx.compress(b'{"zst": true}'))
+        loader = DataLoader()
+        result = loader._resolve_file(tmp_path, "data.json")
+        assert result == tmp_path / "data.json.zst"
+
+    def test_resolve_file_returns_none(self, tmp_path: Path) -> None:
+        loader = DataLoader()
+        result = loader._resolve_file(tmp_path, "data.json")
+        assert result is None
+
+    def test_read_bytes_raw(self, tmp_path: Path) -> None:
+        (tmp_path / "data.json").write_bytes(b'{"raw": true}')
+        loader = DataLoader()
+        result = loader._read_bytes(tmp_path / "data.json")
+        assert result == b'{"raw": true}'
+
+    def test_read_bytes_zst(self, tmp_path: Path) -> None:
+        cctx = zstandard.ZstdCompressor()
+        original = b'{"compressed": true}'
+        (tmp_path / "data.json.zst").write_bytes(cctx.compress(original))
+        loader = DataLoader()
+        result = loader._read_bytes(tmp_path / "data.json.zst")
+        assert result == original
+
+    def test_open_text_raw(self, tmp_path: Path) -> None:
+        (tmp_path / "data.jsonl").write_text("line1\nline2\n")
+        loader = DataLoader()
+        with loader._open_text(tmp_path / "data.jsonl") as f:
+            lines = f.readlines()
+        assert lines == ["line1\n", "line2\n"]
+
+    def test_open_text_zst(self, tmp_path: Path) -> None:
+        cctx = zstandard.ZstdCompressor()
+        content = "line1\nline2\n"
+        (tmp_path / "data.jsonl.zst").write_bytes(cctx.compress(content.encode()))
+        loader = DataLoader()
+        with loader._open_text(tmp_path / "data.jsonl.zst") as f:
+            lines = f.readlines()
+        assert lines == ["line1\n", "line2\n"]
+
+
+class TestZstRunLoading:
+    """Tests for loading runs with .zst compressed files."""
+
+    def _create_zst_run_dir(self, tmp_path: Path) -> Path:
+        """Create a minimal run directory with .zst files."""
+        import zstandard
+
+        run_dir = tmp_path / "zst_run"
+        run_dir.mkdir()
+        cctx = zstandard.ZstdCompressor()
+
+        jsonl_line = orjson.dumps(
+            {
+                "metadata": {
+                    "session_num": 0,
+                    "request_start_ns": 1762551534000000000,
+                    "request_end_ns": 1762551535000000000,
+                    "worker_id": "worker-0",
+                    "record_processor_id": "processor-0",
+                    "benchmark_phase": "profiling",
+                },
+                "metrics": {
+                    "time_to_first_token": {"value": 100.0, "unit": "ms"},
+                },
+            }
+        )
+        (run_dir / "profile_export.jsonl.zst").write_bytes(
+            cctx.compress(jsonl_line + b"\n")
+        )
+
+        agg_json = orjson.dumps(
+            {
+                "metrics": {
+                    "request_throughput": {
+                        "avg": 100.0,
+                        "min": 90.0,
+                        "max": 110.0,
+                        "p50": 100.0,
+                        "p90": 108.0,
+                        "p95": 109.0,
+                        "p99": 110.0,
+                        "unit": "req/s",
+                        "tag": "request_throughput",
+                        "header": "Request Throughput",
+                    }
+                },
+                "input_config": {},
+            }
+        )
+        (run_dir / "profile_export_aiperf.json.zst").write_bytes(
+            cctx.compress(agg_json)
+        )
+        return run_dir
+
+    def test_load_run_with_zst_files(self, tmp_path: Path) -> None:
+        """DataLoader.load_run works with .zst compressed files."""
+        run_dir = self._create_zst_run_dir(tmp_path)
+        loader = DataLoader()
+        run_data = loader.load_run(run_dir, load_per_request_data=True)
+        assert run_data.metadata.run_name == "zst_run"
+        assert run_data.aggregated["metrics"]["request_throughput"].avg == 100.0
+        assert run_data.requests is not None
+        assert len(run_data.requests) == 1
+
+    def test_load_run_zst_without_per_request(self, tmp_path: Path) -> None:
+        """DataLoader.load_run with load_per_request_data=False and zst files."""
+        run_dir = self._create_zst_run_dir(tmp_path)
+        loader = DataLoader()
+        run_data = loader.load_run(run_dir, load_per_request_data=False)
+        assert run_data.requests is None
+        assert "request_throughput" in run_data.aggregated["metrics"]

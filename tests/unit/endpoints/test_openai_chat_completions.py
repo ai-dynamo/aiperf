@@ -2,17 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Image, Text, Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import create_request_info
+from tests.unit.endpoints.conftest import (
+    _wrap_run,
+    create_config,
+    create_request_info,
+)
 
 
 class TestChatEndpoint:
@@ -20,24 +17,18 @@ class TestChatEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        return ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.RANDOM,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
-                custom_endpoint="/v1/chat/completions",
-                api_key="test-api-key",
-            ),
+        return create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000",
+            api_key="test-api-key",
+            path="/v1/chat/completions",
         )
 
     def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
             "messages": [
@@ -51,15 +42,19 @@ class TestChatEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_with_max_tokens_and_streaming(
-        self, model_endpoint, sample_conversations
-    ):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_format_payload_with_max_tokens_and_streaming(self, sample_conversations):
+        streaming_endpoint = create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000",
+            streaming=True,
+            api_key="test-api-key",
+            path="/v1/chat/completions",
+        )
+        endpoint = ChatEndpoint(run=_wrap_run(streaming_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         turns[0].max_tokens = 42
-        model_endpoint.endpoint.streaming = True
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=streaming_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
             "messages": [
@@ -74,14 +69,18 @@ class TestChatEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_with_extra_options(
-        self, model_endpoint, sample_conversations
-    ):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_format_payload_with_extra_options(self, sample_conversations):
+        cfg = create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000",
+            api_key="test-api-key",
+            path="/v1/chat/completions",
+            extra={"ignore_eos": True, "temperature": 0.7},
+        )
+        endpoint = ChatEndpoint(run=_wrap_run(cfg))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        model_endpoint.endpoint.extra = {"ignore_eos": True, "temperature": 0.7}
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=cfg, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
             "messages": [
@@ -100,14 +99,14 @@ class TestChatEndpoint:
     def test_format_payload_multiple_turns_with_text_and_image(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         # Create a turn with both text and image
         turns = sample_conversations["session_1"].turns
         turns[0].images = type("ImageList", (), {})()
         turns[0].images = [
             type("Image", (), {"contents": ["http://image.url/img1.png"]})()
         ]
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
             "messages": [
@@ -132,11 +131,11 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_format_payload_with_audio(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["mp3,ZmFrZV9hdWRpbw=="]})()]
         turns = [turn]
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
             "messages": [
@@ -160,7 +159,7 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_create_messages_hotfix(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         messages = endpoint._create_messages(turns, None, None)
@@ -171,7 +170,7 @@ class TestChatEndpoint:
     def test_create_messages_with_empty_content(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
@@ -183,7 +182,7 @@ class TestChatEndpoint:
     def test_create_messages_audio_format_error(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
@@ -209,7 +208,6 @@ class TestChatEndpoint:
     )  # fmt: skip
     def test_stream_options_auto_configuration(
         self,
-        model_endpoint,
         sample_conversations,
         streaming,
         use_server_token_count,
@@ -217,14 +215,17 @@ class TestChatEndpoint:
         expected_stream_options,
     ):
         """Verify stream_options.include_usage is automatically configured based on flags and user settings."""
-        endpoint = ChatEndpoint(model_endpoint)
+        cfg = create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000",
+            streaming=streaming,
+            use_server_token_count=use_server_token_count,
+            extra=user_extra or {},
+        )
+        endpoint = ChatEndpoint(run=_wrap_run(cfg))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        model_endpoint.endpoint.streaming = streaming
-        model_endpoint.endpoint.use_server_token_count = use_server_token_count
-        if user_extra:
-            model_endpoint.endpoint.extra = user_extra
-        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        request_info = create_request_info(turns=turns, config=cfg)
         payload = endpoint.format_payload(request_info)
 
         if expected_stream_options is None:
@@ -237,7 +238,7 @@ class TestChatEndpoint:
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -253,7 +254,7 @@ class TestChatEndpoint:
     def test_create_messages_with_user_context_message(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         user_context = "The user is working on a Python project."
@@ -269,7 +270,7 @@ class TestChatEndpoint:
     def test_create_messages_with_both_context_messages(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -289,7 +290,7 @@ class TestChatEndpoint:
     def test_create_messages_with_context_and_multiple_turns(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
@@ -310,14 +311,14 @@ class TestChatEndpoint:
     def test_format_payload_with_context_messages(
         self, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
 
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=turns,
             system_message=system_message,
             user_context_message=user_context,
@@ -349,12 +350,12 @@ class TestChatEndpoint:
         Regression test for https://github.com/ai-dynamo/aiperf/issues/769:
         vLLM with Mistral tokenizer rejects the extra 'name' field.
         """
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = Turn(
             texts=[Text(name=text_name, contents=["Hello"])],
             role="user",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
         payload = endpoint.format_payload(request_info)
         message = payload["messages"][0]
         assert "name" not in message
@@ -363,13 +364,13 @@ class TestChatEndpoint:
 
     def test_name_field_excluded_from_multimodal_payload(self, model_endpoint):
         """Multimodal content-array path also must not include name."""
-        endpoint = ChatEndpoint(model_endpoint)
+        endpoint = ChatEndpoint(run=_wrap_run(model_endpoint))
         turn = Turn(
             texts=[Text(name="text", contents=["Hello"])],
             images=[Image(name="img", contents=["http://example.com/img.png"])],
             role="user",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
         payload = endpoint.format_payload(request_info)
         message = payload["messages"][0]
         assert "name" not in message

@@ -6,13 +6,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     RankingsResponseData,
@@ -21,6 +14,7 @@ from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.endpoints.conftest import _wrap_run, create_config
 
 
 def mock_response_nim(rankings):
@@ -68,19 +62,13 @@ class TestRankingsEndpointParseResponse:
     def endpoint(self, request):
         """Create endpoint instances for all ranking endpoint types."""
         endpoint_type, endpoint_cls, mock_fn = request.param
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="rankings-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=endpoint_type,
-                base_url="http://localhost:8000",
-            ),
+        cfg = create_config(
+            endpoint_type,
+            model_name="rankings-model",
         )
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            endpoint_instance = endpoint_cls(model_endpoint=model_endpoint)
+            endpoint_instance = endpoint_cls(run=_wrap_run(cfg))
             # Attach mock builder to endpoint for easy access in tests
             endpoint_instance._mock_builder = mock_fn
             return endpoint_instance

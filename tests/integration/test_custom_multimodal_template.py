@@ -55,8 +55,10 @@ class TestCustomMultimodalTemplate:
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --synthetic-input-tokens-mean 50 \
+                --image-batch-size 1 \
                 --image-width-mean 64 \
                 --image-height-mean 64 \
+                --audio-batch-size 1 \
                 --audio-length-mean 0.1 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}

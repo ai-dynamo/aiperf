@@ -19,12 +19,31 @@
 		test coverage clean install install-app docker docker-run first-time-setup \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
+		kubernetes-tests-ci test-kubernetes-ci \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
-		test-fern-docs internal-help help
+		test-fern-docs internal-help help \
+		validate-config-examples validate-template-metadata \
+		generate-config-schema check-config-schema \
+		generate-crd check-crd crd-release benchmark-resources \
+		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
+		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
+		kube-install-jobset kube-install-dynamo \
+		kube-install-kueue kube-remove-kueue \
+		kube-install-prometheus kube-install-loki \
+		kube-push \
+		kube-deploy-mock kube-remove-mock \
+		kube-deploy-vllm kube-remove-vllm kube-vllm-logs \
+		kube-deploy-sglang kube-remove-sglang kube-sglang-logs \
+		kube-deploy-trtllm kube-remove-trtllm kube-trtllm-logs \
+		kube-deploy-dynamo kube-remove-dynamo kube-dynamo-logs \
+		kube-deploy-lora kube-remove-lora \
+		kube-run kube-run-detach kube-dry-run \
+		kube-run-local kube-run-local-detach kube-dry-run-local \
+		helm-lint helm-template helm-package
 
 
 # Include user-defined environment variables
@@ -70,7 +89,7 @@ dim := $(shell tput dim)
 
 
 help: #? show this help
-	@$(MAKE) internal-help --no-print-directory
+	@make internal-help --no-print-directory
 
 #
 # Help command is automatically generated based on the comments in the Makefile.
@@ -123,6 +142,18 @@ test-imports-src: #? verify all modules in src/aiperf can be imported.
 test-imports-tests: #? verify all modules in tests/ can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_test_modules_can_be_imported -q $(args)
 
+check-ergonomics: #? run LLM-ergonomics checks (file/function size, nesting, module state, duplicate classes, wide sigs, pydantic fields, stdlib-json).
+	$(activate_venv) && python tools/check_ergonomics.py $(args)
+
+regenerate-ergonomics-baseline: #? overwrite tools/ergonomics_baseline.json with current violations.
+	$(activate_venv) && python tools/check_ergonomics.py --regenerate-baseline
+
+check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (PLR0915/PLR0912/C901/TID251) via the out-of-band baseline wrapper.
+	$(activate_venv) && python tools/ruff_baselined.py $(args)
+
+regenerate-ruff-baseline: #? overwrite tools/ruff_baseline.json with current ruff violations (grandfather them).
+	$(activate_venv) && python tools/ruff_baselined.py --regenerate-baseline
+
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration' $(args)
 
@@ -171,7 +202,7 @@ setup-venv: #? create the virtual environment.
 	fi
 
 first-time-setup: #? convenience command to setup the environment for the first time
-	$(MAKE) setup-venv --no-print-directory
+	make setup-venv --no-print-directory
 
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
@@ -221,6 +252,11 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 	$(activate_venv) && pytest tests/integration/ -m 'integration and stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
 
+benchmark-resources: #? run worker resource benchmarks for K8s sizing.
+	@printf "$(bold)$(blue)Running worker resource benchmarks...$(reset)\n"
+	$(activate_venv) && pytest tests/benchmarks/worker_resource/ -m 'benchmark' -v --tb=short --capture=no $(args)
+	@printf "$(bold)$(green)Worker resource benchmarks completed!$(reset)\n"
+
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance' -n auto --tb=short --no-looptime $(args)
@@ -230,6 +266,9 @@ integration-tests-ci test-integration-ci: #? run integration tests with with AIP
 	@printf "$(bold)$(blue)Running integration tests (CI mode) with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and not performance and not ffmpeg and not stress' -n auto -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests (CI mode) passed!$(reset)\n"
+
+kubernetes-tests-ci test-kubernetes-ci: #? run kubernetes tests on Kind for CI (full suite minus gpu/k8s_slow).
+	$(activate_venv) && pytest tests/kubernetes/ --ignore=tests/kubernetes/gpu -m 'k8s and not k8s_slow' -n auto -v --tb=long $(args)
 
 integration-tests-ci-macos test-integration-ci-macos: #? run integration tests with with AIPerf Mock Server for CI on macOS (non-parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running integration tests (CI mode on macOS) with AIPerf Mock Server...$(reset)\n"
@@ -284,6 +323,31 @@ generate-plugin-schemas: #? generate JSON schemas for categories.yaml and plugin
 validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against their schemas.
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py --validate
 
+validate-config-examples: #? validate config example YAML files.
+	$(activate_venv) && python -m tools.validate_config_examples $(args)
+
+validate-template-metadata: #? validate template YAML metadata blocks.
+	$(activate_venv) && python -m tools.validate_template_metadata $(args)
+
+generate-config-schema: #? generate JSON schema for config YAML files.
+	$(activate_venv) && python -m tools.generate_config_schema $(args)
+
+check-config-schema: #? check if config JSON schema is up-to-date.
+	$(activate_venv) && python -m tools.generate_config_schema --check $(args)
+
+generate-crd: #? generate Kubernetes CRD YAML from AIPerfConfig model.
+	$(activate_venv) && python -m tools.generate_crd $(args)
+
+check-crd: #? check if CRD YAML is up-to-date.
+	$(activate_venv) && python -m tools.generate_crd --check $(args)
+
+crd-release: #? render the Helm CRD template to dist/aiperfjob-crd.yaml for release.
+	$(activate_venv) && mkdir -p dist && \
+		helm template aiperf-operator deploy/helm/aiperf-operator \
+			--show-only templates/crd.yaml \
+			> dist/aiperfjob-crd.yaml
+	@echo "Wrote dist/aiperfjob-crd.yaml"
+
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
 
@@ -293,3 +357,153 @@ generate-all-docs: #? generate all documentation files.
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py
+
+# ---------------------------------------------------------------------------
+# Kubernetes cluster management (dev/kube.py)
+# ---------------------------------------------------------------------------
+
+KUBE = $(activate_venv) && python dev/kube.py
+
+kube-setup: #? set up local K8s cluster with all dependencies (Kind/Minikube).
+	$(KUBE) setup $(args)
+
+kube-doctor: #? check prerequisites and cluster health.
+	$(KUBE) doctor $(args)
+
+kube-status: #? show status of cluster, images, and deployments.
+	$(KUBE) status
+
+kube-cleanup: #? delete AIPerf benchmark resources (keep cluster).
+	$(KUBE) cleanup
+
+kube-teardown: #? delete the entire local cluster.
+	$(KUBE) teardown
+
+kube-reload: #? rebuild images and reload into cluster.
+	$(KUBE) reload
+
+kube-build: #? build AIPerf and mock-server Docker images.
+	$(KUBE) build
+
+kube-load: #? load Docker images into the cluster.
+	$(KUBE) load
+
+kube-logs: #? view AIPerf benchmark pod logs.
+	$(KUBE) logs $(args)
+
+kube-cluster-create: #? create a new Kind/Minikube cluster.
+	$(KUBE) cluster-create
+
+kube-cluster-delete: #? delete the Kind/Minikube cluster.
+	$(KUBE) cluster-delete
+
+kube-install-jobset: #? install the JobSet CRD.
+	$(KUBE) install-jobset
+
+kube-install-dynamo: #? install the Dynamo operator.
+	$(KUBE) install-dynamo
+
+kube-install-kueue: #? install Kueue and seed default ClusterQueue/LocalQueue.
+	$(KUBE) install-kueue
+
+kube-remove-kueue: #? remove Kueue and default queues.
+	$(KUBE) remove-kueue
+
+kube-install-prometheus: #? install kube-prometheus-stack (Prometheus + Grafana).
+	$(KUBE) install-prometheus
+
+kube-install-loki: #? install loki-stack (Loki + Promtail).
+	$(KUBE) install-loki
+
+kube-push: #? retag and docker push the aiperf image. Pass --registry (required) / --tag.
+	$(KUBE) push $(args)
+
+kube-deploy-mock: #? deploy the mock inference server.
+	$(KUBE) deploy-mock
+
+kube-remove-mock: #? remove the mock inference server.
+	$(KUBE) remove-mock
+
+kube-deploy-vllm: #? deploy a standalone vLLM server.
+	$(KUBE) deploy-vllm $(args)
+
+kube-remove-vllm: #? remove the vLLM server.
+	$(KUBE) remove-vllm
+
+kube-vllm-logs: #? view vLLM server logs.
+	$(KUBE) vllm-logs $(args)
+
+kube-deploy-sglang: #? deploy a standalone SGLang server.
+	$(KUBE) deploy-sglang $(args)
+
+kube-remove-sglang: #? remove the SGLang server.
+	$(KUBE) remove-sglang
+
+kube-sglang-logs: #? view SGLang server logs.
+	$(KUBE) sglang-logs $(args)
+
+kube-deploy-trtllm: #? deploy a standalone TensorRT-LLM server.
+	$(KUBE) deploy-trtllm $(args)
+
+kube-remove-trtllm: #? remove the TensorRT-LLM server.
+	$(KUBE) remove-trtllm
+
+kube-trtllm-logs: #? view TensorRT-LLM server logs.
+	$(KUBE) trtllm-logs $(args)
+
+kube-deploy-dynamo: #? deploy a Dynamo inference server.
+	$(KUBE) deploy-dynamo $(args)
+
+kube-remove-dynamo: #? remove the Dynamo server.
+	$(KUBE) remove-dynamo
+
+kube-dynamo-logs: #? view Dynamo pod logs.
+	$(KUBE) dynamo-logs $(args)
+
+kube-deploy-lora: #? deploy a LoRA adapter.
+	$(KUBE) deploy-lora $(args)
+
+kube-remove-lora: #? remove a LoRA adapter.
+	$(KUBE) remove-lora $(args)
+
+kube-run: #? run an AIPerf benchmark (attached).
+	$(KUBE) run $(args)
+
+kube-run-detach: #? run an AIPerf benchmark (detached).
+	$(KUBE) run-detach $(args)
+
+kube-dry-run: #? print benchmark manifest without running.
+	$(KUBE) dry-run $(args)
+
+kube-run-local: #? run single-pod benchmark (attached). Pass aiperf args after '--'.
+	$(KUBE) run-local $(args)
+
+kube-run-local-detach: #? run single-pod benchmark (detached). Pass aiperf args after '--'.
+	$(KUBE) run-local-detach $(args)
+
+kube-dry-run-local: #? print single-pod manifest without running. Pass aiperf args after '--'.
+	$(KUBE) dry-run-local $(args)
+
+# ---------------------------------------------------------------------------
+# Helm chart targets for deploy/helm/aiperf-operator.
+# helm-lint validates chart structure; helm-template smoke-checks rendering
+# without cluster access; helm-package produces a versioned tarball in dist/.
+# ---------------------------------------------------------------------------
+
+helm-lint: #? lint the aiperf-operator Helm chart.
+	helm lint deploy/helm/aiperf-operator
+
+helm-template: #? smoke-check Helm chart rendering (no cluster required).
+	helm template test deploy/helm/aiperf-operator > /dev/null
+
+helm-package: #? package the aiperf-operator Helm chart into dist/.
+	mkdir -p dist/
+	helm package deploy/helm/aiperf-operator -d dist/
+
+.PHONY: install-e2e-browsers test-e2e
+
+install-e2e-browsers: ## Install Playwright Chromium for e2e UI tests
+	uv run playwright install chromium --with-deps || uv run playwright install chromium
+
+test-e2e: ## Run operator web UI e2e tests
+	uv run pytest tests/e2e/ -m e2e -n auto

@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import UserConfig
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from aiperf.common.enums import ServerMetricsFormat
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
@@ -33,26 +39,28 @@ class ServerMetricsJSONLWriter(
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        if user_config.server_metrics_disabled:
+        config = run.cfg
+        if config.server_metrics_disabled:
             raise PostProcessorDisabled(
                 "Server metrics JSONL export is disabled via --no-server-metrics"
             )
 
         # Check if JSONL format is enabled
-        if ServerMetricsFormat.JSONL not in user_config.server_metrics_formats:
+        if ServerMetricsFormat.JSONL not in config.server_metrics_formats:
             raise PostProcessorDisabled(
                 "Server metrics JSONL export disabled: format not selected"
             )
 
-        output_file = user_config.output.server_metrics_export_jsonl_file
+        output_file = config.output.server_metrics_export_jsonl_file
 
         super().__init__(
-            user_config=user_config,
+            run=run,
             output_file=output_file,
             batch_size=Environment.SERVER_METRICS.EXPORT_BATCH_SIZE,
+            flush_interval=Environment.SERVER_METRICS.EXPORT_FLUSH_INTERVAL,
             **kwargs,
         )
 

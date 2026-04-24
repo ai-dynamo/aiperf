@@ -4,7 +4,6 @@
 
 import orjson
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -186,15 +185,11 @@ class TestBaseTraceData:
         )
         assert loaded_trace.request_headers == sample_headers
 
-    def test_trace_type_is_frozen(self):
-        """Trace type field is frozen and cannot be modified."""
+    def test_trace_type_settable(self):
+        """Trace type is a plain string field on the msgspec struct and can be updated."""
         trace = create_base_trace_data()
-
-        with pytest.raises(
-            ValidationError,
-            match="Field is frozen",
-        ):
-            trace.trace_type = "modified"
+        trace.trace_type = "modified"
+        assert trace.trace_type == "modified"
 
 
 class TestAioHttpTraceData:
@@ -719,3 +714,21 @@ class TestTraceDataEdgeCases:
         )
         assert new_trace.tcp_connect_start_perf_ns is not None
         assert new_trace.connection_reused_perf_ns is None
+
+
+def test_trace_data_export_has_no_autoroutedmodel_registry():
+    """TraceDataExport does not use a discriminator_field registry."""
+    from aiperf.common.models import TraceDataExport
+
+    assert "discriminator_field" not in TraceDataExport.__dict__
+
+
+def test_base_trace_data_to_export_still_routes_via_export_lookup():
+    """to_export() uses the manual _EXPORT_LOOKUP for routing."""
+    from aiperf.common.models.trace_models import (
+        AioHttpTraceData,
+        AioHttpTraceDataExport,
+    )
+
+    data = AioHttpTraceData()
+    assert isinstance(data.to_export(), AioHttpTraceDataExport)

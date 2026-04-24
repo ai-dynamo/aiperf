@@ -462,8 +462,6 @@ class TestParseSSEMessageIncompleteJSON:
         assert len(result.packets) == 1
         assert result.packets[0].name == SSEFieldType.DATA
 
-        import orjson
-
         parsed = orjson.loads(result.packets[0].value)
         assert parsed["choices"][0]["delta"]["content"] == "\n"
         assert parsed["choices"][0]["delta"]["function_call"] is None
@@ -476,8 +474,6 @@ class TestParseSSEMessageIncompleteJSON:
         assert len(result.packets) == 1
         assert result.packets[0].name == SSEFieldType.DATA
 
-        import orjson
-
         parsed = orjson.loads(result.packets[0].value)
         assert parsed["content"] == "line1\nline2\nline3"
 
@@ -488,8 +484,6 @@ class TestParseSSEMessageIncompleteJSON:
 
         assert len(result.packets) == 1
         assert result.packets[0].name == SSEFieldType.DATA
-
-        import orjson
 
         parsed = orjson.loads(result.packets[0].value)
         assert parsed["choices"][0]["delta"]["content"] == "hello"

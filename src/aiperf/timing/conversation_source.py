@@ -18,6 +18,7 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
@@ -29,17 +30,19 @@ class SampledSession:
 
     Returned by ConversationSource.next(). Each session is a unique execution
     of a conversation template.
-
-    Attributes:
-        conversation_id: Template ID from dataset (can be reused across sessions).
-        metadata: Conversation metadata (turns, prompts, etc.) from the template.
-        x_correlation_id: Unique session ID (UUID). Enables sticky routing so all
-            turns in this session route to the same worker.
     """
 
     conversation_id: str
+    """Template ID from dataset (can be reused across sessions)."""
+
     metadata: ConversationMetadata
+    """Conversation metadata (turns, prompts, etc.) from the template."""
+
     x_correlation_id: str
+    """Unique session ID (UUID) for sticky routing all turns to the same worker."""
+
+    allow_worker_migration: bool
+    """Whether later turns can safely continue on a different worker after worker loss."""
 
     def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
@@ -53,6 +56,7 @@ class SampledSession:
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
+            allow_worker_migration=self.allow_worker_migration,
         )
 
 
@@ -89,6 +93,11 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=x_correlation_id or str(uuid.uuid4()),
+            allow_worker_migration=self.get_context_mode(conversation_id)
+            in {
+                ConversationContextMode.DELTAS_WITH_RESPONSES,
+                ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            },
         )
 
     def get_metadata(self, conversation_id: str) -> ConversationMetadata:
@@ -96,6 +105,19 @@ class ConversationSource:
         if conversation_id not in self._metadata_lookup:
             raise KeyError(f"No metadata for conversation {conversation_id}")
         return self._metadata_lookup[conversation_id]
+
+    def get_context_mode(self, conversation_id: str) -> ConversationContextMode:
+        """Resolve context mode for a specific conversation.
+
+        Resolution order matches worker-side session setup:
+        conversation override -> dataset default -> DELTAS_WITHOUT_RESPONSES.
+        """
+        metadata = self.get_metadata(conversation_id)
+        return (
+            metadata.context_mode
+            or self._dataset_metadata.default_context_mode
+            or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+        )
 
     def get_next_turn_metadata(self, credit: Credit) -> TurnMetadata:
         """Get metadata for next turn after completed credit.

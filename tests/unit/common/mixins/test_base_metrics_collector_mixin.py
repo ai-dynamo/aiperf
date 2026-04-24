@@ -56,7 +56,7 @@ class TestTrustEnvPassedToSessions:
             mock_session_class.side_effect = [mock_persistent, mock_temp_cm]
 
             with patch(
-                "aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector"
+                "aiperf.transports.aiohttp_client.create_tcp_connector"
             ) as mock_create:
                 mock_conn = AsyncMock()
                 mock_conn.close = AsyncMock()

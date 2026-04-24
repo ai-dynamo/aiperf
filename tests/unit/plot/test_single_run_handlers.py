@@ -173,7 +173,7 @@ class TestBaseSingleRunHandler:
         result = handler._get_metric_label("unknown_metric", "p50", {})
         assert result == "Unknown Metric (p50)"
 
-    @patch("aiperf.plot.handlers.single_run_handlers.prepare_request_timeseries")
+    @patch("aiperf.plot.handlers.single_run._base.prepare_request_timeseries")
     def test_prepare_data_for_requests_source(self, mock_prepare, handler):
         """Test data preparation for REQUESTS source."""
         mock_run = MagicMock()

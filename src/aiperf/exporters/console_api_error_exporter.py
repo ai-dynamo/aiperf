@@ -20,10 +20,19 @@ class ErrorInsight:
     """Model describing a detected API error insight."""
 
     title: str
+    """Short title for the error pattern."""
+
     problem: str
+    """Description of the problem detected."""
+
     causes: list[str]
+    """Possible causes of the error."""
+
     investigation: list[str]
+    """Steps to investigate the error further."""
+
     fixes: list[str]
+    """Suggested fixes to resolve the error."""
 
 
 class MaxCompletionTokensDetector:

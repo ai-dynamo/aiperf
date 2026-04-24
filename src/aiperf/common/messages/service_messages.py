@@ -2,72 +2,70 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
-from pydantic import Field
+import msgspec
 
 from aiperf.common.enums import LifecycleState, MessageType
+from aiperf.common.memory_tracker import MemoryPhase
 from aiperf.common.messages.base_messages import Message
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.types import MessageTypeT, ServiceTypeT
 
 
-class BaseServiceMessage(Message):
-    """Base message that is sent from a service. Requires a service_id field to specify
-    the service that sent the message."""
+class BaseServiceMessage(Message, kw_only=True, omit_defaults=True):
+    """Any message originating from a specific service; requires ``service_id``."""
 
-    service_id: str = Field(
-        ...,
-        description="ID of the service sending the message",
-    )
+    service_id: str
 
 
-class BaseStatusMessage(BaseServiceMessage):
-    """Base message containing status data.
-    This message is sent by a service to the system controller to report its status.
-    """
+class BaseStatusMessage(BaseServiceMessage, kw_only=True, omit_defaults=True):
+    """Lifecycle status message — ``request_ns`` defaults to ``time.time_ns``."""
 
-    # override request_ns to be auto-filled if not provided
-    request_ns: int | None = Field(
-        default_factory=time.time_ns,
-        description="Timestamp of the request",
-    )
-    state: LifecycleState = Field(
-        ...,
-        description="Current state of the service",
-    )
-    service_type: ServiceTypeT = Field(
-        ...,
-        description="Type of service",
-    )
+    state: LifecycleState
+    # ServiceType is an ExtensibleStrEnum with a custom metaclass; msgspec
+    # cannot build a decoder for ``ServiceType | str``. Storing the raw ``str``
+    # on the wire preserves equality (enum members compare against str values).
+    service_type: str
+    request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]
 
 
-class StatusMessage(BaseStatusMessage):
-    """Message containing status data.
-    This message is sent by a service to the system controller to report its status.
-    """
-
-    message_type: MessageTypeT = MessageType.STATUS
+class StatusMessage(BaseStatusMessage, kw_only=True, tag=MessageType.STATUS.value):
+    """Service status report."""
 
 
-class RegistrationMessage(BaseStatusMessage):
-    """Message containing registration data.
-    This message is sent by a service to the system controller to register itself.
-    """
-
-    message_type: MessageTypeT = MessageType.REGISTRATION
+class RegistrationMessage(
+    BaseStatusMessage, kw_only=True, tag=MessageType.REGISTRATION.value
+):
+    """Service self-registration."""
 
 
-class HeartbeatMessage(BaseStatusMessage):
-    """Message containing heartbeat data.
-    This message is sent by a service to the system controller to indicate that it is
-    still running.
-    """
-
-    message_type: MessageTypeT = MessageType.HEARTBEAT
+class HeartbeatMessage(
+    BaseStatusMessage, kw_only=True, tag=MessageType.HEARTBEAT.value
+):
+    """Service heartbeat."""
 
 
-class BaseServiceErrorMessage(BaseServiceMessage):
-    """Base message containing error data."""
+class MemoryReportMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.MEMORY_REPORT.value
+):
+    """Self-reported memory snapshot from a service process."""
 
-    message_type: MessageTypeT = MessageType.SERVICE_ERROR
+    pid: int
+    service_type: str
+    phase: MemoryPhase
+    pss_bytes: int
+    rss_bytes: int | None = None
+    uss_bytes: int | None = None
+    shared_bytes: int | None = None
 
-    error: ErrorDetails = Field(..., description="Error information")
+
+class ConnectionProbeMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.CONNECTION_PROBE.value
+):
+    """ZMQ slow-joiner self-echo probe."""
+
+
+class BaseServiceErrorMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.SERVICE_ERROR.value
+):
+    """Service-level error envelope."""
+
+    error: ErrorDetails

@@ -83,7 +83,7 @@ class CommunicationError(AIPerfError):
     """Generic communication error."""
 
 
-class ConfigurationError(AIPerfError):
+class AIPerfConfigurationError(AIPerfError):
     """Exception raised when something fails to configure, or there is a configuration error."""
 
 
@@ -187,6 +187,25 @@ class PostProcessorDisabled(AIPerfError):
 
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
+
+
+class ServiceProcessDiedError(AIPerfError):
+    """Exception raised when a service process dies unexpectedly."""
+
+    def __init__(self, service_id: str, service_type: "ServiceTypeT") -> None:
+        self.service_id = service_id
+        self.service_type = service_type
+        super().__init__(
+            f"Service process '{service_id}' ({service_type}) died unexpectedly"
+        )
+
+
+class ServiceRegistrationTimeoutError(AIPerfError, TimeoutError):
+    """Exception raised when services fail to register within the timeout."""
+
+    def __init__(self, message: str, missing: dict[str, int]) -> None:
+        self.missing = missing
+        super().__init__(message)
 
 
 class ShutdownError(AIPerfError):

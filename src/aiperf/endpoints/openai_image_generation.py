@@ -27,7 +27,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
 
         Supports all OpenAI Image Generation API parameters:
         - prompt (required): Text description from turn.texts[0]
-        - model (optional): From turn.model or model_endpoint.primary_model_name
+        - model (optional): From turn.model or model_endpoint.get_model_names()[0]
         - stream (optional): From model_endpoint.endpoint.streaming
         - n, size, quality, style, response_format, background, moderation,
           output_format, output_compression, partial_images, user:
@@ -43,7 +43,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
             raise ValueError("Image generation endpoint requires at least one turn.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         if not turn.texts or not turn.texts[0].contents:
             raise ValueError(
@@ -56,7 +56,7 @@ class ImageGenerationEndpoint(BaseEndpoint):
         #       This is because sglang generate only supports b64_json responses currently.
         payload = {
             "prompt": prompt,
-            "model": turn.model or model_endpoint.primary_model_name,
+            "model": turn.model or model_endpoint.get_model_names()[0],
             "response_format": "b64_json",
             "n": 1,
         }

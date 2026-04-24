@@ -17,9 +17,11 @@ from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 _DEFAULT_ROLE: str = "user"
+_FAST_PARSE_FALLBACK = object()
 
 
 class ChatEndpoint(BaseEndpoint):
+    _FAST_PARSE_FALLBACK = _FAST_PARSE_FALLBACK
     """OpenAI Chat Completions endpoint.
 
     Supports multi-modal inputs (text, images, audio, video) and both
@@ -39,7 +41,7 @@ class ChatEndpoint(BaseEndpoint):
             raise ValueError("Chat endpoint requires at least one turn.")
 
         turns = request_info.turns
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.run.cfg
 
         if turns[-1].raw_messages is not None:
             messages = turns[-1].raw_messages
@@ -50,7 +52,7 @@ class ChatEndpoint(BaseEndpoint):
 
         payload = {
             "messages": messages,
-            "model": turns[-1].model or model_endpoint.primary_model_name,
+            "model": turns[-1].model or model_endpoint.get_model_names()[0],
             "stream": model_endpoint.endpoint.streaming,
         }
 
@@ -143,21 +145,30 @@ class ChatEndpoint(BaseEndpoint):
             return
 
         message_content: list[dict[str, Any]] = []
+        self._append_text_parts(message_content, turn)
+        self._append_image_parts(message_content, turn)
+        self._append_audio_parts(message_content, turn)
+        self._append_video_parts(message_content, turn)
+        message["content"] = message_content
 
+    @staticmethod
+    def _append_text_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
         for text in turn.texts:
             for content in text.contents:
                 if not content:
                     continue
-                message_content.append({"type": "text", "text": content})
+                parts.append({"type": "text", "text": content})
 
+    @staticmethod
+    def _append_image_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
         for image in turn.images:
             for content in image.contents:
                 if not content:
                     continue
-                message_content.append(
-                    {"type": "image_url", "image_url": {"url": content}}
-                )
+                parts.append({"type": "image_url", "image_url": {"url": content}})
 
+    @staticmethod
+    def _append_audio_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
         for audio in turn.audios:
             for content in audio.contents:
                 if not content:
@@ -167,7 +178,7 @@ class ChatEndpoint(BaseEndpoint):
                         "Audio content must be in the format 'format,b64_audio'."
                     )
                 format, b64_audio = content.split(",", 1)
-                message_content.append(
+                parts.append(
                     {
                         "type": "input_audio",
                         "input_audio": {
@@ -176,15 +187,14 @@ class ChatEndpoint(BaseEndpoint):
                         },
                     }
                 )
+
+    @staticmethod
+    def _append_video_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
         for video in turn.videos:
             for content in video.contents:
                 if not content:
                     continue
-                message_content.append(
-                    {"type": "video_url", "video_url": {"url": content}}
-                )
-
-        message["content"] = message_content
+                parts.append({"type": "video_url", "video_url": {"url": content}})
 
     def parse_response(
         self, response: InferenceServerResponse
@@ -201,12 +211,85 @@ class ChatEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
+        fast_parsed = self._fast_parse_response(json_obj, response.perf_ns)
+        if fast_parsed is not self._FAST_PARSE_FALLBACK:
+            return fast_parsed
+
         data = self.extract_chat_response_data(json_obj)
         usage = json_obj.get("usage") or None
 
         if data or usage:
             return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
 
+        return None
+
+    def _fast_parse_response(
+        self,
+        json_obj: JsonObject,
+        perf_ns: int,
+    ) -> ParsedResponse | None | object:
+        """Fast-path the common OpenAI chat shapes and fall back for anything unusual."""
+        try:
+            data_key = self._fast_parse_data_key(json_obj)
+            if data_key is None:
+                return self._FAST_PARSE_FALLBACK
+
+            choices = json_obj.get("choices")
+            if not choices:
+                return self._usage_only_response(json_obj, perf_ns)
+
+            first_choice = choices[0]
+            if not isinstance(first_choice, dict):
+                return self._FAST_PARSE_FALLBACK
+
+            data = first_choice.get(data_key)
+            if not isinstance(data, dict):
+                return None
+
+            return self._build_fast_parsed(data, json_obj, perf_ns)
+        except (IndexError, KeyError, TypeError):
+            return self._FAST_PARSE_FALLBACK
+
+    @staticmethod
+    def _fast_parse_data_key(json_obj: JsonObject) -> str | None:
+        object_type = json_obj.get("object")
+        if object_type == "chat.completion":
+            return "message"
+        if object_type == "chat.completion.chunk":
+            return "delta"
+        return None
+
+    @staticmethod
+    def _usage_only_response(
+        json_obj: JsonObject, perf_ns: int
+    ) -> ParsedResponse | None:
+        # Final usage-only chunk (stream_options.include_usage=true)
+        # has empty choices but carries the cumulative usage totals.
+        usage = json_obj.get("usage") or None
+        if usage is not None:
+            return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)
+        return None
+
+    def _build_fast_parsed(
+        self, data: dict[str, Any], json_obj: JsonObject, perf_ns: int
+    ) -> ParsedResponse | None:
+        content = data.get("content")
+        reasoning = data.get("reasoning_content") or data.get("reasoning")
+        usage = json_obj.get("usage") or None
+
+        if not content and not reasoning and not usage:
+            return None
+
+        if reasoning:
+            response_data: BaseResponseData | None = ReasoningResponseData(
+                content=content,
+                reasoning=reasoning,
+            )
+        else:
+            response_data = self.make_text_response_data(content)
+
+        if response_data or usage:
+            return ParsedResponse(perf_ns=perf_ns, data=response_data, usage=usage)
         return None
 
     def extract_chat_response_data(

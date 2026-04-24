@@ -122,6 +122,22 @@
         "$ref": "#/$defs/ResultsProcessorPlugin"
       }
     },
+    "gpu_telemetry_processor": {
+      "title": "GPU Telemetry Processor Plugins",
+      "type": "object",
+      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/GpuTelemetryProcessorPlugin"
+      }
+    },
+    "server_metrics_processor": {
+      "title": "Server Metrics Processor Plugins",
+      "type": "object",
+      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServerMetricsProcessorPlugin"
+      }
+    },
     "accuracy_grader": {
       "title": "Accuracy Grader Plugins",
       "type": "object",
@@ -1052,6 +1068,88 @@
       ],
       "title": "Results Processor Plugin",
       "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
+    "GpuTelemetryProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "GPU Telemetry Processor Plugin",
+      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+    },
+    "ServerMetricsProcessorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Server Metrics Processor Plugin",
+      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
     },
     "AccuracyGraderPlugin": {
       "type": "object",

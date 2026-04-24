@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from aiperf.common import random_generator as rng
-from aiperf.common.config import InputDefaults, UserConfig
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
@@ -16,22 +20,15 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     Each dataset entry contains one query and multiple passages.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
-        super().__init__(config, tokenizer)
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None):
+        super().__init__(run, tokenizer)
 
-        self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
+        # Use dataset-specific random seed or fall back to global
+        seed = self.dataset_config.random_seed or run.cfg.random_seed
+        self.session_id_generator = SessionIDGenerator(seed=seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
         self._passages_token_rng = rng.derive("dataset.rankings.passages.tokens")
         self._query_token_rng = rng.derive("dataset.rankings.query.tokens")
-
-        # Set default sampling strategy for synthetic rankings dataset if not explicitly set
-        if self.config.input.dataset_sampling_strategy is None:
-            self.config.input.dataset_sampling_strategy = (
-                InputDefaults.DATASET_SAMPLING_STRATEGY
-            )
-            self.info(
-                f"Using default sampling strategy for synthetic rankings dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
-            )
 
     def create_dataset(self) -> list[Conversation]:
         """Generate synthetic dataset for the rankings endpoint.
@@ -39,14 +36,17 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         Each conversation contains one turn with one query and multiple passages.
         """
         conversations: list[Conversation] = []
-        num_entries = self.config.input.conversation.num_dataset_entries
-        num_passages_mean = self.config.input.rankings.passages.mean
-        num_passages_std = self.config.input.rankings.passages.stddev
+        num_entries = self.dataset_config.entries
+
+        # Get rankings config
+        rankings_config = getattr(self.dataset_config, "rankings", None)
+        if rankings_config is None:
+            raise ValueError(
+                "Rankings config is required for synthetic rankings dataset"
+            )
 
         for _ in range(num_entries):
-            num_passages = self._passages_rng.sample_positive_normal_integer(
-                num_passages_mean, num_passages_std
-            )
+            num_passages = rankings_config.passages.sample_int(self._passages_rng)
             conversation = Conversation(session_id=self.session_id_generator.next())
             turn = self._create_turn(num_passages=num_passages)
             conversation.turns.append(turn)
@@ -68,23 +68,25 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         turn = Turn()
 
-        query_text = self.prompt_generator.generate_prompt(
-            self.prompt_generator.calculate_num_tokens(
-                self.config.input.rankings.query.prompt_token_mean,
-                self.config.input.rankings.query.prompt_token_stddev,
+        # Get rankings config
+        rankings_config = getattr(self.dataset_config, "rankings", None)
+        if rankings_config is None:
+            raise ValueError(
+                "Rankings config is required for synthetic rankings dataset"
             )
+
+        query_num_tokens = rankings_config.query_tokens.sample_int(
+            self._query_token_rng
         )
+        query_text = self.prompt_generator.generate_prompt(query_num_tokens)
         query = Text(name="query", contents=[query_text])
 
-        # Generate passages with rankings-specific token counts (per passage)
         passages = Text(name="passages")
         for _ in range(num_passages):
-            passage_text = self.prompt_generator.generate_prompt(
-                self.prompt_generator.calculate_num_tokens(
-                    self.config.input.rankings.passages.prompt_token_mean,
-                    self.config.input.rankings.passages.prompt_token_stddev,
-                )
+            passage_num_tokens = rankings_config.passage_tokens.sample_int(
+                self._passages_token_rng
             )
+            passage_text = self.prompt_generator.generate_prompt(passage_num_tokens)
             passages.contents.append(passage_text)
 
         turn.texts.extend([query, passages])

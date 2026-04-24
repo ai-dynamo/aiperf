@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -18,6 +18,7 @@ from tests.unit.conftest import (
     DEFAULT_START_TIME_NS,
 )
 from tests.unit.post_processors.conftest import (
+    _make_run,
     create_metric_metadata,
     setup_mock_registry_sequences,
 )
@@ -27,14 +28,14 @@ class TestMetricRecordProcessor:
     """Test cases for MetricRecordProcessor."""
 
     def test_initialization_caches_parse_functions(
-        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test processor initialization caches parse functions for valid and error metrics."""
         setup_mock_registry_sequences(
             mock_metric_registry, [RequestLatencyMetric], [ErrorRequestCountMetric]
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
 
         # Verify valid parse and error parse functions were cached
         assert len(processor.valid_parse_funcs) == 1
@@ -60,13 +61,13 @@ class TestMetricRecordProcessor:
     async def test_process_valid_record(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ) -> None:
         """Test processing a valid record uses valid parse functions."""
         setup_mock_registry_sequences(mock_metric_registry, [RequestLatencyMetric], [])
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
@@ -80,7 +81,7 @@ class TestMetricRecordProcessor:
     async def test_process_error_record(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         error_parsed_record: ParsedResponseRecord,
     ) -> None:
         """Test processing an error record uses error parse functions."""
@@ -88,7 +89,7 @@ class TestMetricRecordProcessor:
             mock_metric_registry, [], [ErrorRequestCountMetric]
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
         result = await processor.process_record(error_parsed_record, metadata)
 
@@ -99,7 +100,7 @@ class TestMetricRecordProcessor:
     async def test_process_record_multiple_metrics(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ) -> None:
         """Test processing record with multiple metrics in sequence."""
@@ -107,7 +108,7 @@ class TestMetricRecordProcessor:
             mock_metric_registry, [RequestLatencyMetric, RequestCountMetric], []
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
@@ -123,7 +124,7 @@ class TestMetricRecordProcessor:
     async def test_process_record_handles_no_metric_value_exception(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
         failing_metric_no_value_cls,
     ) -> None:
@@ -132,7 +133,7 @@ class TestMetricRecordProcessor:
             mock_metric_registry, [failing_metric_no_value_cls], []
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
 
         with patch.object(processor, "trace") as mock_trace:
@@ -155,7 +156,7 @@ class TestMetricRecordProcessor:
     async def test_process_record_handles_value_error_exception(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
         failing_metric_value_error_cls,
     ) -> None:
@@ -164,7 +165,7 @@ class TestMetricRecordProcessor:
             mock_metric_registry, [failing_metric_value_error_cls], []
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
 
         with patch.object(processor, "warning") as mock_warning:
@@ -182,7 +183,7 @@ class TestMetricRecordProcessor:
     async def test_process_record_mixed_success_failure(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
         failing_metric_no_value_cls,
     ) -> None:
@@ -191,7 +192,7 @@ class TestMetricRecordProcessor:
             mock_metric_registry, [RequestLatencyMetric], [failing_metric_no_value_cls]
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
 
         with patch.object(processor, "debug"):
@@ -208,7 +209,7 @@ class TestMetricRecordProcessor:
     async def test_process_record_with_dependencies(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
         double_latency_test_metric_cls,
     ) -> None:
@@ -219,7 +220,7 @@ class TestMetricRecordProcessor:
             [],
         )
 
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 
@@ -237,11 +238,11 @@ class TestMetricRecordProcessor:
     async def test_process_record_empty_metrics(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ) -> None:
         """Test processing record when no metrics are configured."""
-        processor = MetricRecordProcessor(mock_user_config)
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
         metadata = create_metric_metadata()
         result = await processor.process_record(sample_parsed_record, metadata)
 

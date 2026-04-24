@@ -6,16 +6,10 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import InferenceServerResponse, TextResponseData
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.endpoints.conftest import _wrap_run, create_config
 
 
 class TestCompletionsEndpointParseResponse:
@@ -24,19 +18,10 @@ class TestCompletionsEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create a CompletionsEndpoint instance for parsing tests."""
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="completion-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.COMPLETIONS,
-                base_url="http://localhost:8000",
-            ),
-        )
+        cfg = create_config(EndpointType.COMPLETIONS, model_name="completion-model")
         with patch("aiperf.plugin.plugins.get_class") as mock_transport:
             mock_transport.return_value = MagicMock()
-            return CompletionsEndpoint(model_endpoint=model_endpoint)
+            return CompletionsEndpoint(run=_wrap_run(cfg))
 
     def test_parse_response_completion_object(self, endpoint):
         """Test parsing text_completion object type."""

@@ -1,0 +1,2 @@
+/* esm.sh - preact@10.29.1 */
+export * from "/preact@10.29.1/es2022/preact.mjs";

@@ -6,9 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricArray
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -18,6 +18,8 @@ from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetr
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.unit.post_processors.conftest import (
+    _make_run,
+    create_metric_metadata,
     create_metric_records_message,
     create_results_processor_with_metrics,
     setup_mock_registry_sequences,
@@ -36,7 +38,7 @@ class TestPostProcessorIntegration:
     async def test_record_to_results_data_flow(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
     ) -> None:
         """Test data flows correctly from record processor to results processor."""
         results_processor = create_results_processor_with_metrics(
@@ -62,7 +64,7 @@ class TestPostProcessorIntegration:
     async def test_multiple_batches_accumulation(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
     ) -> None:
         """Test accumulation across multiple record batches."""
         results_processor = create_results_processor_with_metrics(
@@ -87,7 +89,7 @@ class TestPostProcessorIntegration:
     async def test_error_metrics_isolation(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
         error_parsed_record: ParsedResponseRecord,
     ) -> None:
         """Test that error and valid metrics are processed separately."""
@@ -95,12 +97,10 @@ class TestPostProcessorIntegration:
             mock_metric_registry, [], [ErrorRequestCountMetric]
         )
 
-        record_processor = MetricRecordProcessor(mock_user_config)
+        record_processor = MetricRecordProcessor(_make_run(mock_user_config))
 
         assert len(record_processor.error_parse_funcs) == 1
         assert len(record_processor.valid_parse_funcs) == 0
-
-        from tests.unit.post_processors.conftest import create_metric_metadata
 
         metadata = create_metric_metadata()
         result = await record_processor.process_record(error_parsed_record, metadata)
@@ -110,14 +110,14 @@ class TestPostProcessorIntegration:
     async def test_derived_metrics_computation(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
     ) -> None:
         """Test derived metrics are computed from accumulated results."""
         setup_mock_registry_sequences(
             mock_metric_registry, [RequestThroughputMetric], []
         )
 
-        results_processor = MetricResultsProcessor(mock_user_config)
+        results_processor = MetricResultsProcessor(_make_run(mock_user_config))
 
         results_processor._results[RequestCountMetric.tag] = TEST_REQUEST_COUNT
         results_processor._results[BenchmarkDurationMetric.tag] = (
@@ -135,7 +135,7 @@ class TestPostProcessorIntegration:
     async def test_complete_pipeline_summary(
         self,
         mock_metric_registry: Mock,
-        mock_user_config: UserConfig,
+        mock_user_config: AIPerfConfig,
     ) -> None:
         """Test complete pipeline produces proper summary results."""
         results_processor = create_results_processor_with_metrics(

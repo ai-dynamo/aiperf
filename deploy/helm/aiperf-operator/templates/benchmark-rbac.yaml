@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.rbac.create }}
+{{- $namespaces := list }}
+{{- if .Values.benchmarkNamespace.create }}
+{{- $namespaces = append $namespaces .Values.benchmarkNamespace.name }}
+{{- end }}
+{{- range .Values.benchmarkRbacNamespaces }}
+{{- $namespaces = append $namespaces . }}
+{{- end }}
+{{- range $ns := $namespaces | uniq }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aiperf-operator.fullname" $ }}-benchmark
+  namespace: {{ $ns }}
+  labels:
+    {{- include "aiperf-operator.labels" $ | nindent 4 }}
+rules:
+# Pods - benchmark pods need to discover peers for coordination
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+# JobSets - benchmark pods signal completion via status patches
+- apiGroups: ["jobset.x-k8s.io"]
+  resources: ["jobsets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+
+# AIPerfJobs - benchmark pods read config and patch status
+- apiGroups: ["aiperf.nvidia.com"]
+  resources: ["aiperfjobs", "aiperfjobs/status"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aiperf-operator.fullname" $ }}-benchmark
+  namespace: {{ $ns }}
+  labels:
+    {{- include "aiperf-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aiperf-operator.fullname" $ }}-benchmark
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: {{ $ns }}
+{{- end }}
+{{- end }}

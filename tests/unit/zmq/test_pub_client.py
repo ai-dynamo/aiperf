@@ -10,9 +10,9 @@ import zmq.asyncio
 
 from aiperf.common.enums import MessageType
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import Message, TargetedServiceMessage
+from aiperf.common.messages import ConnectionProbeMessage
 from aiperf.zmq.pub_client import ZMQPubClient
-from aiperf.zmq.zmq_defaults import TOPIC_DELIMITER, TOPIC_END
+from aiperf.zmq.zmq_defaults import TOPIC_END
 
 
 class TestZMQPubClientInitialization:
@@ -57,81 +57,14 @@ class TestZMQPubClientPublish:
         client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
         await client.initialize()
 
-        message = Message(message_type=MessageType.HEARTBEAT)
+        message = ConnectionProbeMessage(service_id="test")
 
         await client.publish(message)
 
         sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
         topic = sent_parts[0].decode()
 
-        assert topic == f"{MessageType.HEARTBEAT}{TOPIC_END}"
-
-    @pytest.mark.asyncio
-    async def test_publish_with_targeted_service_id(
-        self, mock_zmq_socket, mock_zmq_context
-    ):
-        """Test that publishing with target_service_id includes it in topic."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-        await client.initialize()
-
-        message = TargetedServiceMessage(
-            service_id="test-service",
-            message_type=MessageType.COMMAND,
-            target_service_id="service-123",
-        )
-
-        await client.publish(message)
-
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
-        topic = sent_parts[0].decode()
-
-        expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123{TOPIC_END}"
-        assert topic == expected_topic
-
-    @pytest.mark.asyncio
-    async def test_publish_with_targeted_service_type(
-        self, mock_zmq_socket, mock_zmq_context
-    ):
-        """Test that publishing with target_service_type includes it in topic."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-        await client.initialize()
-
-        message = TargetedServiceMessage(
-            service_id="test-service",
-            message_type=MessageType.COMMAND,
-            target_service_type="WORKER",
-        )
-
-        await client.publish(message)
-
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
-        topic = sent_parts[0].decode()
-
-        expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}WORKER{TOPIC_END}"
-        assert topic == expected_topic
-
-    @pytest.mark.asyncio
-    async def test_publish_service_id_takes_precedence_over_type(
-        self, mock_zmq_socket, mock_zmq_context
-    ):
-        """Test that target_service_id is used in topic when provided."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-        await client.initialize()
-
-        # Can only provide one of target_service_id or target_service_type
-        message = TargetedServiceMessage(
-            service_id="test-service",
-            message_type=MessageType.COMMAND,
-            target_service_id="service-123",
-        )
-
-        await client.publish(message)
-
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
-        topic = sent_parts[0].decode()
-
-        # Should use service_id in topic
-        assert "service-123" in topic
+        assert topic == f"{MessageType.CONNECTION_PROBE}{TOPIC_END}"
 
     @pytest.mark.asyncio
     async def test_publish_handles_graceful_errors(
@@ -141,7 +74,7 @@ class TestZMQPubClientPublish:
         async with pub_test_helper.create_client(
             send_multipart_side_effect=graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             # Should not raise, just return
             await client.publish(message)
@@ -154,7 +87,7 @@ class TestZMQPubClientPublish:
         async with pub_test_helper.create_client(
             send_multipart_side_effect=non_graceful_error
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT)
+            message = ConnectionProbeMessage(service_id="test")
 
             with pytest.raises(CommunicationError, match="Failed to publish message"):
                 await client.publish(message)
@@ -163,60 +96,50 @@ class TestZMQPubClientPublish:
 class TestZMQPubClientTopicDetermination:
     """Test topic determination logic."""
 
-    def test_determine_topic_for_basic_message(self, mock_zmq_context):
-        """Test topic determination for basic message."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-
-        message = Message(message_type=MessageType.HEARTBEAT)
-        topic = client._determine_topic(message)
-
-        assert topic == f"{MessageType.HEARTBEAT}{TOPIC_END}"
-
     @pytest.mark.parametrize(
         "message_type",
         [
             MessageType.HEARTBEAT,
             MessageType.ERROR,
-            MessageType.COMMAND,
-            MessageType.COMMAND_RESPONSE,
+            MessageType.CONNECTION_PROBE,
+            MessageType.STATUS,
         ],
     )  # fmt: skip
-    def test_determine_topic_for_various_message_types(
-        self, message_type, mock_zmq_context
+    @pytest.mark.asyncio
+    async def test_topic_uses_message_type_with_end_sentinel(
+        self, message_type, mock_zmq_socket, mock_zmq_context
     ):
-        """Test topic determination for various message types."""
+        """Test that topic is always message_type + TOPIC_END."""
         client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
+        await client.initialize()
 
-        message = Message(message_type=message_type)
-        topic = client._determine_topic(message)
+        # Need a concrete message for each tag; use a helper
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import (
+            ConnectionProbeMessage,
+            ErrorMessage,
+            HeartbeatMessage,
+            StatusMessage,
+        )
+        from aiperf.common.models import ErrorDetails
 
+        if message_type == MessageType.HEARTBEAT:
+            message = HeartbeatMessage(
+                service_id="s", service_type="worker", state=LifecycleState.RUNNING
+            )
+        elif message_type == MessageType.STATUS:
+            message = StatusMessage(
+                service_id="s", service_type="worker", state=LifecycleState.RUNNING
+            )
+        elif message_type == MessageType.CONNECTION_PROBE:
+            message = ConnectionProbeMessage(service_id="s")
+        else:
+            message = ErrorMessage(error=ErrorDetails(type="x", message="m"))
+        await client.publish(message)
+
+        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        topic = sent_parts[0].decode()
         assert topic == f"{message_type}{TOPIC_END}"
-
-    def test_determine_topic_with_service_id(self, mock_zmq_context):
-        """Test topic determination with service ID."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-
-        message = TargetedServiceMessage(
-            service_id="test-service",
-            message_type=MessageType.COMMAND,
-            target_service_id="svc-456",
-        )
-        topic = client._determine_topic(message)
-
-        assert topic == f"{MessageType.COMMAND}{TOPIC_DELIMITER}svc-456{TOPIC_END}"
-
-    def test_determine_topic_with_service_type(self, mock_zmq_context):
-        """Test topic determination with service type."""
-        client = ZMQPubClient(address="tcp://127.0.0.1:5555", bind=True)
-
-        message = TargetedServiceMessage(
-            service_id="test-service",
-            message_type=MessageType.COMMAND,
-            target_service_type="PROCESSOR",
-        )
-        topic = client._determine_topic(message)
-
-        assert topic == f"{MessageType.COMMAND}{TOPIC_DELIMITER}PROCESSOR{TOPIC_END}"
 
 
 class TestZMQPubClientEdgeCases:
@@ -231,7 +154,7 @@ class TestZMQPubClientEdgeCases:
         await client.initialize()
 
         messages = [
-            Message(message_type=MessageType.HEARTBEAT, request_id=f"req-{i}")
+            ConnectionProbeMessage(service_id="test", request_id=f"req-{i}")
             for i in range(5)
         ]
 

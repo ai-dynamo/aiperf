@@ -7,20 +7,16 @@ being sent to inference servers. These tests verify the real API key flows
 through every layer that constructs or passes headers to the HTTP client.
 """
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.dataset_models import Text
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import RequestInfo, RequestRecord, Turn
 from aiperf.common.redact import REDACTED_VALUE
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.plugin.enums import TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
@@ -30,6 +26,37 @@ from aiperf.workers.inference_client import InferenceClient
 
 API_KEY = "sk-real-secret-key-12345"
 BEARER = f"Bearer {API_KEY}"
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/chat/completions"],
+        "api_key": API_KEY,
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _make_run(**overrides: Any) -> BenchmarkRun:
+    config = _make_config(**overrides)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 class _StubEndpoint(BaseEndpoint):
@@ -43,27 +70,17 @@ class _StubEndpoint(BaseEndpoint):
 
 
 @pytest.fixture
-def model_endpoint_with_key():
-    return ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name="test-model")],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-        ),
-        endpoint=EndpointInfo(
-            base_urls=["http://localhost:8000"],
-            api_key=API_KEY,
-        ),
-    )
+def run():
+    return _make_run()
 
 
 @pytest.fixture
-def request_info(model_endpoint_with_key):
+def request_info(run):
     return RequestInfo(
-        model_endpoint=model_endpoint_with_key,
         turns=[],
         turn_index=0,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="req-1",
         x_correlation_id="corr-1",
         conversation_id="conv-1",
@@ -71,20 +88,20 @@ def request_info(model_endpoint_with_key):
 
 
 # =============================================================================
-# EndpointInfo: api_key accessible at runtime
+# EndpointConfig: api_key accessible at runtime
 # =============================================================================
 
 
-class TestEndpointInfoApiKeyAccessible:
-    """EndpointInfo.api_key must remain accessible even though it's excluded
-    from serialization. Code paths that construct headers read it directly."""
+class TestEndpointConfigApiKeyAccessible:
+    """EndpointConfig.api_key must remain accessible so code paths that
+    construct headers can read it directly."""
 
-    def test_api_key_attribute_returns_real_value(self, model_endpoint_with_key):
-        assert model_endpoint_with_key.endpoint.api_key == API_KEY
+    def test_api_key_attribute_returns_real_value(self, run):
+        assert run.cfg.endpoint.api_key == API_KEY
 
-    def test_api_key_survives_model_copy(self, model_endpoint_with_key):
-        copy = model_endpoint_with_key.model_copy(deep=True)
-        assert copy.endpoint.api_key == API_KEY
+    def test_api_key_survives_model_copy(self, run):
+        copy = run.cfg.endpoint.model_copy(deep=True)
+        assert copy.api_key == API_KEY
 
 
 # =============================================================================
@@ -95,24 +112,25 @@ class TestEndpointInfoApiKeyAccessible:
 class TestGetEndpointHeadersNotRedacted:
     """BaseEndpoint.get_endpoint_headers must produce real Authorization values."""
 
-    def test_authorization_header_contains_real_key(
-        self, model_endpoint_with_key, request_info
-    ):
-        endpoint = _StubEndpoint(model_endpoint=model_endpoint_with_key)
+    def test_authorization_header_contains_real_key(self, run, request_info):
+        endpoint = _StubEndpoint(run=run)
         headers = endpoint.get_endpoint_headers(request_info)
         assert headers["Authorization"] == BEARER
 
-    def test_no_redaction_marker_in_headers(
-        self, model_endpoint_with_key, request_info
-    ):
-        endpoint = _StubEndpoint(model_endpoint=model_endpoint_with_key)
+    def test_no_redaction_marker_in_headers(self, run, request_info):
+        endpoint = _StubEndpoint(run=run)
         headers = endpoint.get_endpoint_headers(request_info)
         assert REDACTED_VALUE not in headers.get("Authorization", "")
 
     def test_custom_headers_combined_with_auth(self, request_info):
-        """User-supplied --header values must also pass through unredacted."""
-        request_info.model_endpoint.endpoint.headers = [("X-Custom", "my-value")]
-        endpoint = _StubEndpoint(model_endpoint=request_info.model_endpoint)
+        """User-supplied headers must also pass through unredacted."""
+        custom_run = _make_run(
+            endpoint={
+                **_MINIMAL_CONFIG_KWARGS["endpoint"],
+                "headers": {"X-Custom": "my-value"},
+            }
+        )
+        endpoint = _StubEndpoint(run=custom_run)
         headers = endpoint.get_endpoint_headers(request_info)
         assert headers["Authorization"] == BEARER
         assert headers["X-Custom"] == "my-value"
@@ -127,9 +145,7 @@ class TestBuildHeadersNotRedacted:
     """BaseTransport.build_headers must include the real Authorization
     value so the HTTP client sends it to the server."""
 
-    def test_build_headers_preserves_real_auth(
-        self, model_endpoint_with_key, request_info
-    ):
+    def test_build_headers_preserves_real_auth(self, run, request_info):
         class FakeTransport(BaseTransport):
             @classmethod
             def metadata(cls):
@@ -144,7 +160,7 @@ class TestBuildHeadersNotRedacted:
             async def send_request(self, ri, payload, **kw):
                 return RequestRecord()
 
-        transport = FakeTransport(model_endpoint=model_endpoint_with_key)
+        transport = FakeTransport(run=run)
         request_info.endpoint_headers = {"Authorization": BEARER}
         headers = transport.build_headers(request_info)
 
@@ -162,10 +178,8 @@ class TestAioHttpTransportWireHeaders:
     Only the stored record.request_headers should be redacted."""
 
     @pytest.mark.asyncio
-    async def test_real_headers_sent_to_aiohttp_client(
-        self, model_endpoint_with_key, request_info
-    ):
-        transport = AioHttpTransport(model_endpoint=model_endpoint_with_key)
+    async def test_real_headers_sent_to_aiohttp_client(self, run, request_info):
+        transport = AioHttpTransport(run=run)
         request_info.endpoint_headers = {"Authorization": BEARER}
 
         mock_record = RequestRecord()
@@ -181,10 +195,8 @@ class TestAioHttpTransportWireHeaders:
         assert REDACTED_VALUE not in str(sent_headers)
 
     @pytest.mark.asyncio
-    async def test_stored_record_headers_are_redacted(
-        self, model_endpoint_with_key, request_info
-    ):
-        transport = AioHttpTransport(model_endpoint=model_endpoint_with_key)
+    async def test_stored_record_headers_are_redacted(self, run, request_info):
+        transport = AioHttpTransport(run=run)
         request_info.endpoint_headers = {"Authorization": BEARER}
 
         mock_record = RequestRecord()
@@ -206,12 +218,8 @@ class TestInferenceClientWireHeaders:
     and only redact when enriching the stored RequestRecord."""
 
     @pytest.mark.asyncio
-    async def test_transport_receives_real_headers(
-        self, model_endpoint_with_key, request_info
-    ):
-        client = InferenceClient(
-            model_endpoint=model_endpoint_with_key, service_id="test"
-        )
+    async def test_transport_receives_real_headers(self, run, request_info):
+        client = InferenceClient(run=run, service_id="test")
         await client.initialize()
 
         captured_headers = None
@@ -231,12 +239,8 @@ class TestInferenceClientWireHeaders:
         assert captured_headers["Authorization"] == BEARER
 
     @pytest.mark.asyncio
-    async def test_record_headers_redacted_after_enrichment(
-        self, model_endpoint_with_key, request_info
-    ):
-        client = InferenceClient(
-            model_endpoint=model_endpoint_with_key, service_id="test"
-        )
+    async def test_record_headers_redacted_after_enrichment(self, run, request_info):
+        client = InferenceClient(run=run, service_id="test")
         await client.initialize()
 
         async def fake_send(ri, payload, **kw):

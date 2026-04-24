@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.dataset.synthesis import EmpiricalSampler
 
 
@@ -58,7 +59,7 @@ class TestEmpiricalSampler:
 
         samples = sampler.sample_batch(10)
         assert len(samples) == 10
-        assert all(isinstance(s, int | np.integer) for s in samples)
+        assert all(isinstance(s, (int, np.integer)) for s in samples)
 
     def test_sample_respects_distribution(self) -> None:
         """Test that sampling respects empirical distribution."""
@@ -147,8 +148,6 @@ class TestEmpiricalSampler:
         Since EmpiricalSampler derives its RNG from the global seed,
         reproducibility is achieved by reinitializing the global RNG.
         """
-        from aiperf.common import random_generator as rng
-
         # First run with seed 42
         rng.reset()
         rng.init(42)

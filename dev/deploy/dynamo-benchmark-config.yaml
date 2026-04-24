@@ -1,0 +1,23 @@
+# Benchmark configuration targeting Dynamo inference server (minikube or other K8s cluster)
+endpoint:
+  model_names: ["Qwen/Qwen3-0.6B"]
+  urls: ["http://dynamo-agg-frontend.dynamo-server.svc.cluster.local:8000/v1"]
+  type: chat
+
+loadgen:
+  concurrency: 2
+  request_count: 20
+  warmup_request_count: 3
+
+tokenizer:
+  name: Qwen/Qwen3-0.6B
+
+dataset:
+  sequence_length:
+    distribution: uniform
+    min: 20
+    max: 50
+  output_tokens:
+    distribution: uniform
+    min: 10
+    max: 30

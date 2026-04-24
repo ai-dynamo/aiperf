@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Composed Dataset (File + Synthetic)
+# description: Combine file-based prompts with synthetic output length control.
+# category: Datasets
+# tags: composed, file, augmentation
+# difficulty: intermediate
+# features: composed dataset, OSL augmentation
+#
+# Composed Dataset Benchmark
+# ==========================
+# Use your own prompts from a file but let AIPerf control the output length.
+# This is useful when you have real queries but need consistent OSL for
+# apples-to-apples comparison, or when your file has no max_tokens field.
+#
+# The augment section adds an OSL distribution to file records:
+#   fill     - Only set OSL if the record doesn't already have one
+#   override - Always replace existing OSL
+#
+# Prepare a prompts.jsonl file (one JSON object per line):
+#   {"prompt": "What is machine learning?"}
+#   {"prompt": "Explain neural networks in simple terms"}
+#   {"prompt": "How does gradient descent find the minimum?"}
+#
+# Run: aiperf profile --config composed_dataset.yaml
+
+randomSeed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+dataset:
+  type: composed
+  source:
+    type: file
+    path: ./data/prompts.jsonl
+    format: single_turn
+    sampling: shuffle  # Randomize prompt order each run
+  augment:
+    osl: {mean: 256, stddev: 50}
+    oslMode: fill  # Respect existing OSL if present, fill missing ones
+  entries: 1000    # Recycle prompts if file has fewer than 1000 lines
+
+phases:
+  type: concurrency
+  requests: 1000
+  concurrency: 32
+  duration: 120
+  gracePeriod: 60
+
+artifacts:
+  dir: ./artifacts/composed_dataset
+  summary: [json]
+  records: [jsonl, csv]

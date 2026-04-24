@@ -7,7 +7,6 @@ import pytest
 from rich.text import Text
 from textual.widgets.data_table import RowDoesNotExist
 
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.models import MetricResult
 from aiperf.ui.dashboard.realtime_telemetry_dashboard import (
     GPUMetricsTable,
@@ -562,18 +561,18 @@ class TestRealtimeTelemetryDashboard:
     """Test RealtimeTelemetryDashboard widget."""
 
     @pytest.fixture
-    def service_config(self):
-        """Create a mock ServiceConfig."""
-        return Mock(spec=ServiceConfig)
+    def dashboard_config(self):
+        """Create a mock AIPerfConfig."""
+        return Mock()
 
     @pytest.fixture
-    def dashboard(self, service_config):
+    def dashboard(self, dashboard_config):
         """Create a RealtimeTelemetryDashboard instance for testing."""
-        return RealtimeTelemetryDashboard(service_config=service_config)
+        return RealtimeTelemetryDashboard(run=dashboard_config)
 
-    def test_init(self, dashboard, service_config):
+    def test_init(self, dashboard, dashboard_config):
         """Test dashboard initialization."""
-        assert dashboard.service_config == service_config
+        assert dashboard.run == dashboard_config
         assert dashboard.all_nodes_view is None
         assert dashboard.metrics == []
         assert dashboard.border_title == "Real-Time GPU Telemetry"

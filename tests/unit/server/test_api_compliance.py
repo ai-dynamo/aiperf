@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Comprehensive API compliance tests for the AIPerf Mock Server."""
 
+import orjson
 import pytest
 from aiperf_mock_server.app import asgi_app
 from httpx import ASGITransport, AsyncClient
@@ -102,8 +103,6 @@ class TestChatCompletions:
                 data_str = line[6:]
                 if data_str == "[DONE]":
                     break
-                import orjson
-
                 chunk = orjson.loads(data_str)
                 chunks.append(chunk)
 
@@ -144,8 +143,6 @@ class TestChatCompletions:
                 data_str = line[6:]
                 if data_str == "[DONE]":
                     break
-                import orjson
-
                 chunk = orjson.loads(data_str)
                 chunks.append(chunk)
 
@@ -285,8 +282,6 @@ class TestTextCompletions:
                 data_str = line[6:]
                 if data_str == "[DONE]":
                     break
-                import orjson
-
                 chunk = orjson.loads(data_str)
                 chunks.append(chunk)
 
@@ -552,8 +547,6 @@ class TestTGIGenerate:
         async for line in resp.aiter_lines():
             if line.startswith("data: "):
                 data_str = line[6:]
-                import orjson
-
                 chunk = orjson.loads(data_str)
                 chunks.append(chunk)
 

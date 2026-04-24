@@ -4,9 +4,9 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.config import AIPerfConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.http_trace_console_exporter import HttpTraceConsoleExporter
 from aiperf.metrics.types.http_trace_metrics import (
@@ -27,16 +27,6 @@ from aiperf.metrics.types.http_trace_metrics import (
 )
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
-from aiperf.plugin.enums import EndpointType
-
-
-@pytest.fixture
-def mock_endpoint_config():
-    return EndpointConfig(
-        type=EndpointType.CHAT,
-        streaming=True,
-        model_names=["test-model"],
-    )
 
 
 @pytest.fixture
@@ -155,13 +145,21 @@ def sample_mixed_records(sample_http_trace_records):
 
 def make_exporter_config(
     records: list[MetricResult],
-    endpoint_config: EndpointConfig,
     show_trace_timing: bool = True,
 ) -> ExporterConfig:
     """Create an ExporterConfig with the specified settings."""
-    user_config = UserConfig(
-        endpoint=endpoint_config,
-        output=OutputConfig(show_trace_timing=show_trace_timing),
+    aiperf_config = AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        artifacts={"show_trace_timing": show_trace_timing},
     )
     return ExporterConfig(
         results=ProfileResults(
@@ -170,8 +168,7 @@ def make_exporter_config(
             end_ns=0,
             completed=0,
         ),
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        config=aiperf_config,
         telemetry_results=None,
     )
 
@@ -179,11 +176,10 @@ def make_exporter_config(
 class TestHttpTraceConsoleExporter:
     """Tests for HttpTraceConsoleExporter."""
 
-    def test_raises_when_disabled(self, mock_endpoint_config):
+    def test_raises_when_disabled(self):
         """Test that exporter raises ConsoleExporterDisabled when flag is False."""
         config = make_exporter_config(
             records=[],
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=False,
         )
         with pytest.raises(ConsoleExporterDisabled) as exc_info:
@@ -191,21 +187,19 @@ class TestHttpTraceConsoleExporter:
 
         assert "HTTP trace timing is not enabled" in str(exc_info.value)
 
-    def test_creates_successfully_when_enabled(self, mock_endpoint_config):
+    def test_creates_successfully_when_enabled(self):
         """Test that exporter creates successfully when flag is True."""
         config = make_exporter_config(
             records=[],
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
         assert exporter._show_trace_timing is True
 
-    def test_get_title_returns_http_trace_title(self, mock_endpoint_config):
+    def test_get_title_returns_http_trace_title(self):
         """Test that _get_title returns the correct title."""
         config = make_exporter_config(
             records=[],
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
@@ -236,14 +230,12 @@ class TestHttpTraceConsoleExporter:
     )  # fmt: skip
     def test_should_show_only_http_trace_metrics(
         self,
-        mock_endpoint_config,
         metric_class,
         should_show,
     ):
         """Test that only HTTP trace metrics are shown."""
         config = make_exporter_config(
             records=[],
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
@@ -258,12 +250,11 @@ class TestHttpTraceConsoleExporter:
 
     @pytest.mark.asyncio
     async def test_export_prints_http_trace_table(
-        self, sample_http_trace_records, mock_endpoint_config, capsys
+        self, sample_http_trace_records, capsys
     ):
         """Test that export prints the HTTP trace table with correct content."""
         config = make_exporter_config(
             records=sample_http_trace_records,
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
@@ -280,13 +271,10 @@ class TestHttpTraceConsoleExporter:
         assert "HTTP Duration (excl. conn)" in output
 
     @pytest.mark.asyncio
-    async def test_export_filters_non_trace_metrics(
-        self, sample_mixed_records, mock_endpoint_config, capsys
-    ):
+    async def test_export_filters_non_trace_metrics(self, sample_mixed_records, capsys):
         """Test that regular metrics are filtered out from the output."""
         config = make_exporter_config(
             records=sample_mixed_records,
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
@@ -301,13 +289,10 @@ class TestHttpTraceConsoleExporter:
         assert "Request Latency" not in output
 
     @pytest.mark.asyncio
-    async def test_export_with_no_records_returns_early(
-        self, mock_endpoint_config, capsys
-    ):
+    async def test_export_with_no_records_returns_early(self, capsys):
         """Test that export returns early when there are no records."""
         config = make_exporter_config(
             records=[],
-            endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)

@@ -395,17 +395,13 @@ DCGM_FI_DEV_GPU_TEMP, gauge, Valid field (in C)
             csv_path.unlink()
 
     def test_build_custom_metrics_from_csv_file_error(self):
-        """Test error handling when CSV file cannot be parsed."""
+        """Test error handling when CSV file does not exist."""
 
         loader = MetricsConfigLoader()
         non_existent_path = Path("/nonexistent/path/metrics.csv")
 
-        custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-            custom_csv_path=non_existent_path
-        )
-
-        assert custom_metrics == []
-        assert new_dcgm_mappings == {}
+        with pytest.raises(FileNotFoundError, match="not found"):
+            loader.build_custom_metrics_from_csv(custom_csv_path=non_existent_path)
 
     def test_build_custom_metrics_from_csv_empty_result(self):
         """Test handling of CSV file that results in no valid metrics."""

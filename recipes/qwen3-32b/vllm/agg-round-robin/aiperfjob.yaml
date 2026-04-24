@@ -1,0 +1,35 @@
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: agg-8xtp2-benchmark
+spec:
+  benchmark:
+    models:
+    - Qwen/Qwen3-32B
+    endpoint:
+      urls:
+      - http://agg-8xtp2-frontend:8000
+      streaming: true
+    datasets:
+      main:
+        type: file
+        path: /perf-cache/traces/conversation_trace.jsonl
+        format: mooncake_trace
+    profiling:
+      type: fixed_schedule
+    slos:
+      time_to_first_token: 2000
+      inter_token_latency: 25
+  podTemplate:
+    volumes:
+    - name: model-cache
+      persistentVolumeClaim:
+        claimName: model-cache
+    - name: perf-cache
+      persistentVolumeClaim:
+        claimName: perf-cache
+    volumeMounts:
+    - name: model-cache
+      mountPath: /home/dynamo/.cache/huggingface
+    - name: perf-cache
+      mountPath: /perf-cache

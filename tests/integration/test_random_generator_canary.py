@@ -11,6 +11,7 @@ that any changes to the codebase don't silently break determinism.
 import json
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from aiperf.common.utils import load_json_str
@@ -65,14 +66,14 @@ class TestRandomGeneratorCanary:
         # Load reference data
         if not self.REFERENCE_FILE.exists():
             # Generate reference file if it doesn't exist (for first-time setup)
-            self._save_reference(result.inputs.model_dump())
+            self._save_reference(msgspec.to_builtins(result.inputs))
             pytest.fail(
                 f"Reference file created at {self.REFERENCE_FILE}. "
                 "Run test again to validate against reference."
             )
 
         reference_data = load_json_str(self.REFERENCE_FILE.read_text())
-        current_data = result.inputs.model_dump()
+        current_data = msgspec.to_builtins(result.inputs)
         self._assert_inputs_match(reference_data, current_data)
 
     def _assert_inputs_match(self, reference: dict, current: dict) -> None:

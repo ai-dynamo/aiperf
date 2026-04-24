@@ -7,8 +7,8 @@ from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -18,10 +18,8 @@ class TestCompletionsEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for completions."""
-        return create_model_endpoint(
-            EndpointType.COMPLETIONS, model_name="completion-model"
-        )
+        """Create a test BenchmarkConfig for completions."""
+        return create_config(EndpointType.COMPLETIONS, model_name="completion-model")
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
@@ -34,7 +32,7 @@ class TestCompletionsEndpoint:
             texts=[Text(contents=["Once upon a time"])],
             model="completion-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -51,7 +49,7 @@ class TestCompletionsEndpoint:
             ],
             model="completion-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -66,7 +64,7 @@ class TestCompletionsEndpoint:
             ],
             model="completion-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -90,7 +88,7 @@ class TestCompletionsEndpoint:
             model="completion-model",
             max_tokens=max_tokens,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -101,7 +99,7 @@ class TestCompletionsEndpoint:
 
     def test_format_payload_streaming_enabled(self):
         """Test streaming flag from endpoint config."""
-        streaming_endpoint = create_model_endpoint(
+        streaming_endpoint = create_config(
             EndpointType.COMPLETIONS, model_name="completion-model", streaming=True
         )
         endpoint = create_endpoint_with_mock_transport(
@@ -109,9 +107,7 @@ class TestCompletionsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="completion-model")
-        request_info = create_request_info(
-            model_endpoint=streaming_endpoint, turns=[turn]
-        )
+        request_info = create_request_info(config=streaming_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -119,12 +115,12 @@ class TestCompletionsEndpoint:
 
     def test_format_payload_extra_parameters(self):
         """Test extra parameters are merged into payload."""
-        extra_params = [
-            ("temperature", 0.8),
-            ("top_p", 0.95),
-            ("frequency_penalty", 0.5),
-        ]
-        model_endpoint = create_model_endpoint(
+        extra_params = {
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "frequency_penalty": 0.5,
+        }
+        model_endpoint = create_config(
             EndpointType.COMPLETIONS, model_name="completion-model", extra=extra_params
         )
         endpoint = create_endpoint_with_mock_transport(
@@ -132,7 +128,7 @@ class TestCompletionsEndpoint:
         )
 
         turn = Turn(texts=[Text(contents=["Test"])], model="completion-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -146,7 +142,7 @@ class TestCompletionsEndpoint:
             texts=[],  # No texts
             model="completion-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -158,7 +154,7 @@ class TestCompletionsEndpoint:
         turn2 = Turn(texts=[Text(contents=["Second"])], model="model2")
 
         request_info = create_request_info(
-            model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
+            config=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
         # Should raise ValueError because completions endpoint only supports one turn

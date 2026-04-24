@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.config import BenchmarkRun
 
 
 class Math500Benchmark(AIPerfLoggerMixin):
     """MATH-500 benchmark loader for mathematical reasoning evaluation."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.user_config = user_config
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
+        super().__init__(run=run, **kwargs)
+        self.run = run
 
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool

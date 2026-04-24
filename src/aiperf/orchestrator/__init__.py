@@ -13,7 +13,6 @@ from aiperf.orchestrator.aggregation import (
     ConfidenceMetric,
 )
 from aiperf.orchestrator.models import (
-    RunConfig,
     RunResult,
 )
 from aiperf.orchestrator.orchestrator import (
@@ -32,6 +31,5 @@ __all__ = [
     "ExecutionStrategy",
     "FixedTrialsStrategy",
     "MultiRunOrchestrator",
-    "RunConfig",
     "RunResult",
 ]

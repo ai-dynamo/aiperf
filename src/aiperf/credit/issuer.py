@@ -14,7 +14,6 @@ Key responsibilities:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
@@ -53,6 +52,7 @@ class CreditIssuer:
         self,
         *,
         phase: CreditPhase,
+        exclude_from_results: bool,
         stop_checker: StopConditionChecker,
         progress: PhaseProgressTracker,
         concurrency_manager: ConcurrencyManager,
@@ -64,7 +64,8 @@ class CreditIssuer:
         """Initialize credit issuer.
 
         Args:
-            phase: Phase enum (WARMUP or PROFILING).
+            phase: Phase name (e.g. 'warmup', 'main').
+            exclude_from_results: Whether this phase is excluded from results.
             stop_checker: Evaluates stop conditions (can_send_any_turn, can_start_new_session).
             progress: Tracks credit progress (increment_sent, freeze_sent_counts).
             concurrency_manager: Manages concurrency slots (session + prefill).
@@ -75,6 +76,7 @@ class CreditIssuer:
                 balancing. If None, url_index will be None in credits.
         """
         self._phase = phase
+        self._exclude_from_results = exclude_from_results
         self._stop_checker = stop_checker
         self._progress = progress
         self._concurrency_manager = concurrency_manager
@@ -198,27 +200,25 @@ class CreditIssuer:
         Returns:
             True if more credits can be sent, False if this was the final credit.
         """
-        credit_index, is_final_credit = self._progress.increment_sent(turn)
+        credit_index, session_index, is_final_credit = self._progress.increment_sent(
+            turn
+        )
 
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
-            turn, self._phase
+            turn, self._phase, exclude_from_results=self._exclude_from_results
         )
-        issued_at_ns = self._lifecycle.started_at_ns + (
-            time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
-        )
+        issued_at_ns = self._lifecycle.clock.now_ns()
 
-        # Get URL index from strategy (for multi-URL load balancing)
-        # Only advance the round-robin on the first turn of a conversation.
-        # Subsequent turns will use the url_index stored in the worker's UserSession.
+        # Preserve URL affinity on continuation turns so migration keeps the
+        # session on the same backend in multi-URL runs.
         is_first_turn = turn.turn_index == 0
-        url_index = (
-            self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_first_turn
-            else None
-        )
+        url_index = turn.url_index
+        if url_index is None and self._url_selection_strategy and is_first_turn:
+            url_index = self._url_selection_strategy.next_url_index()
 
         credit = Credit(
             id=credit_index,
+            session_num=session_index,
             phase=self._phase,
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,
@@ -227,6 +227,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            allow_worker_migration=turn.allow_worker_migration,
         )
 
         await self._credit_router.send_credit(credit=credit)

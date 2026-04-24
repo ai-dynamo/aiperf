@@ -271,12 +271,11 @@ class TestCustomDatasetComposerInferDatasetType:
     def test_infer_from_file_empty(
         self, create_user_config_and_composer, create_jsonl_file, content
     ):
-        """Test that empty files return None (no valid lines to infer from)."""
+        """Test that empty files raise ValueError (no valid lines to infer from)."""
         _, composer = create_user_config_and_composer()
         filepath = create_jsonl_file(content)
-        # Empty files have no valid lines, so the method exits the loop without calling _infer_type
-        result = composer._infer_dataset_type(filepath)
-        assert result is None
+        with pytest.raises(ValueError, match="empty file"):
+            composer._infer_dataset_type(filepath)
 
     def test_infer_from_file_invalid_json(
         self, create_user_config_and_composer, create_jsonl_file

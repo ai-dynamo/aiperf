@@ -20,6 +20,7 @@ class CIWidthConvergence(ConvergenceCriterion):
     def __init__(
         self,
         metric: str,
+        *,
         stat: str = "avg",
         threshold: float = 0.10,
         confidence_level: float = 0.95,

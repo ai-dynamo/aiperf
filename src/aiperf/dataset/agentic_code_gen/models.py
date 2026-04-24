@@ -9,9 +9,8 @@ import math
 from enum import Enum
 
 import numpy as np
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.models import AIPerfBaseModel
 
 
@@ -29,22 +28,19 @@ class PercentileStats(AIPerfBaseModel):
     p99: float = Field(description="99th percentile")
 
 
-def _maybe_round(value: float, digits: int | None) -> float:
-    return value if digits is None else round(value, digits)
-
-
 def percentile_stats(arr: np.ndarray, digits: int | None = 2) -> PercentileStats:
     """Compute PercentileStats from a numpy array."""
+    r = (lambda v: v) if digits is None else (lambda v: round(v, digits))
     return PercentileStats(
         count=len(arr),
-        mean=_maybe_round(float(np.mean(arr)), digits),
-        std=_maybe_round(float(np.std(arr)), digits),
-        median=_maybe_round(float(np.median(arr)), digits),
-        p05=_maybe_round(float(np.percentile(arr, 5)), digits),
-        p25=_maybe_round(float(np.percentile(arr, 25)), digits),
-        p75=_maybe_round(float(np.percentile(arr, 75)), digits),
-        p95=_maybe_round(float(np.percentile(arr, 95)), digits),
-        p99=_maybe_round(float(np.percentile(arr, 99)), digits),
+        mean=r(float(np.mean(arr))),
+        std=r(float(np.std(arr))),
+        median=r(float(np.median(arr))),
+        p05=r(float(np.percentile(arr, 5))),
+        p25=r(float(np.percentile(arr, 25))),
+        p75=r(float(np.percentile(arr, 75))),
+        p95=r(float(np.percentile(arr, 95))),
+        p99=r(float(np.percentile(arr, 99))),
     )
 
 
@@ -254,7 +250,7 @@ def _default_generation_length() -> LognormalParams:
     return LognormalParams(mean=500, median=300)
 
 
-class SessionDistributionConfig(BaseConfig):
+class SessionDistributionConfig(BaseModel):
     """Full configuration for synthesizing Agentic Code sessions.
 
     initial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.

@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from abc import ABC
+from __future__ import annotations
 
-from aiperf.common.config import ServiceConfig
+from abc import ABC
+from typing import TYPE_CHECKING
+
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -13,6 +15,9 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
 from aiperf.common.types import MessageTypeT
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 @provides_hooks(AIPerfHook.ON_REQUEST)
@@ -25,12 +30,12 @@ class ReplyClientMixin(CommunicationMixin, ABC):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         reply_client_address: CommAddress,
         reply_client_bind: bool = False,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+        super().__init__(run=run, **kwargs)
         # NOTE: The communication base class will automatically manage the reply client's lifecycle.
         self.reply_client = self.comms.create_reply_client(
             reply_client_address, bind=reply_client_bind

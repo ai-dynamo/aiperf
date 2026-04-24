@@ -1,26 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for AutoRoutedModel-based message routing."""
+"""Tests for Message.from_json tagged-union routing."""
 
 import json
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import (
-    CommandResponseStatus,
-    CommandType,
     LifecycleState,
     MessageType,
 )
 from aiperf.common.messages import Message, StatusMessage
-from aiperf.common.messages.command_messages import (
-    CommandErrorResponse,
-    CommandMessage,
-    CommandSuccessResponse,
-    ProcessRecordsCommand,
-    ProcessRecordsResponse,
-    SpawnWorkersCommand,
-)
 
 
 def assert_routed_to(msg, expected_class, **expected_attrs):
@@ -34,8 +25,8 @@ def assert_routed_to(msg, expected_class, **expected_attrs):
         )
 
 
-class TestAutoRoutedModel:
-    """Test AutoRoutedModel routing behavior."""
+class TestMessageRouting:
+    """Test Message.from_json routing behavior."""
 
     @pytest.mark.parametrize(
         "data,expected_class,expected_attrs",
@@ -51,95 +42,12 @@ class TestAutoRoutedModel:
                 StatusMessage,
                 {"message_type": MessageType.STATUS, "state": LifecycleState.RUNNING},
             ),
-            # Two-level routing
-            (
-                {
-                    "message_type": "command",
-                    "command": "spawn_workers",
-                    "service_id": "controller",
-                    "num_workers": 5,
-                },
-                SpawnWorkersCommand,
-                {"message_type": MessageType.COMMAND, "command": CommandType.SPAWN_WORKERS, "num_workers": 5},
-            ),
-            (
-                {
-                    "message_type": "command",
-                    "command": "process_records",
-                    "service_id": "controller",
-                    "cancelled": True,
-                },
-                ProcessRecordsCommand,
-                {"command": CommandType.PROCESS_RECORDS, "cancelled": True},
-            ),
-            # Fallback to base class
-            (
-                {
-                    "message_type": "command",
-                    "command": "unknown_command",
-                    "service_id": "controller",
-                },
-                CommandMessage,
-                {"command": "unknown_command"},
-            ),
         ],
     )  # fmt: skip
     def test_routing_levels(self, data, expected_class, expected_attrs):
         """Test routing at various nesting levels."""
         msg = Message.from_json(data)
         assert_routed_to(msg, expected_class, **expected_attrs)
-
-    @pytest.mark.parametrize(
-        "data,expected_class,expected_attrs",
-        [
-            # Error response (status routing)
-            (
-                {
-                    "message_type": "command_response",
-                    "status": "failure",
-                    "command": "spawn_workers",
-                    "command_id": "cmd-123",
-                    "service_id": "worker",
-                    "error": {"message": "Failed", "type": "Error"},
-                },
-                CommandErrorResponse,
-                {"status": CommandResponseStatus.FAILURE},
-            ),
-            # Success response (status + command routing)
-            (
-                {
-                    "message_type": "command_response",
-                    "status": "success",
-                    "command": "spawn_workers",
-                    "command_id": "cmd-123",
-                    "service_id": "worker",
-                    "data": {"count": 5},
-                },
-                CommandSuccessResponse,
-                {"status": CommandResponseStatus.SUCCESS},
-            ),
-        ],
-    )  # fmt: skip
-    def test_response_routing(self, data, expected_class, expected_attrs):
-        """Test three-level routing for command responses."""
-        msg = Message.from_json(data)
-        assert_routed_to(msg, expected_class, **expected_attrs)
-
-    def test_specialized_response_routing(self, process_records_result):
-        """Test routing to specialized response class."""
-        data = {
-            "message_type": "command_response",
-            "status": "success",
-            "command": "process_records",
-            "command_id": "cmd-456",
-            "service_id": "records-manager",
-            "data": process_records_result,
-        }
-
-        msg = Message.from_json(data)
-        assert_routed_to(
-            msg, ProcessRecordsResponse, command=CommandType.PROCESS_RECORDS
-        )
 
     def test_json_string_routing(self, base_message_data):
         """Test routing from JSON string (ensures single parse)."""
@@ -155,26 +63,25 @@ class TestAutoRoutedModel:
     @pytest.mark.parametrize(
         "data,match",
         [
-            ({"service_id": "test"}, "Missing discriminator 'message_type'"),
-            ({"message_type": "command", "service_id": "test"}, "Missing discriminator 'command'"),
+            ({"service_id": "test"}, "missing required field `message_type`"),
         ],
     )  # fmt: skip
     def test_missing_discriminator_error(self, data, match):
-        """Test that missing discriminators raise ValueError."""
-        with pytest.raises(ValueError, match=match):
+        """Test that missing discriminators raise ValidationError."""
+        with pytest.raises(msgspec.ValidationError, match=match):
             Message.from_json(data)
 
-    def test_unknown_discriminator_value_falls_back_to_base_class(self):
-        """Test that unknown discriminator values fall back to base class validation."""
-        # Unknown message type should still work with base Message class
+    def test_unknown_discriminator_value_raises(self):
+        """Test that unknown discriminator values raise ValidationError.
+
+        msgspec is strict — decode fails fast for unknown message_type tags.
+        """
         data = {
             "message_type": "unknown_type",
             "service_id": "test",
         }
-        msg = Message.from_json(data)
-        # Should be validated as base Message class
-        assert msg.message_type == "unknown_type"
-        assert msg.service_id == "test"
+        with pytest.raises(msgspec.ValidationError):
+            Message.from_json(data)
 
     @pytest.mark.parametrize(
         "input_transform,description",

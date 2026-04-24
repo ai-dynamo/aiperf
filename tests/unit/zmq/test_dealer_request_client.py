@@ -11,9 +11,9 @@ import pytest
 import zmq
 import zmq.asyncio
 
-from aiperf.common.enums import LifecycleState, MessageType
+from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import HeartbeatMessage, Message
+from aiperf.common.messages import ConnectionProbeMessage, HeartbeatMessage
 from aiperf.zmq.dealer_request_client import ZMQDealerRequestClient
 
 
@@ -65,7 +65,7 @@ class TestZMQDealerRequestClientRequestAsync:
         client = ZMQDealerRequestClient(address="tcp://127.0.0.1:5555", bind=False)
         await client.initialize()
 
-        message = Message(message_type=MessageType.HEARTBEAT)
+        message = ConnectionProbeMessage(service_id="test")
         assert message.request_id is None
 
         callback = AsyncMock()
@@ -110,7 +110,7 @@ class TestZMQDealerRequestClientRequestAsync:
         async with dealer_test_helper.create_client(
             send_side_effect=Exception("Send failed")
         ) as client:
-            message = Message(message_type=MessageType.HEARTBEAT, request_id="test-123")
+            message = ConnectionProbeMessage(service_id="test", request_id="test-123")
             callback = AsyncMock()
 
             with pytest.raises(CommunicationError, match="Exception sending request"):
@@ -164,13 +164,14 @@ class TestZMQDealerRequestClientRequest:
             await client.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_request_times_out_if_no_response(
         self, dealer_test_helper, sample_message
     ):
         """Test that request times out if no response is received."""
         async with dealer_test_helper.create_client(auto_start=True) as client:
             with pytest.raises(asyncio.TimeoutError):
-                await client.request(sample_message, timeout=0.1)
+                await client.request(sample_message, timeout=1)
 
 
 class TestZMQDealerRequestClientReceiverExceptions:

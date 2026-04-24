@@ -8,9 +8,9 @@ from aiperf.common.models.record_models import ReasoningResponseData, TextRespon
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
 )
 
 
@@ -20,8 +20,8 @@ class TestChatEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create a ChatEndpoint instance for parsing tests."""
-        model_endpoint = create_model_endpoint(EndpointType.CHAT)
-        return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        cfg = create_config(EndpointType.CHAT)
+        return create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
     def test_parse_response_chat_completion(self, endpoint):
         """Test parsing non-streaming chat completion response."""
@@ -155,6 +155,33 @@ class TestChatEndpointParseResponse:
         mock_response = create_mock_response(123456789, json_data)
         parsed = endpoint.parse_response(mock_response)
         assert parsed is None
+
+    def test_fast_parse_response_handles_standard_chunk_with_usage(self, endpoint):
+        """Fast-path parser should handle the common streaming chunk shape."""
+        parsed = endpoint._fast_parse_response(
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": "Hello"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            },
+            123456789,
+        )
+
+        assert parsed is not endpoint._FAST_PARSE_FALLBACK
+        assert parsed is not None
+        assert isinstance(parsed.data, TextResponseData)
+        assert parsed.data.text == "Hello"
+        assert parsed.usage.prompt_tokens == 10
+        assert parsed.usage.completion_tokens == 20
+
+    def test_fast_parse_response_falls_back_for_unexpected_shape(self, endpoint):
+        """Fast-path parser should defer to the generic path for unusual responses."""
+        parsed = endpoint._fast_parse_response(
+            {"object": "unexpected", "choices": [{"message": {"content": "Hello"}}]},
+            123456789,
+        )
+
+        assert parsed is endpoint._FAST_PARSE_FALLBACK
 
     def test_parse_response_streaming_multiple_chunks(self, endpoint):
         """Test parsing multiple streaming chunks."""

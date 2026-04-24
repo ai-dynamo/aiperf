@@ -7,14 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import (
-    ConversationConfig,
-    EndpointConfig,
-    InputConfig,
-    InputTokensConfig,
-    PromptConfig,
-    UserConfig,
-)
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
@@ -40,32 +33,79 @@ def create_jsonl_file():
 
 @pytest.fixture
 def create_user_config_and_composer(mock_tokenizer_cls):
-    """Create a UserConfig and CustomDatasetComposer for testing."""
+    """Create an AIPerfConfig and CustomDatasetComposer for testing."""
 
     def _create():
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig.model_construct(
-                file="test_data.jsonl",
-                conversation=ConversationConfig(num=5),
-                prompt=PromptConfig(
-                    input_tokens=InputTokensConfig(mean=10, stddev=2),
-                ),
-            ),
+        config = AIPerfConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets={
+                "default": {
+                    "type": "file",
+                    "path": "test_data.jsonl",
+                    "format": "single_turn",
+                }
+            },
+            phases={
+                "default": {
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            },
         )
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
-        composer = CustomDatasetComposer(config, tokenizer)
+        run = BenchmarkRun(
+            benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test")
+        )
+        composer = CustomDatasetComposer(run, tokenizer)
         return config, composer
 
     return _create
 
 
 @pytest.fixture
-def default_user_config() -> UserConfig:
-    """Create a default UserConfig for testing."""
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def default_user_config() -> AIPerfConfig:
+    """Create a default AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={
+            "default": {
+                "type": "concurrency",
+                "requests": 10,
+                "concurrency": 1,
+            }
+        },
+    )
+
+
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
+@pytest.fixture
+def default_user_run(default_user_config: AIPerfConfig) -> BenchmarkRun:
+    """Create a default BenchmarkRun wrapping default_user_config."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=default_user_config,
+        artifact_dir=Path("/tmp/test"),
+    )
 
 
 @pytest.fixture

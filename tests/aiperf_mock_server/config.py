@@ -2,15 +2,41 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mock server configuration."""
 
+import importlib
 import json
 import logging
 import os
 from typing import Annotated, Any, Literal
 
-from cyclopts import Parameter
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
+import cyclopts
+
+
+def _load_cyclopts_parameter() -> type:
+    param = getattr(cyclopts, "Parameter", None)
+    if param is not None:
+        return param
+    for module_name in (
+        "parameter",
+        "params",
+        "param",
+        "_parameter",
+        "_params",
+    ):
+        try:
+            module = importlib.import_module(f"cyclopts.{module_name}")
+        except Exception:
+            continue
+        param = getattr(module, "Parameter", None)
+        if param is not None:
+            return param
+    raise ImportError("cyclopts.Parameter is not available in this cyclopts version")
+
+
+from pydantic import Field, model_validator  # noqa: E402
+from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
+from typing_extensions import Self  # noqa: E402
+
+Parameter = _load_cyclopts_parameter()
 
 
 class MockServerConfig(BaseSettings):
@@ -249,6 +275,6 @@ def _get_env_key(config_key: str) -> str:
 
 def _serialize_env_value(value: Any) -> str:
     """Serialize value for environment variable storage."""
-    if isinstance(value, list | dict):
+    if isinstance(value, (list, dict)):
         return json.dumps(value)
     return str(value)

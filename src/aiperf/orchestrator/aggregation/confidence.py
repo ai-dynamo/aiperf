@@ -6,9 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-from scipy import stats
-
 from aiperf.common.constants import STAT_KEYS
 from aiperf.orchestrator.aggregation.base import AggregateResult, AggregationStrategy
 from aiperf.orchestrator.models import RunResult
@@ -21,31 +18,37 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ConfidenceMetric:
-    """Statistics for a single metric across runs.
-
-    Attributes:
-        mean: Sample mean
-        std: Sample standard deviation (ddof=1)
-        min: Minimum value
-        max: Maximum value
-        cv: Coefficient of variation (std/mean)
-        se: Standard error (std/sqrt(n))
-        ci_low: Lower bound of confidence interval
-        ci_high: Upper bound of confidence interval
-        t_critical: t-distribution critical value used for CI
-        unit: Unit of measurement (e.g., "ms", "requests/sec")
-    """
+    """Statistics for a single metric across runs."""
 
     mean: float
+    """Sample mean."""
+
     std: float
+    """Sample standard deviation (ddof=1)."""
+
     min: float
+    """Minimum value across runs."""
+
     max: float
+    """Maximum value across runs."""
+
     cv: float
+    """Coefficient of variation (std/mean)."""
+
     se: float
+    """Standard error (std/sqrt(n))."""
+
     ci_low: float
+    """Lower bound of the confidence interval."""
+
     ci_high: float
+    """Upper bound of the confidence interval."""
+
     t_critical: float
+    """t-distribution critical value used for CI calculation."""
+
     unit: str
+    """Unit of measurement (e.g., "ms", "requests/sec")."""
 
     def to_json_result(self) -> "JsonMetricResult":
         """Convert to JsonMetricResult for export.
@@ -163,47 +166,55 @@ class ConfidenceAggregation(AggregationStrategy):
             Dict mapping flattened metric name to ConfidenceMetric
             (e.g., "time_to_first_token_avg", "time_to_first_token_p99")
         """
-        # Get all metric names from first result
         if not results or not results[0].summary_metrics:
             return {}
 
-        # Collect all unique metric names and stat keys across all runs
-        metric_stat_pairs = set()
-        for result in results:
-            for metric_name, metric_result in result.summary_metrics.items():
-                # Get all populated stat fields
-                for stat_key in STAT_KEYS:
-                    if getattr(metric_result, stat_key, None) is not None:
-                        metric_stat_pairs.add((metric_name, stat_key))
+        metric_stat_pairs = self._collect_metric_stat_pairs(results)
 
         aggregated = {}
         for metric_name, stat_key in metric_stat_pairs:
-            # Extract values for this metric+stat combination across all runs
-            values = []
-            unit = ""
-
-            for result in results:
-                if metric_name in result.summary_metrics:
-                    metric_result = result.summary_metrics[metric_name]
-                    value = getattr(metric_result, stat_key, None)
-                    if value is not None:
-                        values.append(value)
-                        # Get unit from first occurrence
-                        if not unit:
-                            unit = metric_result.unit
-
+            values, unit = self._extract_values_for_pair(results, metric_name, stat_key)
             if not values:
                 continue
 
-            # Create flattened key for output (e.g., "time_to_first_token_p99")
             flattened_key = f"{metric_name}_{stat_key}"
-
-            # Compute statistics
             aggregated[flattened_key] = self._compute_confidence_stats(
                 values, flattened_key, unit
             )
 
         return aggregated
+
+    @staticmethod
+    def _collect_metric_stat_pairs(
+        results: list[RunResult],
+    ) -> set[tuple[str, str]]:
+        """Collect all unique (metric_name, stat_key) pairs populated across runs."""
+        pairs: set[tuple[str, str]] = set()
+        for result in results:
+            for metric_name, metric_result in result.summary_metrics.items():
+                for stat_key in STAT_KEYS:
+                    if getattr(metric_result, stat_key, None) is not None:
+                        pairs.add((metric_name, stat_key))
+        return pairs
+
+    @staticmethod
+    def _extract_values_for_pair(
+        results: list[RunResult], metric_name: str, stat_key: str
+    ) -> tuple[list[float], str]:
+        """Extract values and unit for a (metric_name, stat_key) pair across runs."""
+        values: list[float] = []
+        unit = ""
+        for result in results:
+            if metric_name not in result.summary_metrics:
+                continue
+            metric_result = result.summary_metrics[metric_name]
+            value = getattr(metric_result, stat_key, None)
+            if value is None:
+                continue
+            values.append(value)
+            if not unit:
+                unit = metric_result.unit
+        return values, unit
 
     def _compute_confidence_stats(
         self, values: list[float], metric_name: str, unit: str
@@ -218,6 +229,9 @@ class ConfidenceAggregation(AggregationStrategy):
         Returns:
             ConfidenceMetric with computed statistics
         """
+        import numpy as np
+        from scipy import stats
+
         n = len(values)
         mean = float(np.mean(values))
         std = float(np.std(values, ddof=1))  # Sample std (N-1)

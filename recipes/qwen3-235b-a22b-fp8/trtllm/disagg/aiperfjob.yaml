@@ -1,0 +1,59 @@
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: qwen3-235b-a22b-disagg-bench
+spec:
+  benchmark:
+    models:
+    - Qwen/Qwen3-235B-A22B-FP8
+    endpoint:
+      urls:
+      - http://qwen3-235b-a22b-disagg-frontend:8000
+      type: chat
+      streaming: true
+      path: /v1/chat/completions
+      extra:
+        max_tokens: 200
+        min_tokens: 200
+        ignore_eos: true
+        repetition_penalty: 1.0
+        temperature: 0.0
+        nvext:
+          ignore_eos: true
+      headers:
+        Authorization: Bearer NOT USED
+        Accept: text/event-stream
+    tokenizer:
+      name: Qwen/Qwen3-235B-A22B-FP8
+    datasets:
+      main:
+        type: synthetic
+        entries: 12800
+        isl:
+          mean: 4000
+          stddev: 0
+        osl:
+          mean: 200
+          stddev: 0
+    warmup:
+      type: concurrency
+      concurrency: 32
+      requests: 32
+    profiling:
+      type: concurrency
+      concurrency: 32
+      requests: 320
+    randomSeed: 100
+  podTemplate:
+    imagePullSecrets:
+    - nvcrimagepullsecret
+    env:
+    - name: AIPERF_HTTP_CONNECTION_LIMIT
+      value: '200'
+    volumes:
+    - name: model-cache
+      persistentVolumeClaim:
+        claimName: model-cache
+    volumeMounts:
+    - name: model-cache
+      mountPath: /model-cache

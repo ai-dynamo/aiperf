@@ -3,6 +3,7 @@
 
 import contextlib
 
+from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import ProgressBar, Static
@@ -75,7 +76,7 @@ class ProgressHeader(Widget):
         self.title = title
         self.progress_name = ""
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
         with Horizontal():
             yield Static(id="progress-name")
             yield Static(self.title, id="header-title")

@@ -18,21 +18,22 @@ from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
 
 @dataclass
 class DCGMEndpoint:
-    """Configuration for a fake DCGM endpoint.
-
-    Attributes:
-        url: The DCGM Prometheus metrics endpoint URL (e.g., "http://localhost:9401/metrics").
-        gpu_name: GPU model name from DCGMFaker GPU_CONFIGS (e.g., "h100", "h200", "b200").
-        num_gpus: Number of GPUs to simulate.
-        seed: Random seed for deterministic fake data generation.
-        initial_load: Initial GPU load level (0.0=idle, 1.0=max load).
-    """
+    """Configuration for a fake DCGM endpoint."""
 
     url: str
+    """DCGM Prometheus metrics endpoint URL (e.g. 'http://localhost:9401/metrics')."""
+
     gpu_name: str = "h100"
+    """GPU model name from DCGMFaker GPU_CONFIGS (e.g. 'h100', 'h200', 'b200')."""
+
     num_gpus: int = 2
+    """Number of GPUs to simulate."""
+
     seed: int = 42
+    """Random seed for deterministic fake data generation."""
+
     initial_load: float = 0.0
+    """Initial GPU load level (0.0=idle, 1.0=max load)."""
 
 
 class FakeDCGMMocker:

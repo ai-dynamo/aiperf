@@ -9,6 +9,7 @@ import aiofiles
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.metrics.metric_registry import MetricRegistry
 
 
 class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
@@ -19,8 +20,9 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         self._results = exporter_config.results
         self._telemetry_results = exporter_config.telemetry_results
         self._server_metrics_results = exporter_config.server_metrics_results
-        self._user_config = exporter_config.user_config
-        self._output_directory = exporter_config.user_config.output.artifact_directory
+        self._config = exporter_config.config
+        self._metric_registry = MetricRegistry
+        self._output_directory = exporter_config.config.artifacts.dir
 
     def _prepare_metrics(
         self, metric_results: Iterable[MetricResult]

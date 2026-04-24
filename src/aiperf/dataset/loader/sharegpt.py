@@ -1,16 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class ShareGPTLoader(BasePublicDatasetLoader):
@@ -36,21 +40,23 @@ class ShareGPTLoader(BasePublicDatasetLoader):
     url = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
     filename = "ShareGPT_V3_unfiltered_cleaned_split.json"
 
-    def __init__(
-        self, user_config: UserConfig, tokenizer: Tokenizer | None = None, **kwargs
-    ):
+    def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None = None, **kwargs):
         if tokenizer is None:
             raise ValueError(
                 "ShareGPTLoader requires a tokenizer; ensure the endpoint supports tokenization."
             )
         self.tokenizer = tokenizer
-        self.user_config = user_config
-        self.output_tokens_mean = self.user_config.input.prompt.output_tokens.mean
+        self.run = run
+        self.dataset_config = run.cfg.get_default_dataset()
+        # Get output tokens mean from dataset prompts config if available
+        prompts = getattr(self.dataset_config, "prompts", None)
+        osl = getattr(prompts, "osl", None) if prompts else None
+        self.output_tokens_mean = osl.mean if osl else None
         self.turn_count = 0
 
         self._rng = rng.derive("dataset.loader.sharegpt")
 
-        super().__init__(user_config=user_config, tokenizer=tokenizer, **kwargs)
+        super().__init__(run=run, tokenizer=tokenizer, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """
@@ -122,13 +128,12 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         return filtered_dataset
 
     def _select_model_name(self) -> str:
-        selection_strategy = self.user_config.endpoint.model_selection_strategy
+        selection_strategy = self.run.cfg.models.strategy
+        model_names = self.run.cfg.get_model_names()
         if selection_strategy == ModelSelectionStrategy.RANDOM:
-            return self._rng.choice(self.user_config.endpoint.model_names)
+            return self._rng.choice(model_names)
         elif selection_strategy == ModelSelectionStrategy.ROUND_ROBIN:
-            model_name = self.user_config.endpoint.model_names[
-                self.turn_count % len(self.user_config.endpoint.model_names)
-            ]
+            model_name = model_names[self.turn_count % len(model_names)]
             self.turn_count += 1
             return model_name
         else:

@@ -26,6 +26,7 @@ def load_sessions(jsonl_path: Path) -> list[dict]:
 def render_simulation(
     sessions: list[dict],
     output_path: Path,
+    *,
     block_size: int = 512,
     l1_tokens: int = 32000,
     l1_5_tokens: int = 20000,

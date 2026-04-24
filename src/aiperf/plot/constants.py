@@ -10,8 +10,8 @@ configuration constants used throughout the visualization functionality.
 
 from pathlib import Path
 
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.config.defaults import OutputDefaults
 
 # File patterns for AIPerf profiling output files. These reference the canonical definitions from OutputDefaults
 PROFILE_EXPORT_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name

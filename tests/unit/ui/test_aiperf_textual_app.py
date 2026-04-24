@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from aiperf.common.enums import GPUTelemetryMode
-from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.models import MetricResult
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 
@@ -24,11 +23,9 @@ class TestAIPerfTextualAppInitialization:
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, run, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=run, controller=mock_controller)
 
     def test_init_sets_title(self, app):
         """Test that initialization sets the correct title."""
@@ -58,11 +55,9 @@ class TestAIPerfTextualAppActions:
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, run, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=run, controller=mock_controller)
 
     @pytest.mark.asyncio
     async def test_action_quit_cleanup(self, app):
@@ -188,16 +183,13 @@ class TestAIPerfTextualAppActions:
             await app.action_toggle_maximize_telemetry()
 
             assert (
-                mock_controller.user_config.gpu_telemetry_mode
+                mock_controller.run.resolved.gpu_telemetry_mode
                 == GPUTelemetryMode.REALTIME_DASHBOARD
             )
             app.realtime_telemetry_dashboard.set_status_message.assert_called_once_with(
                 "Enabling live GPU telemetry..."
             )
-            mock_controller.publish.assert_called_once()
-
-            call_args = mock_controller.publish.call_args[0][0]
-            assert isinstance(call_args, StartRealtimeTelemetryCommand)
+            mock_controller.start_realtime_telemetry.assert_awaited_once()
 
 
 class TestAIPerfTextualAppProgressHandlers:
@@ -212,55 +204,55 @@ class TestAIPerfTextualAppProgressHandlers:
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, run, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=run, controller=mock_controller)
 
     @pytest.mark.asyncio
-    async def test_on_warmup_progress(self, app):
-        """Test on_warmup_progress updates dashboard and header."""
+    async def test_on_phase_progress_warmup(self, app):
+        """Test on_phase_progress updates dashboard and header for warmup."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        warmup_stats = Mock()
-        warmup_stats.requests_progress_percent = 50.0
-        warmup_stats.timeout_triggered = False
+        phase_stats = Mock()
+        phase_stats.phase = "warmup"
+        phase_stats.requests_progress_percent = 50.0
+        phase_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_warmup_progress(warmup_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_warmup_progress.assert_called_once_with(
-                warmup_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
                 header="Warmup", progress=50.0, total=100
             )
 
     @pytest.mark.asyncio
-    async def test_on_warmup_progress_grace_period(self, app):
-        """Test on_warmup_progress shows grace period when timeout triggered."""
+    async def test_on_phase_progress_grace_period(self, app):
+        """Test on_phase_progress shows grace period when timeout triggered."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        warmup_stats = Mock()
-        warmup_stats.timeout_triggered = True
-        warmup_stats.requests_sent = 100
-        warmup_stats.requests_completed = 70
-        warmup_stats.requests_cancelled = 5
+        phase_stats = Mock()
+        phase_stats.phase = "warmup"
+        phase_stats.timeout_triggered = True
+        phase_stats.requests_sent = 100
+        phase_stats.requests_completed = 70
+        phase_stats.requests_cancelled = 5
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_warmup_progress(warmup_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_warmup_progress.assert_called_once_with(
-                warmup_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             # Progress should be (70 + 5) / 100 * 100 = 75%
             app.progress_header.update_progress.assert_called_once_with(
@@ -268,52 +260,54 @@ class TestAIPerfTextualAppProgressHandlers:
             )
 
     @pytest.mark.asyncio
-    async def test_on_profiling_progress(self, app):
-        """Test on_profiling_progress updates dashboard and header."""
+    async def test_on_phase_progress_profiling(self, app):
+        """Test on_phase_progress updates dashboard and header for profiling."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        profiling_stats = Mock()
-        profiling_stats.requests_progress_percent = 50.0
-        profiling_stats.timeout_triggered = False
+        phase_stats = Mock()
+        phase_stats.phase = "profiling"
+        phase_stats.requests_progress_percent = 50.0
+        phase_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_profiling_progress(profiling_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_profiling_progress.assert_called_once_with(
-                profiling_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
                 header="Profiling", progress=50.0, total=100
             )
 
     @pytest.mark.asyncio
-    async def test_on_profiling_progress_grace_period(self, app):
-        """Test on_profiling_progress shows grace period when timeout triggered."""
+    async def test_on_phase_progress_profiling_grace_period(self, app):
+        """Test on_phase_progress shows grace period for profiling when timeout triggered."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        profiling_stats = Mock()
-        profiling_stats.timeout_triggered = True
-        profiling_stats.requests_sent = 100
-        profiling_stats.requests_completed = 80
-        profiling_stats.requests_cancelled = 10
+        phase_stats = Mock()
+        phase_stats.phase = "profiling"
+        phase_stats.timeout_triggered = True
+        phase_stats.requests_sent = 100
+        phase_stats.requests_completed = 80
+        phase_stats.requests_cancelled = 10
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_profiling_progress(profiling_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_profiling_progress.assert_called_once_with(
-                profiling_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             # Progress should be (80 + 10) / 100 * 100 = 90%
             app.progress_header.update_progress.assert_called_once_with(
-                header="Grace Period", progress=90.0, total=100
+                header="Profiling Grace", progress=90.0, total=100
             )
 
     @pytest.mark.asyncio
@@ -322,8 +316,11 @@ class TestAIPerfTextualAppProgressHandlers:
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
-        app._profiling_stats = Mock()
-        app._profiling_stats.is_requests_complete = True
+        # Simulate a completed profiling phase
+        profiling_stats = Mock()
+        profiling_stats.is_requests_complete = True
+        profiling_stats.exclude_from_results = False
+        app._phase_stats = {"profiling": profiling_stats}
 
         records_stats = Mock()
         records_stats.records_progress_percent = 75.0
@@ -351,11 +348,9 @@ class TestAIPerfTextualAppMetricsHandlers:
         return controller
 
     @pytest.fixture
-    def app(self, service_config, mock_controller):
+    def app(self, run, mock_controller):
         """Create AIPerfTextualApp instance."""
-        return AIPerfTextualApp(
-            service_config=service_config, controller=mock_controller
-        )
+        return AIPerfTextualApp(run=run, controller=mock_controller)
 
     @pytest.mark.asyncio
     async def test_on_worker_update(self, app):

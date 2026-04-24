@@ -9,9 +9,9 @@ from aiperf.common.models.record_models import ImageRetrievalResponseData
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -23,7 +23,7 @@ class TestImageRetrievalEndpointFormatPayload:
 
     @pytest.fixture
     def model_endpoint(self):
-        return create_model_endpoint(
+        return create_config(
             EndpointType.IMAGE_RETRIEVAL, model_name="image-retrieval-model"
         )
 
@@ -38,7 +38,7 @@ class TestImageRetrievalEndpointFormatPayload:
         turn = Turn(
             images=[Image(contents=[BASE64_PNG])], model="image-retrieval-model"
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -53,7 +53,7 @@ class TestImageRetrievalEndpointFormatPayload:
         turn = Turn(
             images=[Image(contents=[img1, img2])], model="image-retrieval-model"
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -71,7 +71,7 @@ class TestImageRetrievalEndpointFormatPayload:
             ],
             model="image-retrieval-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -79,10 +79,10 @@ class TestImageRetrievalEndpointFormatPayload:
 
     def test_format_payload_with_extra(self):
         """Test format_payload applies endpoint extra fields."""
-        model_endpoint_with_extra = create_model_endpoint(
+        model_endpoint_with_extra = create_config(
             EndpointType.IMAGE_RETRIEVAL,
             model_name="image-retrieval-model",
-            extra=[("threshold", 0.5), ("max_detections", 10)],
+            extra={"threshold": 0.5, "max_detections": 10},
         )
         endpoint = create_endpoint_with_mock_transport(
             ImageRetrievalEndpoint, model_endpoint_with_extra
@@ -91,7 +91,7 @@ class TestImageRetrievalEndpointFormatPayload:
             images=[Image(contents=[BASE64_PNG])], model="image-retrieval-model"
         )
         request_info = create_request_info(
-            model_endpoint=model_endpoint_with_extra, turns=[turn]
+            config=model_endpoint_with_extra, turns=[turn]
         )
 
         payload = endpoint.format_payload(request_info)
@@ -102,7 +102,7 @@ class TestImageRetrievalEndpointFormatPayload:
     def test_format_payload_no_images_raises(self, endpoint, model_endpoint):
         """Test that empty images raises ValueError."""
         turn = Turn(images=[], model="image-retrieval-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(
             ValueError, match="Image Retrieval request requires at least one image"
@@ -115,7 +115,7 @@ class TestImageRetrievalEndpointFormatPayload:
             Turn(images=[Image(contents=[BASE64_PNG])], model="image-retrieval-model"),
             Turn(images=[Image(contents=[BASE64_PNG])], model="image-retrieval-model"),
         ]
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        request_info = create_request_info(config=model_endpoint, turns=turns)
 
         with pytest.raises(
             ValueError, match="Image Retrieval endpoint only supports one turn"
@@ -125,7 +125,7 @@ class TestImageRetrievalEndpointFormatPayload:
     def test_format_payload_empty_contents_raises(self, endpoint, model_endpoint):
         """Test that images with empty contents raises ValueError."""
         turn = Turn(images=[Image(contents=["", ""])], model="image-retrieval-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="No valid image content found"):
             endpoint.format_payload(request_info)
@@ -136,7 +136,7 @@ class TestImageRetrievalEndpointParseResponse:
 
     @pytest.fixture
     def endpoint(self):
-        model_endpoint = create_model_endpoint(
+        model_endpoint = create_config(
             EndpointType.IMAGE_RETRIEVAL, model_name="image-retrieval-model"
         )
         return create_endpoint_with_mock_transport(

@@ -8,21 +8,14 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter
-from pydantic import Field
 
+from aiperf.api.models.responses import WorkersResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.mixins.worker_tracker_mixin import WorkerTrackerMixin
-from aiperf.common.models import AIPerfBaseModel, WorkerStats
 
 WorkersDep = Annotated["WorkersRouter", component_dependency("workers")]
 
 workers_router = APIRouter()
-
-
-class WorkersResponse(AIPerfBaseModel):
-    """Worker status response."""
-
-    workers: dict[str, WorkerStats] = Field(description="Per-worker stats")
 
 
 class WorkersRouter(WorkerTrackerMixin, BaseRouter):

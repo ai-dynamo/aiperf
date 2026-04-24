@@ -17,17 +17,15 @@ from pathlib import Path
 import pytest
 from pytest import param
 
-from aiperf.common.config import (
-    EndpointConfig,
-    ServiceConfig,
-    UserConfig,
+from aiperf.common.enums import CommAddress, LifecycleState
+from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.config.zmq import (
     ZMQDualBindConfig,
     ZMQDualBindProxyConfig,
     ZMQIPCProxyConfig,
     ZMQTCPConfig,
     ZMQTCPProxyConfig,
 )
-from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CommunicationBackend, PluginType
@@ -201,6 +199,7 @@ class TestZMQDualBindConfig:
     def test_default_tcp_ports(self, config: ZMQDualBindConfig) -> None:
         assert config.records_push_pull_tcp_port == 5557
         assert config.credit_router_tcp_port == 5564
+        assert config.control_tcp_port == 5667
 
     def test_default_proxy_tcp_ports(self, config: ZMQDualBindConfig) -> None:
         assert config.event_bus_proxy_config.tcp_frontend_port == 5663
@@ -244,10 +243,28 @@ class TestZMQDualBindConfig:
             remote_config.credit_router_address == "tcp://controller.default.svc:5564"
         )
 
-    def test_get_address_remote_returns_tcp_for_all(
+    def test_control_address_local_uses_ipc(self, config: ZMQDualBindConfig) -> None:
+        assert config.control_address.startswith("ipc://")
+
+    def test_control_address_remote_uses_tcp(
         self, remote_config: ZMQDualBindConfig
     ) -> None:
-        for addr_type in CommAddress:
+        assert remote_config.control_address == "tcp://controller.default.svc:5667"
+
+    def test_get_address_remote_returns_tcp_for_controller_proxies(
+        self, remote_config: ZMQDualBindConfig
+    ) -> None:
+        """Remote (worker pod) mode uses TCP for controller-hosted proxies."""
+        tcp_addresses = [
+            CommAddress.EVENT_BUS_PROXY_FRONTEND,
+            CommAddress.EVENT_BUS_PROXY_BACKEND,
+            CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+            CommAddress.DATASET_MANAGER_PROXY_BACKEND,
+            CommAddress.CREDIT_ROUTER,
+            CommAddress.CONTROL,
+            CommAddress.RECORDS,
+        ]
+        for addr_type in tcp_addresses:
             addr = remote_config.get_address(addr_type)
             assert addr.startswith("tcp://"), (
                 f"{addr_type} should be TCP in remote mode"
@@ -650,53 +667,72 @@ class TestBaseZMQClientAdditionalBind:
 class _DualBindServiceFixtures:
     """Shared fixtures for service-level dual-bind tests."""
 
-    @pytest.fixture
-    def dual_bind_service_config(self, tmp_path: Path) -> ServiceConfig:
-        config = ServiceConfig()
-        config._comm_config = ZMQDualBindConfig(ipc_path=tmp_path, tcp_host="0.0.0.0")
-        return config
+    @staticmethod
+    def _make_base_config() -> BenchmarkRun:
+        config = AIPerfConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
+        )
+        return BenchmarkRun(
+            benchmark_id="test",
+            cfg=config,
+            artifact_dir=Path("/tmp/test"),
+        )
 
     @pytest.fixture
-    def remote_dual_bind_service_config(self, tmp_path: Path) -> ServiceConfig:
-        config = ServiceConfig()
-        config._comm_config = ZMQDualBindConfig(
+    def dual_bind_config(self, tmp_path: Path, monkeypatch) -> BenchmarkRun:
+        run = self._make_base_config()
+        dual_bind = ZMQDualBindConfig(ipc_path=tmp_path, tcp_host="0.0.0.0")
+        monkeypatch.setattr(
+            AIPerfConfig, "comm_config", property(lambda self: dual_bind)
+        )
+        return run
+
+    @pytest.fixture
+    def remote_dual_bind_config(self, tmp_path: Path, monkeypatch) -> BenchmarkRun:
+        run = self._make_base_config()
+        dual_bind = ZMQDualBindConfig(
             ipc_path=tmp_path,
             tcp_host="0.0.0.0",
             controller_host="controller.default.svc",
         )
-        return config
-
-    @pytest.fixture
-    def user_config(self) -> UserConfig:
-        return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        monkeypatch.setattr(
+            AIPerfConfig, "comm_config", property(lambda self: dual_bind)
+        )
+        return run
 
 
 class TestRecordsManagerDualBind(_DualBindServiceFixtures):
     """Test RecordsManager passes additional_bind_address in dual-bind mode."""
 
-    def test_controller_mode_passes_tcp_bind_address(
-        self, dual_bind_service_config, user_config
-    ) -> None:
+    def test_controller_mode_passes_tcp_bind_address(self, dual_bind_config) -> None:
         manager = RecordsManager(
-            service_config=dual_bind_service_config,
-            user_config=user_config,
+            run=dual_bind_config,
         )
         assert manager.pull_client.additional_bind_address == "tcp://0.0.0.0:5557"
 
     def test_worker_mode_does_not_pass_tcp_bind_address(
-        self, remote_dual_bind_service_config, user_config
+        self, remote_dual_bind_config
     ) -> None:
         manager = RecordsManager(
-            service_config=remote_dual_bind_service_config,
-            user_config=user_config,
+            run=remote_dual_bind_config,
         )
         assert manager.pull_client.additional_bind_address is None
 
-    def test_ipc_mode_does_not_pass_tcp_bind_address(self, user_config) -> None:
-        config = ServiceConfig()
+    def test_ipc_mode_does_not_pass_tcp_bind_address(self) -> None:
+        config = self._make_base_config()
         manager = RecordsManager(
-            service_config=config,
-            user_config=user_config,
+            run=config,
         )
         assert manager.pull_client.additional_bind_address is None
 
@@ -704,28 +740,28 @@ class TestRecordsManagerDualBind(_DualBindServiceFixtures):
 class TestStickyRouterDualBind(_DualBindServiceFixtures):
     """Test StickyCreditRouter passes additional_bind_address in dual-bind mode."""
 
-    def test_controller_mode_passes_tcp_bind_address(
-        self, dual_bind_service_config
-    ) -> None:
+    def test_controller_mode_passes_tcp_bind_address(self, dual_bind_config) -> None:
         router = StickyCreditRouter(
-            service_config=dual_bind_service_config,
+            run=dual_bind_config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address == "tcp://0.0.0.0:5564"
+        assert (
+            router._credit_router_client.additional_bind_address == "tcp://0.0.0.0:5564"
+        )
 
     def test_worker_mode_does_not_pass_tcp_bind_address(
-        self, remote_dual_bind_service_config
+        self, remote_dual_bind_config
     ) -> None:
         router = StickyCreditRouter(
-            service_config=remote_dual_bind_service_config,
+            run=remote_dual_bind_config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None
 
     def test_ipc_mode_does_not_pass_tcp_bind_address(self) -> None:
-        config = ServiceConfig()
+        config = self._make_base_config()
         router = StickyCreditRouter(
-            service_config=config,
+            run=config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None

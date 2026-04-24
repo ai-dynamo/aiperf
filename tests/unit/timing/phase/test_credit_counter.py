@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import TurnToSend
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -13,7 +12,7 @@ def cfg(
     reqs: int | None = None, sessions: int | None = None, dur: float | None = None
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=reqs,
         expected_num_sessions=sessions,
@@ -56,7 +55,7 @@ class TestCreditCounter:
     def test_increment_sent_returns_sequential_index(self) -> None:
         c = CreditCounter(cfg())
         for i in range(10):
-            idx, _ = c.increment_sent(turn(idx=0))
+            idx, _, _ = c.increment_sent(turn(idx=0))
             assert idx == i
         assert c.requests_sent == 10
 
@@ -81,14 +80,14 @@ class TestCreditCounter:
     def test_final_when_request_count_reached(self, reqs: int, expected_finals: list[bool]) -> None:
         c = CreditCounter(cfg(reqs=reqs))
         for exp in expected_finals:
-            _, is_final = c.increment_sent(turn())
+            _, _, is_final = c.increment_sent(turn())
             assert is_final == exp
     # fmt: on
 
     def test_not_final_without_request_limit(self) -> None:
         c = CreditCounter(cfg(reqs=None))
         for _ in range(100):
-            _, is_final = c.increment_sent(turn())
+            _, _, is_final = c.increment_sent(turn())
             assert not is_final
 
     def test_final_when_sessions_complete(self) -> None:
@@ -96,7 +95,7 @@ class TestCreditCounter:
         finals = []
         for _ in range(2):
             for t in range(2):
-                _, f = c.increment_sent(turn(idx=t, num=2))
+                _, _, f = c.increment_sent(turn(idx=t, num=2))
                 finals.append(f)
         assert finals == [False, False, False, True]
 
@@ -106,7 +105,7 @@ class TestCreditCounter:
         c.increment_sent(turn(idx=0, num=2))
         c.increment_sent(turn(idx=1, num=3))
         c.increment_sent(turn(idx=1, num=2))
-        _, is_final = c.increment_sent(turn(idx=2, num=3))
+        _, _, is_final = c.increment_sent(turn(idx=2, num=3))
         assert is_final
 
     def test_increment_returned_completed(self) -> None:
@@ -135,6 +134,19 @@ class TestCreditCounter:
         c.increment_sent(turn(idx=0, num=1))
         c.increment_returned(is_final_turn=True, cancelled=True)
         assert c.cancelled_sessions == 1 and c.completed_sessions == 0
+
+    def test_increment_returned_can_cancel_session_after_completed_turn(self) -> None:
+        c = CreditCounter(cfg())
+        c.increment_sent(turn(idx=0, num=2))
+        c.increment_returned(
+            is_final_turn=False,
+            cancelled=False,
+            session_ended=True,
+            session_cancelled=True,
+        )
+        assert c.requests_completed == 1
+        assert c.cancelled_sessions == 1
+        assert c.completed_sessions == 0
 
     def test_increment_returned_all_done(self) -> None:
         c = CreditCounter(cfg())
@@ -211,8 +223,59 @@ class TestCreditCounter:
 
     def test_single_session_single_turn_is_final(self) -> None:
         c = CreditCounter(cfg(sessions=1))
-        _, is_final = c.increment_sent(turn(idx=0, num=1))
+        _, _, is_final = c.increment_sent(turn(idx=0, num=1))
         assert is_final
+
+    def test_session_index_single_turn_matches_credit_index(self) -> None:
+        """For single-turn datasets, session_index == credit_index."""
+        c = CreditCounter(cfg())
+        for i in range(5):
+            credit_idx, session_idx, _ = c.increment_sent(turn(conv=f"c{i}", idx=0))
+            assert credit_idx == i
+            assert session_idx == i
+
+    def test_session_index_shared_across_multi_turn(self) -> None:
+        """All turns in the same conversation get the same session_index."""
+        c = CreditCounter(cfg())
+        # Session 0: 3 turns
+        _, s0, _ = c.increment_sent(turn(conv="a", idx=0, num=3))
+        _, s1, _ = c.increment_sent(turn(conv="a", idx=1, num=3))
+        _, s2, _ = c.increment_sent(turn(conv="a", idx=2, num=3))
+        assert s0 == s1 == s2 == 0
+
+        # Session 1: 2 turns
+        _, s3, _ = c.increment_sent(turn(conv="b", idx=0, num=2))
+        _, s4, _ = c.increment_sent(turn(conv="b", idx=1, num=2))
+        assert s3 == s4 == 1
+
+    def test_session_index_interleaved_conversations(self) -> None:
+        """Interleaved multi-turn conversations get correct session indices."""
+        c = CreditCounter(cfg())
+        # Conv A turn 0
+        _, sa0, _ = c.increment_sent(turn(conv="a", idx=0, num=2))
+        # Conv B turn 0
+        _, sb0, _ = c.increment_sent(turn(conv="b", idx=0, num=2))
+        # Conv A turn 1
+        _, sa1, _ = c.increment_sent(turn(conv="a", idx=1, num=2))
+        # Conv B turn 1
+        _, sb1, _ = c.increment_sent(turn(conv="b", idx=1, num=2))
+
+        assert sa0 == 0 and sa1 == 1  # session increments on each turn_index==0
+        assert sb0 == 1 and sb1 == 1  # B's child turn keeps B's session_index
+
+    def test_credit_index_vs_session_index_diverge_multi_turn(self) -> None:
+        """credit_index is always sequential; session_index only increments on first turn."""
+        c = CreditCounter(cfg())
+        results = []
+        for conv_id in ["a", "b"]:
+            for t in range(3):
+                ci, si, _ = c.increment_sent(turn(conv=conv_id, idx=t, num=3))
+                results.append((ci, si))
+
+        # credit_index: 0,1,2,3,4,5
+        # session_index: 0,0,0,1,1,1
+        assert [r[0] for r in results] == [0, 1, 2, 3, 4, 5]
+        assert [r[1] for r in results] == [0, 0, 0, 1, 1, 1]
 
     def test_mixed_completed_and_cancelled_with_all_done_check(self) -> None:
         c = CreditCounter(cfg())

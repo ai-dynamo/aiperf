@@ -11,18 +11,15 @@ from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.workers import WorkersRouter
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.models import WorkerStats
+from aiperf.config import AIPerfConfig
 
 
 @pytest.fixture
-def workers_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> WorkersRouter:
+def workers_router(mock_zmq, router_config: AIPerfConfig) -> WorkersRouter:
     return WorkersRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
+        run=router_config,
     )
 
 

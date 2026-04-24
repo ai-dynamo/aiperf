@@ -113,4 +113,4 @@ class AIPerfLoggerMixin(BaseMixin):
 # in the AIPerfLogger class to skip it when determining the caller.
 # NOTE: Using similar logic to logging._srcfile
 _srcfile = os.path.normcase(AIPerfLoggerMixin.info.__code__.co_filename)
-aiperf_logger._ignored_files.append(_srcfile)
+aiperf_logger.AIPerfLogger._ignored_files.append(_srcfile)

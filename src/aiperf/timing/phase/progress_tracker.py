@@ -83,15 +83,16 @@ class PhaseProgressTracker:
     # Increment Methods (wrapped with event coordination)
     # =========================================================================
 
-    def increment_sent(self, turn: TurnToSend) -> tuple[int, bool]:
+    def increment_sent(self, turn: TurnToSend) -> tuple[int, int, bool]:
         """Atomically increment sent count.
 
         Args:
             turn: The turn being sent.
 
         Returns:
-            (credit_index, is_final_credit)
-            - credit_index: Sequential ID for this credit
+            (credit_index, session_index, is_final_credit)
+            - credit_index: Sequential ID for this credit (0-based request number)
+            - session_index: Sequential ID for this session/conversation (0-based)
             - is_final_credit: True if this was the final credit to send
 
         CRITICAL: No async calls in this method - preserves atomicity.
@@ -106,12 +107,19 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        *,
+        session_ended: bool | None = None,
+        session_cancelled: bool | None = None,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            session_ended: Whether this return ended the session. Defaults to
+                is_final_turn.
+            session_cancelled: Whether the ended session should count as cancelled.
+                Defaults to the request's cancelled status when session_ended=True.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -123,7 +131,12 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled)
+        return self._counter.increment_returned(
+            is_final_turn,
+            cancelled,
+            session_ended=session_ended,
+            session_cancelled=session_cancelled,
+        )
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.
@@ -184,6 +197,7 @@ class PhaseProgressTracker:
         """
         return CreditPhaseStats(
             phase=self._config.phase,
+            exclude_from_results=self._config.exclude_from_results,
             # Timestamps from lifecycle
             start_ns=lifecycle.started_at_ns,
             sent_end_ns=lifecycle.sending_complete_at_ns,

@@ -1,24 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records import _tokenizer_preload
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -27,32 +32,22 @@ class InferenceResultParser(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
     ) -> None:
-        super().__init__(
-            service_config=service_config,
-            user_config=user_config,
-        )
+        super().__init__(run=run)
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
+        config: BenchmarkConfig = run.cfg
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
-        )
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
-        )
-        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
-        endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
+        EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
+        self.endpoint = EndpointClass(run=run)
+        endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = (
-            user_config.endpoint.use_server_token_count
-            or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
+        # if the config is set to use server token counts.
+        self.disable_tokenization: bool = config.endpoint.use_server_token_count or (
+            not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
         self.debug(
-            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+            lambda: f"Created endpoint for {config.endpoint.type}, "
             f"class: {self.endpoint.__class__.__name__}",
         )
 
@@ -71,17 +66,31 @@ class InferenceResultParser(CommunicationMixin):
 
         self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
-        tokenizer_config = self.user_config.tokenizer
 
         async with self.tokenizer_lock:
             self.tokenizers = {}
-            for model in self.model_endpoint.models.models:
+            resolved_names = self.run.resolved.tokenizer_names
+            for model in self.run.cfg.models.items:
+                if resolved_names and model.name in resolved_names:
+                    tokenizer_name = resolved_names[model.name]
+                    resolve_alias = False
+                else:
+                    tokenizer_name = (
+                        self.run.cfg.tokenizer.name or model.name
+                        if self.run.cfg.tokenizer
+                        else model.name
+                    )
+                    resolve_alias = True
                 self.tokenizers[model.name] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    _tokenizer_preload.get_or_load,
+                    tokenizer_name,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
+                    resolve_alias=resolve_alias,
                 )
 
         duration = time.perf_counter() - begin
@@ -98,13 +107,20 @@ class InferenceResultParser(CommunicationMixin):
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.user_config.tokenizer
+                tokenizer_name = (
+                    self.run.cfg.tokenizer.name or model
+                    if self.run.cfg.tokenizer
+                    else model
+                )
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    _tokenizer_preload.get_or_load,
+                    tokenizer_name,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
                 )
             return self.tokenizers[model]
 
@@ -124,71 +140,55 @@ class InferenceResultParser(CommunicationMixin):
         request_record.create_error_from_invalid()
 
         if request_record.has_error:
-            # Even for error records, compute input token count if possible
-            input_token_count = None
-            if not self.disable_tokenization:
-                # Suppress exceptions during token counting for error records to avoid masking the original error.
-                # If token counting fails, we still return the error record with token_counts.input=None.
-                with suppress(Exception):
-                    input_token_count = await self.compute_input_token_count(
-                        request_record
-                    )
+            return await self._build_error_record(request_record)
 
-            return ParsedResponseRecord(
-                request=request_record,
-                responses=[],
-                token_counts=TokenCounts(
-                    input=input_token_count,
-                ),
-            )
+        try:
+            raw_response_count = len(request_record.responses)
+            record = await self.process_valid_record(request_record)
 
-        else:
-            try:
-                raw_response_count = len(request_record.responses)
-                record = await self.process_valid_record(request_record)
+            # Check if the parsed record is actually valid (e.g., has content responses)
+            record.create_error_from_invalid()
 
-                # Check if the parsed record is actually valid (e.g., has content responses)
-                record.create_error_from_invalid()
-
-                if record.has_error:
-                    # Parsed record was invalid, return as error record
-                    return ParsedResponseRecord(
-                        request=record.request,
-                        responses=[],
-                        token_counts=TokenCounts(
-                            input=record.token_counts.input
-                            if record.token_counts
-                            else None
-                        ),
-                    )
-                else:
-                    # Success path: valid record with no errors
-                    self.debug(
-                        lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
-                    )
-                    return record
-
-            except Exception as e:
-                # TODO: We should add an ErrorDetails to the response record and not the request record.
-                self.exception(f"Error processing valid record: {e}")
-                request_record.error = ErrorDetails.from_exception(e)
-                input_token_count = None
-
-                if not self.disable_tokenization:
-                    # Suppress exceptions during token counting for error records to avoid masking the original error.
-                    # If token counting fails, we still return the error record with token_counts.input=None.
-                    with suppress(Exception):
-                        input_token_count = await self.compute_input_token_count(
-                            request_record
-                        )
-
+            if record.has_error:
+                # Parsed record was invalid, return as error record
                 return ParsedResponseRecord(
-                    request=request_record,
+                    request=record.request,
                     responses=[],
                     token_counts=TokenCounts(
-                        input=input_token_count,
+                        input=record.token_counts.input if record.token_counts else None
                     ),
                 )
+
+            # Success path: valid record with no errors
+            self.debug(
+                lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
+            )
+            return record
+
+        except Exception as e:  # noqa: BLE001 - per-request parser errors are attached as ErrorDetails on the record, not raised
+            # TODO: We should add an ErrorDetails to the response record and not the request record.
+            self.exception(f"Error processing valid record: {e}")
+            request_record.error = ErrorDetails.from_exception(e)
+            return await self._build_error_record(request_record)
+
+    async def _build_error_record(
+        self, request_record: RequestRecord
+    ) -> ParsedResponseRecord:
+        """Build an error ParsedResponseRecord, computing input tokens when possible."""
+        input_token_count = None
+        if not self.disable_tokenization:
+            # Suppress exceptions during token counting for error records to avoid masking the original error.
+            # If token counting fails, we still return the error record with token_counts.input=None.
+            with suppress(Exception):
+                input_token_count = await self.compute_input_token_count(request_record)
+
+        return ParsedResponseRecord(
+            request=request_record,
+            responses=[],
+            token_counts=TokenCounts(
+                input=input_token_count,
+            ),
+        )
 
     async def process_valid_record(
         self, request_record: RequestRecord
@@ -207,11 +207,11 @@ class InferenceResultParser(CommunicationMixin):
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             request_record.responses = None
 
         # Compute token counts based on configuration
-        if self.user_config.endpoint.use_server_token_count:
+        if self.run.cfg.endpoint.use_server_token_count:
             token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(

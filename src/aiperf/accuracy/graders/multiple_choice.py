@@ -3,14 +3,14 @@
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
+from aiperf.config import BenchmarkRun
 
 
 class MultipleChoiceGrader(BaseGrader):
     """Grades responses by matching selected choice (A/B/C/D) against ground truth."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs) -> None:
+        super().__init__(run=run, **kwargs)
 
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs

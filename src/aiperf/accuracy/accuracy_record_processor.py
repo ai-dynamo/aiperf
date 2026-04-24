@@ -1,11 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import UserConfig
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.metric_records_wire import MetricRecordMetadata
 from aiperf.common.mixins import AIPerfLifecycleMixin
-from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
+from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.metric_dicts import MetricRecordDict
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class AccuracyRecordProcessor(AIPerfLifecycleMixin):
@@ -18,16 +25,17 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
     def __init__(
         self,
         service_id: str | None,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ) -> None:
-        if not user_config.accuracy.enabled:
+        config = run.cfg
+        if not (config.accuracy and config.accuracy.enabled):
             raise PostProcessorDisabled(
                 "Accuracy record processor is disabled: accuracy mode is not enabled"
             )
 
-        super().__init__(service_id=service_id, user_config=user_config, **kwargs)
-        self.user_config = user_config
+        super().__init__(service_id=service_id, run=run, **kwargs)
+        self.run = run
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

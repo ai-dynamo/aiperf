@@ -2,22 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import asyncio
 import os
 import signal
 import uuid
 from abc import ABC
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
-from aiperf.common.messages import CommandMessage
-from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
 from aiperf.common.mixins import CommandHandlerMixin
 from aiperf.common.mixins.health_server_mixin import HealthServerMixin
 from aiperf.common.mixins.process_health_mixin import ProcessHealthMixin
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, ABC):
@@ -33,6 +34,14 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     _service_type_cache: ServiceType | None = None
     """Cached service type (class-level)."""
+
+    @classmethod
+    def reset_service_type_cache(cls) -> None:
+        """Clear cached service type for all subclasses. Used in tests."""
+        for subclass in cls.__subclasses__():
+            subclass._service_type_cache = None
+            subclass.reset_service_type_cache()
+        cls._service_type_cache = None
 
     @classmethod
     def get_service_type(cls) -> ServiceType:
@@ -69,19 +78,18 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        health_port: int | None = None,
         **kwargs,
     ) -> None:
-        self.service_config = service_config
-        self.user_config = user_config
+        self.run = run
         self.service_id = service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
+        self._health_port = health_port
         super().__init__(
             service_id=self.service_id,
             id=self.service_id,
-            service_config=self.service_config,
-            user_config=self.user_config,
+            run=self.run,
             **kwargs,
         )
         self.debug(
@@ -94,7 +102,7 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             import setproctitle
 
             setproctitle.setproctitle(f"aiperf {self.service_id}")
-        except Exception:
+        except (ImportError, OSError):
             # setproctitle is not available on all platforms, so we ignore the error
             self.debug("Failed to set process title, ignoring")
 
@@ -106,16 +114,12 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         )
 
     @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: CommandMessage) -> None:
-        self.debug(f"Received shutdown command from {message.service_id}")
-        # Send an acknowledged response back to the sender, because we won't be able to send it after we stop.
-        await self.publish(
-            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
-        )
+    async def _on_shutdown_command(self, message: Command) -> None:
+        self.debug("Received shutdown command")
 
         try:
             await self.stop()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shutdown path must force-kill on any stop failure, regardless of cause
             self.exception(
                 f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
             )
@@ -145,4 +149,3 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         # TODO: This is a hack to ensure that the process is killed.
         #       We should find a better way to do this.
         os.kill(os.getpid(), signal.SIGKILL)
-        raise asyncio.CancelledError(f"Killed {self}")

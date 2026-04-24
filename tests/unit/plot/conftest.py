@@ -117,6 +117,7 @@ def sample_jsonl_data() -> list[dict[str, Any]]:
     return [
         {
             "metadata": {
+                "request_num": 0,
                 "session_num": 0,
                 "x_request_id": "req-1",
                 "request_start_ns": 1000000000000,

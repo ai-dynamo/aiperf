@@ -7,6 +7,7 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 
@@ -199,8 +200,6 @@ class EndToEndTestRunner:
 
     def _monitor_server_logs(self, process: subprocess.Popen, server_name: str):
         """Continuously monitor and display server logs in background thread"""
-        import sys
-
         try:
             while not self.stop_log_monitoring.is_set():
                 line = process.stdout.readline()

@@ -20,7 +20,6 @@ from aiperf.common.aiperf_logger import (
     AIPerfLogger,
 )
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import RequestRecord, TextResponse
 from tests.harness.time_traveler import TimeTraveler
 
@@ -70,7 +69,7 @@ def large_message():
         ],
         error=None,
         delayed_ns=None,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
     )
 
 

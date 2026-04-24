@@ -9,9 +9,11 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
-    from aiperf.common.messages.inference_messages import MetricRecordsData
+    from aiperf.common.metric_records_wire import (
+        MetricRecordMetadata,
+        MetricRecordsData,
+    )
     from aiperf.common.models import MetricResult
-    from aiperf.common.models.record_models import MetricRecordMetadata
     from aiperf.metrics.metric_dicts import MetricRecordDict
 
 

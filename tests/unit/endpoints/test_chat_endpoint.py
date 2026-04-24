@@ -3,19 +3,12 @@
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Audio, Image, Text, Turn, Video
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
-    create_model_endpoint,
     create_request_info,
 )
 
@@ -25,13 +18,13 @@ class TestChatEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        """Create a test ModelEndpointInfo for chat."""
-        return create_model_endpoint(EndpointType.CHAT)
+        """Create a test BenchmarkConfig for chat."""
+        return create_config(EndpointType.CHAT)
 
     @pytest.fixture
     def streaming_model_endpoint(self):
-        """Create a test ModelEndpointInfo with streaming enabled."""
-        return create_model_endpoint(EndpointType.CHAT, streaming=True)
+        """Create a test BenchmarkConfig with streaming enabled."""
+        return create_config(EndpointType.CHAT, streaming=True)
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
@@ -44,7 +37,7 @@ class TestChatEndpoint:
             texts=[Text(contents=["Hello, world!"])],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -65,7 +58,7 @@ class TestChatEndpoint:
             images=[Image(contents=["data:image/png;base64,abc123"])],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -89,7 +82,7 @@ class TestChatEndpoint:
             audios=[Audio(contents=["wav,YWJjMTIz"])],  # format,b64
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -110,7 +103,7 @@ class TestChatEndpoint:
             audios=[Audio(contents=["invalid_no_comma"])],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         with pytest.raises(ValueError, match="Audio content must be in the format"):
             endpoint.format_payload(request_info)
@@ -122,7 +115,7 @@ class TestChatEndpoint:
             videos=[Video(contents=["https://example.com/video.mp4"])],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -138,7 +131,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=500,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -152,7 +145,7 @@ class TestChatEndpoint:
             model="test-model",
             max_tokens=None,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -161,28 +154,18 @@ class TestChatEndpoint:
 
     def test_format_payload_legacy_max_tokens(self):
         """Test legacy max_tokens field is used when flag is enabled."""
-        # Create model endpoint with use_legacy_max_tokens=True
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
-                streaming=False,
-                extra=[],
-                use_legacy_max_tokens=True,
-            ),
+        cfg = create_config(
+            EndpointType.CHAT,
+            use_legacy_max_tokens=True,
         )
-        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
             max_tokens=500,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=cfg, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -191,28 +174,18 @@ class TestChatEndpoint:
 
     def test_format_payload_legacy_max_tokens_disabled(self):
         """Test max_completion_tokens is used when legacy flag is explicitly disabled."""
-        # Create model endpoint with use_legacy_max_tokens=False (explicit)
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
-                streaming=False,
-                extra=[],
-                use_legacy_max_tokens=False,
-            ),
+        cfg = create_config(
+            EndpointType.CHAT,
+            use_legacy_max_tokens=False,
         )
-        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
             max_tokens=500,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=cfg, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -221,28 +194,18 @@ class TestChatEndpoint:
 
     def test_format_payload_legacy_max_tokens_none(self):
         """Test neither field is set when max_tokens is None, regardless of legacy flag."""
-        # Create model endpoint with use_legacy_max_tokens=True
-        model_endpoint = ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
-                streaming=False,
-                extra=[],
-                use_legacy_max_tokens=True,
-            ),
+        cfg = create_config(
+            EndpointType.CHAT,
+            use_legacy_max_tokens=True,
         )
-        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
             max_tokens=None,
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=cfg, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -260,7 +223,7 @@ class TestChatEndpoint:
             model="test-model",
         )
         request_info = create_request_info(
-            model_endpoint=streaming_model_endpoint, turns=[turn]
+            config=streaming_model_endpoint, turns=[turn]
         )
 
         payload = endpoint.format_payload(request_info)
@@ -273,20 +236,20 @@ class TestChatEndpoint:
             texts=[Text(contents=["Test"])],
             model=None,  # No model specified
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["model"] == model_endpoint.primary_model_name
+        assert payload["model"] == model_endpoint.get_model_names()[0]
 
     def test_format_payload_with_extra_params(self):
         """Test extra parameters are included in payload."""
-        extra_params = [("temperature", 0.7), ("top_p", 0.9)]
-        model_endpoint = create_model_endpoint(EndpointType.CHAT, extra=extra_params)
-        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        extra_params = {"temperature": 0.7, "top_p": 0.9}
+        cfg = create_config(EndpointType.CHAT, extra=extra_params)
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
         turn = Turn(texts=[Text(contents=["Test"])], model="test-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=cfg, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -299,7 +262,7 @@ class TestChatEndpoint:
             texts=[Text(contents=[""])],  # Empty string
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -318,7 +281,7 @@ class TestChatEndpoint:
             ],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -339,7 +302,7 @@ class TestChatEndpoint:
             ],
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -358,7 +321,7 @@ class TestChatEndpoint:
             role="assistant",
             model="test-model",
         )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -374,7 +337,7 @@ class TestChatEndpoint:
 
         # Pass multiple turns - all should be included in the chat conversation
         request_info = create_request_info(
-            model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
+            config=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
         payload = endpoint.format_payload(request_info)
@@ -396,7 +359,7 @@ class TestChatEndpoint:
             {"role": "tool", "tool_call_id": "call_1", "content": "result"},
         ]
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=[Turn(max_tokens=100, raw_messages=raw_messages)],
         )
 
@@ -414,7 +377,7 @@ class TestChatEndpoint:
             {"role": "user", "content": "Hello"},
         ]
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=[Turn(raw_messages=raw_messages)],
         )
 
@@ -432,7 +395,7 @@ class TestChatEndpoint:
             {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
         ]
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=[Turn(max_tokens=50, raw_messages=raw_messages, raw_tools=raw_tools)],
         )
 
@@ -446,7 +409,7 @@ class TestChatEndpoint:
         """Test that no tools key exists when raw_tools is None."""
         raw_messages = [{"role": "user", "content": "Hello"}]
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=model_endpoint,
             turns=[Turn(raw_messages=raw_messages)],
         )
 
@@ -457,13 +420,13 @@ class TestChatEndpoint:
 
     def test_format_payload_raw_messages_with_extra_params(self):
         """Test that extra params still apply when using raw_messages."""
-        extra_params = [("temperature", 0.7)]
-        model_endpoint = create_model_endpoint(EndpointType.CHAT, extra=extra_params)
-        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        extra_params = {"temperature": 0.7}
+        cfg = create_config(EndpointType.CHAT, extra=extra_params)
+        endpoint = create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
         raw_messages = [{"role": "user", "content": "Hello"}]
         request_info = create_request_info(
-            model_endpoint=model_endpoint,
+            config=cfg,
             turns=[Turn(max_tokens=50, raw_messages=raw_messages)],
         )
 

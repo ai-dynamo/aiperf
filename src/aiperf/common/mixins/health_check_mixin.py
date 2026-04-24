@@ -21,9 +21,16 @@ class HealthCheckResult:
     """Result of the health check."""
 
     service_id: str
+    """Identifier of the service that was checked."""
+
     state: LifecycleState
+    """Current lifecycle state of the service."""
+
     healthy: bool
+    """Whether the service passed the liveness check."""
+
     ready: bool
+    """Whether the service is ready to accept traffic."""
 
 
 class HealthCheckMixin:

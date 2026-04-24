@@ -1,14 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from abc import ABC, abstractmethod
+from __future__ import annotations
 
-from aiperf.common.config.user_config import UserConfig
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.dataset.loader.models import CustomDatasetT
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class BaseLoader(AIPerfLoggerMixin, ABC):
@@ -20,16 +25,17 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
     for each conversation.
 
     Args:
-        user_config: The user configuration.
+        run: The benchmark run context.
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, user_config: UserConfig, **kwargs):
-        self.user_config = user_config
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, *, run: BenchmarkRun, **kwargs):
+        self.run = run
+        super().__init__(run=run, **kwargs)
         # Create session ID generator (deterministic when seed is set)
+        dataset_config = run.cfg.get_default_dataset()
         self.session_id_generator = SessionIDGenerator(
-            seed=user_config.input.random_seed
+            seed=dataset_config.random_seed or run.cfg.random_seed
         )
 
     @classmethod
@@ -61,10 +67,10 @@ class BaseFileLoader(BaseLoader):
 
     Args:
         filename: The path to the file to load.
-        user_config: The user configuration.
+        config: The AIPerf configuration.
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str, user_config: UserConfig, **kwargs):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, *, filename: str, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
         self.filename = filename

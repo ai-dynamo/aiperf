@@ -12,7 +12,6 @@ from aiperf.common.models import (
     EmbeddingResponseData,
     InferenceServerResponse,
     Media,
-    ModelEndpointInfo,
     ParsedResponse,
     RankingsResponseData,
     RequestInfo,
@@ -20,6 +19,7 @@ from aiperf.common.models import (
     TextResponseData,
 )
 from aiperf.common.types import RequestOutputT
+from aiperf.config import BenchmarkRun
 
 
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
@@ -28,22 +28,21 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     Endpoints handle API-specific formatting and parsing.
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs):
+    def __init__(self, run: BenchmarkRun, **kwargs):
         super().__init__(**kwargs)
-        self.model_endpoint = model_endpoint
+        self.run = run
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint headers (auth + user custom). Override to customize."""
-        cfg = self.model_endpoint.endpoint
-        headers = dict(cfg.headers) if cfg.headers else {}
-        if cfg.api_key:
-            headers["Authorization"] = f"Bearer {cfg.api_key}"
+        ep = self.run.cfg.endpoint
+        headers = dict(ep.headers) if ep.headers else {}
+        if ep.api_key:
+            headers["Authorization"] = f"Bearer {ep.api_key}"
         return headers
 
     def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint URL query params (e.g., api-version). Override to customize."""
-        cfg = self.model_endpoint.endpoint
-        return dict(cfg.url_params) if cfg.url_params else {}
+        return {}
 
     @abstractmethod
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
@@ -61,17 +60,24 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]:
         """Extract parsed data from record.
 
+        Frees each raw response after parsing to prevent the full raw list and
+        the full parsed list from coexisting in memory (critical when a single
+        streaming request produces 100K+ SSE chunks).
+
         Args:
             record: Request record containing responses to parse
 
         Returns:
             List of successfully parsed responses
         """
-        return [
-            parsed
-            for response in record.responses
-            if (parsed := self.parse_response(response))
-        ]
+        parsed: list[ParsedResponse] = []
+        responses = record.responses
+        for i, response in enumerate(responses):
+            result = self.parse_response(response)
+            if result:
+                parsed.append(result)
+            responses[i] = None  # type: ignore[assignment]
+        return parsed
 
     @staticmethod
     def make_text_response_data(text: str | None) -> TextResponseData | None:
@@ -129,7 +135,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             value = json_obj.get(field)
             if not (isinstance(value, list) and value):
                 continue
-            if isinstance(value[0], int | float):
+            if isinstance(value[0], (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(value[0], list):
                 return EmbeddingResponseData(embeddings=value)
@@ -215,9 +221,9 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
         if isinstance(value, list) and value:
             first = value[0]
-            if isinstance(first, list) and first and isinstance(first[0], int | float):
+            if isinstance(first, list) and first and isinstance(first[0], (int, float)):
                 return EmbeddingResponseData(embeddings=value)
-            if isinstance(first, int | float):
+            if isinstance(first, (int, float)):
                 return EmbeddingResponseData(embeddings=[value])
             if isinstance(first, dict):
                 return RankingsResponseData(rankings=value)

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from aiperf.common.config import UserConfig
+from aiperf.config.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
 
 if TYPE_CHECKING:
@@ -36,14 +36,14 @@ class ExecutionStrategy(ABC):
     5. Cooldown duration between runs
     """
 
-    def validate_config(self, config: UserConfig) -> None:  # noqa: B027
+    def validate_config(self, config: BenchmarkConfig) -> None:  # noqa: B027
         """Validate that config is suitable for this strategy.
 
         Override this method to add strategy-specific validation.
         Called by orchestrator before starting execution.
 
         Args:
-            config: User configuration to validate
+            config: Benchmark configuration to validate
         """
         # Default implementation: no validation required
         # Subclasses can override to add strategy-specific validation
@@ -63,8 +63,8 @@ class ExecutionStrategy(ABC):
 
     @abstractmethod
     def get_next_config(
-        self, base_config: UserConfig, results: list[RunResult]
-    ) -> UserConfig:
+        self, base_config: BenchmarkConfig, results: list[RunResult]
+    ) -> BenchmarkConfig:
         """Generate config for next run.
 
         Args:
@@ -145,6 +145,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
     def __init__(
         self,
         num_trials: int,
+        *,
         cooldown_seconds: float = 0.0,
         auto_set_seed: bool = True,
         disable_warmup_after_first: bool = True,
@@ -164,8 +165,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
             ValueError: If cooldown_seconds < 0
 
         Note:
-            num_trials validation is handled by Pydantic at the config level
-            (LoadGeneratorConfig.num_profile_runs with ge=1, le=10 constraints).
+            num_trials validation is handled by Pydantic at the config level.
         """
         if cooldown_seconds < 0:
             raise ValueError(
@@ -177,7 +177,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         self.auto_set_seed = auto_set_seed
         self.disable_warmup_after_first = disable_warmup_after_first
 
-    def validate_config(self, config: UserConfig) -> None:
+    def validate_config(self, config: BenchmarkConfig) -> None:
         """Validate that config is suitable for this strategy.
 
         For FixedTrialsStrategy with multiple trials, warns if random seed
@@ -185,11 +185,11 @@ class FixedTrialsStrategy(ExecutionStrategy):
         different workloads across runs.
 
         Args:
-            config: User configuration to validate
+            config: Benchmark configuration to validate
         """
         if (
             self.num_trials > 1
-            and config.input.random_seed is None
+            and config.random_seed is None
             and not self.auto_set_seed
         ):
             logger.warning(
@@ -204,8 +204,8 @@ class FixedTrialsStrategy(ExecutionStrategy):
         return len(results) < self.num_trials
 
     def get_next_config(
-        self, base_config: UserConfig, results: list[RunResult]
-    ) -> UserConfig:
+        self, base_config: BenchmarkConfig, results: list[RunResult]
+    ) -> BenchmarkConfig:
         """Return config for next trial.
 
         For first trial: ensure random seed is set (for workload consistency).
@@ -271,11 +271,6 @@ class FixedTrialsStrategy(ExecutionStrategy):
         artifacts/llama-3-8b-openai-chat-concurrency_10/profile_runs/run_0002/
         artifacts/llama-3-8b-openai-chat-concurrency_10/aggregate/
 
-        The base_dir includes the auto-generated name with model, service, and stimulus:
-        - Model name (e.g., "llama-3-8b")
-        - Service kind and endpoint type (e.g., "openai-chat")
-        - Stimulus (e.g., "concurrency_10", "request_rate_100")
-
         Args:
             base_dir: Base artifact directory (Path)
             run_index: Zero-based run index
@@ -308,7 +303,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         base_dir = Path(base_dir)
         return base_dir / "aggregate"
 
-    def _ensure_random_seed(self, config: UserConfig) -> UserConfig:
+    def _ensure_random_seed(self, config: BenchmarkConfig) -> BenchmarkConfig:
         """Ensure config has random seed set.
 
         Auto-sets seed if not specified for multi-run consistency.
@@ -319,17 +314,17 @@ class FixedTrialsStrategy(ExecutionStrategy):
         Returns:
             Configuration with random seed set
         """
-        if config.input.random_seed is None:
+        if config.random_seed is None:
             logger.info(
                 f"No --random-seed specified. Using default seed {self.DEFAULT_SEED} "
                 f"for multi-run consistency. All runs will use identical workloads."
             )
             config = config.model_copy(deep=True)
-            config.input.random_seed = self.DEFAULT_SEED
+            config.random_seed = self.DEFAULT_SEED
 
         return config
 
-    def _disable_warmup(self, config: UserConfig) -> UserConfig:
+    def _disable_warmup(self, config: BenchmarkConfig) -> BenchmarkConfig:
         """Create config copy with warmup disabled.
 
         This is called for subsequent trials when disable_warmup_after_first=True.
@@ -342,17 +337,20 @@ class FixedTrialsStrategy(ExecutionStrategy):
         - Testing cold-start performance explicitly
         - Ensuring consistent conditions across all runs
 
-        Delegates to LoadGeneratorConfig.disable_warmup() which maintains
-        the authoritative list of warmup fields.
+        Removes phases that have exclude_from_results=True (warmup phases).
 
         Args:
             config: Original configuration
 
         Returns:
-            Configuration with all warmup parameters set to None
+            Configuration with warmup phases removed
         """
         config = config.model_copy(deep=True)
-        config.loadgen.disable_warmup()
+        warmup_keys = [
+            name for name, phase in config.phases.items() if phase.exclude_from_results
+        ]
+        for key in warmup_keys:
+            del config.phases[key]
         return config
 
 
@@ -370,6 +368,7 @@ class AdaptiveStrategy(ExecutionStrategy):
     def __init__(
         self,
         criterion: ConvergenceCriterion,
+        *,
         min_runs: int = 3,
         max_runs: int = 10,
         cooldown_seconds: float = 0.0,
@@ -422,8 +421,8 @@ class AdaptiveStrategy(ExecutionStrategy):
         return not converged
 
     def get_next_config(
-        self, base_config: UserConfig, results: list[RunResult]
-    ) -> UserConfig:
+        self, base_config: BenchmarkConfig, results: list[RunResult]
+    ) -> BenchmarkConfig:
         """Return config for next run, delegating to FixedTrialsStrategy."""
         return self._delegate.get_next_config(base_config, results)
 

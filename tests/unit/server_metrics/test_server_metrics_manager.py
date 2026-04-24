@@ -5,41 +5,59 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
-from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
-from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
-from aiperf.common.models import ErrorDetails
-from aiperf.common.models.server_metrics_models import ServerMetricsRecord
-from aiperf.plugin.enums import EndpointType
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, CreditPhase
+from aiperf.common.models import CreditPhaseStats, ErrorDetails
+from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.credit.messages import CreditPhaseStartMessage
+from aiperf.plugin.enums import TimingMode
 from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.timing.config import CreditPhaseConfig
+
+_BASE = dict(
+    models=["test-model"],
+    endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+    datasets={
+        "default": {
+            "type": "synthetic",
+            "entries": 100,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+)
 
 
-@pytest.fixture
-def user_config_with_endpoint() -> UserConfig:
-    """Create UserConfig with inference endpoint."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            urls=["http://localhost:8000/v1/chat"],
-        ),
+def _make_run(config: AIPerfConfig) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun."""
+    from pathlib import Path
+
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
     )
 
 
 @pytest.fixture
-def user_config_with_server_metrics_urls() -> UserConfig:
-    """Create UserConfig with custom server metrics URLs."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            urls=["http://localhost:8000/v1/chat"],
-        ),
-        server_metrics=[
-            "http://custom-endpoint:9400/metrics",
-            "http://another-endpoint:8081",
-        ],
+def config_with_endpoint() -> BenchmarkRun:
+    """Create BenchmarkRun with inference endpoint."""
+    return _make_run(AIPerfConfig(**_BASE))
+
+
+@pytest.fixture
+def config_with_server_metrics_urls() -> BenchmarkRun:
+    """Create BenchmarkRun with custom server metrics URLs."""
+    return _make_run(
+        AIPerfConfig(
+            **_BASE,
+            server_metrics={
+                "urls": [
+                    "http://custom-endpoint:9400/metrics",
+                    "http://another-endpoint:8081",
+                ],
+            },
+        )
     )
 
 
@@ -48,31 +66,27 @@ class TestServerMetricsManagerInitialization:
 
     def test_initialization_basic(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test basic initialization with inference endpoint."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         assert manager._collectors == {}
         # Should include inference endpoint with /metrics appended
         assert manager._server_metrics_endpoints == [
-            "http://localhost:8000/v1/chat/metrics"
+            "http://localhost:8000/v1/chat/completions/metrics"
         ]
         assert manager._collection_interval == 0.333  # SERVER_METRICS default (333ms)
 
     def test_endpoint_discovery_from_inference_url(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that inference endpoint port is discovered by default."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         # Should include inference port (localhost:8000) by default
@@ -81,13 +95,11 @@ class TestServerMetricsManagerInitialization:
 
     def test_custom_server_metrics_urls_added(
         self,
-        service_config: ServiceConfig,
-        user_config_with_server_metrics_urls: UserConfig,
+        config_with_server_metrics_urls: BenchmarkRun,
     ):
         """Test that user-specified server metrics URLs are added to endpoint list."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_server_metrics_urls,
+            run=config_with_server_metrics_urls,
         )
 
         assert (
@@ -99,13 +111,11 @@ class TestServerMetricsManagerInitialization:
 
     def test_duplicate_urls_avoided(
         self,
-        service_config: ServiceConfig,
-        user_config_with_server_metrics_urls: UserConfig,
+        config_with_server_metrics_urls: BenchmarkRun,
     ):
         """Test that duplicate URLs are deduplicated."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_server_metrics_urls,
+            run=config_with_server_metrics_urls,
         )
 
         endpoint_counts = {}
@@ -116,19 +126,17 @@ class TestServerMetricsManagerInitialization:
             assert count == 1
 
 
-class TestProfileConfigureCommand:
+class TestProfileConfigure:
     """Test profile configuration and endpoint reachability checking."""
 
     @pytest.mark.asyncio
     async def test_configure_with_reachable_endpoints(
         self,
-        service_config: ServiceConfig,
-        user_config_with_server_metrics_urls: UserConfig,
+        config_with_server_metrics_urls: BenchmarkRun,
     ):
         """Test configuration when all endpoints are reachable."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_server_metrics_urls,
+            run=config_with_server_metrics_urls,
         )
 
         with patch(
@@ -139,11 +147,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) > 0
@@ -151,13 +155,11 @@ class TestProfileConfigureCommand:
     @pytest.mark.asyncio
     async def test_configure_with_unreachable_endpoints(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test configuration when no endpoints are reachable."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         with patch(
@@ -168,11 +170,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) == 0
@@ -180,13 +178,11 @@ class TestProfileConfigureCommand:
     @pytest.mark.asyncio
     async def test_configure_clears_existing_collectors(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that configuration clears previous collectors."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         manager._collectors["old_collector"] = AsyncMock()
@@ -199,11 +195,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert "old_collector" not in manager._collectors
@@ -215,8 +207,7 @@ class TestProfileStartCommand:
     @pytest.mark.asyncio
     async def test_start_initializes_and_starts_collectors(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that start command starts all collectors.
 
@@ -224,17 +215,14 @@ class TestProfileStartCommand:
         This test only verifies that start() is called.
         """
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
         mock_collector.start.assert_called_once()
@@ -242,8 +230,7 @@ class TestProfileStartCommand:
     @pytest.mark.asyncio
     async def test_start_triggers_delayed_shutdown_when_no_collectors(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that start triggers delayed shutdown when no collectors available.
 
@@ -257,8 +244,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
         manager._collectors = {}  # No collectors
 
@@ -266,9 +252,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -278,13 +262,11 @@ class TestProfileStartCommand:
     @pytest.mark.asyncio
     async def test_start_handles_initialization_failure(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test start command handles collector initialization failures."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
@@ -292,16 +274,13 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
     @pytest.mark.asyncio
     async def test_start_triggers_delayed_shutdown_when_all_collectors_fail(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that start triggers delayed shutdown when all collectors fail to start.
 
@@ -314,8 +293,7 @@ class TestProfileStartCommand:
             return MagicMock()
 
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
@@ -326,89 +304,12 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
             mock_create_task.assert_called_once()
             assert hasattr(manager, "_shutdown_task")
-
-
-class TestManagerCallbackFunctionality:
-    """Test callback handling for records and errors."""
-
-    @pytest.mark.asyncio
-    async def test_record_callback_sends_message(
-        self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
-    ):
-        """Test that record callback sends ServerMetricsRecordMessage."""
-        manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock()
-
-        test_record = ServerMetricsRecord(
-            endpoint_url="http://localhost:8081/metrics",
-            timestamp_ns=1_000_000_000,
-            endpoint_latency_ns=5_000_000,
-            metrics={},
-        )
-
-        await manager._on_server_metrics_records([test_record], "test_collector")
-
-        manager.records_push_client.push.assert_called_once()
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert isinstance(call_args, ServerMetricsRecordMessage)
-        assert call_args.record == test_record
-
-    @pytest.mark.asyncio
-    async def test_error_callback_logs_error(
-        self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
-    ):
-        """Test that error callback logs the error."""
-        manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
-        )
-
-        test_error = ErrorDetails.from_exception(ValueError("Test error"))
-
-        await manager._on_server_metrics_error(test_error, "test_collector")
-
-    @pytest.mark.asyncio
-    async def test_record_callback_handles_send_failure(
-        self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
-    ):
-        """Test that record callback handles message send failures gracefully."""
-        manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
-        )
-
-        test_records = [
-            ServerMetricsRecord(
-                endpoint_url="http://localhost:8081/metrics",
-                timestamp_ns=1_000_000_000,
-                endpoint_latency_ns=5_000_000,
-                metrics={},
-            )
-        ]
-
-        await manager._on_server_metrics_records(test_records, "test_collector")
 
 
 class TestDisabledServerMetrics:
@@ -417,36 +318,26 @@ class TestDisabledServerMetrics:
     @pytest.mark.asyncio
     async def test_configure_when_server_metrics_disabled(
         self,
-        service_config: ServiceConfig,
     ):
         """Test configuration when server metrics are disabled via CLI flag."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["test-model"],
-                type=EndpointType.CHAT,
-                urls=["http://localhost:8000/v1/chat"],
-            ),
-            no_server_metrics=True,  # Disable server metrics
+        config = AIPerfConfig(
+            **_BASE,
+            server_metrics={"enabled": False},
         )
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config,
+            run=_make_run(config),
         )
 
-        manager.publish = AsyncMock()
+        manager.control_client = AsyncMock()
 
         await manager._profile_configure_command(
-            ProfileConfigureCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_CONFIGURE,
-                config={},
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Should not create any collectors
         assert len(manager._collectors) == 0
-        # Should publish disabled status
-        manager.publish.assert_called_once()
+        # Should send disabled status via health check client
+        manager.control_client.send.assert_called_once()
 
 
 class TestExceptionHandling:
@@ -455,13 +346,11 @@ class TestExceptionHandling:
     @pytest.mark.asyncio
     async def test_exception_during_reachability_check(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that exceptions during reachability check are handled."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         with patch(
@@ -472,11 +361,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Should handle exception and not add collector
@@ -485,13 +370,11 @@ class TestExceptionHandling:
     @pytest.mark.asyncio
     async def test_exception_during_baseline_capture(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that exceptions during baseline capture are logged but don't fail configuration."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         with patch(
@@ -506,11 +389,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Collector should still be added despite baseline failure
@@ -523,13 +402,11 @@ class TestPartialStartup:
     @pytest.mark.asyncio
     async def test_partial_collector_startup(
         self,
-        service_config: ServiceConfig,
-        user_config_with_server_metrics_urls: UserConfig,
+        config_with_server_metrics_urls: BenchmarkRun,
     ):
         """Test scenario where some collectors start successfully and some fail."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_server_metrics_urls,
+            run=config_with_server_metrics_urls,
         )
 
         # Create 2 collectors: one succeeds, one fails
@@ -545,9 +422,7 @@ class TestPartialStartup:
         }
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
         # Both should be called
@@ -561,24 +436,18 @@ class TestProfileCompleteAndCancel:
     @pytest.mark.asyncio
     async def test_profile_complete_triggers_final_scrape(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that profile complete triggers final metrics scrape."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should call final scrape
@@ -589,15 +458,11 @@ class TestProfileCompleteAndCancel:
     @pytest.mark.asyncio
     async def test_profile_complete_handles_final_scrape_failure(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that profile complete handles final scrape failures gracefully."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
@@ -607,9 +472,7 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should still stop collector even if final scrape fails
@@ -618,47 +481,35 @@ class TestProfileCompleteAndCancel:
     @pytest.mark.asyncio
     async def test_profile_complete_when_already_stopped(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that profile complete is idempotent when collectors already stopped."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         manager._collectors = {}  # Already stopped
 
         # Should not raise exception
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
     @pytest.mark.asyncio
     async def test_profile_cancel(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that profile cancel stops all collectors."""
-        from aiperf.common.messages import ProfileCancelCommand
-
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_CANCEL)
         )
 
         mock_collector.stop.assert_called_once()
@@ -670,13 +521,11 @@ class TestLifecycleHooks:
     @pytest.mark.asyncio
     async def test_on_stop_hook(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that on_stop hook stops all collectors."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
@@ -693,13 +542,11 @@ class TestStopAllCollectors:
     @pytest.mark.asyncio
     async def test_stop_all_collectors_calls_stop(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that stop_all_collectors stops each collector."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector1 = AsyncMock()
@@ -717,13 +564,11 @@ class TestStopAllCollectors:
     @pytest.mark.asyncio
     async def test_stop_all_collectors_handles_failure(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that stop_all_collectors handles failures gracefully."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         mock_collector = AsyncMock()
@@ -735,13 +580,11 @@ class TestStopAllCollectors:
     @pytest.mark.asyncio
     async def test_stop_all_collectors_when_no_collectors(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that stop_all_collectors handles empty collectors dict."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         manager._collectors = {}
@@ -756,13 +599,11 @@ class TestDelayedShutdown:
     @pytest.mark.asyncio
     async def test_delayed_shutdown(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that delayed shutdown sleeps and then stops service."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
         manager.stop = AsyncMock()
@@ -785,36 +626,26 @@ class TestCallbackEdgeCases:
     @pytest.mark.asyncio
     async def test_record_callback_with_empty_list(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that record callback handles empty record list."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
-        manager.records_push_client.push = AsyncMock()
-
+        # Empty list should be a no-op (no processor fan-out, no error tracking).
         await manager._on_server_metrics_records([], "test_collector")
 
-        # Should not push anything for empty list
-        manager.records_push_client.push.assert_not_called()
+        assert sum(manager._error_state.error_counts.values()) == 0
 
     @pytest.mark.asyncio
-    async def test_error_callback_handles_send_failure(
+    async def test_error_callback_records_error(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
-        """Test that error callback handles message send failures gracefully."""
+        """Test that error callback records the error against local state."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
-        )
-
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
+            run=config_with_endpoint,
         )
 
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
@@ -822,19 +653,20 @@ class TestCallbackEdgeCases:
         # Should not raise exception
         await manager._on_server_metrics_error(test_error, "test_collector")
 
+        assert sum(manager._error_state.error_counts.values()) == 1
+
     @pytest.mark.asyncio
     async def test_status_send_failure(
         self,
-        service_config: ServiceConfig,
-        user_config_with_endpoint: UserConfig,
+        config_with_endpoint: BenchmarkRun,
     ):
         """Test that status send failures are handled gracefully."""
         manager = ServerMetricsManager(
-            service_config=service_config,
-            user_config=user_config_with_endpoint,
+            run=config_with_endpoint,
         )
 
-        manager.publish = AsyncMock(side_effect=Exception("Publish failed"))
+        manager.control_client = AsyncMock()
+        manager.control_client.send = AsyncMock(side_effect=Exception("Publish failed"))
 
         # Should not raise exception
         await manager._send_server_metrics_status(
@@ -843,3 +675,434 @@ class TestCallbackEdgeCases:
             endpoints_configured=[],
             endpoints_reachable=[],
         )
+
+
+class TestCreditPhaseStart:
+    """Test boundary scrape at warmup→profiling phase transition."""
+
+    @staticmethod
+    def _make_phase_start_message(phase: CreditPhase) -> CreditPhaseStartMessage:
+        """Create a CreditPhaseStartMessage with real Pydantic models."""
+        return CreditPhaseStartMessage(
+            service_id="timing_manager",
+            stats=CreditPhaseStats(phase=phase),
+            config=CreditPhaseConfig(
+                phase=phase,
+                timing_mode=TimingMode.REQUEST_RATE,
+                total_expected_requests=100,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_profiling_phase_triggers_boundary_scrape(
+        self,
+        config_with_endpoint: BenchmarkRun,
+    ):
+        """Test that PROFILING phase triggers scrape without stopping collectors."""
+        manager = ServerMetricsManager(
+            run=config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message("profiling")
+        )
+
+        mock_collector.collect_and_process_metrics.assert_called_once()
+        mock_collector.stop.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warmup_phase_does_not_trigger_scrape(
+        self,
+        config_with_endpoint: BenchmarkRun,
+    ):
+        """Test that WARMUP phase does not trigger a boundary scrape."""
+        manager = ServerMetricsManager(
+            run=config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._on_credit_phase_start(self._make_phase_start_message("warmup"))
+
+        mock_collector.collect_and_process_metrics.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_boundary_scrape_with_no_collectors(
+        self,
+        config_with_endpoint: BenchmarkRun,
+    ):
+        """Test that boundary scrape with empty collectors does not raise."""
+        manager = ServerMetricsManager(
+            run=config_with_endpoint,
+        )
+
+        manager._collectors = {}
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message("profiling")
+        )
+
+    @pytest.mark.asyncio
+    async def test_boundary_scrape_handles_collector_failure(
+        self,
+        config_with_endpoint: BenchmarkRun,
+    ):
+        """Test that one collector failure doesn't prevent scraping the other."""
+        manager = ServerMetricsManager(
+            run=config_with_endpoint,
+        )
+
+        mock_collector_ok = AsyncMock()
+        mock_collector_fail = AsyncMock()
+        mock_collector_fail.collect_and_process_metrics.side_effect = Exception(
+            "Scrape failed"
+        )
+        manager._collectors = {
+            "endpoint_fail": mock_collector_fail,
+            "endpoint_ok": mock_collector_ok,
+        }
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message("profiling")
+        )
+
+        mock_collector_fail.collect_and_process_metrics.assert_called_once()
+        mock_collector_ok.collect_and_process_metrics.assert_called_once()
+
+
+class TestMetricsDiscovery:
+    """Test _run_metrics_discovery integration with ServerMetricsManager."""
+
+    @pytest.mark.asyncio
+    async def test_disabled_mode_returns_empty(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={"discovery": {"mode": "disabled"}},
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        result = await manager._run_metrics_discovery()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_mode_not_in_cluster(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={"discovery": {"mode": "kubernetes"}},
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        with patch(
+            "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+            return_value=False,
+        ):
+            result = await manager._run_metrics_discovery()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_mode_in_cluster(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={
+                    "discovery": {
+                        "mode": "kubernetes",
+                        "namespace": "inference",
+                        "label_selector": "app=vllm",
+                    },
+                },
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ) as mock_discover,
+        ):
+            result = await manager._run_metrics_discovery()
+
+        assert result == ["http://pod-1:8080/metrics"]
+        mock_discover.assert_called_once_with(
+            namespace="inference",
+            label_selector="app=vllm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_in_cluster(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://auto:8080/metrics"],
+            ),
+        ):
+            result = await manager._run_metrics_discovery()
+        assert result == ["http://auto:8080/metrics"]
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_in_cluster_derives_namespace_from_default_endpoint(self):
+        run = _make_run(
+            AIPerfConfig(
+                **{
+                    **_BASE,
+                    "endpoint": {
+                        "urls": [
+                            "http://gateway.inference.svc.cluster.local/v1/chat/completions"
+                        ]
+                    },
+                }
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ) as mock_discover,
+        ):
+            result = await manager._run_metrics_discovery()
+
+        assert result == ["http://pod-1:8080/metrics"]
+        mock_discover.assert_called_once_with(
+            namespace="inference",
+            label_selector=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_not_in_cluster(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+        with patch(
+            "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+            return_value=False,
+        ):
+            result = await manager._run_metrics_discovery()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_discovery_exception_handled_gracefully(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={"discovery": {"mode": "kubernetes"}},
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                side_effect=Exception("K8s API error"),
+            ),
+        ):
+            result = await manager._run_metrics_discovery()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_configure_integrates_discovered_endpoints(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={"discovery": {"mode": "kubernetes"}},
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+        initial_count = len(manager._server_metrics_endpoints)
+
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://discovered:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert initial_count == 1
+        assert manager._server_metrics_endpoints == ["http://discovered:8080/metrics"]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_auto_in_cluster_replaces_default_endpoint(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == ["http://pod-1:8080/metrics"]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_deduplicates_discovered_endpoints(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={
+                    "urls": ["http://already-there:8080/metrics"],
+                    "discovery": {"mode": "kubernetes"},
+                },
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://already-there:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == [
+            "http://already-there:8080/metrics"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_configure_kubernetes_discovery_keeps_explicit_urls(self):
+        run = _make_run(
+            AIPerfConfig(
+                **_BASE,
+                server_metrics={
+                    "urls": ["http://custom-endpoint:9400/metrics"],
+                    "discovery": {"mode": "kubernetes"},
+                },
+            )
+        )
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == [
+            "http://custom-endpoint:9400/metrics",
+            "http://pod-1:8080/metrics",
+        ]
+        assert (
+            "http://localhost:8000/v1/chat/completions/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
+    @pytest.mark.asyncio
+    async def test_configure_auto_not_in_cluster_keeps_default_endpoint(self):
+        run = _make_run(AIPerfConfig(**_BASE))
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
+                return_value=False,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert manager._server_metrics_endpoints == [
+            "http://localhost:8000/v1/chat/completions/metrics"
+        ]

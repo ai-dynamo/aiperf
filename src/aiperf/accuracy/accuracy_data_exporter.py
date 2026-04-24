@@ -14,7 +14,9 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
-        if not exporter_config.user_config.accuracy.enabled:
+        if not (
+            exporter_config.config.accuracy and exporter_config.config.accuracy.enabled
+        ):
             raise DataExporterDisabled(
                 "Accuracy data exporter is disabled: accuracy mode is not enabled"
             )

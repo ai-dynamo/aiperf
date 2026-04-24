@@ -27,6 +27,7 @@ def disabled_parameters() -> list[str]:
     ]
 
 
+@pytest.mark.component_integration
 class TestCLIHelp:
     def test_profile_help_does_not_show_parameters(self, cli: AIPerfCLI):
         """Ensure help text for profile command does not show miscellaneous un-grouped parameters."""
@@ -50,6 +51,7 @@ class TestCLIHelp:
             )
 
 
+@pytest.mark.component_integration
 class TestCLIVersion:
     def test_version_flag(self, cli: AIPerfCLI):
         """Test that --version returns the correct package version."""

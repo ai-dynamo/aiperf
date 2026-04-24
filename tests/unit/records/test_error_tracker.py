@@ -4,7 +4,6 @@
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ErrorDetails
 from aiperf.records.error_tracker import ErrorTracker, PhaseErrorTracker
 
@@ -32,14 +31,14 @@ class TestPhaseErrorTracker:
 
     def test_initialization(self):
         """PhaseErrorTracker initializes with a phase."""
-        phase = CreditPhase.WARMUP
+        phase = "warmup"
         tracker = PhaseErrorTracker(phase)
 
         assert tracker.phase == phase
 
     def test_initial_error_summary_empty(self):
         """Error summary is empty when no errors have been recorded."""
-        tracker = PhaseErrorTracker(CreditPhase.WARMUP)
+        tracker = PhaseErrorTracker("warmup")
 
         summary = tracker.get_error_summary()
 
@@ -47,7 +46,7 @@ class TestPhaseErrorTracker:
 
     def test_increment_error_count_single_error(self, sample_error):
         """Error count increments correctly for a single error."""
-        tracker = PhaseErrorTracker(CreditPhase.WARMUP)
+        tracker = PhaseErrorTracker("warmup")
 
         tracker.increment_error_count(sample_error)
 
@@ -58,7 +57,7 @@ class TestPhaseErrorTracker:
 
     def test_increment_error_count_multiple_times_same_error(self, sample_error):
         """Error count increments correctly when same error occurs multiple times."""
-        tracker = PhaseErrorTracker(CreditPhase.WARMUP)
+        tracker = PhaseErrorTracker("warmup")
 
         # Increment same error multiple times
         for _ in range(5):
@@ -73,7 +72,7 @@ class TestPhaseErrorTracker:
         self, sample_error, another_error, third_error
     ):
         """Multiple different errors are tracked separately."""
-        tracker = PhaseErrorTracker(CreditPhase.WARMUP)
+        tracker = PhaseErrorTracker("warmup")
 
         tracker.increment_error_count(sample_error)
         tracker.increment_error_count(another_error)
@@ -92,7 +91,7 @@ class TestPhaseErrorTracker:
 
     def test_phase_property_returns_correct_phase(self):
         """Phase property returns the phase set during initialization."""
-        phase = CreditPhase.PROFILING
+        phase = "profiling"
         tracker = PhaseErrorTracker(phase)
 
         assert tracker.phase == phase
@@ -100,8 +99,8 @@ class TestPhaseErrorTracker:
     @pytest.mark.parametrize(
         "phase",  # fmt: skip
         [
-            CreditPhase.WARMUP,
-            CreditPhase.PROFILING,
+            "warmup",
+            "profiling",
         ],
     )
     def test_works_with_different_phases(self, phase, sample_error):
@@ -117,7 +116,7 @@ class TestPhaseErrorTracker:
 
     def test_error_summary_reflects_current_state(self, sample_error, another_error):
         """Error summary always reflects the current state of error counts."""
-        tracker = PhaseErrorTracker(CreditPhase.WARMUP)
+        tracker = PhaseErrorTracker("warmup")
 
         # First increment
         tracker.increment_error_count(sample_error)
@@ -139,7 +138,7 @@ class TestPhaseErrorTracker:
 
     def test_concurrent_increments_same_error(self, sample_error):
         """Multiple increments of the same error are accumulated correctly."""
-        tracker = PhaseErrorTracker(CreditPhase.PROFILING)
+        tracker = PhaseErrorTracker("profiling")
 
         # Simulate rapid concurrent increments
         for _ in range(100):
@@ -158,8 +157,8 @@ class TestErrorTracker:
         tracker = ErrorTracker()
 
         # Should not have any phase trackers initially
-        summary_warmup = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
-        summary_run = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        summary_warmup = tracker.get_error_summary_for_phase("warmup")
+        summary_run = tracker.get_error_summary_for_phase("profiling")
 
         assert summary_warmup == []
         assert summary_run == []
@@ -168,9 +167,9 @@ class TestErrorTracker:
         """Phase tracker is created lazily when first error is recorded."""
         tracker = ErrorTracker()
 
-        tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
+        tracker.increment_error_count_for_phase("warmup", sample_error)
 
-        summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
+        summary = tracker.get_error_summary_for_phase("warmup")
         assert len(summary) == 1
         assert summary[0].count == 1
 
@@ -179,12 +178,12 @@ class TestErrorTracker:
         tracker = ErrorTracker()
 
         # Add errors to different phases
-        tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, another_error)
+        tracker.increment_error_count_for_phase("warmup", sample_error)
+        tracker.increment_error_count_for_phase("warmup", sample_error)
+        tracker.increment_error_count_for_phase("profiling", another_error)
 
-        warmup_summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
-        run_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        warmup_summary = tracker.get_error_summary_for_phase("warmup")
+        run_summary = tracker.get_error_summary_for_phase("profiling")
 
         assert len(warmup_summary) == 1
         assert warmup_summary[0].error_details == sample_error
@@ -198,14 +197,14 @@ class TestErrorTracker:
         """Same error type in different phases is tracked separately."""
         tracker = ErrorTracker()
 
-        tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
+        tracker.increment_error_count_for_phase("warmup", sample_error)
+        tracker.increment_error_count_for_phase("warmup", sample_error)
+        tracker.increment_error_count_for_phase("profiling", sample_error)
+        tracker.increment_error_count_for_phase("profiling", sample_error)
+        tracker.increment_error_count_for_phase("profiling", sample_error)
 
-        warmup_summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
-        run_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        warmup_summary = tracker.get_error_summary_for_phase("warmup")
+        run_summary = tracker.get_error_summary_for_phase("profiling")
 
         assert len(warmup_summary) == 1
         assert warmup_summary[0].count == 2
@@ -219,12 +218,12 @@ class TestErrorTracker:
         """Multiple different errors in same phase are tracked correctly."""
         tracker = ErrorTracker()
 
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, another_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, third_error)
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
+        tracker.increment_error_count_for_phase("profiling", sample_error)
+        tracker.increment_error_count_for_phase("profiling", another_error)
+        tracker.increment_error_count_for_phase("profiling", third_error)
+        tracker.increment_error_count_for_phase("profiling", sample_error)
 
-        summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        summary = tracker.get_error_summary_for_phase("profiling")
         assert len(summary) == 3
 
         error_counts = {item.error_details: item.count for item in summary}
@@ -236,7 +235,7 @@ class TestErrorTracker:
         """Getting summary for phase with no errors returns empty list."""
         tracker = ErrorTracker()
 
-        summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
+        summary = tracker.get_error_summary_for_phase("warmup")
 
         assert summary == []
 
@@ -246,24 +245,22 @@ class TestErrorTracker:
 
         # Warmup phase: some timeout errors
         for _ in range(3):
-            tracker.increment_error_count_for_phase(CreditPhase.WARMUP, sample_error)
+            tracker.increment_error_count_for_phase("warmup", sample_error)
 
         # Run phase: mix of errors
         for _ in range(10):
-            tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
+            tracker.increment_error_count_for_phase("profiling", sample_error)
         for _ in range(5):
-            tracker.increment_error_count_for_phase(
-                CreditPhase.PROFILING, another_error
-            )
+            tracker.increment_error_count_for_phase("profiling", another_error)
 
         # Verify warmup phase errors
-        warmup_summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
+        warmup_summary = tracker.get_error_summary_for_phase("warmup")
         assert len(warmup_summary) == 1
         assert warmup_summary[0].error_details == sample_error
         assert warmup_summary[0].count == 3
 
         # Verify run phase errors
-        run_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        run_summary = tracker.get_error_summary_for_phase("profiling")
         assert len(run_summary) == 2
         error_counts = {item.error_details: item.count for item in run_summary}
         assert error_counts[sample_error] == 10
@@ -272,8 +269,8 @@ class TestErrorTracker:
     @pytest.mark.parametrize(
         "phase",  # fmt: skip
         [
-            CreditPhase.WARMUP,
-            CreditPhase.PROFILING,
+            "warmup",
+            "profiling",
         ],
     )
     def test_works_with_all_credit_phases(self, phase, sample_error):
@@ -292,13 +289,11 @@ class TestErrorTracker:
 
         # Simulate many errors
         for _ in range(1000):
-            tracker.increment_error_count_for_phase(CreditPhase.PROFILING, sample_error)
+            tracker.increment_error_count_for_phase("profiling", sample_error)
         for _ in range(500):
-            tracker.increment_error_count_for_phase(
-                CreditPhase.PROFILING, another_error
-            )
+            tracker.increment_error_count_for_phase("profiling", another_error)
 
-        summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        summary = tracker.get_error_summary_for_phase("profiling")
         assert len(summary) == 2
 
         error_counts = {item.error_details: item.count for item in summary}
@@ -311,7 +306,7 @@ class TestErrorDetailsEquality:
 
     def test_identical_errors_counted_together(self):
         """Identical ErrorDetails instances are counted as the same error."""
-        tracker = PhaseErrorTracker(CreditPhase.PROFILING)
+        tracker = PhaseErrorTracker("profiling")
 
         error1 = ErrorDetails(message="Connection timeout", type="TimeoutError")
         error2 = ErrorDetails(message="Connection timeout", type="TimeoutError")
@@ -326,7 +321,7 @@ class TestErrorDetailsEquality:
 
     def test_different_messages_counted_separately(self):
         """ErrorDetails with different messages are counted separately."""
-        tracker = PhaseErrorTracker(CreditPhase.PROFILING)
+        tracker = PhaseErrorTracker("profiling")
 
         error1 = ErrorDetails(message="Connection timeout", type="TimeoutError")
         error2 = ErrorDetails(message="Read timeout", type="TimeoutError")
@@ -339,7 +334,7 @@ class TestErrorDetailsEquality:
 
     def test_different_types_counted_separately(self):
         """ErrorDetails with different types are counted separately."""
-        tracker = PhaseErrorTracker(CreditPhase.PROFILING)
+        tracker = PhaseErrorTracker("profiling")
 
         error1 = ErrorDetails(message="Error occurred", type="TimeoutError")
         error2 = ErrorDetails(message="Error occurred", type="ValueError")
@@ -363,7 +358,7 @@ class TestErrorTrackerIntegration:
             message="Connection refused", type="ConnectionError"
         )
         for _ in range(2):
-            tracker.increment_error_count_for_phase(CreditPhase.WARMUP, warmup_error)
+            tracker.increment_error_count_for_phase("warmup", warmup_error)
 
         # Phase 2: Run - various errors
         timeout_error = ErrorDetails(message="Request timeout", type="TimeoutError")
@@ -371,25 +366,19 @@ class TestErrorTrackerIntegration:
         validation_error = ErrorDetails(message="Invalid input", type="ValidationError")
 
         for _ in range(15):
-            tracker.increment_error_count_for_phase(
-                CreditPhase.PROFILING, timeout_error
-            )
+            tracker.increment_error_count_for_phase("profiling", timeout_error)
         for _ in range(8):
-            tracker.increment_error_count_for_phase(
-                CreditPhase.PROFILING, rate_limit_error
-            )
+            tracker.increment_error_count_for_phase("profiling", rate_limit_error)
         for _ in range(3):
-            tracker.increment_error_count_for_phase(
-                CreditPhase.PROFILING, validation_error
-            )
+            tracker.increment_error_count_for_phase("profiling", validation_error)
 
         # Verify warmup errors
-        warmup_summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
+        warmup_summary = tracker.get_error_summary_for_phase("warmup")
         assert len(warmup_summary) == 1
         assert warmup_summary[0].count == 2
 
         # Verify run errors
-        run_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        run_summary = tracker.get_error_summary_for_phase("profiling")
         assert len(run_summary) == 3
 
         error_counts = {item.error_details: item.count for item in run_summary}
@@ -407,10 +396,10 @@ class TestErrorTrackerIntegration:
 
         # Only run phase errors
         error = ErrorDetails(message="Server error", type="ServerError")
-        tracker.increment_error_count_for_phase(CreditPhase.PROFILING, error)
+        tracker.increment_error_count_for_phase("profiling", error)
 
-        warmup_summary = tracker.get_error_summary_for_phase(CreditPhase.WARMUP)
-        run_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+        warmup_summary = tracker.get_error_summary_for_phase("warmup")
+        run_summary = tracker.get_error_summary_for_phase("profiling")
 
         assert len(warmup_summary) == 0
         assert len(run_summary) == 1

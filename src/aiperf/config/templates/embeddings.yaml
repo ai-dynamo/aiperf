@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Embeddings Endpoint Benchmark
+# description: Benchmark embedding models with single-text and batched requests.
+# category: Specialized Endpoints
+# tags: embeddings, search, retrieval
+# difficulty: beginner
+# features: embeddings endpoint, batch processing
+#
+# Embeddings Endpoint Benchmark
+# =============================
+# Benchmarks embedding models used in RAG pipelines, semantic search, and
+# retrieval systems. Tests how throughput scales with batch size — servers
+# that support batching can process N texts in one GPU pass, so larger
+# batches amortize per-request overhead but increase per-request latency.
+#
+# Run: aiperf profile --config embeddings.yaml
+
+randomSeed: 42
+
+model: BAAI/bge-small-en-v1.5
+
+endpoint:
+  url: http://localhost:8000/v1/embeddings
+  type: embeddings
+  timeout: 60.0
+
+datasets:
+  # Single text per request — baseline latency
+  single:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 256, stddev: 50}
+      batchSize: 1
+
+  # 10 texts per request — typical batch for real-time search
+  batch_10:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 128, stddev: 30}
+      batchSize: 10
+
+  # 50 texts per request — bulk indexing workload
+  batch_50:
+    type: synthetic
+    entries: 200
+    prompts:
+      isl: {mean: 100, stddev: 20}
+      batchSize: 50
+
+phases:
+  single_test:
+    type: concurrency
+    dataset: single
+    requests: 1000
+    concurrency: 32
+    duration: 120
+    gracePeriod: 30
+
+  # Lower concurrency for batched requests — each request does more work
+  batch_10_test:
+    type: concurrency
+    dataset: batch_10
+    requests: 500
+    concurrency: 16
+    seamless: true
+    duration: 120
+    gracePeriod: 30
+
+  batch_50_test:
+    type: concurrency
+    dataset: batch_50
+    requests: 200
+    concurrency: 8
+    seamless: true
+    duration: 120
+    gracePeriod: 30
+
+artifacts:
+  dir: ./artifacts/embeddings
+  summary: [json]
+  records: [jsonl, csv]

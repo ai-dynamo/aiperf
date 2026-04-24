@@ -254,7 +254,10 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 
 
 def extract_commands(app: Any) -> list[tuple[str, str]]:
-    """Extract command names and descriptions."""
+    """Extract command names and descriptions.
+
+    For nested apps (like 'kube'), this extracts subcommands as 'parent subcommand' format.
+    """
     skip = {"--help", "-h", "--version"}
     commands = []
     for name, cmd in app._commands.items():
@@ -265,7 +268,26 @@ def extract_commands(app: Any) -> list[tuple[str, str]]:
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text or ""))
+
+        # Check if this is a subcommand group (has user-defined subcommands
+        # beyond the built-in --help/-h).
+        user_subs = (
+            {k for k in cmd._commands if k not in skip}
+            if hasattr(cmd, "_commands")
+            else set()
+        )
+        if user_subs:
+            for sub_name, sub_obj in cmd._commands.items():
+                if sub_name in skip:
+                    continue
+                sub_help = sub_obj.help if hasattr(sub_obj, "help") else ""
+                if callable(sub_help):
+                    sub_help = sub_help()
+                if sub_help:
+                    sub_help = _extract_text(sub_help).split("\n")[0].strip()
+                commands.append((f"{name} {sub_name}", sub_help or ""))
+        else:
+            commands.append((name, help_text or ""))
     return commands
 
 
@@ -373,6 +395,19 @@ def _format_param(param: Param) -> list[str]:
     return lines
 
 
+def _resolve_nested_command(app: Any, cmd_name: str) -> Any | None:
+    """Look up a command by name, walking into nested apps for 'parent child' names."""
+    parts = cmd_name.split()
+    current = app
+    for part in parts:
+        if not hasattr(current, "_commands"):
+            return None
+        current = current._commands.get(part)
+        if current is None:
+            return None
+    return current
+
+
 def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
     """Generate full markdown documentation."""
     lines = [
@@ -411,8 +446,8 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
     for cmd_name, groups in data.items():
         lines.extend(["<hr/>", "", f"## `aiperf {cmd_name}`", ""])
 
-        # Command help text
-        cmd = app._commands.get(cmd_name)
+        # Command help text — resolve nested commands like "kube attach"
+        cmd = _resolve_nested_command(app, cmd_name)
         if cmd and hasattr(cmd, "help"):
             help_text = cmd.help() if callable(cmd.help) else cmd.help
             if help_text:
@@ -485,12 +520,15 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
 
 def _resolve_lazy_commands(app: Any) -> None:
     """Resolve any lazily-loaded ``CommandSpec`` entries so the generator can
-    inspect help text and parameters."""
+    inspect help text and parameters.  Recurses into nested Apps."""
     from cyclopts.command_spec import CommandSpec
 
     for name, cmd in list(app._commands.items()):
         if isinstance(cmd, CommandSpec):
-            app._commands[name] = cmd.resolve(app)
+            cmd = cmd.resolve(app)
+            app._commands[name] = cmd
+        if hasattr(cmd, "_commands"):
+            _resolve_lazy_commands(cmd)
 
 
 class CLIDocsGenerator(Generator):

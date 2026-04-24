@@ -25,6 +25,7 @@ def synthesize(
     num_sessions: int = 1000,
     output: Path = Path("."),
     config: str | None = None,
+    *,
     seed: int = 42,
     max_isl: int | None = None,
     max_osl: int | None = None,
