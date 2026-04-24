@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate all AIPerfJob recipe YAML files against the nested CRD schema and AIPerfConfig model."""
+"""Validate all AIPerfJob recipe YAML files against the nested CRD schema and AIPerfConfig model.
+
+Recipes live as ``recipes/**/perf.yaml`` and may use Jinja2 ``{{ ... }}`` templates
+and ``${ENV_VAR}`` substitutions; ``AIPerfJobSpecConverter.to_aiperf_config`` renders
+those before validating against ``AIPerfConfig``.
+"""
 
 from pathlib import Path
 
@@ -15,10 +20,10 @@ RECIPES_DIR = Path(__file__).parents[3] / "recipes"
 
 
 def _discover_recipes() -> list[Path]:
-    """Find all aiperfjob.yaml files in the recipes directory."""
+    """Find all perf.yaml files in the recipes directory."""
     if not RECIPES_DIR.exists():
         return []
-    return sorted(RECIPES_DIR.rglob("aiperfjob.yaml"))
+    return sorted(RECIPES_DIR.rglob("perf.yaml"))
 
 
 RECIPE_FILES = _discover_recipes()
@@ -109,23 +114,23 @@ class TestRecipeCompleteness:
 
     def test_expected_recipes_exist(self) -> None:
         expected = [
-            "deepseek-r1/trtllm/disagg/wide_ep/gb200/aiperfjob.yaml",
-            "deepseek-v32-fp4/trtllm/agg-round-robin/aiperfjob.yaml",
-            "deepseek-v32-fp4/trtllm/disagg-kv-router/aiperfjob.yaml",
-            "glm-5-nvfp4/sglang/disagg/aiperfjob.yaml",
-            "gpt-oss-120b/trtllm/agg/aiperfjob.yaml",
-            "gpt-oss-120b/trtllm/disagg/aiperfjob.yaml",
-            "llama-3-70b/vllm/agg/aiperfjob.yaml",
-            "llama-3-70b/vllm/disagg-multi-node/aiperfjob.yaml",
-            "llama-3-70b/vllm/disagg-single-node/aiperfjob.yaml",
-            "qwen3-235b-a22b-fp8/trtllm/agg/aiperfjob.yaml",
-            "qwen3-235b-a22b-fp8/trtllm/disagg/aiperfjob.yaml",
-            "qwen3-32b-fp8/trtllm/agg/aiperfjob.yaml",
-            "qwen3-32b-fp8/trtllm/disagg/aiperfjob.yaml",
-            "qwen3-32b-fp8/vllm/disagg/aiperfjob.yaml",
-            "qwen3-32b/vllm/agg-round-robin/aiperfjob.yaml",
-            "qwen3-32b/vllm/disagg-kv-router/aiperfjob.yaml",
-            "qwen3-vl-30b/vllm/agg-embedding-cache/aiperfjob.yaml",
+            "deepseek-r1/trtllm/disagg/wide_ep/gb200/perf.yaml",
+            "deepseek-v32-fp4/trtllm/agg-round-robin/perf.yaml",
+            "deepseek-v32-fp4/trtllm/disagg-kv-router/perf.yaml",
+            "glm-5-nvfp4/sglang/disagg/perf.yaml",
+            "gpt-oss-120b/trtllm/agg/perf.yaml",
+            "gpt-oss-120b/trtllm/disagg/perf.yaml",
+            "llama-3-70b/vllm/agg/perf.yaml",
+            "llama-3-70b/vllm/disagg-multi-node/perf.yaml",
+            "llama-3-70b/vllm/disagg-single-node/perf.yaml",
+            "qwen3-235b-a22b-fp8/trtllm/agg/perf.yaml",
+            "qwen3-235b-a22b-fp8/trtllm/disagg/perf.yaml",
+            "qwen3-32b-fp8/trtllm/agg/perf.yaml",
+            "qwen3-32b-fp8/trtllm/disagg/perf.yaml",
+            "qwen3-32b-fp8/vllm/disagg/perf.yaml",
+            "qwen3-32b/vllm/agg-round-robin/perf.yaml",
+            "qwen3-32b/vllm/disagg-kv-router/perf.yaml",
+            "qwen3-vl-30b/vllm/agg-embedding-cache/perf.yaml",
         ]
         for path_str in expected:
             full_path = RECIPES_DIR / path_str
