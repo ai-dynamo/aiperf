@@ -347,14 +347,20 @@ async def _list_events_impl(
     The result is sorted by ``lastTimestamp`` descending and capped at
     :data:`MAX_EVENTS_RETURNED` entries. Events with no timestamp sort last.
 
+    Archived (PVC-only) runs whose AIPerfJob CR is gone return an empty
+    event list — there are no live objects left to source events from,
+    and the run view still renders for archived jobs so 404 here would
+    surface as a noisy ``console.error`` on the browser side for a
+    legitimate UI state.
+
     Raises:
-        HTTPException: 404 if the AIPerfJob CR does not exist in ``namespace``.
-            Non-404 ``ApiException`` errors propagate via the app-level handler
+        ApiException: Non-404 ``kubernetes_asyncio.client.ApiException``
+            errors (e.g. 401/403) propagate via the app-level handler
             registered in ``results_server._register_k8s_exception_handler``.
     """
     cr = await get_raw_aiperfjob(api, namespace, name)
     if cr is None:
-        raise HTTPException(404, f"AIPerfJob {namespace}/{name} not found")
+        return JobEventsResponse(events=[])
 
     cr_events = await list_events_for_object(api, namespace, name)
 

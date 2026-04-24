@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """E2E robustness tests: every route loads without server errors or JS crashes.
 
-Visits every SPA route (``/``, ``/jobs``, ``/leaderboard``, ``/compare``,
-``/history``) and then rapidly cycles through them without waiting, as a
+Visits every SPA route (``/``, ``/archive``, ``/compare``, ``/log``,
+``/launch``) and then rapidly cycles through them without waiting, as a
 smoke check that nothing throws on mount/unmount. The ``page`` fixture's
 console-error gate fails the test if any ``pageerror`` or ``console.error``
 fires during the run.
@@ -16,7 +16,7 @@ from playwright.async_api import Response, expect
 
 pytestmark = [pytest.mark.e2e]
 
-ROUTES = ["/", "/jobs", "/leaderboard", "/compare", "/history"]
+ROUTES = ["/", "/archive", "/compare", "/log", "/launch"]
 
 
 def _hash_url(base_url: str, route: str) -> str:
@@ -50,7 +50,7 @@ async def test_all_routes_return_ok_fetches(
             await page.wait_for_load_state("networkidle")
             # Let Chart.js mount animations settle on chart-heavy pages so
             # their teardown path doesn't race a running animation frame.
-            if route in ("/compare", "/history", "/leaderboard"):
+            if route in ("/compare", "/log"):
                 await page.wait_for_timeout(600)
     finally:
         page.remove_listener("response", _on_response)
@@ -75,7 +75,7 @@ async def test_rapid_route_changes_do_not_crash(
     """
     # Start from a settled page so the first cycle isn't racing initial load.
     await page.goto(live_operator_app.base_url + "/")
-    await expect(page.get_by_test_id("page-dashboard")).to_be_visible()
+    await expect(page.get_by_test_id("page-home")).to_be_visible()
 
     for _ in range(3):
         for route in ROUTES:
