@@ -8,7 +8,9 @@ description: >
 
 inputs:
   version:
-    description: 'PEP 440 version string to write (e.g. 0.6.0rc0)'
+    description: >
+      PEP 440 version string to write. Examples: 0.6.0rc0,
+      0.6.0.dev20260424, 0.6.0.dev20260424+g3e3b3b1.
     required: true
 
 runs:
@@ -25,8 +27,13 @@ runs:
 
         target = os.environ["TARGET_VERSION"]
 
-        # Validate PEP 440 RC format (X.Y.Z, X.Y.Zrc<N>, X.Y.Za<N>, X.Y.Zb<N>)
-        if not re.match(r'^\d+\.\d+\.\d+((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$', target):
+        # PEP 440: X.Y.Z[(a|b|rc)N][.postN][.devN][+local]
+        # Local version: [a-zA-Z0-9] segments joined by dots (e.g. "g3e3b3b1").
+        if not re.match(
+            r'^\d+\.\d+\.\d+((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?'
+            r'(\+[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$',
+            target,
+        ):
             raise SystemExit(f"::error::Invalid PEP 440 version '{target}'")
 
         path = "pyproject.toml"

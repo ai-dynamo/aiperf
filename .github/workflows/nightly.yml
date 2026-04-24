@@ -126,12 +126,12 @@ jobs:
             # shellcheck source=/dev/null
             source .nightly-version/version-info.env
           else
-            # Date-only UTC stamp (YYYYMMDD). CONTAINER_TAG is further
-            # disambiguated by the 7-char short SHA, so two runs on the same
-            # day from different commits do not collide. WHEEL_VERSION has no
-            # SHA component — two runs on the same day produce the same
-            # PEP 440 dev version and will overwrite each other in S3 and
-            # Artifactory (intentional; last-writer-wins per day).
+            # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
+            # WHEEL_VERSION are disambiguated by the 7-char short SHA so
+            # two runs on the same day from different commits never collide.
+            # Same-day re-runs of the same commit DO produce identical
+            # versions and will overwrite each other in S3/Artifactory
+            # (intentional; last-writer-wins per commit).
             TIMESTAMP=$(date -u +%Y%m%d)
             SHORT_SHA=$(git rev-parse --short=7 HEAD)
             FULL_SHA=$(git rev-parse HEAD)
@@ -147,7 +147,11 @@ jobs:
             # is NOT a git tag — nothing in this workflow pushes a git tag.
             NIGHTLY_TAG="AIPerf Nightlies"
             CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
-            WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}"
+            # PEP 440: <base>.dev<YYYYMMDD>+g<short_sha>. The `+g<sha>` is a
+            # local version identifier (PyPI rejects it; Artifactory accepts).
+            # Example: 0.6.0.dev20260424+g3e3b3b1 → wheel filename
+            # aiperf-0.6.0.dev20260424+g3e3b3b1-py3-none-any.whl
+            WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+g${SHORT_SHA}"
 
             WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
           fi
