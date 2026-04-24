@@ -1,0 +1,42 @@
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: glm5-sglang-disagg-bench
+spec:
+  benchmark:
+    model: nvidia/GLM-5-NVFP4
+    endpoint:
+      url: http://glm5-sglang-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      extra:
+        max_tokens: 8192
+        min_tokens: 8192
+        ignore_eos: true
+    tokenizer:
+      name: nvidia/GLM-5-NVFP4
+    dataset:
+      type: synthetic
+      entries: 12800
+      isl: 1000
+      osl: 8192
+    warmup:
+      type: concurrency
+      concurrency: 512
+      requests: 16
+    profiling:
+      type: concurrency
+      concurrency: 512
+      requests: 1536
+    randomSeed: 100
+  podTemplate:
+    imagePullSecrets:
+      - nvcrimagepullsecret
+    volumes:
+      - name: model-store
+        persistentVolumeClaim:
+          claimName: model-store
+    volumeMounts:
+      - name: model-store
+        mountPath: /model-store

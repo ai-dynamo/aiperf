@@ -4,14 +4,12 @@ metadata:
   name: deepseek-r1-bench
 spec:
   benchmark:
-    models:
-    - deepseek-ai/DeepSeek-R1
+    model: deepseek-ai/DeepSeek-R1
     endpoint:
-      urls:
-      - http://trtllm-disagg-multinode-frontend:8000
+      url: http://trtllm-disagg-multinode-frontend:8000
       type: chat
-      streaming: true
       path: /v1/chat/completions
+      streaming: true
       extra:
         max_tokens: 1024
         min_tokens: 1024
@@ -25,16 +23,11 @@ spec:
         Accept: text/event-stream
     tokenizer:
       name: /model-cache/deepseek-r1-fp4
-    datasets:
-      main:
-        type: synthetic
-        entries: 12800
-        isl:
-          mean: 1024
-          stddev: 0
-        osl:
-          mean: 1024
-          stddev: 0
+    dataset:
+      type: synthetic
+      entries: 12800
+      isl: 1024
+      osl: 1024
     warmup:
       type: concurrency
       concurrency: 1080
@@ -46,14 +39,14 @@ spec:
     randomSeed: 100
   podTemplate:
     imagePullSecrets:
-    - nvcrimagepullsecret
+      - nvcrimagepullsecret
     env:
-    - name: AIPERF_HTTP_CONNECTION_LIMIT
-      value: '252'
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "252"
     volumes:
-    - name: model-cache
-      persistentVolumeClaim:
-        claimName: model-cache
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
     volumeMounts:
-    - name: model-cache
-      mountPath: /model-cache
+      - name: model-cache
+        mountPath: /model-cache
