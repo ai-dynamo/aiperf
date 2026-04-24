@@ -13,11 +13,25 @@ inputs:
     description: 'Container registry hostname (e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com)'
     required: true
   registry-username:
-    description: 'Registry username'
-    required: true
+    description: 'Registry username. Defaults to AWS (ECR convention).'
+    required: false
+    default: 'AWS'
   registry-password:
-    description: 'Registry password or token'
-    required: true
+    description: >
+      Registry password or token. Leave empty and set aws-ecr-region instead
+      for ECR so the token is fetched in-step and never exposed on job
+      outputs or environments.
+    required: false
+    default: ''
+  aws-ecr-region:
+    description: >
+      AWS region for ECR. When set, the action runs
+      `aws ecr get-login-password` internally and pipes the token directly
+      to crane over stdin — the token never leaves this step. Requires the
+      runner to have IAM permissions for ECR. Mutually exclusive with
+      registry-password; one of the two must be provided.
+    required: false
+    default: ''
   target-image:
     description: 'Full image reference for the manifest index (e.g. registry/repo:tag)'
     required: true
@@ -62,12 +76,24 @@ runs:
     - name: Log in to registry
       shell: bash
       env:
-        REGISTRY:  ${{ inputs.registry }}
-        USERNAME:  ${{ inputs.registry-username }}
-        PASSWORD:  ${{ inputs.registry-password }}
+        REGISTRY:       ${{ inputs.registry }}
+        USERNAME:       ${{ inputs.registry-username }}
+        PASSWORD:       ${{ inputs.registry-password }}
+        AWS_ECR_REGION: ${{ inputs.aws-ecr-region }}
       run: |
-        echo "${PASSWORD}" | crane auth login "${REGISTRY}" \
-          --username "${USERNAME}" --password-stdin
+        set -euo pipefail
+        if [ -n "${AWS_ECR_REGION}" ]; then
+          # Token stays on stdin — never written to env, outputs, or disk.
+          aws ecr get-login-password --region "${AWS_ECR_REGION}" \
+            | crane auth login "${REGISTRY}" \
+                --username "${USERNAME}" --password-stdin
+        elif [ -n "${PASSWORD}" ]; then
+          echo "${PASSWORD}" | crane auth login "${REGISTRY}" \
+            --username "${USERNAME}" --password-stdin
+        else
+          echo "::error::Either aws-ecr-region or registry-password must be provided"
+          exit 1
+        fi
 
     - name: Verify source images and create manifest index
       shell: bash

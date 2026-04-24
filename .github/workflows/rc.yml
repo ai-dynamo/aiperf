@@ -431,19 +431,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get ECR login token
-        id: ecr
-        env:
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        run: |
-          echo "password=$(aws ecr get-login-password --region "${AWS_DEFAULT_REGION}")" >> "$GITHUB_OUTPUT"
-
+      # aws-ecr-region makes the composite action fetch the ECR token
+      # internally and pipe it to crane over stdin — the token is never
+      # written to a job output or env var.
       - name: Create multi-arch manifest on ECR
         uses: ./.github/actions/create-multiarch-manifest
         with:
-          registry:          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
-          registry-username: AWS
-          registry-password: ${{ steps.ecr.outputs.password }}
+          registry:       ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          aws-ecr-region: ${{ secrets.AWS_DEFAULT_REGION }}
           target-image: >-
             ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-release.outputs.wheel_version }}
           source-images: >-
