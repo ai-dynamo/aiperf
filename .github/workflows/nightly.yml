@@ -1,0 +1,875 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Nightly build and release pipeline.
+#
+# Phases:
+#   1. Init     — compute version strings and effective release mode (rerun-stable via artifact)
+#   2. Validate — pre-commit + unit / integration tests
+#   3. Build    — wheel (→ S3) + multi-arch containers (→ ECR)
+#   4. Stage    — [automated-release approval] ECR → NGC staging; S3 → Artifactory
+#   5. Scan     — trigger GitLab security scan (fire-and-forget)
+#   6. Summary  — always runs
+#
+# No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
+#
+# Triggers:
+#   schedule         — Mon–Fri 09:00 UTC (01:00 PST / 02:00 PDT). Builds the
+#                      tip of main at fire time. release=true.
+#   workflow_dispatch — manual run launched from main. Builds the SHA passed
+#                      in the `sha` input. release defaults to true.
+#
+# Schedule builds tip of main; dispatch builds the user-supplied SHA. Both
+# paths require the SHA to be reachable from origin/main — dispatch is
+# rejected if the input SHA isn't on main, and the workflow itself is
+# rejected if dispatched from any branch other than main. There are no
+# push triggers.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit SHA to build. Required. Must be on main.'
+        required: true
+      release:
+        description: 'Stage artifacts and trigger GitLab security scan. Schedule always sets release=true.'
+        type: boolean
+        default: true
+      skip_security_scan:
+        description: 'Skip GitLab security scan. Emergency use only.'
+        type: boolean
+        default: false
+
+# Allow concurrent nightly runs. Shared destinations (ECR/NGC `aiperf:<container_tag>`,
+# S3 wheel path, Artifactory wheel) are last-writer-wins on same-day/same-commit
+# collisions; the Artifactory repo must be configured to allow overwrites.
+# Each run gets a unique concurrency group so GitHub never serializes runs.
+# cancel-in-progress: false — never cancel a run that may be pending human approval.
+concurrency:
+  group: nightly-${{ github.run_id }}
+  cancel-in-progress: false
+
+# Least-privilege default. No job in this workflow writes to the repo or to
+# GitHub Packages — container pushes go to ECR/NGC via AWS/NGC credentials,
+# wheels go to S3/Artifactory, and no git tag is created.
+# `actions: read` is only needed by build-container's `gh run list` /
+# `gh run download` step, which pulls the prior nightly's license artifacts
+# for diffing. Grant it at workflow scope for simplicity — it is a read-only
+# scope and every job can safely inherit it.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ============================================================================
+  # PHASE 1: INIT
+  # Version strings are computed once and saved as a workflow artifact so that
+  # partial reruns use the same versions as the original run.
+  # ============================================================================
+
+  prepare-nightly:
+    name: Prepare Nightly
+    runs-on: ubuntu-latest
+    outputs:
+      nightly_tag:    ${{ steps.version.outputs.nightly_tag }}
+      wheel_version:  ${{ steps.version.outputs.wheel_version }}
+      container_tag:  ${{ steps.version.outputs.container_tag }}
+      wheel_filename: ${{ steps.version.outputs.wheel_filename }}
+      base_version:   ${{ steps.version.outputs.base_version }}
+      run_timestamp:  ${{ steps.version.outputs.run_timestamp }}
+      resolved_sha:   ${{ steps.version.outputs.resolved_sha }}
+      release:        ${{ steps.release.outputs.release }}
+    steps:
+      # Workflow file itself must come from main on dispatch.
+      - name: Require dispatch from main
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Dispatch this workflow from main (got '${GITHUB_REF}')."
+          exit 1
+
+      # Schedule → tip of main. Dispatch → user-supplied SHA.
+      # fetch-depth: 0 so the next step can run merge-base against origin/main.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || 'main' }}
+          fetch-depth: 0
+
+      - name: Verify SHA is on main
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          BUILD_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "${BUILD_SHA}" origin/main; then
+            echo "::error::SHA ${BUILD_SHA} is not on main."
+            exit 1
+          fi
+          echo "Verified ${BUILD_SHA} is on main."
+
+      - name: Restore version artifact from prior attempt
+        id: restore
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-version
+          path: .nightly-version/
+        continue-on-error: true
+
+      - name: Compute or restore version strings
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [ -f ".nightly-version/version-info.env" ]; then
+            echo "Restoring version strings from prior run attempt."
+            # shellcheck source=/dev/null
+            source .nightly-version/version-info.env
+          else
+            # Date-only UTC stamp (YYYYMMDD). Both CONTAINER_TAG and
+            # WHEEL_VERSION are disambiguated by the 7-char short SHA so
+            # runs on the same day from different commits never collide.
+            # Same-day re-runs of the same commit produce identical tags
+            # and versions and will overwrite each other in ECR / NGC /
+            # S3 / Artifactory (intentional; last-writer-wins per commit).
+            TIMESTAMP=$(date -u +%Y%m%d)
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            FULL_SHA=$(git rev-parse HEAD)
+
+            BASE_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+            if [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Cannot parse base version from pyproject.toml (got '${BASE_VERSION}')"
+              exit 1
+            fi
+
+            # NIGHTLY_TAG is a human-readable label surfaced in the pipeline
+            # summary, Slack notification, and forwarded to the GitLab scan. It
+            # is NOT a git tag — nothing in this workflow pushes a git tag.
+            NIGHTLY_TAG="AIPerf Nightlies"
+            # Example: nightly-20260423-33d7011
+            CONTAINER_TAG="nightly-${TIMESTAMP}-${SHORT_SHA}"
+            # PEP 440: <base>.dev<YYYYMMDD>+g<short_sha>. The `+g<sha>` is a
+            # local version identifier (PyPI rejects it; Artifactory accepts).
+            # Example: 0.6.0.dev20260423+g33d7011 → wheel filename
+            # aiperf-0.6.0.dev20260423+g33d7011-py3-none-any.whl
+            WHEEL_VERSION="${BASE_VERSION}.dev${TIMESTAMP}+g${SHORT_SHA}"
+
+            WHEEL_FILENAME="aiperf-${WHEEL_VERSION}-py3-none-any.whl"
+          fi
+
+          echo "nightly_tag=${NIGHTLY_TAG}"         >> "$GITHUB_OUTPUT"
+          echo "wheel_version=${WHEEL_VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "container_tag=${CONTAINER_TAG}"     >> "$GITHUB_OUTPUT"
+          echo "wheel_filename=${WHEEL_FILENAME}"   >> "$GITHUB_OUTPUT"
+          echo "base_version=${BASE_VERSION}"       >> "$GITHUB_OUTPUT"
+          echo "run_timestamp=${TIMESTAMP:-reused}" >> "$GITHUB_OUTPUT"
+          echo "resolved_sha=${FULL_SHA}"           >> "$GITHUB_OUTPUT"
+
+          mkdir -p .nightly-version
+          # Values are single-quoted because NIGHTLY_TAG contains whitespace
+          # and version-info.env is `source`d on rerun.
+          {
+            echo "NIGHTLY_TAG='${NIGHTLY_TAG}'"
+            echo "WHEEL_VERSION='${WHEEL_VERSION}'"
+            echo "CONTAINER_TAG='${CONTAINER_TAG}'"
+            echo "WHEEL_FILENAME='${WHEEL_FILENAME}'"
+            echo "BASE_VERSION='${BASE_VERSION}'"
+            echo "TIMESTAMP='${TIMESTAMP:-reused}'"
+            echo "FULL_SHA='${FULL_SHA}'"
+          } > .nightly-version/version-info.env
+
+      - name: Save version artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-version
+          path: .nightly-version/version-info.env
+          overwrite: true
+          retention-days: 7
+
+      - name: Compute effective release mode
+        id: release
+        env:
+          # inputs.release is only set when event_name == workflow_dispatch.
+          DISPATCH_RELEASE: ${{ inputs.release }}
+        run: |
+          # schedule → full release.
+          # dispatch → honor the `release` input (default true).
+          case "${GITHUB_EVENT_NAME}" in
+            schedule)
+              RELEASE=true
+              ;;
+            workflow_dispatch)
+              if [ "${DISPATCH_RELEASE}" = "false" ]; then
+                RELEASE=false
+              else
+                RELEASE=true
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported event '${GITHUB_EVENT_NAME}' — this workflow only runs on schedule or workflow_dispatch."
+              exit 1
+              ;;
+          esac
+          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # PHASE 2: VALIDATE
+  # pre-commit is a real gate. Test jobs are placeholders until runners are ready.
+  # ============================================================================
+
+  pre-commit:
+    name: Pre-commit Checks
+    needs: [prepare-nightly]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run pre-commit
+        run: |
+          . .venv/bin/activate
+          pre-commit run --all-files
+
+  # Tests run but do not block the rest of the pipeline — build-container
+  # depends on these via `needs` only for ordering. Test failures are
+  # surfaced in the pipeline summary and in each job's status.
+  unit-tests:
+    name: Unit Tests
+    needs: [prepare-nightly]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run unit and component integration tests
+        run: make test-ci PYTHON_VERSION=3.12
+
+  integration-tests:
+    name: Integration Tests
+    needs: [prepare-nightly]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run integration tests
+        run: make integration-tests-ci PYTHON_VERSION=3.12
+
+  # TODO: re-enable when GPU runner is available. Also restore references in
+  # build-container.needs and pipeline-summary (needs: list + summary table).
+  # gpu-e2e-tests:
+  #   name: GPU End-to-End Tests
+  #   needs: [prepare-nightly]
+  #   runs-on: prod-aiperf-tester-amd-gpu-v1
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ inputs.ref || github.ref }}
+  #
+  #     - name: Run test_docs_end_to_end
+  #       env:
+  #         AIPERF_SOURCE_DIR: ${{ github.workspace }}
+  #         CI_JOB_NAME: test_docs_end_to_end
+  #       run: |
+  #         bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+  #
+  #     - name: Cleanup Docker containers
+  #       if: always()
+  #       run: docker compose -f docker-compose.yml down || true
+
+  # ============================================================================
+  # PHASE 3: BUILD
+  # No environment: declaration — builder runners carry AWS credentials via IAM
+  # instance profile. The automated-release gate is enforced at staging only.
+  # ============================================================================
+
+  # `needs:` orders build after tests so their results appear in the summary,
+  # but the `if:` condition only hard-gates on prepare-nightly + pre-commit.
+  # Unit/integration test failures are visible but non-blocking — the rest of
+  # the pipeline continues to build, stage, and scan.
+  build-container:
+    name: Build Container (${{ matrix.arch }})
+    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests]
+    if: >-
+      ${{ always()
+          && needs.prepare-nightly.result == 'success'
+          && needs.pre-commit.result == 'success' }}
+    # 90 min covers cold registry cache on both archs plus license extraction.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: prod-aiperf-builder-amd-v1
+          - arch: arm64
+            platform: linux/arm64
+            runner: prod-aiperf-builder-arm-v1
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Patch version in pyproject.toml
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-nightly.outputs.wheel_version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
+      # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
+      # by the runtime build below.
+      #
+      # Target `wheel-artifact` is a scratch-based export stage that contains
+      # only the wheel file, so `--output type=local` writes a few MB instead
+      # of the full wheel-builder filesystem (~400 MB).
+      - name: Build and extract wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   wheel-artifact \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
+            --output     type=local,dest=./dist/ \
+            .
+
+      - name: Validate wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
+          if [ "${#WHEELS[@]}" -eq 0 ]; then
+            echo "::error::No wheel found in dist/ after build"
+            exit 1
+          fi
+          if [ "${#WHEELS[@]}" -gt 1 ]; then
+            echo "::error::Multiple wheels found in dist/ — expected exactly one:"
+            printf '  %s\n' "${WHEELS[@]}"
+            exit 1
+          fi
+          WHEEL_PATH="${WHEELS[0]}"
+
+          uvx twine check "${WHEEL_PATH}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL_PATH}"
+          INSTALLED_VERSION=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${INSTALLED_VERSION}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${INSTALLED_VERSION}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help
+
+      - name: Upload wheel to S3 (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
+
+      - name: Build and push ${{ matrix.arch }} image to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          CONTAINER_TAG:      ${{ needs.prepare-nightly.outputs.container_tag }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
+
+          refresh_ecr_token() {
+            while sleep 21600; do
+              aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+                | docker login --username AWS --password-stdin "${REGISTRY}" 2>/dev/null || true
+            done
+          }
+          refresh_ecr_token &
+          REFRESH_PID=$!
+          trap 'kill ${REFRESH_PID} 2>/dev/null || true' EXIT
+
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --target   runtime \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
+            --push \
+            --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            .
+
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            --format '{{.Manifest.Digest}}')
+          echo "Pushed ${REGISTRY}/aiperf:${IMAGE_TAG} — digest: ${DIGEST}"
+
+      # -------------------------------------------------------------------------
+      # Compliance: extract attribution artifacts from the licenses-artifact
+      # stage — a scratch stage that re-exports /opt/licenses/* from the
+      # python-licenses stage. Using licenses-artifact keeps the `--output
+      # type=local` export to a few MB instead of the ~1.3 GB python-licenses
+      # filesystem. The stage emits python/, dpkg/, ffmpeg/* at the root —
+      # pip-licenses JSON, ATTRIBUTIONS-Python.md, per-ecosystem deps CSVs,
+      # and a CycloneDX SBOM.
+      # --cache-from hits the registry cache warmed by the runtime build above
+      # so this step streams cached layers without re-building.
+      # amd64 only: Python deps are pure-Python so identical across archs; dpkg
+      # deps only differ for ffmpeg-linked .so files, covered in a follow-up.
+      # -------------------------------------------------------------------------
+      - name: Extract license artifacts (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   licenses-artifact \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --output     "type=local,dest=./license-raw" \
+            .
+          mkdir -p license-artifacts
+          cp -r ./license-raw/. license-artifacts/
+          # Merge per-ecosystem CSVs into a unified deps.csv (shared schema).
+          {
+            cat license-artifacts/python/python-deps.csv
+            tail -n +2 license-artifacts/dpkg/dpkg-deps.csv
+          } > license-artifacts/deps.csv
+          echo "License artifacts:"
+          find license-artifacts -type f | sort
+
+      # Fetch the deps.csv from the most recent successful nightly on this branch
+      # so we can compute a diff. continue-on-error so the first run on a new
+      # branch (no prior artifact) doesn't fail the pipeline — diff just shows
+      # every package as "added".
+      - name: Download prior nightly deps.csv (best-effort)
+        if: matrix.arch == 'amd64'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p prior-artifacts
+          PRIOR_RUN_ID=$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow=nightly.yml \
+            --branch main \
+            --status=success \
+            --limit=10 \
+            --json databaseId \
+            --jq ".[] | select(.databaseId != ${GITHUB_RUN_ID}) | .databaseId" \
+            | head -1 || true)
+          if [ -n "${PRIOR_RUN_ID:-}" ]; then
+            echo "Prior nightly run: ${PRIOR_RUN_ID}"
+            gh run download "${PRIOR_RUN_ID}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern 'license-artifacts-*' \
+              --dir prior-artifacts/ 2>&1 || echo "No prior artifact available."
+            PRIOR_DEPS=$(find prior-artifacts -name deps.csv -print -quit 2>/dev/null || true)
+            if [ -n "${PRIOR_DEPS}" ]; then
+              cp "${PRIOR_DEPS}" prior-artifacts/deps.csv
+              echo "Using baseline: ${PRIOR_DEPS}"
+            fi
+          else
+            echo "No prior nightly run found; diff will list every package as added."
+          fi
+
+      - name: Compute deps diff
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import csv
+          from pathlib import Path
+
+          current = Path("license-artifacts/deps.csv")
+          prior = Path("prior-artifacts/deps.csv")
+          out = Path("license-artifacts/deps-diff.csv")
+
+          def load(p):
+              if not p.is_file():
+                  return {}
+              with p.open(newline="") as f:
+                  return {(r["dependency_type"], r["name"]): r for r in csv.DictReader(f)}
+
+          cur, pri = load(current), load(prior)
+          fields = ["change", "dependency_type", "name", "version", "spdx_license",
+                    "prior_version", "prior_spdx_license"]
+          rows = []
+          for key in sorted(set(cur) | set(pri)):
+              c, p = cur.get(key), pri.get(key)
+              if c and not p:
+                  rows.append({"change": "added", **c,
+                               "prior_version": "", "prior_spdx_license": ""})
+              elif p and not c:
+                  rows.append({"change": "removed",
+                               "dependency_type": p["dependency_type"],
+                               "name": p["name"], "version": "", "spdx_license": "",
+                               "prior_version": p["version"],
+                               "prior_spdx_license": p["spdx_license"]})
+              elif c and p and (c["version"] != p["version"]
+                                or c["spdx_license"] != p["spdx_license"]):
+                  rows.append({"change": "changed", **c,
+                               "prior_version": p["version"],
+                               "prior_spdx_license": p["spdx_license"]})
+          with out.open("w", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=fields)
+              w.writeheader()
+              w.writerows(rows)
+          print(f"Diff: {len(rows)} added/changed/removed vs prior (→ {out})")
+          PYEOF
+
+      - name: Upload license artifacts
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-artifacts-${{ needs.prepare-nightly.outputs.wheel_version }}
+          path: |
+            license-artifacts/
+            !license-artifacts/**/.DS_Store
+            !license-artifacts/.DS_Store
+          retention-days: 90
+          if-no-files-found: error
+
+  create-multiarch-manifest-ecr:
+    name: Create Multi-arch Manifest (ECR)
+    needs: [prepare-nightly, build-container]
+    runs-on: prod-aiperf-default-v1
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+
+      # aws-ecr-region makes the composite action fetch the ECR token
+      # internally and pipe it to crane over stdin — the token is never
+      # written to a job output or env var.
+      - name: Create multi-arch manifest on ECR
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry:       ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          aws-ecr-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          target-image: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}
+          source-images: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.container_tag }}-arm64
+
+  # ============================================================================
+  # PHASE 4: STAGE
+  # Both jobs run under automated-release, which requires human approval before
+  # proceeding (configured in GitHub: Settings > Environments > automated-release).
+  # Runs on all triggers unless explicitly disabled via workflow_dispatch release=false.
+  # ============================================================================
+
+  stage-nightly-container:
+    name: Stage Container (ECR → NGC Staging)
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
+    env:
+      CRANE_VERSION: v0.20.2
+      CRANE_SHA256: ''
+    steps:
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
+            -o "${TARBALL}"
+          if [ -n "${CRANE_SHA256}" ]; then
+            echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum --check
+          else
+            echo "::warning::CRANE_SHA256 not set — skipping checksum verification"
+          fi
+          tar -xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/crane
+          rm "${TARBALL}"
+
+      - name: Log in to ECR and NGC staging
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_TOKEN:          ${{ secrets.NGC_PUBLISH_TOKEN }}
+          NGC_USERNAME:       ${{ secrets.NGC_PUBLISH_USERNAME }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | crane auth login \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" \
+                --username AWS --password-stdin
+          echo "${NGC_TOKEN}" | crane auth login nvcr.io \
+            --username "${NGC_USERNAME}" --password-stdin
+
+      - name: Copy multi-arch images ECR → NGC staging
+        env:
+          AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
+        run: |
+          set -euo pipefail
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+          for ARCH in amd64 arm64; do
+            crane copy \
+              "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
+              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
+          done
+
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}" 2>/dev/null || true
+          crane index append \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+
+  stage-nightly-wheel:
+    name: Stage Wheel (S3 → Artifactory)
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
+    # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
+    # the wheels bucket. Revisit when IAM is widened.
+    runs-on: prod-aiperf-builder-amd-v1
+    environment: automated-release
+    if: ${{ needs.prepare-nightly.outputs.release == 'true' }}
+    steps:
+      - name: Upload wheel from S3 to Artifactory
+        env:
+          S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+          WHEEL_VERSION:     ${{ needs.prepare-nightly.outputs.wheel_version }}
+          WHEEL_FILENAME:    ${{ needs.prepare-nightly.outputs.wheel_filename }}
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          # Single-object copy (no --recursive) so we only need s3:GetObject.
+          aws s3 cp \
+            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
+            "${TMPDIR}/${WHEEL_FILENAME}"
+
+          # Raw Artifactory deploy via native repo API. The PyPI handler
+          # (/api/pypi/) does not accept sub-path deploys — it expects the
+          # repo root URL. ARTIFACTORY_URL must be the generic repo base:
+          # https://<host>/artifactory/<repo> (no /api/pypi/, no sub-path).
+          TARGET_URL="${ARTIFACTORY_URL%/}/nightly/${WHEEL_FILENAME}"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}")
+          if [ "${HTTP_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel staged to Artifactory: ${TARGET_URL}"
+
+  # ============================================================================
+  # PHASE 5: TRIGGER GITLAB SECURITY SCAN
+  # Fire-and-forget. Passes full artifact locations so GitLab can pull containers
+  # from NGC staging and download the wheel from Artifactory without further input.
+  # ============================================================================
+
+  trigger-gitlab-security-scan:
+    name: Trigger GitLab Security Scan
+    needs: [prepare-nightly, stage-nightly-container, stage-nightly-wheel]
+    runs-on:
+      group: gitlab_ci_runners
+    environment: automated-release
+    if: ${{ inputs.skip_security_scan != 'true' && needs.prepare-nightly.outputs.release == 'true' }}
+    steps:
+      - name: Trigger GitLab pipeline
+        env:
+          GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
+          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          WHEEL_VERSION:          ${{ needs.prepare-nightly.outputs.wheel_version }}
+          CONTAINER_TAG:          ${{ needs.prepare-nightly.outputs.container_tag }}
+          RESOLVED_SHA:           ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_TYPE="ondemand"
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            RELEASE_TYPE="nightly"
+          fi
+
+          TOKEN_FILE=$(mktemp)
+          echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          trap 'rm -f "${TOKEN_FILE}"' EXIT
+
+          RESPONSE=$(curl -fsSL \
+            --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=security" \
+            --form "variables[RELEASE_TYPE]=${RELEASE_TYPE}" \
+            --form "variables[DRY_RUN]=true" \
+            --form "variables[PROJECT]=aiperf" \
+            --form "variables[SOURCE_BRANCH]=main" \
+            --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
+            --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ENABLE_PULSE_SCAN]=true" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[SONAR_REPO]=aiperf" \
+            --form "variables[SONAR_BRANCH]=main" \
+            "${GITLAB_TRIGGER_URL}")
+
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger GitLab pipeline or parse response"
+            exit 1
+          fi
+
+          echo "GitLab security scan triggered: pipeline ID ${PIPELINE_ID}"
+
+  # ============================================================================
+  # PHASE 6: SUMMARY
+  # ============================================================================
+
+  pipeline-summary:
+    name: Pipeline Summary
+    needs:
+      - prepare-nightly
+      - pre-commit
+      - unit-tests
+      - integration-tests
+      # - gpu-e2e-tests  # temporarily commented out with the job
+      - build-container
+      - create-multiarch-manifest-ecr
+      - stage-nightly-container
+      - stage-nightly-wheel
+      - trigger-gitlab-security-scan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write pipeline summary
+        env:
+          NIGHTLY_TAG:    ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+          CONTAINER_TAG:  ${{ needs.prepare-nightly.outputs.container_tag }}
+        run: |
+          {
+            echo "## Nightly Pipeline Summary"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Tag | \`${NIGHTLY_TAG}\` |"
+            echo "| Version | \`${WHEEL_VERSION}\` |"
+            echo "| Container Tag | \`${CONTAINER_TAG}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Git ref | \`refs/heads/main\` |"
+            echo "| Branch | \`main\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Release mode | ${{ needs.prepare-nightly.outputs.release }} |"
+            echo ""
+            echo "### Quality Gates"
+            echo "| Gate | Result |"
+            echo "|------|--------|"
+            echo "| pre-commit | ${{ needs.pre-commit.result }} |"
+            echo "| unit-tests | ${{ needs.unit-tests.result }} |"
+            echo "| integration-tests | ${{ needs.integration-tests.result }} |"
+            echo ""
+            echo "### Build + Upload"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| build-container (→ ECR + S3 wheel) | ${{ needs.build-container.result }} |"
+            echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
+            echo ""
+            echo "### Stage + Scan"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| stage-nightly-container (→ NGC staging) | ${{ needs.stage-nightly-container.result }} |"
+            echo "| stage-nightly-wheel (→ Artifactory) | ${{ needs.stage-nightly-wheel.result }} |"
+            echo "| trigger-gitlab-security-scan | ${{ needs.trigger-gitlab-security-scan.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on failure
+        if: ${{ failure() }}
+        env:
+          NIGHTLY_TAG:   ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK}" ]; then
+            echo "::warning::NIGHTLY_SLACK_WEBHOOK is not configured — skipping failure notification"
+            exit 0
+          fi
+          curl -fsSL \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data "{\"text\":\"Nightly pipeline failed: ${NIGHTLY_TAG}\n${RUN_URL}\"}" \
+            "${SLACK_WEBHOOK}"
