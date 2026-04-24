@@ -36,6 +36,7 @@ allow = [
     "LGPL-2.1-or-later",
     "LGPL-3.0-only",
     "PSF-2.0",
+    "AFL-2.1",
     "AFL-3.0",
     "HPND",
     "Artistic-2.0",
