@@ -40,11 +40,14 @@ from tools._core import (
 
 ENV_FILE = Path("src/aiperf/common/environment.py")
 # _Xx_Settings subgroups were split into sibling private modules; scan those too.
+# Operator environment (separate BaseSettings classes with their own env_prefix)
+# also contributes user-facing AIPERF_* env vars.
 ENV_FILES = [
     ENV_FILE,
     Path("src/aiperf/common/_env_data.py"),
     Path("src/aiperf/common/_env_network.py"),
     Path("src/aiperf/common/_env_services.py"),
+    Path("src/aiperf/operator/environment.py"),
 ]
 OUTPUT_FILE = Path("docs/environment-variables.md")
 
@@ -163,7 +166,6 @@ def parse_settings_file(path: Path) -> list[Settings]:
         if (
             isinstance(node, ast.ClassDef)
             and node.name.startswith("_")
-            and node.name.endswith("Settings")
             and (parsed := _parse_settings_class(node))
         ):
             settings.append(parsed)
@@ -221,6 +223,17 @@ def generate_markdown(settings_list: list[Settings]) -> str:
 
     for settings in sorted_settings:
         section = settings.env_prefix.replace("AIPERF_", "").replace("_", "")
+        if not section:
+            # Root settings classes share env_prefix `AIPERF_`; fall back to
+            # the class name (e.g. `_OperatorEnvironment` -> `OPERATOR`) so
+            # each class gets a distinct, non-empty heading.
+            section = (
+                settings.name.strip("_")
+                .replace("Environment", "")
+                .replace("Settings", "")
+                .upper()
+                or "ROOT"
+            )
         lines.append(f"## {section}")
         lines.append("")
         if settings.docstring:

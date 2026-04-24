@@ -22,6 +22,44 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## ROOT
+
+Root environment configuration with nested subsystem settings. This is a singleton instance that loads configuration from environment variables with the AIPERF_ prefix. Settings are organized into logical subsystems for better discoverability and maintainability. All nested settings can be configured via environment variables using the pattern: AIPERF_{SUBSYSTEM}_{SETTING_NAME} Example: AIPERF_HTTP_CONNECTION_LIMIT=5000 AIPERF_WORKER_CPU_UTILIZATION_FACTOR=0.8 AIPERF_ZMQ_RCVTIMEO=600000
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_API_SERVER` | — | — | API server settings |
+| `AIPERF_COMPRESSION` | — | — | Compression settings for streaming file transfers |
+| `AIPERF_CONFIG` | — | — | Configuration file paths for distributed deployments |
+| `AIPERF_DATASET` | — | — | Dataset loading and configuration settings |
+| `AIPERF_DEV` | — | — | Development and debugging settings |
+| `AIPERF_GPU` | — | — | GPU telemetry collection settings |
+| `AIPERF_HTTP` | — | — | HTTP client socket and connection settings |
+| `AIPERF_LOGGING` | — | — | Logging system settings |
+| `AIPERF_METRICS` | — | — | Metrics collection and storage settings |
+| `AIPERF_RECORD` | — | — | Record processing and export settings |
+| `AIPERF_SERVER_METRICS` | — | — | Server metrics collection settings |
+| `AIPERF_SERVICE` | — | — | Service lifecycle and communication settings |
+| `AIPERF_TIMING` | — | — | Timing manager settings |
+| `AIPERF_UI` | — | — | User interface and dashboard settings |
+| `AIPERF_WORKER` | — | — | Worker management and scaling settings |
+| `AIPERF_ZMQ` | — | — | ZMQ communication settings |
+
+## OPERATOR
+
+Root operator environment configuration. Loads from environment variables. Nested settings use their own prefixes.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_DEFAULT_IMAGE` | `'nvcr.io/nvidia/aiperf:latest'` | — | Default container image for benchmark jobs |
+| `AIPERF_JOB_TIMEOUT_SECONDS` | `0` | ≥ 0 | Job timeout in seconds (0 = no timeout) |
+| `AIPERF_POD_RESTART_THRESHOLD` | `3` | ≥ 0, ≤ 100 | Pod restart count before emitting a warning event |
+| `AIPERF_ENDPOINT_CHECK_TIMEOUT` | `10.0` | > 0, ≤ 300 | Seconds to wait for endpoint health check |
+| `AIPERF_PREFLIGHT_TIMEOUT` | `30.0` | > 0, ≤ 120 | Seconds to wait for all pre-flight checks to complete |
+| `AIPERF_CONFIGMAP_PROPAGATION_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 60 | Seconds to wait after creating the benchmark ConfigMap before creating the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before pods start mounting it, preventing FailedMount races on first deployment with a freshly pulled image. |
+| `AIPERF_MONITOR` | — | — | Monitor timer settings |
+| `AIPERF_RESULTS` | — | — | Results fetching and storage settings |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
@@ -125,6 +163,15 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
 
+## OPERATORMONITOR
+
+Timer settings for the kopf monitor handler.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_MONITOR_INTERVAL` | `10.0` | > 0, ≤ 3600 | Seconds between progress checks |
+| `AIPERF_OPERATOR_MONITOR_INITIAL_DELAY` | `5.0` | ≥ 0, ≤ 300 | Seconds before first progress check after job creation |
+
 ## RECORD
 
 Record processing and export configuration. Controls batch sizes, processor scaling, and progress reporting for record processing.
@@ -140,6 +187,19 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
 | `AIPERF_RECORD_CHECKPOINT_INTERVAL` | `30.0` | ≥ 1.0, ≤ 3600.0 | Interval in seconds between controller-side partial checkpoint writes |
+
+## RESULTS
+
+Results fetching and storage settings.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_RESULTS_DIR` | `Path('/data')` | — | Base directory for storing benchmark results (mounted PVC) |
+| `AIPERF_RESULTS_MAX_RETRIES` | `5` | ≥ 0, ≤ 50 | Max retries when fetching results from controller |
+| `AIPERF_RESULTS_RETRY_DELAY` | `2.0` | ≥ 0, ≤ 60 | Seconds between result fetch retries |
+| `AIPERF_RESULTS_TTL_DAYS` | `30` | ≥ 0, ≤ 3650 | Days to keep results before cleanup (0 = never clean) |
+| `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
+| `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
 
 ## SERVERMETRICS
 
