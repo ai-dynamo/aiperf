@@ -263,7 +263,12 @@ def main() -> None:
         print("License validation failed:\n" + "\n".join(failures), file=sys.stderr)
         sys.exit(1)
 
-    sorted_data = sorted(data, key=lambda x: x["Name"].lower())
+    # Filter first-party: we don't attribute ourselves. Matches pyproject.toml
+    # project.name. Update if the project is ever renamed.
+    sorted_data = sorted(
+        (pkg for pkg in data if pkg["Name"].lower() != "aiperf"),
+        key=lambda x: x["Name"].lower(),
+    )
 
     with output_md.open("w") as f:
         f.write(_HEADER)

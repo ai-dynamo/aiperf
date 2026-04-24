@@ -82,9 +82,10 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Install build dependencies; record which packages are new vs the base image
+# Install build dependencies. The dpkg-installed.txt snapshot was dropped:
+# nothing downstream consumes it, and shipping it alongside runtime-pkgs.txt
+# in the artifact was misleading (build-only packages that never ship).
 RUN mkdir -p /opt/licenses/dpkg \
-    && dpkg-query -W -f='${Package}\n' | sort > /tmp/dpkg-before.txt \
     && apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -94,9 +95,6 @@ RUN mkdir -p /opt/licenses/dpkg \
         yasm \
         libvpx-dev \
         zlib1g-dev \
-    && dpkg-query -W -f='${Package}\n' | sort \
-    | comm -13 /tmp/dpkg-before.txt - > /opt/licenses/dpkg/dpkg-installed.txt \
-    && rm /tmp/dpkg-before.txt \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
@@ -127,11 +125,16 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; }
 
 # Collect copyright files for packages whose files we explicitly copy into the runtime.
-# Scoped to /bin/bash and /opt/ffmpeg/lib/*.so* — the only dpkg-owned files we distribute.
-# libz and other distroless-base libraries are excluded because we never copy them.
-RUN dpkg -S /bin/bash $(find /opt/ffmpeg/lib -name "*.so*" -type f) 2>/dev/null \
-    | awk -F: '{print $1}' \
-    | sort -u > /opt/licenses/dpkg/runtime-pkgs.txt \
+# `dpkg -S` resolves paths against the dpkg database, which only tracks files at
+# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so* were copied from /usr/lib/
+# so querying /opt/ffmpeg/lib/ returns nothing for them — we must query the
+# /usr/lib/ source paths instead. /bin/bash is still at its dpkg-tracked location.
+RUN { dpkg -S /bin/bash 2>/dev/null; \
+      for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so*; do \
+        [ -e "$f" ] && dpkg -S "$f" 2>/dev/null; \
+      done; \
+    } | awk -F: '{print $1}' \
+      | sort -u > /opt/licenses/dpkg/runtime-pkgs.txt \
     && while read pkg; do \
         [ -f "/usr/share/doc/${pkg}/copyright" ] && \
           cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
