@@ -82,6 +82,14 @@ jobs:
         kubectl version --client || true
         helm version || true
 
+    - name: Build aiperf image
+      run: docker build -t aiperf:local .
+      timeout-minutes: 20
+
+    - name: Build mock server image
+      run: docker build -f dev/deploy/Dockerfile.mock-server -t aiperf-mock-server:latest .
+      timeout-minutes: 10
+
     - name: Run kubernetes tests
       id: pytest
       run: make kubernetes-tests-ci
