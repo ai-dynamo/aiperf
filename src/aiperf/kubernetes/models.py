@@ -206,6 +206,11 @@ class CRJobStatus(K8sCamelModel):
         default_factory=dict,
         description="Per-phase progress (PhaseProgress.to_k8s_dict() format).",
     )
+    run_epoch: int | None = Field(
+        default=None,
+        description="Epoch-seconds key of the most recent successful run. Use as "
+        "{epoch} in /api/v1/results/<ns>/<name>/runs/<epoch>/ to pin historical artifacts.",
+    )
 
     @field_validator("phase", mode="before")
     @classmethod

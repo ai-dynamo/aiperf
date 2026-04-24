@@ -304,6 +304,16 @@ class StatusBuilder:
         self._patch.status["resultsPath"] = path
         return self
 
+    def set_run_epoch(self, epoch: int) -> StatusBuilder:
+        """Set the epoch-seconds key of the most recent successful run.
+
+        Mirrors the on-disk <ns>/<name>/<epoch>/ directory key onto the CR status
+        so kubectl consumers can pin historical artifacts via
+        /api/v1/results/<ns>/<name>/runs/<epoch>/.
+        """
+        self._patch.status["runEpoch"] = epoch
+        return self
+
     def set_summary(self, summary: dict[str, Any]) -> StatusBuilder:
         """Set the metrics summary."""
         self._patch.status["summary"] = summary

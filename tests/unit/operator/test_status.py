@@ -1019,3 +1019,16 @@ class TestPreflightPassedConditionType:
         assert conditions[0]["status"] == "True"
         assert conditions[0]["reason"] == "PreflightPassed"
         assert conditions[0]["message"] == "All pre-flight checks passed"
+
+
+def test_status_builder_set_run_epoch_writes_int() -> None:
+    import kopf
+
+    from aiperf.operator.status import StatusBuilder
+
+    patch = kopf.Patch()
+    sb = StatusBuilder(patch)
+    result = sb.set_run_epoch(1714069323)
+    assert result is sb
+    assert patch.status["runEpoch"] == 1714069323
+    assert isinstance(patch.status["runEpoch"], int)
