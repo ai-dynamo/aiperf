@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import jinja2
 import orjson
@@ -19,6 +19,11 @@ from pydantic import Field, model_validator
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfError
 from aiperf.config._base import BaseConfig
+
+if TYPE_CHECKING:
+    # Avoid runtime import cycle: config.config imports config.artifacts which
+    # imports this module. The annotation is enough for type-checkers.
+    from aiperf.config.config import BenchmarkConfig
 
 _logger = AIPerfLogger(__name__)
 
@@ -136,17 +141,16 @@ class RunMeta:
 
 
 def build_user_file_context(
-    config: Any,
+    config: BenchmarkConfig,
     run_meta: RunMeta,
     run_dir: Path,
 ) -> dict[str, Any]:
     """Build the jinja2 context dict for user_files rendering.
 
     Args:
-        config: Resolved BenchmarkConfig (must expose ``.variables``, ``.models[0]``,
-            ``.endpoint.urls[0]``). Accepts a duck-typed object whose top-level
-            attributes match — the production callsite passes ``BenchmarkRun.cfg``
-            which is a ``BenchmarkConfig`` directly (no ``.benchmark`` wrapper).
+        config: Resolved BenchmarkConfig. The production callsite passes
+            ``BenchmarkRun.cfg`` which is a ``BenchmarkConfig`` directly
+            (no ``.benchmark`` wrapper).
         run_meta: Identity for the run (epoch, job_name, namespace).
         run_dir: Absolute path to the run directory on local disk.
 
@@ -157,18 +161,11 @@ def build_user_file_context(
     Side effects:
         Logs WARNING for each shadowed user variable.
     """
-    user_vars = dict(getattr(config, "variables", {}) or {})
+    user_vars = dict(config.variables or {})
     # BenchmarkConfig.models is a ModelsAdvanced, not a list — go through the
     # canonical helper which flattens .items[*].name into a list[str].
-    get_names = getattr(config, "get_model_names", None)
-    if callable(get_names):
-        models = get_names()
-    else:
-        # Duck-typed test stubs may pass a list directly under ``.models``.
-        raw = getattr(config, "models", None)
-        models = list(raw) if raw else []
-    endpoint = getattr(config, "endpoint", None)
-    endpoint_urls = getattr(endpoint, "urls", None) or []
+    models = config.get_model_names()
+    endpoint_urls = config.endpoint.urls or []
     injected = {
         "epoch": run_meta.epoch,
         "job_name": run_meta.job_name,

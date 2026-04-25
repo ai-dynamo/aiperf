@@ -90,23 +90,47 @@ def test_text_format_with_dict_content_rejected():
 # --- build_user_file_context --------------------------------------------------
 
 
-def _stub_config(variables=None, model="m", url="http://x"):
-    """Minimal duck-typed config for build_user_file_context.
+def _real_config(variables=None, model="m", url="http://x"):
+    """Build a real AIPerfConfig matching production shape, with optional variables.
 
-    Mirrors the BenchmarkConfig shape the production callsite passes:
-    ``models`` and ``endpoint`` live at the top level (no ``.benchmark`` wrapper).
+    Mirrors the YAML pattern in test_artifacts_user_files.py / test_variables_persist.py
+    so a future BenchmarkConfig refactor breaks here, not silently in production where
+    build_user_file_context reads ``.variables``, ``.endpoint.urls``, and
+    ``.get_model_names()``.
     """
-    from types import SimpleNamespace
+    from aiperf.config.loader import load_config_from_string
 
-    return SimpleNamespace(
-        variables=variables or {},
-        models=[model],
-        endpoint=SimpleNamespace(urls=[url]),
-    )
+    base = f"""
+models:
+  - {model}
+endpoint:
+  type: chat
+  urls: ["{url}"]
+datasets:
+  default:
+    type: synthetic
+    entries: 100
+    prompts:
+      isl: 128
+      osl: 64
+phases:
+  default:
+    type: concurrency
+    requests: 10
+    concurrency: 1
+"""
+    if variables:
+        vars_yaml = "variables:\n" + "".join(
+            f"  {k}: {v!r}\n" for k, v in variables.items()
+        )
+        yaml_str = vars_yaml + base
+    else:
+        yaml_str = base
+    return load_config_from_string(yaml_str)
 
 
 def test_context_includes_injected_names(tmp_path):
-    config = _stub_config(variables={"isl": 1024})
+    config = _real_config(variables={"isl": 1024})
     meta = RunMeta(epoch="1714", job_name="run-1", namespace="ns")
     ctx = build_user_file_context(config, meta, run_dir=tmp_path)
     assert ctx["epoch"] == "1714"
@@ -119,7 +143,7 @@ def test_context_includes_injected_names(tmp_path):
 
 
 def test_collision_injected_wins_and_warns(caplog):
-    config = _stub_config(variables={"epoch": "user-supplied"})
+    config = _real_config(variables={"epoch": "user-supplied"})
     meta = RunMeta(epoch="1714", job_name="r", namespace="")
     with caplog.at_level("WARNING"):
         ctx = build_user_file_context(config, meta, run_dir=Path("/tmp"))

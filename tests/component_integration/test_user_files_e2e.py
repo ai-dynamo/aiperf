@@ -152,3 +152,12 @@ def test_user_files_missing_variable_aborts_run(tmp_path: Path, cli: AIPerfCLI) 
     assert "bad.json" in combined, (
         f"expected 'bad.json' in error output; got:\n{combined}"
     )
+
+    # Fail-fast: render error must abort BEFORE benchmark output exists.
+    forbidden = {"profile_export.json", "records", "checkpoints"}
+    if artifact_dir.exists():
+        children_recursive = {p.name for p in artifact_dir.rglob("*")}
+        leaked = children_recursive & forbidden
+        assert not leaked, (
+            f"benchmark output materialized despite render failure: {leaked}"
+        )
