@@ -25,9 +25,15 @@ def test_defined_variable_renders_normally() -> None:
 
 
 def test_artifacts_user_files_subtree_skipped_during_render() -> None:
-    """artifacts.user_files content is rendered at run-time, not load-time."""
+    """artifacts.user_files content is rendered at run-time, not load-time.
+
+    Pins the ``prefix + "."`` boundary in ``_path_is_skipped``: a sibling under
+    ``artifacts`` whose name shares a prefix with ``user_files`` (none today, but
+    e.g. ``artifacts.benchmark_id``) MUST still render normally.
+    """
     data = {
         "artifacts": {
+            "benchmark_id": "{{ defined }}",  # sibling under artifacts: must render
             "user_files": [
                 {
                     "path": "x.json",
@@ -39,7 +45,9 @@ def test_artifacts_user_files_subtree_skipped_during_render() -> None:
         "other": "{{ defined }}",
     }
     result = render_jinja2_templates(data, context={"defined": "yes"})
-    # `other` rendered:
+    # Top-level non-skipped renders:
     assert result["other"] == "yes"
+    # Sibling under artifacts also renders (subtree skip is anchored, not substring):
+    assert result["artifacts"]["benchmark_id"] == "yes"
     # user_files content survived verbatim — no exception, no transformation:
     assert result["artifacts"]["user_files"][0]["content"]["k"] == "{{ undefined }}"
