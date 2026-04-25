@@ -43,12 +43,17 @@ endpoint:
 Result in the run directory:
 
 ```
-{artifact_dir}/{epoch}_{job_name}/
+{artifact_dir}/{epoch}_{job_name}/    # operator-managed (AIPerfJob)
 ├── input_config.json
 ├── meta/
 │   └── notes.md
 └── ... (standard AIPerf artifacts)
 ```
+
+For local `aiperf profile` runs the layout is whatever `artifacts.dir` points at —
+typically a single per-run directory with no `{epoch}_{job_name}` wrapper. The
+`{{ epoch }}` system-injected name still resolves: locally it's wall-clock seconds
+captured at run start, and `{{ job_name }}` is the `--artifact-dir` basename.
 
 ## Schema
 
@@ -63,6 +68,11 @@ Each entry is:
 Format/content compatibility:
 - `format: json` or `format: yaml` requires structured `content` (dict/list/scalar).
 - `format: text` requires string `content`.
+
+**Dict keys are not rendered.** Jinja2 expressions only resolve in string *values*,
+not in dict keys. `content: {"{{ model }}": "x"}` writes a file with the literal key
+`"{{ model }}"`, not the resolved model name. Put templated values where they belong
+— in values — or pre-flatten the dict before passing it to AIPerf.
 
 ## Templating context
 

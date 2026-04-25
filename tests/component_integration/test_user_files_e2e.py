@@ -13,6 +13,7 @@ from pathlib import Path
 
 import orjson
 import pytest
+import yaml
 
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
@@ -161,3 +162,71 @@ def test_user_files_missing_variable_aborts_run(tmp_path: Path, cli: AIPerfCLI) 
         assert not leaked, (
             f"benchmark output materialized despite render failure: {leaked}"
         )
+
+
+@pytest.mark.component_integration
+def test_user_files_e2e_renders_yaml(tmp_path: Path, cli: AIPerfCLI) -> None:
+    """`format: yaml` renders structured content via PyYAML safe_dump.
+
+    Asserts the file round-trips through ``yaml.safe_load`` to the originally
+    declared structure with rendered scalar coercion (int stays int, not "1024").
+    """
+    config_path = tmp_path / "config.yaml"
+    artifact_dir = tmp_path / "aiperf_output"
+    config_path.write_text(
+        f"""
+variables:
+  isl: 1024
+  osl: 512
+models:
+  - {defaults.model}
+endpoint:
+  type: chat
+  urls: ["http://localhost:8000"]
+artifacts:
+  dir: {artifact_dir}
+  user_files:
+    - path: deployment.yaml
+      format: yaml
+      content:
+        gpu_count: 8
+        isl: "{{{{ isl }}}}"
+        osl: "{{{{ osl }}}}"
+        endpoint: "{{{{ endpoint_url }}}}"
+        nested:
+          model: "{{{{ model }}}}"
+datasets:
+  default:
+    type: synthetic
+    entries: 5
+    prompts:
+      isl: 8
+      osl: 4
+phases:
+  default:
+    type: concurrency
+    requests: 3
+    concurrency: 1
+runtime:
+  ui: {defaults.ui}
+"""
+    )
+
+    cli.run_sync(
+        f"aiperf profile --config {config_path}",
+        timeout=defaults.timeout,
+    )
+
+    yaml_path = artifact_dir / "deployment.yaml"
+    assert yaml_path.exists(), f"missing {yaml_path}"
+
+    data = yaml.safe_load(yaml_path.read_text())
+    assert data == {
+        "gpu_count": 8,
+        "isl": 1024,
+        "osl": 512,
+        "endpoint": "http://localhost:8000",
+        "nested": {"model": defaults.model},
+    }
+    assert isinstance(data["isl"], int)
+    assert isinstance(data["nested"]["model"], str)

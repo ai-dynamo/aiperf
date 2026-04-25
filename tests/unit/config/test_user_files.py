@@ -258,3 +258,24 @@ def test_materialize_json_preserves_literal_strings(tmp_path):
     materialize_user_files(files, run_dir=tmp_path, context={"x": 42})
     data = json.loads((tmp_path / "a.json").read_text())
     assert data == {"literal_id": "42", "rendered_id": 42}
+
+
+def test_materialize_dict_keys_are_not_rendered(tmp_path):
+    """Jinja expressions in dict KEYS pass through verbatim — only VALUES render.
+
+    Locks in the documented contract (docs/kubernetes/user-files.md): the
+    materializer walks values recursively but never substitutes into keys, so
+    `{"{{ x }}": "y"}` writes a file with the literal key `"{{ x }}"`.
+    """
+    files = [
+        UserFile(
+            path="a.json",
+            format="json",
+            content={"{{ key_var }}": "{{ value_var }}"},
+        )
+    ]
+    materialize_user_files(
+        files, run_dir=tmp_path, context={"key_var": "k", "value_var": "v"}
+    )
+    data = json.loads((tmp_path / "a.json").read_text())
+    assert data == {"{{ key_var }}": "v"}
