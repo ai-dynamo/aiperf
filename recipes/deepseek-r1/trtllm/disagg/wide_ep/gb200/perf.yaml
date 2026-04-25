@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: DeepSeek-R1 (TRT-LLM, wide-EP disaggregated, GB200)
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: deepseek-r1-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  connectionsPerWorker: 252
+  benchmark:
+    variables:
+      concurrency_per_gpu: 30
+      deployment_gpu_count: 36
+      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+      isl: 1024
+      osl: 1024
+
+    random_seed: 100
+    models:
+      - deepseek-ai/DeepSeek-R1
+    tokenizer:
+      name: /model-cache/deepseek-r1-fp4
+    endpoint:
+      urls:
+        - http://trtllm-disagg-multinode-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      headers:
+        Authorization: "Bearer NOT USED"
+        Accept: "text/event-stream"
+      extra:
+        max_tokens: "{{ osl }}"
+        min_tokens: "{{ osl }}"
+        ignore_eos: true
+        nvext:
+          ignore_eos: true
+        repetition_penalty: 1.0
+        temperature: 0.0
+    datasets:
+      main:
+        type: synthetic
+        entries: 12800
+        prompts:
+          isl: "{{ isl }}"
+          osl: "{{ osl }}"
+    phases:
+      warmup:
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency }}"
+        exclude_from_results: true
+      profiling:
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency * 10 }}"
+    runtime:
+      ui: simple
+      record_processors: 32
+  podTemplate:
+    imagePullSecrets:
+      - nvcrimagepullsecret
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: nvidia.com/dynamo-graph-deployment-name
+                  operator: In
+                  values:
+                    - trtllm-disagg-multinode
+            topologyKey: kubernetes.io/hostname
+    env:
+      - name: HF_HOME
+        value: /model-cache
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "252"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache

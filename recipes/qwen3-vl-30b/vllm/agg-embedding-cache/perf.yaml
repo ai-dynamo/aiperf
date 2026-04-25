@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: Qwen3-VL-30B (vLLM, aggregated w/ embedding cache)
+# Single-turn file dataset with fixed OSL, constant arrival rate.
+#
+# Dataset file must be staged on the perf-cache PVC at:
+#   /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: qwen3-vl-agg-benchmark
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  benchmark:
+    models:
+      - Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+    endpoint:
+      urls:
+        - http://qwen3-vl-agg-frontend:8000
+      streaming: true
+      extra:
+        max_tokens: 150
+        min_tokens: 150
+        ignore_eos: true
+    datasets:
+      main:
+        type: file
+        path: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+        format: single_turn
+    phases:
+      warmup:
+        type: concurrency
+        concurrency: 64
+        requests: 3
+        exclude_from_results: true
+      profiling:
+        type: constant
+        rate: 64.0
+        concurrency: 64
+        requests: 1000
+        seamless: true
+    runtime:
+      ui: none
+  podTemplate:
+    volumes:
+      - name: perf-cache
+        persistentVolumeClaim:
+          claimName: perf-cache
+    volumeMounts:
+      - name: perf-cache
+        mountPath: /perf-cache

@@ -107,8 +107,8 @@ class TestRecipeCompleteness:
     """Verify all expected recipes exist."""
 
     def test_recipe_count(self) -> None:
-        assert len(RECIPE_FILES) == 17, (
-            f"Expected 17 recipes, found {len(RECIPE_FILES)}: "
+        assert len(RECIPE_FILES) == 27, (
+            f"Expected 27 recipes, found {len(RECIPE_FILES)}: "
             + ", ".join(str(p.relative_to(RECIPES_DIR)) for p in RECIPE_FILES)
         )
 
@@ -117,12 +117,22 @@ class TestRecipeCompleteness:
             "deepseek-r1/trtllm/disagg/wide_ep/gb200/perf.yaml",
             "deepseek-v32-fp4/trtllm/agg-round-robin/perf.yaml",
             "deepseek-v32-fp4/trtllm/disagg-kv-router/perf.yaml",
+            "deepseek-v4-flash/sglang/perf.yaml",
+            "deepseek-v4-flash/vllm/agg/perf.yaml",
+            "deepseek-v4-pro/sglang/perf.yaml",
+            "deepseek-v4-pro/vllm/agg/perf.yaml",
             "glm-5-nvfp4/sglang/disagg/perf.yaml",
             "gpt-oss-120b/trtllm/agg/perf.yaml",
             "gpt-oss-120b/trtllm/disagg/perf.yaml",
+            "kimi-k2.5/trtllm/agg/baseten/perf.yaml",
+            "kimi-k2.5/trtllm/agg/nvidia/perf.yaml",
             "llama-3-70b/vllm/agg/perf.yaml",
             "llama-3-70b/vllm/disagg-multi-node/perf.yaml",
             "llama-3-70b/vllm/disagg-single-node/perf.yaml",
+            "nemotron-3-super-fp8/sglang/agg/perf.yaml",
+            "nemotron-3-super-fp8/sglang/disagg/perf.yaml",
+            "nemotron-3-super-fp8/trtllm/disagg/perf.yaml",
+            "nemotron-3-super-fp8/vllm/agg/perf.yaml",
             "qwen3-235b-a22b-fp8/trtllm/agg/perf.yaml",
             "qwen3-235b-a22b-fp8/trtllm/disagg/perf.yaml",
             "qwen3-32b-fp8/trtllm/agg/perf.yaml",

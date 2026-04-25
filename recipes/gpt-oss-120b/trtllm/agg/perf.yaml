@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# AIPerfJob CR: gpt-oss-120B (TRT-LLM, aggregated)
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: gpt-oss-120b-bench
+spec:
+  # image: nvcr.io/nvidia/aiperf:latest
+  connectionsPerWorker: 252
+  benchmark:
+    variables:
+      concurrency_per_gpu: 900
+      deployment_gpu_count: 4
+      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+      isl: 128
+      osl: 1000
+
+    random_seed: 100
+    models:
+      - openai/gpt-oss-120b
+    tokenizer:
+      name: /model-cache/hub/models--openai--gpt-oss-120b/snapshots/b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+    endpoint:
+      urls:
+        - http://gpt-oss-agg-frontend:8000
+      type: chat
+      path: /v1/chat/completions
+      streaming: true
+      headers:
+        Authorization: "Bearer NOT USED"
+        Accept: "text/event-stream"
+      extra:
+        max_tokens: "{{ osl }}"
+        min_tokens: "{{ osl }}"
+        ignore_eos: true
+        nvext:
+          ignore_eos: true
+        repetition_penalty: 1.0
+        temperature: 0.0
+    datasets:
+      main:
+        type: synthetic
+        entries: 12800
+        prompts:
+          isl: {mean: "{{ isl }}", stddev: 0}
+          osl: {mean: "{{ osl }}", stddev: 0}
+    phases:
+      warmup:
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency }}"
+        exclude_from_results: true
+      profiling:
+        type: concurrency
+        concurrency: "{{ total_concurrency }}"
+        requests: "{{ total_concurrency * 10 }}"
+        seamless: true
+    runtime:
+      ui: simple
+      record_processors: 32
+  podTemplate:
+    imagePullSecrets:
+      - nvcrimagepullsecret
+    env:
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "252"
+      - name: HF_HOME
+        value: /model-cache
+      - name: TRANSFORMERS_OFFLINE
+        value: "1"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache
