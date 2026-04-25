@@ -1852,14 +1852,17 @@ class TestDashboardV2LogPane:
         """Phase-start and worker-error events must land in the log with
         distinct categories and severity classes."""
         payload = [
-            # First push establishes a worker in healthy state.
+            # First push: group is healthy.
             {
-                "type": "worker_health",
-                "worker_id": "w-alpha",
+                "type": "worker_group_stats",
+                "service_id": "wgm-0",
+                "group_id": "wgm-0",
                 "status": "healthy",
-                "in_flight": 0,
-                "completed": 0,
-                "failed": 0,
+                "task_stats": {"total": 0, "failed": 0, "completed": 0},
+                "worker_statuses": {"w-alpha": "healthy"},
+                "worker_startup_states": {},
+                "worker_task_stats": {},
+                "worker_health": {},
             },
             # Phase starts — info/phase.
             {
@@ -1870,14 +1873,17 @@ class TestDashboardV2LogPane:
                     "total_expected_requests": 100,
                 },
             },
-            # Worker flips to error — error/worker.
+            # Group flips to error — error/worker.
             {
-                "type": "worker_health",
-                "worker_id": "w-alpha",
+                "type": "worker_group_stats",
+                "service_id": "wgm-0",
+                "group_id": "wgm-0",
                 "status": "error",
-                "in_flight": 0,
-                "completed": 0,
-                "failed": 5,
+                "task_stats": {"total": 0, "failed": 5, "completed": 0},
+                "worker_statuses": {"w-alpha": "error"},
+                "worker_startup_states": {},
+                "worker_task_stats": {},
+                "worker_health": {},
             },
         ]
 
@@ -1915,12 +1921,15 @@ class TestDashboardV2LogPane:
         """Clicking the 'warn+' filter must hide info-only entries."""
         payload = [
             {
-                "type": "worker_health",
-                "worker_id": "w-a",
+                "type": "worker_group_stats",
+                "service_id": "wgm-0",
+                "group_id": "wgm-0",
                 "status": "healthy",
-                "in_flight": 0,
-                "completed": 0,
-                "failed": 0,
+                "task_stats": {"total": 0, "failed": 0, "completed": 0},
+                "worker_statuses": {"w-a": "healthy"},
+                "worker_startup_states": {},
+                "worker_task_stats": {},
+                "worker_health": {},
             },
             {
                 "type": "credit_phase_start",
@@ -1931,12 +1940,15 @@ class TestDashboardV2LogPane:
                 },
             },
             {
-                "type": "worker_health",
-                "worker_id": "w-a",
+                "type": "worker_group_stats",
+                "service_id": "wgm-0",
+                "group_id": "wgm-0",
                 "status": "high_load",
-                "in_flight": 5,
-                "completed": 40,
-                "failed": 0,
+                "task_stats": {"total": 45, "failed": 0, "completed": 40},
+                "worker_statuses": {"w-a": "high_load"},
+                "worker_startup_states": {},
+                "worker_task_stats": {},
+                "worker_health": {},
             },
         ]
 

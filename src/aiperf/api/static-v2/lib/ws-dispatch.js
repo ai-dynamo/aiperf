@@ -36,6 +36,12 @@ function applyRecords(patch) {
   records.value = { ...records.value, ...patch };
 }
 
+function shortGroupId(id) {
+  if (!id) return '';
+  const parts = id.split('-');
+  return parts.length <= 2 ? id : parts.slice(-2).join('-');
+}
+
 /** Replace one group entry from a WorkerGroupStatsMessage. */
 function applyGroupStats(msg) {
   const groupId = msg.group_id ?? msg.service_id;
@@ -70,7 +76,19 @@ function applyGroupStats(msg) {
     memory: msg.health?.memory_usage ?? null,
     workers: children,
   };
+  const prev = workerGroups.value[groupId];
   workerGroups.value = { ...workerGroups.value, [groupId]: group };
+  // Surface group-level health transitions in the log so users notice
+  // error / high_load rollups even when only the group row renders.
+  if (prev && prev.status !== group.status) {
+    if (group.status === 'error') {
+      log({ severity: 'error', category: 'worker',
+            message: `Group ${shortGroupId(groupId)} → error` });
+    } else if (group.status === 'high_load') {
+      log({ severity: 'warn', category: 'worker',
+            message: `Group ${shortGroupId(groupId)} under high load` });
+    }
+  }
 }
 
 export function handleWsMessage(msg) {
