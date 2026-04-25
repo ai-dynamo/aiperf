@@ -37,6 +37,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from aiperf.operator.results_layout import migrate_legacy_layout
 from aiperf.operator.results_server import create_app
 
 GOLDEN_RESULTS = (
@@ -146,6 +147,11 @@ def write_archived_job(results_dir: Path, namespace: str, name: str) -> None:
     # even though the UI's JS catch handler has resolved it to ``null``.
     # Drop a minimal spec so the config endpoint returns 200.
     (d / "job_spec.json").write_bytes(orjson.dumps({"benchmark": {}}))
+    # Fold the freshly-written flat layout into ``<name>/legacy/`` + a
+    # ``latest.txt=legacy`` pointer so ``resolve_run_dir`` finds the files.
+    # The session-scoped server runs this once at startup on an empty dir;
+    # per-test writes after that point need their own migration pass.
+    migrate_legacy_layout(results_dir)
 
 
 @pytest.fixture
@@ -164,6 +170,13 @@ def seeded_results_dir(live_operator_app: LiveApp) -> Path:
     for ns_dir in GOLDEN_RESULTS.iterdir():
         if ns_dir.is_dir():
             shutil.copytree(ns_dir, target / ns_dir.name)
+    # The session-scoped server ran ``migrate_legacy_layout`` once at
+    # startup against an empty dir; re-run it here so the flat golden
+    # tree (``<ns>/<name>/*.json``) gets folded into ``<name>/legacy/``
+    # with a ``latest.txt=legacy`` pointer. Without this, every
+    # ``resolve_run_dir`` lookup returns ``None`` and DuckDB summary,
+    # archive scanning, and the config endpoint's file branch all miss.
+    migrate_legacy_layout(target)
     return target
 
 
