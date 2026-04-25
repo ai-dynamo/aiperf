@@ -38,6 +38,7 @@ from aiperf.common.mixins.realtime_telemetry_metrics_mixin import (
 from aiperf.common.mixins.reply_client_mixin import ReplyClientMixin
 from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
 from aiperf.common.mixins.worker_tracker_mixin import (
+    LOCAL_GROUP_ID,
     WorkerGroupTracker,
     WorkerTrackerMixin,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "HealthServerMixin",
     "HooksMixin",
     "HttpTraceTiming",
+    "LOCAL_GROUP_ID",
     "MessageBusClientMixin",
     "ProcessHealthMixin",
     "ProgressTracker",

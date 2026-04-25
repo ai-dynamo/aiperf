@@ -19,13 +19,19 @@ from aiperf.common.models import (
     WorkerStats,
     WorkerTaskStats,
 )
+from aiperf.workers.worker_group_state import worst_status
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
 
-_FAKE_GROUP_ID = "local"
-"""Synthetic group id used in fake-in-process mode where no real WGM exists."""
+LOCAL_GROUP_ID = "local"
+"""Public synthetic group id used in fake-in-process mode where no real WGM exists.
+
+Exposed (rather than module-private) so the API router and dashboard renderer
+can reference the same constant when distinguishing the synthetic local group
+from real WGM-keyed groups.
+"""
 
 
 class WorkerGroupTracker:
@@ -38,6 +44,13 @@ class WorkerGroupTracker:
 
     def __init__(self) -> None:
         self._groups: dict[str, WorkerGroupStats] = {}
+
+    def _ensure_local_group(self) -> tuple[WorkerGroupStats, dict[str, WorkerStats]]:
+        """Return the synthetic local group (creating it if absent) and a mutable copy of its children."""
+        group = self._groups.get(LOCAL_GROUP_ID)
+        if group is None:
+            group = WorkerGroupStats(group_id=LOCAL_GROUP_ID)
+        return group, dict(group.workers)
 
     def update_from_group_message(
         self, message: WorkerGroupStatsMessage
@@ -78,10 +91,7 @@ class WorkerGroupTracker:
         Only used by fake-in-process tests where workers publish
         WORKER_HEALTH directly (no WorkerGroupManager exists).
         """
-        group = self._groups.get(_FAKE_GROUP_ID) or WorkerGroupStats(
-            group_id=_FAKE_GROUP_ID
-        )
-        children = dict(group.workers)
+        group, children = self._ensure_local_group()
         children[worker_id] = WorkerStats(
             worker_id=worker_id,
             status=WorkerStatus.HEALTHY,
@@ -97,6 +107,8 @@ class WorkerGroupTracker:
             healthy_children = [c for c in children.values() if c.health is not None]
             if healthy_children:
                 first = healthy_children[0].health
+                # synthetic local-mode aggregate; pid/create_time copied from an arbitrary
+                # first child since fake-in-process doesn't model a single owning process.
                 group.health = ProcessHealth(
                     pid=first.pid,
                     create_time=first.create_time,
@@ -106,7 +118,8 @@ class WorkerGroupTracker:
                     memory_usage=sum(c.health.memory_usage for c in healthy_children),
                 )
         group.declared_workers = max(group.declared_workers, len(children))
-        self._groups[_FAKE_GROUP_ID] = group
+        group.status = worst_status(c.status for c in children.values())
+        self._groups[LOCAL_GROUP_ID] = group
         return group
 
     def update_worker_statuses(self, worker_statuses: dict[str, WorkerStatus]) -> None:
@@ -115,30 +128,29 @@ class WorkerGroupTracker:
         Folded under the synthetic ``local`` group when there is no
         matching WGM-keyed group yet.
         """
-        group = self._groups.get(_FAKE_GROUP_ID) or WorkerGroupStats(
-            group_id=_FAKE_GROUP_ID
-        )
-        children = dict(group.workers)
+        group, children = self._ensure_local_group()
         for worker_id, status in worker_statuses.items():
-            child = children.get(worker_id) or WorkerStats(worker_id=worker_id)
+            child = children.get(worker_id)
+            if child is None:
+                child = WorkerStats(worker_id=worker_id)
             child.status = status
             children[worker_id] = child
         group.workers = children
-        self._groups[_FAKE_GROUP_ID] = group
+        group.status = worst_status(c.status for c in children.values())
+        self._groups[LOCAL_GROUP_ID] = group
 
     def update_worker_startup_states(
         self, worker_startup_states: dict[str, WorkerStartupState]
     ) -> None:
-        group = self._groups.get(_FAKE_GROUP_ID) or WorkerGroupStats(
-            group_id=_FAKE_GROUP_ID
-        )
-        children = dict(group.workers)
+        group, children = self._ensure_local_group()
         for worker_id, startup_state in worker_startup_states.items():
-            child = children.get(worker_id) or WorkerStats(worker_id=worker_id)
+            child = children.get(worker_id)
+            if child is None:
+                child = WorkerStats(worker_id=worker_id)
             child.startup_state = startup_state
             children[worker_id] = child
         group.workers = children
-        self._groups[_FAKE_GROUP_ID] = group
+        self._groups[LOCAL_GROUP_ID] = group
 
     def get_group(self, group_id: str) -> WorkerGroupStats | None:
         return self._groups.get(group_id)

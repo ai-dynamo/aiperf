@@ -9,7 +9,10 @@ import pytest
 
 from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.messages import WorkerGroupStatsMessage
-from aiperf.common.mixins.worker_tracker_mixin import WorkerGroupTracker
+from aiperf.common.mixins.worker_tracker_mixin import (
+    LOCAL_GROUP_ID,
+    WorkerGroupTracker,
+)
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 
 
@@ -86,7 +89,7 @@ class TestFakeInProcessFallback:
         tracker.update_from_worker_health(
             "w-0", _health(cpu=20.0), WorkerTaskStats(total=3)
         )
-        group = tracker.get_group("local")
+        group = tracker.get_group(LOCAL_GROUP_ID)
         assert group is not None
         assert group.workers["w-0"].task_stats.total == 3
 
@@ -99,7 +102,7 @@ class TestFakeInProcessFallback:
         tracker.update_from_worker_health(
             "w-1", _health(cpu=30.0, mem=2000), WorkerTaskStats(total=4)
         )
-        group = tracker.get_group("local")
+        group = tracker.get_group(LOCAL_GROUP_ID)
         assert group is not None
         assert group.task_stats.total == 6
         assert group.health is not None
