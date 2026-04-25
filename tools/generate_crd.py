@@ -402,6 +402,11 @@ def _status_schema() -> dict[str, Any]:
                 "type": "string",
                 "description": "Path to stored results on operator PVC",
             },
+            "runEpoch": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Epoch-seconds key of the most recent successful run. Use as {epoch} in /api/v1/results/<ns>/<name>/runs/<epoch>/ to pin historical artifacts.",
+            },
             "liveSummary": {
                 "type": "object",
                 "x-kubernetes-preserve-unknown-fields": True,

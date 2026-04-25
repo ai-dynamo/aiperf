@@ -184,7 +184,6 @@ def load_config_from_string(
     # Render Jinja2 templates (after env vars, before validation)
     context = build_template_context(data)
     data = render_jinja2_templates(data, context)
-    data.pop("variables", None)
 
     return _validate_config_dict(data, file_path)
 

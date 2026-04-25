@@ -268,6 +268,18 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    variables: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description=(
+                "User-defined variables for jinja2 templating in this config. "
+                "Resolved at config load and preserved for run-time renderers "
+                "(e.g. artifacts.user_files)."
+            ),
+        ),
+    ]
+
     # ==========================================================================
     # VALIDATORS
     # ==========================================================================

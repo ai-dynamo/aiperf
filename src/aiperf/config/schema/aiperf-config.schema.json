@@ -6226,6 +6226,12 @@
       "title": "Randomseed",
       "x-jinja2-supported": true
     },
+    "variables": {
+      "additionalProperties": true,
+      "description": "User-defined variables for jinja2 templating in this config. Resolved at config load and preserved for run-time renderers (e.g. artifacts.user_files).",
+      "title": "Variables",
+      "type": "object"
+    },
     "sweep": {
       "anyOf": [
         {
