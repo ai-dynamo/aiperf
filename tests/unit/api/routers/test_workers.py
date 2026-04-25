@@ -43,8 +43,11 @@ class TestWorkersEndpoint:
             param([WorkerStatus.HEALTHY], 1, id="one-healthy"),
             param([WorkerStatus.IDLE], 0, id="one-idle"),
             param([WorkerStatus.HIGH_LOAD], 1, id="one-high-load"),
+            param([WorkerStatus.ERROR], 0, id="one-error"),
+            param([WorkerStatus.STALE], 0, id="one-stale"),
             param([WorkerStatus.HEALTHY, WorkerStatus.HEALTHY], 2, id="two-healthy"),
             param([WorkerStatus.HEALTHY, WorkerStatus.IDLE], 1, id="one-healthy-one-idle"),
+            param([WorkerStatus.HIGH_LOAD, WorkerStatus.HEALTHY], 2, id="high-load-and-healthy"),
         ],
     )  # fmt: skip
     def test_single_group_active_count(

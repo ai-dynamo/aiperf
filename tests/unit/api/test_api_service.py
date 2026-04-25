@@ -19,9 +19,8 @@ from aiperf.common.compression import (
     is_zstd_available,
     select_encoding,
 )
-from aiperf.common.enums import LifecycleState, WorkerStatus
+from aiperf.common.enums import LifecycleState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import WorkerStats
 from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import ServiceType
 
@@ -411,42 +410,6 @@ class TestHTTPEndpoints:
         assert "warmup" in data["phases"]
         assert data["phases"]["warmup"]["total_expected_requests"] == 100
         assert data["phases"]["warmup"]["requests_completed"] == 50
-
-    def test_workers_empty(self, api_test_client: TestClient) -> None:
-        """Test workers endpoint with no workers."""
-        response = api_test_client.get("/api/workers")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["workers"] == {}
-
-    @pytest.mark.parametrize(
-        "statuses,expected_active",
-        [
-            param([WorkerStatus.HEALTHY], 1, id="one-healthy"),
-            param([WorkerStatus.IDLE], 0, id="one-idle"),
-            param([WorkerStatus.HIGH_LOAD], 1, id="one-high-load"),
-            param([WorkerStatus.ERROR], 0, id="one-error"),
-            param([WorkerStatus.STALE], 0, id="one-stale"),
-            param([WorkerStatus.HEALTHY, WorkerStatus.HEALTHY], 2, id="two-healthy"),
-            param([WorkerStatus.HEALTHY, WorkerStatus.IDLE], 1, id="one-healthy-one-idle"),
-            param([WorkerStatus.HIGH_LOAD, WorkerStatus.HEALTHY], 2, id="high-load-and-healthy"),
-        ],
-    )  # fmt: skip
-    def test_workers_active_count(
-        self,
-        api_test_client: TestClient,
-        mock_fastapi_service: FastAPIService,
-        statuses: list[WorkerStatus],
-        expected_active: int,
-    ) -> None:
-        """Test workers endpoint returns correct worker statuses."""
-        mock_fastapi_service._routers["workers"]._worker_tracker._workers_stats = {
-            f"worker-{i}": WorkerStats(worker_id=f"worker-{i}", status=status)
-            for i, status in enumerate(statuses)
-        }
-        response = api_test_client.get("/api/workers")
-        data = response.json()
-        assert len(data["workers"]) == len(statuses)
 
     @pytest.mark.skip(
         reason="/api/server-metrics not yet migrated to router-based architecture"
