@@ -45,6 +45,16 @@ Jinja2 Template Syntax:
     {{ phases.test.concurrency }} - Self-reference to config values
     {{ var * 2 }}                - Expression evaluation
     {{ var | int }}              - Filter application
+
+    Variables may also reference each other (any YAML order, dependency-resolved):
+        variables:
+          concurrency_per_gpu: 30
+          deployment_gpu_count: 4
+          total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"
+        phases:
+          profiling:
+            concurrency: "{{ total_concurrency }}"   # 120
+    Cycles among variables raise ConfigurationError listing the participating names.
 """
 
 from __future__ import annotations

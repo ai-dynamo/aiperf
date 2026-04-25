@@ -78,7 +78,7 @@ not in dict keys. `content: {"{{ model }}": "x"}` writes a file with the literal
 
 Inside `content`, you can reference:
 
-**1. User-declared variables** — anything you put in the top-level `variables:` block of your config.
+**1. User-declared variables** — anything you put in the top-level `variables:` block of your config. Variables may reference each other (in any YAML order); cross-references are resolved in dependency order at config-load time, so a derived variable like `total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"` already holds its computed value (`120`) by the time `user_files` rendering runs. Cycles raise `ConfigurationError`.
 
 **2. System-injected names** (stable API):
 
