@@ -455,4 +455,5 @@ The complete, generated reference for every `AIPERF_*` variable (including non-k
 - [Preflight Checks](preflight.md) -- What the operator validates before admitting a CR
 - [Memory Estimator](memory-estimator.md) -- How per-component memory estimates drive resource requests
 - [Direct Mode](direct-mode.md) -- Trade-offs when running `--no-operator`
+- [User-defined output files](user-files.md) -- `artifacts.user_files` for templated sidecar files
 - [YAML Config Reference](../tutorials/yaml-config.md) -- Complete benchmark configuration options

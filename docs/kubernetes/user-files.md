@@ -1,0 +1,114 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# User-Defined Output Files (`artifacts.user_files`)
+
+`artifacts.user_files` lets you declare arbitrary templated output files that are
+materialized into the run directory before the benchmark begins. Files are rendered
+with jinja2 against the user `variables:` block plus a small set of system-injected
+names. The same mechanism works for `aiperf profile` (local) and `AIPerfJob`
+(Kubernetes) — both load the same config block.
+
+## Quickstart
+
+```yaml
+variables:
+  isl: 1024
+  osl: 512
+
+artifacts:
+  user_files:
+    - path: input_config.json
+      format: json                 # optional; inferred from content type
+      content:
+        isl: "{{ isl }}"
+        osl: "{{ osl }}"
+        endpoint: "{{ endpoint_url }}"
+        model: "{{ model }}"
+
+    - path: meta/notes.md          # subdirectories allowed
+      content: |
+        Run {{ job_name }} started at {{ epoch }}.
+        Targeting {{ model }} @ {{ endpoint_url }}.
+
+models:
+  - my-org/my-model
+endpoint:
+  type: chat
+  urls: ["http://my-frontend:8000"]
+```
+
+Result in the run directory:
+
+```
+{artifact_dir}/{epoch}_{job_name}/
+├── input_config.json
+├── meta/
+│   └── notes.md
+└── ... (standard AIPerf artifacts)
+```
+
+## Schema
+
+Each entry is:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | Output path **relative** to the run directory. Subdirectories OK. Absolute paths and any segment equal to `..` are rejected. |
+| `format` | `json` \| `yaml` \| `text` | no | Serialization format. If omitted: `text` when `content` is a string, `json` otherwise. |
+| `content` | structured or string | yes | Templated value. Dict/list/scalar for `json`/`yaml`; string for `text`. Jinja2 expressions in any string leaf are rendered. |
+
+Format/content compatibility:
+- `format: json` or `format: yaml` requires structured `content` (dict/list/scalar).
+- `format: text` requires string `content`.
+
+## Templating context
+
+Inside `content`, you can reference:
+
+**1. User-declared variables** — anything you put in the top-level `variables:` block of your config.
+
+**2. System-injected names** (stable API):
+
+| Name | Type | Meaning |
+|---|---|---|
+| `epoch` | str | Run epoch identifier (e.g. `"1714000000"`). |
+| `job_name` | str | AIPerfJob name in Kubernetes; `--artifact-dir` basename locally. |
+| `namespace` | str | Kubernetes namespace; empty string locally. |
+| `model` | str | First entry of `benchmark.models`. |
+| `endpoint_url` | str | First entry of `benchmark.endpoint.urls`. |
+| `artifact_dir` | str | Absolute path to the run directory. |
+
+**Collision rule:** if a user `variables:` key shadows an injected name, the injected name wins and a `WARNING` is logged at startup. Rename your variable.
+
+## Errors
+
+These are all fatal — the benchmark does not start.
+
+| Failure | Cause | Where you see it |
+|---|---|---|
+| Path validation | Absolute path, `..` segment, empty path, control chars | Config load (pydantic `ValidationError`) |
+| Format/content mismatch | e.g. `format: json` with `content: "string"` | Config load (pydantic `ValidationError`) |
+| Undefined variable | Template references a name not in context | Run start (`UserFileError`); message names the file path and the variable |
+| Path escape | Resolved path is not inside the run directory | Run start (`UserFileError`) |
+| Write failure | Disk full, permission denied, etc. | Run start (`UserFileError`); message includes resolved path and OS error |
+
+In Kubernetes, controller-pod failures surface on `status.phase: Failed` with the
+error in `status.conditions`.
+
+## Use cases
+
+- **Sidecar metadata** — produce an `input_config.json` for downstream tooling that expects
+  the dynamo-style deployment-shape file.
+- **Run notes** — write a `notes.md` summarizing what this run is for, who triggered it.
+- **Manifests** — emit a manifest a downstream pipeline will read.
+
+## Limitations (v1)
+
+- **Pre-run only.** Files render before the benchmark starts. Post-run files that include
+  results are tracked as a future extension.
+- **Files always overwrite.** No `overwrite: false` safety net.
+- **No `required: false`.** Every declared file must materialize successfully or the run aborts.
+- **Strict undefined.** A typo in `{{ varaibles_name }}` is a hard error, not a silent empty string.

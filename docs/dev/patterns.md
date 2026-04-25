@@ -660,6 +660,17 @@ async def _resolve_result_file(base_dir: Path, filename: str) -> Path:
 
 Reference file: `src/aiperf/kubernetes/results_sidecar.py`. Writer: `src/aiperf/controller/system_controller.py`. Reader: `src/aiperf/api/routers/results.py`.
 
+## User-Defined Templated Outputs Pattern
+
+### User-defined templated outputs
+
+Configs may declare arbitrary output files via `artifacts.user_files`. Each entry
+is `{path, format, content}`; content is rendered with jinja2 (StrictUndefined)
+against `variables:` plus a documented set of injected names (`epoch`,
+`job_name`, `namespace`, `model`, `endpoint_url`, `artifact_dir`). Files
+materialize into the run directory before the benchmark starts. See
+`docs/kubernetes/user-files.md` for the full reference.
+
 ## Error Handling Pattern
 
 Log errors and publish `ErrorDetails` in messages:
