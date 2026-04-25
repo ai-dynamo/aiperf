@@ -16,6 +16,14 @@ from aiperf.config.loader.errors import ConfigurationError
 # that are rendered at request time by the template endpoint, not at config load time)
 SKIP_TEMPLATE_FIELDS = {"template", "body", "payload_template"}
 
+# Strict undefined surfaces typo'd / missing variables as ConfigurationError at load time
+# rather than silently rendering empty strings that downstream parsers must catch.
+_JINJA_ENV = jinja2.Environment(
+    undefined=jinja2.StrictUndefined,
+    autoescape=False,
+    keep_trailing_newline=True,
+)
+
 
 def build_template_context(data: dict[str, Any]) -> dict[str, Any]:
     """Build context for Jinja2 template rendering.
@@ -81,7 +89,7 @@ def _render_template_string(
         return data
 
     try:
-        template = jinja2.Template(data)
+        template = _JINJA_ENV.from_string(data)
         rendered = template.render(**context)
     except jinja2.TemplateError as e:
         raise ConfigurationError(
