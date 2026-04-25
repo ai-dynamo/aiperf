@@ -177,7 +177,7 @@ def preload_tokenizers(
     if logger:
         logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
 
-    all_succeeded = True
+    failed: list[str] = []
     for name in names_to_load:
         if logger:
             logger.info(f"  Caching tokenizer: {name}")
@@ -190,15 +190,17 @@ def preload_tokenizers(
                 revision=revision,
                 resolve_alias=False,  # already resolved by validate_tokenizer_early
             )
-        except Exception as e:
-            all_succeeded = False
-            if logger:
-                logger.warning(
-                    f"  Failed to preload tokenizer '{name}': {e}. "
-                    "Child processes will attempt to load it themselves."
-                )
+        except Exception:  # noqa: BLE001
+            failed.append(name)
 
-    if all_succeeded:
+    if failed:
+        if logger:
+            names_str = ", ".join(f"'{n}'" for n in failed)
+            logger.warning(
+                f"Failed to preload {len(failed)} tokenizer(s): {names_str}. "
+                "Child processes will attempt to load them themselves."
+            )
+    else:
         _enable_hf_offline_mode(logger)
 
 
