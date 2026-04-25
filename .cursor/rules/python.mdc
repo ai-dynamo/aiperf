@@ -204,6 +204,7 @@ When making changes, update the appropriate documentation files. When adding a n
 | New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
 | Kubernetes operator, handlers, CR lifecycle | `docs/dev/kubernetes-flow.md` |
 | Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` + `docs/kubernetes/workflow.md` |
+| User-defined templated output files (`artifacts.user_files`) | `docs/kubernetes/user-files.md` |
 | Kubernetes RBAC, securityContext, NetworkPolicy | `docs/kubernetes/rbac-security.md` |
 | Kube preflight checks / validate / debug | `docs/kubernetes/preflight.md` + `docs/kubernetes/validate.md` + `docs/kubernetes/debug-command.md` |
 | Kube attach / logs command deep-dives | `docs/kubernetes/attach.md` + `docs/kubernetes/logs.md` |
