@@ -71,6 +71,8 @@ class UserFile(BaseConfig):
             raise ValueError(
                 f"user_files path contains control characters: {self.path!r}"
             )
+        # Always POSIX semantics: paths resolve under the run directory inside
+        # the operator pod, regardless of where the YAML was authored.
         p = PurePosixPath(self.path)
         if p.is_absolute():
             raise ValueError(f"user_files absolute path rejected: {self.path!r}")
