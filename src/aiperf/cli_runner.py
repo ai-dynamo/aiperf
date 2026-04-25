@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import contextlib
 import sys
 from typing import TYPE_CHECKING
@@ -104,11 +105,13 @@ def _run_single_benchmark(
 
     # Preload tokenizer files into HF disk cache so child processes use
     # local_files_only=True and make zero HF network calls.
-    preload_tokenizers(
-        user_config.tokenizer.resolved_names,
-        trust_remote_code=user_config.tokenizer.trust_remote_code,
-        revision=user_config.tokenizer.revision,
-        logger=logger,
+    asyncio.run(
+        preload_tokenizers(
+            user_config.tokenizer.resolved_names,
+            trust_remote_code=user_config.tokenizer.trust_remote_code,
+            revision=user_config.tokenizer.revision,
+            logger=logger,
+        )
     )
 
     # Validate custom GPU metrics CSV file
@@ -197,11 +200,13 @@ def _run_multi_benchmark(
     )
 
     user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
-    preload_tokenizers(
-        user_config.tokenizer.resolved_names,
-        trust_remote_code=user_config.tokenizer.trust_remote_code,
-        revision=user_config.tokenizer.revision,
-        logger=logger,
+    asyncio.run(
+        preload_tokenizers(
+            user_config.tokenizer.resolved_names,
+            trust_remote_code=user_config.tokenizer.trust_remote_code,
+            revision=user_config.tokenizer.revision,
+            logger=logger,
+        )
     )
 
     # Inform user about UI mode (now that logging is set up)
@@ -353,7 +358,6 @@ def _run_multi_benchmark(
 
         # Export both JSON and CSV in a single async context
         # This avoids multiple asyncio.run() calls and is more efficient
-        import asyncio
 
         # Compute detailed aggregation synchronously before async export
         # (CPU-bound work with no benefit from async offload)

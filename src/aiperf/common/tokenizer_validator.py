@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import time
@@ -110,7 +111,7 @@ def validate_tokenizer_early(
     return resolved
 
 
-def preload_tokenizers(
+async def preload_tokenizers(
     resolved_names: dict[str, str] | None,
     trust_remote_code: bool = False,
     revision: str = "main",
@@ -184,7 +185,8 @@ def preload_tokenizers(
         try:
             # Discard result — side effect is populating the HF disk cache so
             # child processes find it cached and skip all network calls.
-            Tokenizer.from_pretrained(
+            await asyncio.to_thread(
+                Tokenizer.from_pretrained,
                 name,
                 trust_remote_code=trust_remote_code,
                 revision=revision,
