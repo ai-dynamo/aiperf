@@ -58,7 +58,11 @@ from aiperf.common.models.health_models import (
     ProcessHealth,
     ProcessHealthAggregates,
 )
-from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
+from aiperf.common.models.progress_models import (
+    WorkerGroupStats,
+    WorkerProcessingStats,
+    WorkerStats,
+)
 from aiperf.common.models.record_models import (
     BaseResponseData,
     BinaryResponse,
@@ -248,6 +252,7 @@ __all__ = [
     "Usage",
     "Video",
     "VideoResponseData",
+    "WorkerGroupStats",
     "WorkerProcessingStats",
     "WorkerStats",
     "WorkerTaskStats",

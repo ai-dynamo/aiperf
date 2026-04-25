@@ -66,3 +66,30 @@ class WorkerStartupStateMessage(
 
     startup_state: WorkerStartupState
     request_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]
+
+
+class WorkerGroupStatsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.WORKER_GROUP_STATS.value
+):
+    """Aggregate stats for a single worker-group manager.
+
+    Per-worker maps (statuses, startup states, task stats, health) are carried
+    inline so the controller can populate ``WorkerGroupStats.workers`` with
+    full ``WorkerStats`` for the per-child dropdown rendered by the local
+    web UI when exactly one group exists.
+    """
+
+    group_id: str
+    status: WorkerStatus
+    task_stats: WorkerTaskStats
+    startup_state: WorkerStartupState | None = None
+    declared_workers: int = 0
+    ready_workers: int = 0
+    health: ProcessHealth | None = None
+    worker_statuses: dict[str, WorkerStatus] = msgspec.field(default_factory=dict)
+    worker_startup_states: dict[str, WorkerStartupState] = msgspec.field(
+        default_factory=dict
+    )
+    worker_task_stats: dict[str, WorkerTaskStats] = msgspec.field(default_factory=dict)
+    worker_health: dict[str, ProcessHealth] = msgspec.field(default_factory=dict)
+    last_update_ns: int = msgspec.field(default_factory=time.time_ns)  # type: ignore[assignment]

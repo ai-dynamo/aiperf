@@ -56,3 +56,27 @@ class WorkerStats:
     startup_state: WorkerStartupState | None = None
     startup_state_updated_ns: int | None = None
     last_update_ns: int | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class WorkerGroupStats:
+    """Aggregate stats for one worker-group (one WorkerGroupManager).
+
+    Mutable slotted dataclass, shared between msgspec (HTTP /api/workers
+    payload encoded via msgspec) and Pydantic (``WorkersResponse``).
+
+    ``workers`` is the per-child WorkerStats map, used by the local web UI
+    when there is exactly one group (expandable dropdown).
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    group_id: str
+    status: WorkerStatus = WorkerStatus.IDLE
+    startup_state: WorkerStartupState | None = None
+    declared_workers: int = 0
+    ready_workers: int = 0
+    health: ProcessHealth | None = None
+    task_stats: WorkerTaskStats = field(default_factory=WorkerTaskStats)
+    workers: dict[str, WorkerStats] = field(default_factory=dict)
+    last_update_ns: int | None = None

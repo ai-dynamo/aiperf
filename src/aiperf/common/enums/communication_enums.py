@@ -118,6 +118,7 @@ class MessageType(CaseInsensitiveStrEnum):
     STATUS = "status"
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
+    WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"
     WORKER_POD_STATE = "worker_pod_state"
     WORKER_STARTUP_STATE = "worker_startup_state"
