@@ -14,7 +14,7 @@ from pydantic import Field
 
 from aiperf.common.enums import CaseInsensitiveStrEnum, CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import AIPerfBaseModel, WorkerStats
+from aiperf.common.models import AIPerfBaseModel, WorkerGroupStats
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.controller.system_controller import AggregateWorkerStatus
 
@@ -32,9 +32,11 @@ class ProgressResponse(AIPerfBaseModel):
 
 
 class WorkersResponse(AIPerfBaseModel):
-    """Worker status response."""
+    """Per-worker-group stats payload for /api/workers."""
 
-    workers: dict[str, WorkerStats] = Field(description="Per-worker stats")
+    worker_groups: dict[str, WorkerGroupStats] = Field(
+        description="Per-worker-group aggregated stats keyed by group_id."
+    )
 
 
 class BenchmarkStatus(CaseInsensitiveStrEnum):

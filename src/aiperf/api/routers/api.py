@@ -54,9 +54,9 @@ async def get_progress(svc: ServiceDep) -> ProgressResponse:
 
 @api_router.get("/api/workers", response_model=WorkersResponse, tags=["API"])
 async def get_workers(svc: ServiceDep) -> WorkersResponse:
-    """Get worker status with full stats."""
+    """Get worker-group status with full per-group stats and per-child rollup."""
     return WorkersResponse(
-        workers=svc._worker_tracker.workers,
+        worker_groups=svc._worker_tracker.worker_groups,
     )
 
 
