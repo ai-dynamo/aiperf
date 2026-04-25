@@ -28,6 +28,7 @@ from aiperf.common.enums import (
 )
 from aiperf.config._base import BaseConfig
 from aiperf.config.phases import _normalize_duration
+from aiperf.config.user_files import UserFile
 
 __all__ = [
     "ArtifactsConfig",
@@ -147,9 +148,17 @@ class ArtifactsConfig(BaseConfig):
         str,
         Field(
             default_factory=lambda: __import__("uuid").uuid4().hex,
-            description="Unique identifier for this benchmark run. "
-            "Used to correlate artifacts across export formats. "
-            "Auto-generated if not provided.",
+            description="Unique identifier for this benchmark run, "
+            "used to correlate artifacts across export formats. Auto-generated if absent.",
+        ),
+    ]
+
+    user_files: Annotated[
+        list[UserFile],
+        Field(
+            default_factory=list,
+            description="User-defined templated files materialized into the run directory "
+            "before the benchmark begins. See docs/kubernetes/user-files.md.",
         ),
     ]
 

@@ -261,9 +261,17 @@
           "title": "Clicommand"
         },
         "benchmarkId": {
-          "description": "Unique identifier for this benchmark run. Used to correlate artifacts across export formats. Auto-generated if not provided.",
+          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. Auto-generated if absent.",
           "title": "Benchmarkid",
           "type": "string"
+        },
+        "userFiles": {
+          "description": "User-defined templated files materialized into the run directory before the benchmark begins. See docs/kubernetes/user-files.md.",
+          "items": {
+            "$ref": "#/$defs/UserFile"
+          },
+          "title": "Userfiles",
+          "type": "array"
         }
       },
       "title": "ArtifactsConfig",
@@ -5741,6 +5749,44 @@
         "users"
       ],
       "title": "UserCentricPhase",
+      "type": "object"
+    },
+    "UserFile": {
+      "description": "One user-declared output file rendered into the run directory before benchmark start.\n\nPath is relative to the run directory; subdirectories are allowed; absolute\npaths and any segment equal to '..' are rejected. Content is rendered with\njinja2 against a documented context (variables: + system-injected names);\nsee docs/kubernetes/user-files.md.",
+      "properties": {
+        "path": {
+          "description": "Output path relative to the run directory. Subdirectories allowed. Absolute paths and any segment equal to '..' are rejected.",
+          "title": "Path",
+          "type": "string"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "enum": [
+                "json",
+                "yaml",
+                "text"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Serialization format. If omitted: 'text' when content is a string, 'json' otherwise.",
+          "title": "Format"
+        },
+        "content": {
+          "description": "Templated value. Structured (dict/list/scalar) for json/yaml; string for text. Jinja2 expressions in any string leaf are rendered with the user_files context.",
+          "title": "Content"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "title": "UserFile",
       "type": "object"
     },
     "VideoAudioCodec": {

@@ -16,6 +16,12 @@ from aiperf.config.loader.errors import ConfigurationError
 # that are rendered at request time by the template endpoint, not at config load time)
 SKIP_TEMPLATE_FIELDS = {"template", "body", "payload_template"}
 
+# Dotted-path prefixes whose entire subtree is skipped during load-time rendering.
+# Matched against ``current_path`` with a trailing ``.`` so siblings (e.g. ``artifacts.user``)
+# do not match. Used for content rendered at run-time with run-time-only context
+# (epoch, job_name, artifact_dir, ...), e.g. ``artifacts.user_files``.
+SKIP_TEMPLATE_PATH_PREFIXES = ("artifacts.user_files",)
+
 # Strict undefined surfaces typo'd / missing variables as ConfigurationError at load time
 # rather than silently rendering empty strings that downstream parsers must catch.
 # keep_trailing_newline=True preserves terminal '\n' so rendered artifact file contents
@@ -77,6 +83,19 @@ def _coerce_rendered(rendered: str) -> Any:
     return rendered
 
 
+def _path_is_skipped(current_path: str) -> bool:
+    """True if ``current_path`` is at or under any SKIP_TEMPLATE_PATH_PREFIXES entry.
+
+    Matches exact prefix or prefix followed by ``.`` so that ``artifacts.user_files``
+    matches ``artifacts.user_files``, ``artifacts.user_files.0.content.k`` but NOT
+    ``artifacts.user_files_other``.
+    """
+    for prefix in SKIP_TEMPLATE_PATH_PREFIXES:
+        if current_path == prefix or current_path.startswith(prefix + "."):
+            return True
+    return False
+
+
 def _render_template_string(
     data: str,
     context: dict[str, Any],
@@ -114,8 +133,13 @@ def render_jinja2_templates(
     types (int, float, bool, or string).
 
     Skips fields in SKIP_TEMPLATE_FIELDS (endpoint payload templates that
-    are rendered at request time, not config load time).
+    are rendered at request time, not config load time) and entire subtrees
+    under SKIP_TEMPLATE_PATH_PREFIXES (e.g. ``artifacts.user_files``,
+    rendered at run start with run-time-only context).
     """
+    if _path_is_skipped(current_path):
+        return data
+
     if isinstance(data, str):
         return _render_template_string(data, context, current_path)
 

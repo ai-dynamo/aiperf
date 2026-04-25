@@ -22,3 +22,24 @@ def test_defined_variable_renders_normally() -> None:
     data = {"foo": "{{ defined }}"}
     result = render_jinja2_templates(data, context={"defined": 42})
     assert result == {"foo": 42}
+
+
+def test_artifacts_user_files_subtree_skipped_during_render() -> None:
+    """artifacts.user_files content is rendered at run-time, not load-time."""
+    data = {
+        "artifacts": {
+            "user_files": [
+                {
+                    "path": "x.json",
+                    "format": "json",
+                    "content": {"k": "{{ undefined }}"},
+                }
+            ],
+        },
+        "other": "{{ defined }}",
+    }
+    result = render_jinja2_templates(data, context={"defined": "yes"})
+    # `other` rendered:
+    assert result["other"] == "yes"
+    # user_files content survived verbatim — no exception, no transformation:
+    assert result["artifacts"]["user_files"][0]["content"]["k"] == "{{ undefined }}"
