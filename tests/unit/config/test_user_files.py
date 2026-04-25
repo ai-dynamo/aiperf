@@ -91,15 +91,17 @@ def test_text_format_with_dict_content_rejected():
 
 
 def _stub_config(variables=None, model="m", url="http://x"):
-    """Minimal duck-typed config for build_user_file_context."""
+    """Minimal duck-typed config for build_user_file_context.
+
+    Mirrors the BenchmarkConfig shape the production callsite passes:
+    ``models`` and ``endpoint`` live at the top level (no ``.benchmark`` wrapper).
+    """
     from types import SimpleNamespace
 
     return SimpleNamespace(
         variables=variables or {},
-        benchmark=SimpleNamespace(
-            models=[model],
-            endpoint=SimpleNamespace(urls=[url]),
-        ),
+        models=[model],
+        endpoint=SimpleNamespace(urls=[url]),
     )
 
 

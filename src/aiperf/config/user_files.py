@@ -143,8 +143,10 @@ def build_user_file_context(
     """Build the jinja2 context dict for user_files rendering.
 
     Args:
-        config: Resolved AIPerfConfig (must expose .variables, .benchmark.models[0],
-            .benchmark.endpoint.urls[0]).
+        config: Resolved BenchmarkConfig (must expose ``.variables``, ``.models[0]``,
+            ``.endpoint.urls[0]``). Accepts a duck-typed object whose top-level
+            attributes match — the production callsite passes ``BenchmarkRun.cfg``
+            which is a ``BenchmarkConfig`` directly (no ``.benchmark`` wrapper).
         run_meta: Identity for the run (epoch, job_name, namespace).
         run_dir: Absolute path to the run directory on local disk.
 
@@ -156,14 +158,23 @@ def build_user_file_context(
         Logs WARNING for each shadowed user variable.
     """
     user_vars = dict(getattr(config, "variables", {}) or {})
+    # BenchmarkConfig.models is a ModelsAdvanced, not a list — go through the
+    # canonical helper which flattens .items[*].name into a list[str].
+    get_names = getattr(config, "get_model_names", None)
+    if callable(get_names):
+        models = get_names()
+    else:
+        # Duck-typed test stubs may pass a list directly under ``.models``.
+        raw = getattr(config, "models", None)
+        models = list(raw) if raw else []
+    endpoint = getattr(config, "endpoint", None)
+    endpoint_urls = getattr(endpoint, "urls", None) or []
     injected = {
         "epoch": run_meta.epoch,
         "job_name": run_meta.job_name,
         "namespace": run_meta.namespace,
-        "model": config.benchmark.models[0] if config.benchmark.models else "",
-        "endpoint_url": config.benchmark.endpoint.urls[0]
-        if config.benchmark.endpoint.urls
-        else "",
+        "model": models[0] if models else "",
+        "endpoint_url": endpoint_urls[0] if endpoint_urls else "",
         "artifact_dir": str(run_dir),
     }
     for name in injected:
