@@ -41,6 +41,7 @@ from aiperf.common.hooks._decorators import (
     on_start,
     on_state_change,
     on_stop,
+    on_worker_group_update,
     on_worker_status_summary,
     on_worker_update,
     provides_hooks,
@@ -69,5 +70,6 @@ __all__ = [
     "on_stop",
     "on_worker_status_summary",
     "on_worker_update",
+    "on_worker_group_update",
     "provides_hooks",
 ]

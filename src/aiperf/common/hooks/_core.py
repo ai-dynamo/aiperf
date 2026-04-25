@@ -35,6 +35,7 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_REQUEST = "@on_request"
     ON_WORKER_STATUS_SUMMARY = "@on_worker_status_summary"
     ON_WORKER_UPDATE = "@on_worker_update"
+    ON_WORKER_GROUP_UPDATE = "@on_worker_group_update"
 
 
 HookType = AIPerfHook | str

@@ -361,3 +361,22 @@ def on_worker_update(func: Callable) -> Callable:
     ```
     """
     return _hook_decorator(AIPerfHook.ON_WORKER_UPDATE, func)
+
+
+def on_worker_group_update(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when a worker-group update is received.
+
+    Example:
+    ```python
+    class MyPlugin(WorkerTrackerMixin):
+        @on_worker_group_update
+        def _on_worker_group_update(self, group_id: str, group_stats: WorkerGroupStats) -> None:
+            pass
+    ```
+
+    The above is the equivalent to setting:
+    ```python
+    MyPlugin._on_worker_group_update.__aiperf_hook_type__ = AIPerfHook.ON_WORKER_GROUP_UPDATE
+    ```
+    """
+    return _hook_decorator(AIPerfHook.ON_WORKER_GROUP_UPDATE, func)

@@ -1,177 +1,121 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the standalone WorkerTracker class."""
+"""Tests for the standalone WorkerGroupTracker."""
 
 from __future__ import annotations
 
 import pytest
-from pytest import param
 
 from aiperf.common.enums import WorkerStartupState, WorkerStatus
-from aiperf.common.mixins.worker_tracker_mixin import WorkerTracker
+from aiperf.common.messages import WorkerGroupStatsMessage
+from aiperf.common.mixins.worker_tracker_mixin import WorkerGroupTracker
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 
 
 @pytest.fixture
-def tracker() -> WorkerTracker:
-    """Create a fresh WorkerTracker."""
-    return WorkerTracker()
+def tracker() -> WorkerGroupTracker:
+    return WorkerGroupTracker()
 
 
-@pytest.fixture
-def sample_health() -> ProcessHealth:
-    """Create sample ProcessHealth data."""
+def _health(cpu: float = 10.0, mem: int = 1024) -> ProcessHealth:
     return ProcessHealth(
-        pid=1234,
-        create_time=1000.0,
-        uptime=60.0,
-        cpu_usage=25.0,
-        memory_usage=1024 * 1024,
+        pid=1, create_time=0.0, uptime=1.0, cpu_usage=cpu, memory_usage=mem
     )
 
 
-@pytest.fixture
-def sample_task_stats() -> WorkerTaskStats:
-    """Create sample WorkerTaskStats data."""
-    return WorkerTaskStats(total=10, failed=1)
+def _group_msg(**overrides) -> WorkerGroupStatsMessage:
+    base = dict(
+        service_id="wgm-0",
+        group_id="wgm-0",
+        status=WorkerStatus.HEALTHY,
+        declared_workers=2,
+        ready_workers=2,
+        health=_health(),
+        task_stats=WorkerTaskStats(total=4),
+        worker_statuses={
+            "w-0": WorkerStatus.HEALTHY,
+            "w-1": WorkerStatus.HEALTHY,
+        },
+        worker_startup_states={"w-0": WorkerStartupState.READY},
+        worker_task_stats={
+            "w-0": WorkerTaskStats(total=2),
+            "w-1": WorkerTaskStats(total=2),
+        },
+        worker_health={"w-0": _health(), "w-1": _health()},
+    )
+    base.update(overrides)
+    return WorkerGroupStatsMessage(**base)
 
 
-class TestWorkerTrackerUpdateStats:
-    """Test WorkerTracker.update_worker_stats."""
+class TestUpdateFromGroupMessage:
+    def test_creates_group_entry(self, tracker: WorkerGroupTracker) -> None:
+        group = tracker.update_from_group_message(_group_msg())
+        assert group.group_id == "wgm-0"
+        assert group.status == WorkerStatus.HEALTHY
+        assert set(group.workers.keys()) == {"w-0", "w-1"}
 
-    def test_creates_worker_on_first_update(
-        self,
-        tracker: WorkerTracker,
-        sample_health: ProcessHealth,
-        sample_task_stats: WorkerTaskStats,
+    def test_replaces_group_entry_on_subsequent_update(
+        self, tracker: WorkerGroupTracker
     ) -> None:
-        """Test that a new worker is created on first stats update."""
-        result = tracker.update_worker_stats(
-            "worker-1", sample_health, sample_task_stats
+        tracker.update_from_group_message(_group_msg())
+        tracker.update_from_group_message(
+            _group_msg(
+                status=WorkerStatus.HIGH_LOAD,
+                worker_statuses={"w-0": WorkerStatus.HIGH_LOAD},
+                worker_task_stats={"w-0": WorkerTaskStats(total=2)},
+                worker_health={"w-0": _health()},
+            )
         )
-        assert result.worker_id == "worker-1"
-        assert result.health == sample_health
-        assert result.task_stats == sample_task_stats
+        group = tracker.get_group("wgm-0")
+        assert group is not None
+        assert group.status == WorkerStatus.HIGH_LOAD
+        assert set(group.workers.keys()) == {"w-0"}
 
-    def test_updates_existing_worker(
-        self, tracker: WorkerTracker, sample_health: ProcessHealth
+    def test_per_child_stats_populated(self, tracker: WorkerGroupTracker) -> None:
+        group = tracker.update_from_group_message(_group_msg())
+        assert group.workers["w-0"].task_stats.total == 2
+        assert group.workers["w-0"].health is not None
+        assert group.workers["w-0"].startup_state == WorkerStartupState.READY
+
+
+class TestFakeInProcessFallback:
+    def test_worker_health_creates_local_group(
+        self, tracker: WorkerGroupTracker
     ) -> None:
-        """Test that subsequent calls update the existing worker."""
-        initial_stats = WorkerTaskStats(total=5, failed=0)
-        tracker.update_worker_stats("worker-1", sample_health, initial_stats)
-
-        updated_stats = WorkerTaskStats(total=20, failed=2)
-        result = tracker.update_worker_stats("worker-1", sample_health, updated_stats)
-        assert result.task_stats.total == 20
-        assert result.task_stats.failed == 2
-
-    def test_returns_same_worker_stats_object(
-        self,
-        tracker: WorkerTracker,
-        sample_health: ProcessHealth,
-        sample_task_stats: WorkerTaskStats,
-    ) -> None:
-        """Test that update returns the stored WorkerStats (same reference)."""
-        result = tracker.update_worker_stats(
-            "worker-1", sample_health, sample_task_stats
+        tracker.update_from_worker_health(
+            "w-0", _health(cpu=20.0), WorkerTaskStats(total=3)
         )
-        assert tracker.get_worker_stats("worker-1") is result
+        group = tracker.get_group("local")
+        assert group is not None
+        assert group.workers["w-0"].task_stats.total == 3
 
-
-class TestWorkerTrackerUpdateStatuses:
-    """Test WorkerTracker.update_worker_statuses."""
-
-    def test_creates_workers_from_status_summary(self, tracker: WorkerTracker) -> None:
-        """Test that workers are created if they don't exist during status update."""
-        tracker.update_worker_statuses(
-            {"w-1": WorkerStatus.HEALTHY, "w-2": WorkerStatus.IDLE}
+    def test_multiple_workers_aggregated_in_local_group(
+        self, tracker: WorkerGroupTracker
+    ) -> None:
+        tracker.update_from_worker_health(
+            "w-0", _health(cpu=10.0, mem=1000), WorkerTaskStats(total=2)
         )
-        assert tracker.get_worker_stats("w-1").status == WorkerStatus.HEALTHY
-        assert tracker.get_worker_stats("w-2").status == WorkerStatus.IDLE
-
-    def test_overwrites_existing_status(
-        self,
-        tracker: WorkerTracker,
-        sample_health: ProcessHealth,
-        sample_task_stats: WorkerTaskStats,
-    ) -> None:
-        """Test that status update overwrites existing worker status."""
-        tracker.update_worker_stats("w-1", sample_health, sample_task_stats)
-        assert tracker.get_worker_stats("w-1").status == WorkerStatus.IDLE
-
-        tracker.update_worker_statuses({"w-1": WorkerStatus.HEALTHY})
-        assert tracker.get_worker_stats("w-1").status == WorkerStatus.HEALTHY
-
-    def test_empty_statuses_dict(self, tracker: WorkerTracker) -> None:
-        """Test that empty status dict is a no-op."""
-        tracker.update_worker_statuses({})
-        assert tracker.workers == {}
-
-    def test_updates_startup_states(self, tracker: WorkerTracker) -> None:
-        """Test that startup states are tracked independently from worker status."""
-        tracker.update_worker_startup_states(
-            {"w-1": WorkerStartupState.WAITING_FOR_DATASET}
+        tracker.update_from_worker_health(
+            "w-1", _health(cpu=30.0, mem=2000), WorkerTaskStats(total=4)
         )
-        assert (
-            tracker.get_worker_stats("w-1").startup_state
-            == WorkerStartupState.WAITING_FOR_DATASET
+        group = tracker.get_group("local")
+        assert group is not None
+        assert group.task_stats.total == 6
+        assert group.health is not None
+        assert group.health.memory_usage == 3000
+        assert group.health.cpu_usage == 20.0
+
+
+class TestWorkerGroupsProperty:
+    def test_empty_initially(self, tracker: WorkerGroupTracker) -> None:
+        assert tracker.worker_groups == {}
+
+    def test_keyed_by_group_id(self, tracker: WorkerGroupTracker) -> None:
+        tracker.update_from_group_message(
+            _group_msg(service_id="wgm-0", group_id="wgm-0")
         )
-
-
-class TestWorkerTrackerGetWorkerStats:
-    """Test WorkerTracker.get_worker_stats."""
-
-    def test_returns_none_for_unknown_worker(self, tracker: WorkerTracker) -> None:
-        """Test that getting stats for unknown worker returns None."""
-        assert tracker.get_worker_stats("nonexistent") is None
-
-    def test_returns_stats_for_known_worker(
-        self,
-        tracker: WorkerTracker,
-        sample_health: ProcessHealth,
-        sample_task_stats: WorkerTaskStats,
-    ) -> None:
-        """Test that getting stats for known worker returns WorkerStats."""
-        tracker.update_worker_stats("worker-1", sample_health, sample_task_stats)
-        stats = tracker.get_worker_stats("worker-1")
-        assert stats is not None
-        assert stats.worker_id == "worker-1"
-
-
-class TestWorkerTrackerWorkersProperty:
-    """Test WorkerTracker.workers property."""
-
-    def test_empty_initially(self, tracker: WorkerTracker) -> None:
-        """Test that workers dict is empty initially."""
-        assert tracker.workers == {}
-
-    def test_tracks_multiple_workers(
-        self,
-        tracker: WorkerTracker,
-        sample_health: ProcessHealth,
-        sample_task_stats: WorkerTaskStats,
-    ) -> None:
-        """Test tracking multiple workers simultaneously."""
-        tracker.update_worker_stats("w-1", sample_health, sample_task_stats)
-        tracker.update_worker_stats("w-2", sample_health, sample_task_stats)
-        tracker.update_worker_stats("w-3", sample_health, sample_task_stats)
-        assert len(tracker.workers) == 3
-        assert set(tracker.workers.keys()) == {"w-1", "w-2", "w-3"}
-
-    @pytest.mark.parametrize(
-        "status",
-        [
-            param(WorkerStatus.IDLE, id="idle"),
-            param(WorkerStatus.HEALTHY, id="healthy"),
-            param(WorkerStatus.HIGH_LOAD, id="high-load"),
-            param(WorkerStatus.ERROR, id="error"),
-            param(WorkerStatus.STALE, id="stale"),
-        ],
-    )  # fmt: skip
-    def test_preserves_status_values(
-        self, tracker: WorkerTracker, status: WorkerStatus
-    ) -> None:
-        """Test that all WorkerStatus values are tracked correctly."""
-        tracker.update_worker_statuses({"w-1": status})
-        assert tracker.workers["w-1"].status == status
+        tracker.update_from_group_message(
+            _group_msg(service_id="wgm-1", group_id="wgm-1")
+        )
+        assert set(tracker.worker_groups.keys()) == {"wgm-0", "wgm-1"}

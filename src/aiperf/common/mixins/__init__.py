@@ -37,7 +37,10 @@ from aiperf.common.mixins.realtime_telemetry_metrics_mixin import (
 )
 from aiperf.common.mixins.reply_client_mixin import ReplyClientMixin
 from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
-from aiperf.common.mixins.worker_tracker_mixin import WorkerTracker, WorkerTrackerMixin
+from aiperf.common.mixins.worker_tracker_mixin import (
+    WorkerGroupTracker,
+    WorkerTrackerMixin,
+)
 
 __all__ = [
     "AIPerfLifecycleMixin",
@@ -68,6 +71,6 @@ __all__ = [
     "TRecord",
     "TRecordCallback",
     "TaskManagerMixin",
-    "WorkerTracker",
+    "WorkerGroupTracker",
     "WorkerTrackerMixin",
 ]
