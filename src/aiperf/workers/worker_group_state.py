@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -109,9 +109,42 @@ def mark_stale_workers(worker_infos: Mapping[str, WorkerStatusInfo]) -> None:
             info.status = WorkerStatus.STALE
 
 
+STATUS_RANK: dict[WorkerStatus, int] = {
+    WorkerStatus.IDLE: 0,
+    WorkerStatus.HEALTHY: 1,
+    WorkerStatus.HIGH_LOAD: 2,
+    WorkerStatus.STALE: 3,
+    WorkerStatus.ERROR: 4,
+}
+"""Precedence used to roll up child statuses into a group status.
+
+Higher rank wins when aggregating across workers:
+
+- ``IDLE = 0`` -- no work, no concern.
+- ``HEALTHY = 1`` -- actively working, no concern.
+- ``HIGH_LOAD = 2`` -- actively working but CPU-saturated; results may be inaccurate.
+- ``STALE = 3`` -- no recent heartbeat; we don't know what state it's in, so we
+  treat that uncertainty as worse than known HIGH_LOAD.
+- ``ERROR = 4`` -- terminal failure observed.
+"""
+
+
+def worst_status(statuses: Iterable[WorkerStatus]) -> WorkerStatus:
+    """Return the highest-precedence status from ``statuses`` per ``STATUS_RANK``.
+
+    Empty input returns ``WorkerStatus.IDLE`` (no workers, no concern).
+    """
+    materialized = list(statuses)
+    if not materialized:
+        return WorkerStatus.IDLE
+    return max(materialized, key=lambda s: STATUS_RANK.get(s, 0))
+
+
 __all__ = [
+    "STATUS_RANK",
     "WorkerStatusInfo",
     "build_worker_status_summary",
     "mark_stale_workers",
     "update_worker_status",
+    "worst_status",
 ]

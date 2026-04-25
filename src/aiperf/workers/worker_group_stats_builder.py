@@ -11,27 +11,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import WorkerStartupState, WorkerStatus
+from aiperf.common.enums import WorkerStartupState
 from aiperf.common.messages import WorkerGroupStatsMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.workers.worker_group_state import worst_status
 
 if TYPE_CHECKING:
     from aiperf.workers.worker_group_state import WorkerStatusInfo
-
-
-_STATUS_RANK = {
-    WorkerStatus.IDLE: 0,
-    WorkerStatus.HEALTHY: 1,
-    WorkerStatus.STALE: 2,
-    WorkerStatus.HIGH_LOAD: 3,
-    WorkerStatus.ERROR: 4,
-}
-
-
-def _worst_status(statuses: list[WorkerStatus]) -> WorkerStatus:
-    if not statuses:
-        return WorkerStatus.IDLE
-    return max(statuses, key=lambda s: _STATUS_RANK.get(s, 0))
 
 
 def build_worker_group_stats(
@@ -63,7 +49,7 @@ def build_worker_group_stats(
 
     total = sum(t.total for t in task_stats_map.values())
     failed = sum(t.failed for t in task_stats_map.values())
-    completed = sum(getattr(t, "completed", 0) for t in task_stats_map.values())
+    completed = sum(t.completed for t in task_stats_map.values())
     aggregated_task_stats = WorkerTaskStats(
         total=total, failed=failed, completed=completed
     )
@@ -81,7 +67,7 @@ def build_worker_group_stats(
             memory_usage=mem_sum,
         )
 
-    group_status = _worst_status([info.status for info in worker_infos.values()])
+    group_status = worst_status(info.status for info in worker_infos.values())
     ready_workers = sum(
         1 for s in startup_states.values() if s == WorkerStartupState.READY
     )
