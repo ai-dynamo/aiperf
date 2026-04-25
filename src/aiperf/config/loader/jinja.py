@@ -18,6 +18,8 @@ SKIP_TEMPLATE_FIELDS = {"template", "body", "payload_template"}
 
 # Strict undefined surfaces typo'd / missing variables as ConfigurationError at load time
 # rather than silently rendering empty strings that downstream parsers must catch.
+# keep_trailing_newline=True preserves terminal '\n' so rendered artifact file contents
+# (artifacts.user_files) survive unchanged instead of jinja's default one-newline strip.
 _JINJA_ENV = jinja2.Environment(
     undefined=jinja2.StrictUndefined,
     autoescape=False,
