@@ -8,7 +8,6 @@ from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.config.types import NormalDistribution
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 if TYPE_CHECKING:
@@ -127,26 +126,17 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         text = Text(name="text")
 
-        # Sample ISL/OSL pair for this request (cached for consistency)
+        # ISL was already sampled from the configured distribution in
+        # _get_turn_sequence_lengths. Re-sampling here (stddev>0) would
+        # compound variance to stddev * sqrt(2).
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
-        # Get prompts config
         prompts_config = getattr(self.dataset_config, "prompts", None)
-
-        isl_stddev = 0
-        if self._seq_distribution is None and prompts_config and prompts_config.isl:
-            isl_stddev = (
-                prompts_config.isl.stddev
-                if isinstance(prompts_config.isl, NormalDistribution)
-                else 0
-            )
-
         batch_size = prompts_config.batch_size if prompts_config else 1
 
         for _ in range(batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=isl_stddev)
+            content = self.prompt_generator.generate(mean=isl, stddev=0)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:

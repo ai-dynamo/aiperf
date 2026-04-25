@@ -779,3 +779,761 @@ class TestSyntheticDatasetComposer:
         for conversation in conversations:
             for turn in conversation.turns:
                 assert turn.max_tokens is None
+
+
+# ============================================================================
+# ISL sampling end-to-end regression tests
+#
+# The composer's text path has two places that could sample from the ISL
+# distribution:
+#   1. BaseDatasetComposer._get_turn_sequence_lengths  (turn level, cached)
+#   2. PromptGenerator.generate(mean, stddev)           (per-prompt)
+#
+# Only (1) should sample. If (2) also samples (stddev > 0 passed from the
+# composer), variance inflates to stddev * sqrt(2). These tests lock that
+# contract down: the composer must pass stddev=0 to the prompt generator
+# and pass the turn-level ISL through as `mean`.
+# ============================================================================
+
+
+class TestIslFlowNoDoubleSample:
+    """Lock down: turn-level samples ISL once, prompt generator does NOT re-sample."""
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_generate_passed_stddev_zero_for_constant_isl(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Fixed ISL: generate() must receive stddev=0 and mean=<configured>."""
+        mock_generate.return_value = "text"
+        config = _make_config(entries=1, prompts={"isl": 128, "osl": 64})
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        mock_generate.assert_called_once_with(mean=128, stddev=0)
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_generate_passed_stddev_zero_for_normal_isl(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Normal ISL: generate() must STILL receive stddev=0 (sampling already done)."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        assert mock_generate.call_count == 1
+        _, kwargs = mock_generate.call_args
+        assert kwargs["stddev"] == 0, (
+            f"generate() got stddev={kwargs['stddev']} — double-sampling bug!"
+        )
+        assert isinstance(kwargs["mean"], int)
+        assert 200 <= kwargs["mean"] <= 800
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_generate_mean_matches_cached_turn_level_sample(
+        self, mock_generate, mock_tokenizer
+    ):
+        """The `mean` kwarg to generate() must equal the turn-level ISL cache entry."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turn = Turn()
+        composer._generate_text_payloads(turn, is_first=True)
+
+        turn_id = id(turn)
+        cached_isl, _ = composer._turn_sequence_cache[turn_id]
+        _, kwargs = mock_generate.call_args
+        assert kwargs["mean"] == cached_isl
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_batch_size_reuses_same_turn_isl(self, mock_generate, mock_tokenizer):
+        """All prompts in a single turn's batch must share the turn's ISL sample."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {"mean": 500, "stddev": 100},
+                "osl": 64,
+                "batch_size": 4,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        assert mock_generate.call_count == 4
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        stddevs = [c.kwargs["stddev"] for c in mock_generate.call_args_list]
+        assert len(set(means)) == 1, f"batch should share one ISL sample, got {means}"
+        assert stddevs == [0, 0, 0, 0]
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_different_turns_get_independent_isl_samples(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Each new turn must trigger a fresh turn-level sample."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 100}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(50)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        assert len(means) == 50
+        assert len(set(means)) > 20, (
+            f"turn-level samples stuck: only {len(set(means))} unique ISLs in 50 turns"
+        )
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_normal_isl_empirical_stddev_matches_config_not_inflated(
+        self, mock_generate, mock_tokenizer
+    ):
+        """REGRESSION: empirical stddev of ISLs passed to generate() must
+        match configured stddev, not stddev * sqrt(2).
+
+        Pre-fix: we'd see ~sqrt(2) * 50 ≈ 70.7.
+        Post-fix: we see ~50.
+        """
+        import statistics
+
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(500)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        empirical_mean = statistics.fmean(means)
+        empirical_stddev = statistics.stdev(means)
+
+        assert 490 <= empirical_mean <= 510, f"mean drift: {empirical_mean:.2f}"
+        assert 42 <= empirical_stddev <= 58, (
+            f"stddev={empirical_stddev:.2f} — expected ~50. "
+            f"If ~70 then the double-sampling bug regressed. "
+            f"If ~0 then turn-level sampling was dropped."
+        )
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_lognormal_isl_passes_sampled_values_not_mean(
+        self, mock_generate, mock_tokenizer
+    ):
+        """LogNormal must produce varied means — a collapse to 1000 would
+        mean the turn-level sample was removed (Option-A regression)."""
+        import statistics
+
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 1000, "median": 400}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(300)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        assert statistics.stdev(means) > 100, (
+            "LogNormal ISL collapsed — turn-level sampling missing?"
+        )
+        assert statistics.median(means) < 800
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_multimodal_isl_reaches_both_peaks_through_flow(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Multimodal ISL must reach both peaks by the time it hits generate()."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {
+                    "peaks": [
+                        {"mean": 100, "stddev": 5, "weight": 50},
+                        {"mean": 2000, "stddev": 50, "weight": 50},
+                    ]
+                },
+                "osl": 64,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(200)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        low = sum(1 for m in means if m < 500)
+        high = sum(1 for m in means if m > 1500)
+        middle = sum(1 for m in means if 500 <= m <= 1500)
+        assert low > 50, f"low peak underpopulated: {low}"
+        assert high > 50, f"high peak underpopulated: {high}"
+        assert middle < 20, f"{middle} samples in gap — shape lost through flow"
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_empirical_isl_only_configured_values_through_flow(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Empirical distribution values must flow through unchanged."""
+        mock_generate.return_value = "text"
+        allowed = {128, 512, 2048}
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {
+                    "points": [
+                        {"value": 128, "weight": 1},
+                        {"value": 512, "weight": 1},
+                        {"value": 2048, "weight": 1},
+                    ]
+                },
+                "osl": 64,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(200)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = {c.kwargs["mean"] for c in mock_generate.call_args_list}
+        assert means == allowed, f"mean set {means} != configured {allowed}"
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_prefix_prompt_does_not_cause_resampling(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Prefix prompts don't perturb the stddev=0 contract."""
+        mock_generate.return_value = "content"
+        with patch(
+            "aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt",
+            return_value="pfx:",
+        ):
+            config = _make_config(
+                entries=1,
+                prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64},
+                prefix_prompts={"pool_size": 2, "length": 10},
+            )
+            composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+            composer._generate_text_payloads(Turn(), is_first=True)
+
+        for call in mock_generate.call_args_list:
+            assert call.kwargs["stddev"] == 0
+
+    def test_isl_osl_paired_consistently_across_text_and_max_tokens(
+        self, mock_tokenizer
+    ):
+        """ISL used for prompt and OSL used for max_tokens must come from the
+        same cached turn sample (no drift between the two uses)."""
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {"mean": 500, "stddev": 50},
+                "osl": {"mean": 100, "stddev": 20},
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turn = Turn()
+        with patch(
+            "aiperf.dataset.generator.prompt.PromptGenerator.generate",
+            return_value="text",
+        ) as mock_generate:
+            composer._generate_text_payloads(turn, is_first=True)
+            turn_id = id(turn)
+            cached_pair = composer._turn_sequence_cache[turn_id]
+
+        mean_used = mock_generate.call_args.kwargs["mean"]
+        assert mean_used == cached_pair[0]
+
+        composer._set_max_tokens(turn)
+        assert turn.max_tokens == int(cached_pair[1])
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_normal_stddev_zero_is_deterministic_through_flow(
+        self, mock_generate, mock_tokenizer
+    ):
+        """stddev=0 in config must produce the mean literally at generate()."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 256, "stddev": 0}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(20)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        for call in mock_generate.call_args_list:
+            assert call.kwargs == {"mean": 256, "stddev": 0}
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_sequence_distribution_path_also_uses_stddev_zero(
+        self, mock_generate, mock_tokenizer
+    ):
+        """When a joint sequence_distribution is configured, the ISL still flows
+        through generate() with stddev=0 (no double sampling here either)."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {"mean": 500, "stddev": 50},  # ignored when seq_dist is set
+                "osl": 64,
+                "sequence_distribution": [
+                    {"isl": 100, "osl": 25, "probability": 50},
+                    {"isl": 200, "osl": 50, "probability": 50},
+                ],
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(50)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        seen_means = set()
+        for call in mock_generate.call_args_list:
+            assert call.kwargs["stddev"] == 0
+            seen_means.add(call.kwargs["mean"])
+        assert seen_means == {100, 200}, f"seq_dist ISLs not respected: {seen_means}"
+
+
+# ============================================================================
+# Adversarial ISL-sampling tests
+#
+# These tests attack the invariants from unusual angles: cache tampering,
+# config mutation, turn-id reuse, extreme values, exotic distribution
+# shapes, error propagation, and cross-composer isolation. Every one of
+# them should pass with the correct implementation and fail in a distinct,
+# informative way under a plausible regression.
+# ============================================================================
+
+
+class TestIslAdversarial:
+    """Break things on purpose. Assert the flow holds anyway."""
+
+    # ------------------------------------------------------------------
+    # Cache-tampering attacks
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_pre_populated_cache_is_respected(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Pre-populating the cache must override sampling — the composer
+        must honor the cached (ISL, OSL) pair rather than resample."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turn = Turn()
+        composer._turn_sequence_cache[id(turn)] = (9999, 777)
+
+        composer._generate_text_payloads(turn, is_first=True)
+
+        mock_generate.assert_called_once_with(mean=9999, stddev=0)
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_repeated_calls_same_turn_reuse_isl(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Calling _generate_text_payloads twice on the SAME Turn must reuse
+        the cached ISL — no second sample, no drift."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 100}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turn = Turn()
+        composer._generate_text_payloads(turn, is_first=True)
+        first_mean = mock_generate.call_args.kwargs["mean"]
+
+        composer._generate_text_payloads(turn, is_first=False)
+        second_mean = mock_generate.call_args.kwargs["mean"]
+
+        assert first_mean == second_mean, (
+            f"ISL drifted on repeated call: {first_mean} -> {second_mean}"
+        )
+        assert mock_generate.call_count == 2
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_clear_cache_forces_resample(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Clearing the cache between calls must cause a fresh sample on
+        the same turn — distinct mean (with overwhelming probability)."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 200}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turn = Turn()
+        composer._generate_text_payloads(turn, is_first=True)
+        first_mean = mock_generate.call_args.kwargs["mean"]
+
+        composer._clear_turn_cache(id(turn))
+        composer._generate_text_payloads(turn, is_first=True)
+        second_mean = mock_generate.call_args.kwargs["mean"]
+
+        assert first_mean != second_mean, (
+            "Cache clear did not trigger resample (cache stickiness bug?)"
+        )
+
+    # ------------------------------------------------------------------
+    # Config-mutation attacks
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_mutating_isl_stddev_after_init_keeps_stddev_zero(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Even if someone mutates prompts.isl.stddev after composer init,
+        the stddev kwarg to generate() must stay 0. Guards against a future
+        regression that re-reads the attribute on every call."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        run = _make_run(config)
+        composer = SyntheticDatasetComposer(run, mock_tokenizer)
+
+        composer.dataset_config.prompts.isl.stddev = 999_999
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+        assert mock_generate.call_args.kwargs["stddev"] == 0
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_swap_isl_to_normal_with_huge_stddev_still_zero(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Swap the entire isl distribution to a NormalDistribution with an
+        absurd stddev — the generate() stddev kwarg must stay 0."""
+        from aiperf.config.distributions import NormalDistribution
+
+        mock_generate.return_value = "text"
+        config = _make_config(entries=1, prompts={"isl": 256, "osl": 64})
+        run = _make_run(config)
+        composer = SyntheticDatasetComposer(run, mock_tokenizer)
+
+        composer.dataset_config.prompts.isl = NormalDistribution(
+            mean=256, stddev=10_000
+        )
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+        assert mock_generate.call_args.kwargs["stddev"] == 0
+
+    # ------------------------------------------------------------------
+    # Extreme / degenerate values
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_extreme_stddev_truncates_to_min_one(
+        self, mock_generate, mock_tokenizer
+    ):
+        """N(mean=1, stddev=10000): negative draws are clipped to min 1. No
+        zero or negative ISLs should ever flow into generate()."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 1, "stddev": 10_000}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(200)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        assert all(m >= 1 for m in means), (
+            f"zero or negative ISL leaked: min={min(means)}"
+        )
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_isl_equal_to_one_flows_cleanly(
+        self, mock_generate, mock_tokenizer
+    ):
+        """ISL=1 is the smallest legal prompt length. Must flow end-to-end."""
+        mock_generate.return_value = "text"
+        config = _make_config(entries=1, prompts={"isl": 1, "osl": 64})
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+        mock_generate.assert_called_once_with(mean=1, stddev=0)
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_very_large_isl(self, mock_generate, mock_tokenizer):
+        """Extreme but legal ISL (~1M tokens) flows through without overflow."""
+        mock_generate.return_value = "text"
+        config = _make_config(entries=1, prompts={"isl": 1_000_000, "osl": 64})
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+        mock_generate.assert_called_once_with(mean=1_000_000, stddev=0)
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_huge_batch_size_one_sample(
+        self, mock_generate, mock_tokenizer
+    ):
+        """batch_size=500 produces 500 generate() calls, all sharing one ISL."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {"mean": 500, "stddev": 100},
+                "osl": 64,
+                "batch_size": 500,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        assert mock_generate.call_count == 500
+        means = {c.kwargs["mean"] for c in mock_generate.call_args_list}
+        stddevs = {c.kwargs["stddev"] for c in mock_generate.call_args_list}
+        assert len(means) == 1
+        assert stddevs == {0}
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_multimodal_99_1_weight_imbalance_still_hits_minority(
+        self, mock_generate, mock_tokenizer
+    ):
+        """With 99:1 weights over many samples, the minority peak must still
+        appear at least once (proves we aren't silently collapsing to majority)."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {
+                    "peaks": [
+                        {"mean": 100, "stddev": 1, "weight": 99},
+                        {"mean": 5000, "stddev": 1, "weight": 1},
+                    ]
+                },
+                "osl": 64,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(1000)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        assert any(m > 2000 for m in means), (
+            "minority peak never sampled — weight logic broken?"
+        )
+        low = sum(1 for m in means if m < 500)
+        assert low > 900
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_empirical_single_point_is_deterministic(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Empirical distribution with exactly one point is effectively Fixed."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {"points": [{"value": 777, "weight": 1}]},
+                "osl": 64,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(20)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        for call in mock_generate.call_args_list:
+            assert call.kwargs == {"mean": 777, "stddev": 0}
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_empirical_tiny_weight_barely_sampled(
+        self, mock_generate, mock_tokenizer
+    ):
+        """A point with an infinitesimal weight must be sampled rarely (or
+        never) relative to peers — proves weights gate sampling, not just
+        membership. Pydantic forbids weight=0 outright, so we probe with 1e-6."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1,
+            prompts={
+                "isl": {
+                    "points": [
+                        {"value": 100, "weight": 1_000_000},
+                        {"value": 999, "weight": 0.000_001},
+                        {"value": 200, "weight": 1_000_000},
+                    ]
+                },
+                "osl": 64,
+            },
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        turns = [Turn() for _ in range(200)]
+        for t in turns:
+            composer._generate_text_payloads(t, is_first=True)
+
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        hits_999 = sum(1 for m in means if m == 999)
+        hits_100_or_200 = sum(1 for m in means if m in (100, 200))
+        assert hits_999 <= 1, (
+            f"tiny-weight point oversampled: {hits_999}/200 hits on value 999"
+        )
+        assert hits_100_or_200 >= 195
+
+    # ------------------------------------------------------------------
+    # Error propagation
+    # ------------------------------------------------------------------
+
+    def test_adversarial_sample_int_error_propagates_does_not_silently_fallback(
+        self, mock_tokenizer
+    ):
+        """If isl.sample_int raises, the error surfaces — no silent fallback
+        to mean or default. A swallowed exception would mask config bugs."""
+        from aiperf.config.distributions import NormalDistribution
+
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        run = _make_run(config)
+        composer = SyntheticDatasetComposer(run, mock_tokenizer)
+
+        with (
+            patch.object(
+                NormalDistribution,
+                "sample_int",
+                side_effect=RuntimeError("sampling broken"),
+            ),
+            pytest.raises(RuntimeError, match="sampling broken"),
+        ):
+            composer._generate_text_payloads(Turn(), is_first=True)
+
+    # ------------------------------------------------------------------
+    # Cross-composer isolation
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_two_composers_do_not_share_cache(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Separate composer instances keep separate turn caches."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer_a = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+        composer_b = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        composer_a._turn_sequence_cache[42] = (111, 22)
+        assert 42 not in composer_b._turn_sequence_cache
+
+    # ------------------------------------------------------------------
+    # Multi-turn conversation correctness
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_multiturn_conversation_isl_per_turn_independent(
+        self, mock_generate, mock_tokenizer
+    ):
+        """In a multi-turn conversation each turn must draw its own ISL.
+        Guards against a regression that caches at conversation scope."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=5,
+            prompts={"isl": {"mean": 500, "stddev": 100}, "osl": 64},
+            turns={"mean": 4, "stddev": 0},
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+        composer.create_dataset()
+
+        assert mock_generate.call_count == 20  # 5 conversations × 4 turns
+        means = [c.kwargs["mean"] for c in mock_generate.call_args_list]
+        assert len(set(means)) >= 10
+        assert {c.kwargs["stddev"] for c in mock_generate.call_args_list} == {0}
+
+    # ------------------------------------------------------------------
+    # End-to-end (create_dataset) statistical invariant
+    # ------------------------------------------------------------------
+
+    def test_adversarial_end_to_end_create_dataset_stddev_not_inflated(
+        self, mock_tokenizer
+    ):
+        """Drive create_dataset() end-to-end. The ISL stream passed to
+        generate() must have empirical stddev ≈ 50, not ≈ 70.7."""
+        import statistics
+
+        config = _make_config(
+            entries=500, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+        with patch(
+            "aiperf.dataset.generator.prompt.PromptGenerator.generate",
+            return_value="text",
+        ) as mg:
+            conversations = composer.create_dataset()
+            means = [c.kwargs["mean"] for c in mg.call_args_list]
+
+        assert len(conversations) == 500
+        empirical_stddev = statistics.stdev(means)
+        assert 42 <= empirical_stddev <= 58, (
+            f"create_dataset() ISL stddev={empirical_stddev:.2f} — "
+            f"expected ~50, regressed if ~70."
+        )
+
+    # ------------------------------------------------------------------
+    # Kwarg hygiene
+    # ------------------------------------------------------------------
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_generate_called_with_kwargs_only(
+        self, mock_generate, mock_tokenizer
+    ):
+        """Composer must invoke generate() by keyword, not positional.
+        Positional args are fragile to signature reorderings."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        args, kwargs = mock_generate.call_args
+        assert args == (), f"unexpected positional args: {args}"
+        assert set(kwargs.keys()) == {"mean", "stddev"}
+
+    @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
+    def test_adversarial_generate_stddev_is_literal_int_zero_not_none(
+        self, mock_generate, mock_tokenizer
+    ):
+        """stddev=0 must be an int 0, not None/False/other-falsy. Downstream
+        `sample_positive_normal_integer` checks `stddev <= 0` — None would crash."""
+        mock_generate.return_value = "text"
+        config = _make_config(
+            entries=1, prompts={"isl": {"mean": 500, "stddev": 50}, "osl": 64}
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+        composer._generate_text_payloads(Turn(), is_first=True)
+
+        stddev = mock_generate.call_args.kwargs["stddev"]
+        assert stddev == 0
+        assert stddev is not None
+        assert isinstance(stddev, int)
