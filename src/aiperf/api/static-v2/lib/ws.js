@@ -22,8 +22,7 @@ const SUBSCRIBE_TYPES = [
   'credit_phase_complete',
   'processing_stats',
   'all_records_received',
-  'worker_health',
-  'worker_status_summary',
+  'worker_group_stats',
 ];
 
 const RECONNECT_DELAY_MS = 2000;

@@ -12,7 +12,7 @@
  */
 
 import {
-  phases, records, workers, serverMetrics,
+  phases, records, workerGroups, serverMetrics,
   realtimeMetrics, telemetryMetrics,
   recordTimeseriesSample,
   markRunStarted,
@@ -36,14 +36,41 @@ function applyRecords(patch) {
   records.value = { ...records.value, ...patch };
 }
 
-/** Merge one or many worker updates into the workers signal. */
-function applyWorkers(updates) {
-  if (!updates) return;
-  const next = { ...workers.value };
-  for (const [wid, info] of Object.entries(updates)) {
-    next[wid] = { ...(next[wid] ?? {}), ...info };
+/** Replace one group entry from a WorkerGroupStatsMessage. */
+function applyGroupStats(msg) {
+  const groupId = msg.group_id ?? msg.service_id;
+  if (!groupId) return;
+  const children = {};
+  for (const [wid, status] of Object.entries(msg.worker_statuses ?? {})) {
+    const ts = (msg.worker_task_stats ?? {})[wid] ?? {};
+    const wh = (msg.worker_health ?? {})[wid] ?? null;
+    children[wid] = {
+      id: wid,
+      status,
+      startupState: (msg.worker_startup_states ?? {})[wid] ?? null,
+      inFlight: ts.in_progress ?? 0,
+      completed: ts.completed ?? 0,
+      failed: ts.failed ?? 0,
+      total: ts.total ?? 0,
+      cpu: wh?.cpu_usage ?? null,
+      memory: wh?.memory_usage ?? null,
+    };
   }
-  workers.value = next;
+  const group = {
+    id: groupId,
+    status: msg.status ?? 'idle',
+    startupState: msg.startup_state ?? null,
+    declaredWorkers: msg.declared_workers ?? 0,
+    readyWorkers: msg.ready_workers ?? 0,
+    inFlight: msg.task_stats?.in_progress ?? 0,
+    completed: msg.task_stats?.completed ?? 0,
+    failed: msg.task_stats?.failed ?? 0,
+    total: msg.task_stats?.total ?? 0,
+    cpu: msg.health?.cpu_usage ?? null,
+    memory: msg.health?.memory_usage ?? null,
+    workers: children,
+  };
+  workerGroups.value = { ...workerGroups.value, [groupId]: group };
 }
 
 export function handleWsMessage(msg) {
@@ -116,35 +143,8 @@ export function handleWsMessage(msg) {
       return;
     }
 
-    case 'worker_health': {
-      const wid = msg.worker_id ?? msg.id;
-      if (!wid) return;
-      const status = msg.status ?? 'idle';
-      const prev = workers.value[wid];
-      applyWorkers({ [wid]: {
-        id: wid,
-        status,
-        startupState: msg.startup_state ?? null,
-        inFlight: msg.in_flight ?? 0,
-        completed: msg.completed ?? 0,
-        failed: msg.failed ?? 0,
-        cpu: msg.cpu_percent ?? null,
-        memory: msg.memory_bytes ?? null,
-      }});
-      if (prev && prev.status !== status) {
-        if (status === 'error') {
-          log({ severity: 'error', category: 'worker',
-                message: `Worker ${wid.split('-').slice(-1)[0]} → error` });
-        } else if (status === 'high_load' && prev.status !== 'high_load') {
-          log({ severity: 'warn', category: 'worker',
-                message: `Worker ${wid.split('-').slice(-1)[0]} under high load` });
-        }
-      }
-      return;
-    }
-
-    case 'worker_status_summary':
-      applyWorkers(msg.workers ?? {});
+    case 'worker_group_stats':
+      applyGroupStats(msg);
       return;
 
     case 'realtime_server_metrics':

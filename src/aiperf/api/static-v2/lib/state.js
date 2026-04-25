@@ -33,8 +33,8 @@ export const records = signal({
   complete: false,
 });
 
-/** Map of workerId → WorkerInfo. */
-export const workers = signal({});
+/** Map of groupId → WorkerGroupInfo. Each group contains a `workers` child map. */
+export const workerGroups = signal({});
 
 /** Server metrics endpoint_summaries (array of { endpoint, metrics: [...] }). */
 export const serverMetrics = signal([]);
@@ -112,7 +112,7 @@ export function resetLiveState() {
     active: false,
     complete: false,
   };
-  workers.value = {};
+  workerGroups.value = {};
   serverMetrics.value = [];
   realtimeMetrics.value = [];
   telemetryMetrics.value = [];

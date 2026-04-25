@@ -788,3 +788,14 @@ a:hover { text-decoration: underline; }
 .log-cat--records { background: rgba(118, 185, 0, 0.12); color: var(--green); }
 
 .log-msg { font-family: var(--font-mono); }
+
+/* ───── Worker group toggle ───── */
+.group-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+}
+.group-toggle:hover { color: var(--text); }
+.worker-child-row td { background: rgba(255, 255, 255, 0.02); }
