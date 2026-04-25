@@ -19,7 +19,7 @@ def show(
     path: Annotated[
         Path,
         Parameter(
-            name=["-p", "--path"],
+            name=["-f", "--path"],
             help="Path to an AIPerfJob YAML file.",
         ),
     ],
@@ -33,6 +33,7 @@ def show(
 
     Examples:
         aiperf kube show --path recipes/qwen3-32b-fp8/trtllm/agg/perf.yaml
+        aiperf kube show -f recipes/llama-3-70b/vllm/agg/perf.yaml
     """
     from aiperf.cli_utils import exit_on_error
     from aiperf.config import dump_config

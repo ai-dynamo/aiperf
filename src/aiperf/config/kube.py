@@ -68,7 +68,7 @@ class KubeManageOptions(BaseModel):
     namespace: Annotated[
         str | None,
         Field(description="Kubernetes namespace (default: aiperf-benchmarks)"),
-        CLIParameter(name="--namespace", group=_KubeGroups.KUBERNETES),
+        CLIParameter(name=["-n", "--namespace"], group=_KubeGroups.KUBERNETES),
     ] = None
 
 

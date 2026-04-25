@@ -3062,7 +3062,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4019,7 +4019,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4153,7 +4153,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4209,7 +4209,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4251,7 +4251,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4309,7 +4309,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4360,7 +4360,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4370,7 +4370,7 @@ Kubernetes namespace (default: aiperf-benchmarks).
 
 Render an AIPerfJob CR with Jinja2/env-vars resolved
 
-#### `-p`, `--path` `<str>` _(Required)_
+#### `-f`, `--path` `<str>` _(Required)_
 
 Path to an AIPerfJob YAML file.
 
@@ -4444,7 +4444,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4464,7 +4464,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
@@ -4504,7 +4504,7 @@ Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
 
 Kubernetes context to use (defaults to current context in kubeconfig).
 
-#### `--namespace` `<str>`
+#### `-n`, `--namespace` `<str>`
 
 Kubernetes namespace (default: aiperf-benchmarks).
 
