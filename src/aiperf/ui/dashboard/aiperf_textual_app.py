@@ -16,7 +16,7 @@ from textual.widgets import Footer
 from aiperf.common.enums import GPUTelemetryMode, WorkerStartupState, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import CombinedPhaseStats
-from aiperf.common.models import MetricResult, WorkerStats
+from aiperf.common.models import MetricResult, WorkerGroupStats, WorkerStats
 from aiperf.config import BenchmarkRun
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
@@ -285,6 +285,14 @@ class AIPerfTextualApp(App):
         if self.worker_dashboard:
             async with self.worker_dashboard.batch():
                 self.worker_dashboard.on_worker_update(worker_id, worker_stats)
+
+    async def on_worker_group_update(
+        self, group_id: str, group_stats: WorkerGroupStats
+    ) -> None:
+        """Forward worker-group rolled-up snapshots to the Textual App."""
+        if self.worker_dashboard:
+            async with self.worker_dashboard.batch():
+                self.worker_dashboard.on_worker_group_update(group_id, group_stats)
 
     async def on_worker_status_summary(
         self,

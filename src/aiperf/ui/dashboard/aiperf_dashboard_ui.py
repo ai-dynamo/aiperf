@@ -57,6 +57,9 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         self.attach_hook(AIPerfHook.ON_PHASE_PROGRESS, self.app.on_phase_progress)
         self.attach_hook(AIPerfHook.ON_WORKER_UPDATE, self.app.on_worker_update)
         self.attach_hook(
+            AIPerfHook.ON_WORKER_GROUP_UPDATE, self.app.on_worker_group_update
+        )
+        self.attach_hook(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY, self.app.on_worker_status_summary
         )
         self.attach_hook(AIPerfHook.ON_REALTIME_METRICS, self.app.on_realtime_metrics)
