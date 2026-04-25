@@ -135,12 +135,13 @@ def expand_config_dict(
 
     Mirrors the expansion pipeline in ``load_config_from_string()``. Use this
     when you already have a parsed dict (e.g., from a Kubernetes CRD spec)
-    rather than a YAML string. The ``variables`` key is removed after rendering.
+    rather than a YAML string. The ``variables`` key is preserved on the
+    returned dict so run-time renderers (e.g. ``artifacts.user_files``) can
+    resolve it again later.
 
     Order:
         1. ``${VAR}`` / ``${VAR:default}`` substitution from ``os.environ``
         2. Jinja2 ``{{ expr }}`` rendering using the dict itself as context
-        3. ``variables`` key removed (it was only needed for Jinja2 context)
 
     Args:
         data: Raw config dict to expand (mutated copy is returned).
@@ -157,5 +158,4 @@ def expand_config_dict(
         data = substitute_env_vars(data)
     context = build_template_context(data)
     data = render_jinja2_templates(data, context)
-    data.pop("variables", None)
     return data

@@ -273,9 +273,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             default_factory=dict,
             description=(
-                "User-defined variables for jinja2 templating in this config. "
-                "Resolved at config load and preserved for run-time renderers "
-                "(e.g. artifacts.user_files)."
+                "User-defined values exposed to Jinja2 in `{{ ... }}` expressions "
+                "during config load. Preserved on the resolved config so run-time "
+                "renderers (e.g. `artifacts.user_files`) can resolve them again at "
+                "run time."
             ),
         ),
     ]

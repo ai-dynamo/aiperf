@@ -70,7 +70,7 @@ def _run_show(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
 def test_show_renders_jinja_templates(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`{{ a * b }}` inside phases must resolve to an int; variables section is stripped."""
+    """`{{ a * b }}` inside phases must resolve to an int; variables section is preserved."""
     doc = _minimal_cr()
     doc["spec"]["benchmark"]["variables"] = {
         "concurrency_per_gpu": 2,
@@ -90,7 +90,10 @@ def test_show_renders_jinja_templates(
     phase = rendered["spec"]["benchmark"]["phases"]["default"]
     assert phase["concurrency"] == 32
     assert phase["requests"] == 320
-    assert "variables" not in rendered["spec"]["benchmark"]
+    assert rendered["spec"]["benchmark"]["variables"] == {
+        "concurrency_per_gpu": 2,
+        "deployment_gpu_count": 16,
+    }
     assert "{{" not in out
 
 
