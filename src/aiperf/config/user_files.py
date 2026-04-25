@@ -22,7 +22,10 @@ from aiperf.config._base import BaseConfig
 
 _logger = AIPerfLogger(__name__)
 
+# C0 controls + DEL; matches POSIX portable filename character set negation.
 _FORBIDDEN_PATH_CHARS = frozenset(chr(c) for c in range(32)) | {"\x7f"}
+
+_JINJA_MARKERS = ("{{", "{%", "{#")
 
 
 # Strict-undefined env duplicated from loader/jinja.py: that one is for load-time
@@ -199,6 +202,16 @@ def materialize_user_files(
     for entry in files:
         rendered = _render_content(entry, context)
         target = run_dir / entry.path
+        # Resolve and check parent BEFORE mkdir so a symlinked intermediate
+        # directory cannot cause us to create directories outside run_dir.
+        parent_resolved = target.parent.resolve()
+        try:
+            parent_resolved.relative_to(run_dir_resolved)
+        except ValueError as exc:
+            raise UserFileError(
+                f"user_files path={entry.path!r} parent resolves to "
+                f"{parent_resolved} which is outside run dir {run_dir_resolved}"
+            ) from exc
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -225,8 +238,9 @@ def materialize_user_files(
 
 def _render_content(entry: UserFile, context: dict[str, Any]) -> Any:
     """Recursively render jinja2 strings in entry.content with strict undefined."""
+    coerce = entry.format != "text"
     try:
-        return _render_recursive(entry.content, context, entry.path)
+        return _render_recursive(entry.content, context, coerce=coerce)
     except jinja2.UndefinedError as exc:
         raise UserFileError(
             f"user_files render failed: path={entry.path!r} undefined variable: "
@@ -238,19 +252,25 @@ def _render_content(entry: UserFile, context: dict[str, Any]) -> Any:
         ) from exc
 
 
-def _render_recursive(value: Any, context: dict[str, Any], path: str) -> Any:
+def _render_recursive(value: Any, context: dict[str, Any], *, coerce: bool) -> Any:
     if isinstance(value, str):
-        # Skip plain strings without jinja markers — huge speedup on large dicts.
-        if "{{" not in value and "{%" not in value:
+        # Skip plain strings without jinja markers — huge speedup on large dicts,
+        # AND preserves user-authored literals (a string "42" stays "42" rather
+        # than being coerced to int 42 by the json/yaml path).
+        if not any(m in value for m in _JINJA_MARKERS):
             return value
-        return _USER_FILES_ENV.from_string(value).render(**context)
+        rendered = _USER_FILES_ENV.from_string(value).render(**context)
+        return _coerce_scalar(rendered) if coerce else rendered
     if isinstance(value, dict):
-        return {k: _render_recursive(v, context, path) for k, v in value.items()}
+        return {
+            k: _render_recursive(v, context, coerce=coerce) for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [_render_recursive(v, context, path) for v in value]
+        return [_render_recursive(v, context, coerce=coerce) for v in value]
     return value
 
 
+# Mirrors loader/jinja.py::_coerce_rendered — keep them in sync if either changes.
 def _coerce_scalar(rendered: str) -> Any:
     """Coerce a rendered string to bool/int/float when unambiguous.
 
@@ -273,27 +293,14 @@ def _coerce_scalar(rendered: str) -> Any:
     return rendered
 
 
-def _coerce_structured(value: Any) -> Any:
-    """Recursively coerce scalar leaves of a json/yaml-bound structure."""
-    if isinstance(value, str):
-        return _coerce_scalar(value)
-    if isinstance(value, dict):
-        return {k: _coerce_structured(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_coerce_structured(v) for v in value]
-    return value
-
-
 def _write(entry: UserFile, target: Path, rendered: Any) -> None:
     if entry.format == "json":
-        target.write_bytes(
-            orjson.dumps(_coerce_structured(rendered), option=orjson.OPT_INDENT_2)
-        )
+        target.write_bytes(orjson.dumps(rendered, option=orjson.OPT_INDENT_2))
         return
     if entry.format == "yaml":
         target.write_text(
             yaml.safe_dump(
-                _coerce_structured(rendered),
+                rendered,
                 sort_keys=False,
                 default_flow_style=False,
             )

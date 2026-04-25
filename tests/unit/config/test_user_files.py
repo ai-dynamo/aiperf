@@ -196,3 +196,39 @@ def test_materialize_write_failure_raises(tmp_path):
             materialize_user_files(files, run_dir=tmp_path, context={})
     finally:
         os.chmod(tmp_path, 0o700)
+
+
+def test_materialize_jinja_comment_is_stripped(tmp_path):
+    files = [UserFile(path="a.txt", content="hello {# c #} world")]
+    materialize_user_files(files, run_dir=tmp_path, context={})
+    assert (tmp_path / "a.txt").read_text() == "hello  world"
+
+
+def test_materialize_intermediate_symlink_escape_rejected(tmp_path):
+    outside = tmp_path.parent / "outside_2"
+    outside.mkdir(exist_ok=True)
+    (tmp_path / "evil").symlink_to(outside)
+    files = [UserFile(path="evil/sub/a.txt", content="x")]
+    with pytest.raises(UserFileError) as exc_info:
+        materialize_user_files(files, run_dir=tmp_path, context={})
+    msg = str(exc_info.value).lower()
+    assert "outside run dir" in msg or "escape" in msg
+    # Critical: outside dir should NOT have a `sub` subdir created.
+    assert not (outside / "sub").exists()
+
+
+def test_materialize_json_preserves_literal_strings(tmp_path):
+    """Literal '42' (no jinja) stays a string; rendered '{{ x }}' with x=42 becomes int."""
+    files = [
+        UserFile(
+            path="a.json",
+            format="json",
+            content={
+                "literal_id": "42",  # user wrote a string literal
+                "rendered_id": "{{ x }}",  # context: x=42
+            },
+        )
+    ]
+    materialize_user_files(files, run_dir=tmp_path, context={"x": 42})
+    data = json.loads((tmp_path / "a.json").read_text())
+    assert data == {"literal_id": "42", "rendered_id": 42}
