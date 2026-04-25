@@ -677,8 +677,10 @@ class TestHealthMonitoring:
             manager.worker_health["test-pod-manager_worker_0"].startup_state
             == WorkerStartupState.WAITING_FOR_DATASET
         )
-        summary = manager.publish.await_args_list[0].args[0]
-        assert isinstance(summary, WorkerStatusSummaryMessage)
+        published_messages = [call.args[0] for call in manager.publish.await_args_list]
+        summary = next(
+            m for m in published_messages if isinstance(m, WorkerStatusSummaryMessage)
+        )
         assert summary.worker_startup_states == {
             "test-pod-manager_worker_0": WorkerStartupState.WAITING_FOR_DATASET
         }
@@ -726,9 +728,12 @@ class TestHealthMonitoring:
         published_messages = [
             call.args[0] for call in worker_group_manager.publish.await_args_list
         ]
-        summary = published_messages[0]
-        pod_summary = published_messages[-1]
-        assert isinstance(summary, WorkerStatusSummaryMessage)
+        summary = next(
+            m for m in published_messages if isinstance(m, WorkerStatusSummaryMessage)
+        )
+        pod_summary = next(
+            m for m in published_messages if isinstance(m, WorkerPodStateMessage)
+        )
         assert summary.worker_startup_states == {
             "worker_0": WorkerStartupState.WAITING_FOR_DATASET
         }
@@ -766,9 +771,12 @@ class TestHealthMonitoring:
         )
 
         published_messages = [call.args[0] for call in manager.publish.await_args_list]
-        summary = published_messages[0]
-        pod_summary = published_messages[-1]
-        assert isinstance(summary, WorkerStatusSummaryMessage)
+        summary = next(
+            m for m in published_messages if isinstance(m, WorkerStatusSummaryMessage)
+        )
+        pod_summary = next(
+            m for m in published_messages if isinstance(m, WorkerPodStateMessage)
+        )
         assert summary.worker_statuses == {"worker_0": WorkerStatus.HEALTHY}
         assert summary.worker_startup_states == {
             "worker_0": WorkerStartupState.WAITING_FOR_DATASET

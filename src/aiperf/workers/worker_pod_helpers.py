@@ -15,7 +15,10 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
-from aiperf.common.enums import CommandType, WorkerStartupState
+from aiperf.common.enums import (
+    CommandType,
+    WorkerStartupState,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
@@ -36,6 +39,7 @@ from aiperf.common.pod_lifecycle_structs import (
 )
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.plugin.enums import ServiceType
+from aiperf.workers.worker_group_stats_builder import build_worker_group_stats
 from aiperf.workers.worker_pod_dataset_download import (
     placeholder_local_paths,
 )
@@ -449,3 +453,8 @@ async def run_dataset_download(
         )
         await publish_summary_fn()
         raise
+
+
+# Re-export for the WGM publish path; defined in its own module to keep this
+# file under the ergonomics file-size cap.
+__all__ = ["build_worker_group_stats"]

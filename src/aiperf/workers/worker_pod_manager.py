@@ -68,6 +68,7 @@ from aiperf.workers.worker_pod_dataset_download import download_dataset
 from aiperf.workers.worker_pod_helpers import (
     build_pod_dataset_snapshot,
     build_pod_summary,
+    build_worker_group_stats,
     configure_local_peers,
     notify_registered_workers_of_dataset,
     prefetch_tokenizers,
@@ -434,13 +435,14 @@ class WorkerGroupManagerBase(BaseComponentService):
         await self._publish_worker_summary()
 
     async def _publish_worker_summary(self) -> None:
-        """Publish worker-centric and pod-centric state snapshots."""
-        summary = build_worker_status_summary(
-            service_id=self.service_id,
-            worker_infos=self.worker_health,
+        """Publish worker-group, worker-centric, and pod-centric state snapshots."""
+        sid, infos = self.service_id, self.worker_health
+        summary = build_worker_status_summary(service_id=sid, worker_infos=infos)
+        group_stats = build_worker_group_stats(
+            service_id=sid, declared_workers=self.workers_per_pod, worker_infos=infos
         )
         pod_summary = build_pod_summary(
-            service_id=self.service_id,
+            service_id=sid,
             pod_index=self._pod_index,
             benchmark_generation=self._benchmark_generation,
             dataset_generation=self._dataset_generation,
@@ -449,8 +451,8 @@ class WorkerGroupManagerBase(BaseComponentService):
             worker_startup_states=summary.worker_startup_states,
             peer_types=self._pod_peer_types,
         )
-        await self.publish(summary)
-        await self.publish(pod_summary)
+        for message in (group_stats, summary, pod_summary):
+            await self.publish(message)
 
     @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
     async def _on_report_worker_status_summary(self, message: Command) -> None:
