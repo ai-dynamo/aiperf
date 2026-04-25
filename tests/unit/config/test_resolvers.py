@@ -419,3 +419,73 @@ class TestBuildDefaultResolverChain:
 
         assert run_with_config.resolved.artifact_dir_created is True
         assert run_with_config.resolved.total_expected_duration == 60.0
+
+
+# ---------------------------------------------------------------------------
+# _derive_run_meta — operator vs local layout detection
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveRunMeta:
+    """Cover the EPOCH_RE-gated branch in ``_derive_run_meta``.
+
+    Operator layout is ``<base>/<ns>/<name>/<epoch>``; an epoch-shaped leaf
+    (matched by ``aiperf.operator.results_layout.EPOCH_RE``) means the parent
+    is the AIPerfJob name. A non-epoch leaf is treated as a local-CLI run.
+    """
+
+    @pytest.fixture
+    def _clear_namespace_env(self, monkeypatch):
+        monkeypatch.delenv("AIPERF_NAMESPACE", raising=False)
+
+    def test_operator_layout(self, _clear_namespace_env):
+        """Epoch-shaped leaf -> operator layout: epoch=leaf, job_name=parent."""
+        from aiperf.config.resolvers import _derive_run_meta
+
+        meta = _derive_run_meta(Path("/artifacts/myns/myjob/1714000000"))
+        assert meta.epoch == "1714000000"
+        assert meta.job_name == "myjob"
+        assert meta.namespace == ""
+
+    def test_local_layout(self, _clear_namespace_env):
+        """Non-epoch leaf -> local layout: epoch=wall-clock, job_name=leaf."""
+        from aiperf.config.resolvers import _derive_run_meta
+
+        meta = _derive_run_meta(Path("/tmp/llama-3-8b-bench"))
+        assert meta.epoch.isdigit()
+        assert meta.job_name == "llama-3-8b-bench"
+        assert meta.namespace == ""
+
+    def test_local_path_with_short_digit_basename_not_treated_as_operator(
+        self, _clear_namespace_env
+    ):
+        """A local path like /tmp/bench/42 must NOT be misread as operator layout."""
+        from aiperf.config.resolvers import _derive_run_meta
+
+        # 42 is too short to match EPOCH_RE (^\d{9,11}$|^legacy$).
+        meta = _derive_run_meta(Path("/tmp/bench/42"))
+        assert meta.job_name == "42"  # leaf used as job_name, NOT parent.
+        # epoch is wall-clock seconds, not "42".
+        assert meta.epoch.isdigit() and len(meta.epoch) >= 9
+
+    def test_legacy_epoch_match(self, _clear_namespace_env):
+        """The literal 'legacy' is a valid EPOCH_RE match (sentinel run dir)."""
+        from aiperf.config.resolvers import _derive_run_meta
+
+        meta = _derive_run_meta(Path("/artifacts/myns/myjob/legacy"))
+        assert meta.epoch == "legacy"
+        assert meta.job_name == "myjob"
+
+    def test_namespace_from_env(self, monkeypatch):
+        from aiperf.config.resolvers import _derive_run_meta
+
+        monkeypatch.setenv("AIPERF_NAMESPACE", "production")
+        meta = _derive_run_meta(Path("/tmp/bench"))
+        assert meta.namespace == "production"
+
+    def test_empty_namespace_env_returns_empty(self, monkeypatch):
+        from aiperf.config.resolvers import _derive_run_meta
+
+        monkeypatch.setenv("AIPERF_NAMESPACE", "")
+        meta = _derive_run_meta(Path("/tmp/bench"))
+        assert meta.namespace == ""
