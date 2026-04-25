@@ -7,15 +7,32 @@ See docs/kubernetes/user-files.md for the user-facing reference.
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
+import jinja2
+import orjson
+import yaml
 from pydantic import Field, model_validator
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfError
 from aiperf.config._base import BaseConfig
 
+_logger = AIPerfLogger(__name__)
+
 _FORBIDDEN_PATH_CHARS = frozenset(chr(c) for c in range(32)) | {"\x7f"}
+
+
+# Strict-undefined env duplicated from loader/jinja.py: that one is for load-time
+# config expansion, this one is for run-time user_files materialization. Keep them
+# separate so changes to one don't bleed into the other.
+_USER_FILES_ENV = jinja2.Environment(
+    undefined=jinja2.StrictUndefined,
+    autoescape=False,
+    keep_trailing_newline=True,
+)
 
 
 class UserFileError(AIPerfError):
@@ -96,3 +113,194 @@ class UserFile(BaseConfig):
                 f"got {type(self.content).__name__}."
             )
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class RunMeta:
+    """Run-time identity for a benchmark execution.
+
+    Built once at run start and passed into build_user_file_context.
+    """
+
+    epoch: str
+    """Run epoch (e.g. '1714000000')."""
+
+    job_name: str
+    """AIPerfJob name in k8s; --artifact-dir basename locally."""
+
+    namespace: str
+    """K8s namespace; empty string locally."""
+
+
+def build_user_file_context(
+    config: Any,
+    run_meta: RunMeta,
+    run_dir: Path,
+) -> dict[str, Any]:
+    """Build the jinja2 context dict for user_files rendering.
+
+    Args:
+        config: Resolved AIPerfConfig (must expose .variables, .benchmark.models[0],
+            .benchmark.endpoint.urls[0]).
+        run_meta: Identity for the run (epoch, job_name, namespace).
+        run_dir: Absolute path to the run directory on local disk.
+
+    Returns:
+        A dict combining user variables (tier 1) with system-injected names (tier 2).
+        On collision, injected wins and a WARNING is logged.
+
+    Side effects:
+        Logs WARNING for each shadowed user variable.
+    """
+    user_vars = dict(getattr(config, "variables", {}) or {})
+    injected = {
+        "epoch": run_meta.epoch,
+        "job_name": run_meta.job_name,
+        "namespace": run_meta.namespace,
+        "model": config.benchmark.models[0] if config.benchmark.models else "",
+        "endpoint_url": config.benchmark.endpoint.urls[0]
+        if config.benchmark.endpoint.urls
+        else "",
+        "artifact_dir": str(run_dir),
+    }
+    for name in injected:
+        if name in user_vars:
+            _logger.warning(
+                "variable %r in artifacts.user_files context shadowed by "
+                "system-injected name; rename to avoid",
+                name,
+            )
+    return {**user_vars, **injected}
+
+
+def materialize_user_files(
+    files: list[UserFile],
+    run_dir: Path,
+    context: dict[str, Any],
+) -> None:
+    """Render and write all user_files to the run directory.
+
+    Aborts on first failure; partial writes may have already happened on disk
+    when this raises (acceptable: caller treats this as a fatal pre-run error
+    and the run dir is owned by this run).
+
+    Args:
+        files: User-declared file specs from artifacts.user_files.
+        run_dir: Absolute path to the run directory.
+        context: Jinja2 context dict from build_user_file_context.
+
+    Raises:
+        UserFileError: On render failure, path-escape, or write failure. The
+            message names the offending file path.
+    """
+    if not files:
+        return
+    run_dir_resolved = run_dir.resolve()
+    for entry in files:
+        rendered = _render_content(entry, context)
+        target = run_dir / entry.path
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise UserFileError(
+                f"user_files mkdir failed: path={entry.path!r} "
+                f"parent={target.parent} errno={exc!s}"
+            ) from exc
+        target_resolved = target.resolve()
+        try:
+            target_resolved.relative_to(run_dir_resolved)
+        except ValueError as exc:
+            raise UserFileError(
+                f"user_files path={entry.path!r} resolved to {target_resolved} "
+                f"which is outside run dir {run_dir_resolved}"
+            ) from exc
+        try:
+            _write(entry, target_resolved, rendered)
+        except OSError as exc:
+            raise UserFileError(
+                f"user_files write failed: path={entry.path!r} "
+                f"resolved={target_resolved} errno={exc!s}"
+            ) from exc
+
+
+def _render_content(entry: UserFile, context: dict[str, Any]) -> Any:
+    """Recursively render jinja2 strings in entry.content with strict undefined."""
+    try:
+        return _render_recursive(entry.content, context, entry.path)
+    except jinja2.UndefinedError as exc:
+        raise UserFileError(
+            f"user_files render failed: path={entry.path!r} undefined variable: "
+            f"{exc!s}. Available context keys: {sorted(context.keys())}"
+        ) from exc
+    except jinja2.TemplateError as exc:
+        raise UserFileError(
+            f"user_files render failed: path={entry.path!r} jinja2 error: {exc!s}"
+        ) from exc
+
+
+def _render_recursive(value: Any, context: dict[str, Any], path: str) -> Any:
+    if isinstance(value, str):
+        # Skip plain strings without jinja markers — huge speedup on large dicts.
+        if "{{" not in value and "{%" not in value:
+            return value
+        return _USER_FILES_ENV.from_string(value).render(**context)
+    if isinstance(value, dict):
+        return {k: _render_recursive(v, context, path) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_render_recursive(v, context, path) for v in value]
+    return value
+
+
+def _coerce_scalar(rendered: str) -> Any:
+    """Coerce a rendered string to bool/int/float when unambiguous.
+
+    Matches loader/jinja.py::_coerce_rendered so structured output (json/yaml)
+    treats ``"{{ n }}"`` with ``n=42`` as the int ``42`` rather than ``"42"``.
+    """
+    low = rendered.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    try:
+        return int(rendered)
+    except ValueError:
+        pass
+    try:
+        return float(rendered)
+    except ValueError:
+        pass
+    return rendered
+
+
+def _coerce_structured(value: Any) -> Any:
+    """Recursively coerce scalar leaves of a json/yaml-bound structure."""
+    if isinstance(value, str):
+        return _coerce_scalar(value)
+    if isinstance(value, dict):
+        return {k: _coerce_structured(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_coerce_structured(v) for v in value]
+    return value
+
+
+def _write(entry: UserFile, target: Path, rendered: Any) -> None:
+    if entry.format == "json":
+        target.write_bytes(
+            orjson.dumps(_coerce_structured(rendered), option=orjson.OPT_INDENT_2)
+        )
+        return
+    if entry.format == "yaml":
+        target.write_text(
+            yaml.safe_dump(
+                _coerce_structured(rendered),
+                sort_keys=False,
+                default_flow_style=False,
+            )
+        )
+        return
+    # text: write rendered string verbatim. _USER_FILES_ENV has
+    # keep_trailing_newline=True so the user's exact content (including or
+    # excluding a trailing newline) round-trips unchanged.
+    text = rendered if isinstance(rendered, str) else str(rendered)
+    target.write_text(text)
