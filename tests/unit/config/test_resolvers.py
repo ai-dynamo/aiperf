@@ -157,6 +157,59 @@ class TestArtifactDirResolver:
 
         assert run.resolved.artifact_dir_created is True
 
+    def test_resolve_for_probe_skips_user_files_materialization(self, tmp_path):
+        """Probe runs must NOT materialize user_files (they re-run per variation).
+
+        ``cli_runner._estimate_and_log_duration`` clones the user's first config
+        into a probe run only to estimate duration. After Task 6 the resolver
+        also wrote user_files; that produced a stray artifact tree before the
+        actual benchmark and could bake in template values (e.g. ``epoch``)
+        that don't match the per-variation runs.
+        """
+        from aiperf.config.loader import load_config_from_string
+
+        yaml_str = """
+artifacts:
+  user_files:
+    - path: input_config.json
+      format: json
+      content:
+        note: "literal value"
+models:
+  - test/model
+endpoint:
+  type: chat
+  urls: ["http://localhost:8000"]
+datasets:
+  default:
+    type: synthetic
+    entries: 10
+    prompts:
+      isl: 32
+      osl: 16
+phases:
+  default:
+    type: concurrency
+    requests: 10
+    concurrency: 1
+"""
+        # Probe run: target dir gets created, but user_files MUST NOT exist.
+        probe_dir = tmp_path / "probe"
+        probe_cfg = load_config_from_string(yaml_str)
+        probe_cfg.artifacts.dir = probe_dir
+        probe_run = _make_run(probe_cfg, artifact_dir=probe_dir)
+        ArtifactDirResolver().resolve(probe_run, for_probe=True)
+        assert probe_dir.is_dir()
+        assert not (probe_dir / "input_config.json").exists()
+
+        # Real per-variation run (default for_probe=False) DOES materialize.
+        real_dir = tmp_path / "real"
+        real_cfg = load_config_from_string(yaml_str)
+        real_cfg.artifacts.dir = real_dir
+        real_run = _make_run(real_cfg, artifact_dir=real_dir)
+        ArtifactDirResolver().resolve(real_run)
+        assert (real_dir / "input_config.json").exists()
+
 
 # ---------------------------------------------------------------------------
 # TokenizerResolver

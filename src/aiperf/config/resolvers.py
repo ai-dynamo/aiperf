@@ -64,7 +64,18 @@ class ArtifactDirResolver:
     This matches origin/main's ``UserConfig._compute_artifact_directory()``.
     """
 
-    def resolve(self, run: BenchmarkRun) -> None:
+    def resolve(self, run: BenchmarkRun, *, for_probe: bool = False) -> None:
+        """Resolve artifact_dir and (optionally) materialize user_files.
+
+        Args:
+            run: The BenchmarkRun whose ``cfg.artifacts.dir`` to normalize.
+            for_probe: When True, skip user_files materialization. The probe
+                run in ``cli_runner._estimate_and_log_duration`` clones
+                ``first_config`` only to estimate duration; per-variation runs
+                materialize user_files into their own dirs, so writing them
+                here would produce a stray artifact tree and bake in template
+                values (e.g. ``{{ epoch }}``) that don't match the real run.
+        """
         cfg = run.cfg
         artifact_dir = run.artifact_dir.resolve()
 
@@ -81,7 +92,7 @@ class ArtifactDirResolver:
         run.resolved.artifact_dir_created = True
         logger.debug("Artifact directory created: %s", artifact_dir)
 
-        if run.cfg.artifacts.user_files:
+        if run.cfg.artifacts.user_files and not for_probe:
             from aiperf.config.user_files import (
                 build_user_file_context,
                 materialize_user_files,

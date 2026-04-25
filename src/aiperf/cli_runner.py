@@ -298,7 +298,7 @@ def _estimate_and_log_duration(
         cfg=first_config,
         artifact_dir=first_config.artifacts.dir,
     )
-    ArtifactDirResolver().resolve(probe_run)
+    ArtifactDirResolver().resolve(probe_run, for_probe=True)
     TimingResolver().resolve(probe_run)
 
     per_run_duration = probe_run.resolved.total_expected_duration
