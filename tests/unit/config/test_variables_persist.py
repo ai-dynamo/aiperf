@@ -4,7 +4,7 @@
 """Variables block must persist on the resolved config so run-time renderers can use it."""
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.loader import load_config_from_string
+from aiperf.config.loader import build_benchmark_plan, load_config_from_string
 from aiperf.config.loader.jinja import expand_config_dict
 
 _BASE_YAML = """
@@ -75,3 +75,24 @@ def test_variables_block_persists_through_expand_config_dict():
 
     config = AIPerfConfig.model_validate(expanded)
     assert config.variables == {"isl": 1024, "osl": 512}
+
+
+def test_variables_block_persists_through_sweep_variations():
+    """Sweep path: build_benchmark_plan must keep variables on each variation.
+
+    Mirrors the YAML/dict ingestion tests but exercises the sweep-expansion
+    pipeline in plan.py, which previously stripped `variables` per variation.
+    """
+    config = AIPerfConfig(
+        variables={"isl": 1024, "osl": 512},
+        sweep={
+            "type": "grid",
+            "variables": {"phases.default.concurrency": [8, 16, 32]},
+        },
+        **_BASE_DICT,
+    )
+    plan = build_benchmark_plan(config)
+
+    assert len(plan.configs) == 3
+    for resolved in plan.configs:
+        assert resolved.variables == {"isl": 1024, "osl": 512}

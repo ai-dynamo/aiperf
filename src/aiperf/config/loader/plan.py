@@ -52,10 +52,11 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
         variation_dict.pop("multi_run", None)
 
         # Re-render Jinja2 for this variation so sweep-overridden values
-        # propagate to any templates that reference them
+        # propagate to any templates that reference them. `variables` is
+        # preserved on the resolved variation so run-time renderers (e.g.
+        # artifacts.user_files) can resolve `{{ ... }}` expressions again.
         context = build_template_context(variation_dict)
         variation_dict = render_jinja2_templates(variation_dict, context)
-        variation_dict.pop("variables", None)
 
         benchmark_config = BenchmarkConfig.model_validate(variation_dict)
         configs.append(benchmark_config)
