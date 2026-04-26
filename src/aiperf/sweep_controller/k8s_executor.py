@@ -163,7 +163,7 @@ class K8sChildJobExecutor(RunExecutor):
             "annotations": template_meta.get("annotations") or {},
             "ownerReferences": [
                 {
-                    "apiVersion": "aiperf.nvidia.com/v1",
+                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
                     "kind": "AIPerfSweep",
                     "name": self.sweep_name,
                     "uid": self.sweep_uid,
@@ -219,7 +219,7 @@ class K8sChildJobExecutor(RunExecutor):
                 f"(uid={self.sweep_uid})"
             )
         body = {
-            "apiVersion": "aiperf.nvidia.com/v1",
+            "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfJob",
             "metadata": self._build_child_metadata(run, name),
             "spec": self._build_child_spec(run),
@@ -325,9 +325,10 @@ class K8sChildJobExecutor(RunExecutor):
             f"/profile_export_aiperf.json"
         )
         try:
-            async with aiohttp.ClientSession() as session, session.get(
-                url, timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+            ):
                 resp.raise_for_status()
                 data = orjson.loads(await resp.read())
         except Exception:  # noqa: BLE001

@@ -107,7 +107,7 @@ async def _provision_rbac(*, name: str, namespace: str, sweep_uid: str) -> None:
     sa_name = f"aiperf-sweep-controller-{name}"
     role_name = sa_name
     owner_ref = k8s.V1OwnerReference(
-        api_version="aiperf.nvidia.com/v1",
+        api_version="aiperf.nvidia.com/v1alpha1",
         kind="AIPerfSweep",
         name=name,
         uid=sweep_uid,
@@ -238,8 +238,14 @@ async def _create_sweep_controller_jobset(
     # Lift scheduling primitives from the user's template.spec.podTemplate so the
     # sweep-controller pod can land on the same nodes as its child workers will.
     pod_template = template_spec.get("podTemplate") or {}
-    for key in ("nodeSelector", "tolerations", "affinity",
-                "imagePullSecrets", "priorityClassName", "runtimeClassName"):
+    for key in (
+        "nodeSelector",
+        "tolerations",
+        "affinity",
+        "imagePullSecrets",
+        "priorityClassName",
+        "runtimeClassName",
+    ):
         if key in pod_template and pod_template[key] is not None:
             value = pod_template[key]
             if key == "imagePullSecrets" and value and isinstance(value[0], str):
@@ -255,7 +261,7 @@ async def _create_sweep_controller_jobset(
             "namespace": namespace,
             "ownerReferences": [
                 {
-                    "apiVersion": "aiperf.nvidia.com/v1",
+                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
                     "kind": "AIPerfSweep",
                     "name": name,
                     "uid": sweep_uid,
