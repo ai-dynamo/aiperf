@@ -61,7 +61,7 @@ sweep:
             isl: {mean: 128, stddev: 20}
             osl: {mean: 64, stddev: 10}
       phases:
-        test:
+        - name: test
           rate: 50.0
           concurrency: 128
 
@@ -73,7 +73,7 @@ sweep:
             isl: {mean: 1024, median: 904}
             osl: {mean: 256, stddev: 50}
       phases:
-        test:
+        - name: test
           rate: 20.0
           concurrency: 64
 
@@ -85,7 +85,7 @@ sweep:
             isl: {mean: 4096, median: 3421}
             osl: {mean: 128, stddev: 30}
       phases:
-        test:
+        - name: test
           rate: 5.0
           concurrency: 16
 
@@ -103,7 +103,7 @@ sweep:
                 - {mean: 64, stddev: 15, weight: 60}
                 - {mean: 512, stddev: 100, weight: 40}
       phases:
-        test:
+        - name: test
           rate: 30.0
           concurrency: 64
 
@@ -115,7 +115,7 @@ sweep:
             isl: {mean: 512, median: 192}
             osl: {mean: 144, stddev: 64}
       phases:
-        test:
+        - name: test
           rate: 25.0
           concurrency: 64
 

@@ -42,7 +42,7 @@ datasets:
       osl: {type: normal, mean: 128, stddev: 25}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     dataset: main
     duration: 120
@@ -62,7 +62,7 @@ artifacts:
   summary: [json]
 ```
 
-This produces `4 * 3 = 12` benchmark runs. Each variation overrides the dot-path fields on a deep copy of the base config, so `phases.profiling.concurrency: 32` sets the `concurrency` field inside the `profiling` phase to 32.
+This produces `4 * 3 = 12` benchmark runs. Each variation overrides the dot-path fields on a deep copy of the base config. Because `phases:` is a list of named entries, the second segment of the dot-path (`profiling`) is matched against each phase's `name` field — so `phases.profiling.concurrency: 32` sets the `concurrency` field inside the phase whose `name` is `profiling`. Phases not mentioned in the override are inherited from the base unchanged.
 
 The results directory will contain one subdirectory per variation, making it straightforward to compare throughput and latency across the concurrency-rate surface.
 
@@ -91,7 +91,7 @@ datasets:
       osl: {type: normal, mean: 128, stddev: 25}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     dataset: main
     duration: 120
@@ -109,7 +109,7 @@ sweep:
             isl: {type: normal, mean: 64, stddev: 10}
             osl: {type: normal, mean: 32, stddev: 8}
       phases:
-        profiling:
+        - name: profiling
           rate: 100
 
     - name: summarization
@@ -119,7 +119,7 @@ sweep:
             isl: {type: normal, mean: 2048, stddev: 200}
             osl: {type: normal, mean: 256, stddev: 50}
       phases:
-        profiling:
+        - name: profiling
           concurrency: 16
           rate: 10
 
@@ -130,7 +130,7 @@ sweep:
             isl: {type: normal, mean: 8192, stddev: 500}
             osl: {type: normal, mean: 512, stddev: 100}
       phases:
-        profiling:
+        - name: profiling
           concurrency: 8
           rate: 5
 
@@ -140,7 +140,7 @@ artifacts:
   summary: [json]
 ```
 
-Deep-merge means nested dicts are merged recursively. In the `short_chatbot` scenario, `datasets.main.prompts` is replaced entirely because it is the leaf being overridden, while `datasets.main.type` and `datasets.main.entries` remain inherited from the base. Each scenario's `name` field becomes its label in the output directory.
+Deep-merge means nested dicts are merged recursively, and `phases:` overrides are matched by `name` against the base's phase list — only fields you set on a named override are changed; everything else is inherited. In the `short_chatbot` scenario, `datasets.main.prompts` is replaced entirely because it is the leaf being overridden, while `datasets.main.type` and `datasets.main.entries` remain inherited from the base, and the `profiling` phase keeps its base `type`, `dataset`, `duration`, and `grace_period` while picking up the new `rate`. Each scenario's `name` field becomes its label in the output directory.
 
 ## Sweep + Distributions
 
@@ -169,7 +169,7 @@ datasets:
       osl: {type: normal, mean: 128, stddev: 25}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     dataset: main
     duration: 120
@@ -314,13 +314,13 @@ datasets:
       osl: {type: normal, mean: 128, stddev: 25}
 
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     exclude_from_results: true
     requests: 100
     concurrency: 8
 
-  profiling:
+  - name: profiling
     type: poisson
     dataset: main
     duration: 120
@@ -396,7 +396,7 @@ datasets:
       osl: {type: normal, mean: 128, stddev: 25}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     dataset: main
     duration: ${DURATION:120}

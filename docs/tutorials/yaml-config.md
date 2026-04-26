@@ -459,7 +459,7 @@ sweep:
   type: grid
   variables:
     datasets.profiling.prompts.isl: [128, 512, 2048]
-    phases.profiling.rate: [10.0, 30.0, 50.0]  # TODO: name-targeted grid override syntax pending
+    phases.profiling.rate: [10.0, 30.0, 50.0]  # second segment is the phase's `name`
 # Produces 3 x 3 = 9 benchmark runs
 ```
 

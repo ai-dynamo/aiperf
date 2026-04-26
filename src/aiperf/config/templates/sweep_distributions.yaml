@@ -62,6 +62,10 @@ phases:
 sweep:
   type: grid
   variables:
+    # Grid sweep variables use dot-paths. For list-shaped `phases:` the
+    # second segment is the phase's `name` (e.g. ``profiling``), so
+    # ``phases.profiling.rate`` targets the phase named ``profiling`` —
+    # not an integer list index.
     datasets.profiling.prompts.isl: [128, 512, 2048]
     phases.profiling.rate: [10.0, 30.0, 50.0]
 
