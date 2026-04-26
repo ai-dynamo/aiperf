@@ -11,11 +11,16 @@ construction.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import logging
+import os
 import re
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import orjson
 from kubernetes_asyncio.client import ApiException, CustomObjectsApi
 
 from aiperf.orchestrator.executor import RunExecutor
@@ -59,6 +64,7 @@ __all__ = [
     "derive_child_name",
     "is_my_child",
     "needs_trial_suffix",
+    "write_child_sweep_marker",
 ]
 
 
@@ -132,6 +138,7 @@ class K8sChildJobExecutor(RunExecutor):
         sweep: dict[str, Any],
         *,
         with_trial_suffix: bool,
+        base_dir: Path | None = None,
         status_writer: Any | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> None:
@@ -141,6 +148,7 @@ class K8sChildJobExecutor(RunExecutor):
         self.sweep_namespace: str = sweep["metadata"]["namespace"]
         self.sweep_uid: str = sweep["metadata"]["uid"]
         self.with_trial_suffix = with_trial_suffix
+        self.base_dir = Path(base_dir) if base_dir is not None else None
         self._status_writer = status_writer
         self._cancel_check = cancel_check
 
@@ -280,6 +288,21 @@ class K8sChildJobExecutor(RunExecutor):
             "metadata": self._build_child_metadata(run, name),
             "spec": self._build_child_spec(run),
         }
+        if self.base_dir is not None and run.variation is not None:
+            try:
+                write_child_sweep_marker(
+                    base_dir=self.base_dir,
+                    namespace=self.sweep_namespace,
+                    child_name=name,
+                    sweep_name=self.sweep_name,
+                    variation_index=run.variation.index,
+                    variation_label=run.variation.label,
+                    trial_index=run.trial if self.with_trial_suffix else None,
+                )
+            except OSError as e:
+                logger.warning(
+                    f"failed to write child sweep marker for {name}: {e}; continuing"
+                )
         custom = CustomObjectsApi(self._api)
         logger.info(f"creating child {name}")
         return await custom.create_namespaced_custom_object(
@@ -375,3 +398,41 @@ class K8sChildJobExecutor(RunExecutor):
             logger.warning(f"child {name}: status.summary is empty")
             return {}
         return JsonMetricResult.project_summary_dict(summary)
+
+
+def write_child_sweep_marker(
+    *,
+    base_dir: Path,
+    namespace: str,
+    child_name: str,
+    sweep_name: str,
+    variation_index: int,
+    variation_label: str,
+    trial_index: int | None,
+) -> None:
+    """Drop the per-child ``sweep.json`` marker into the child's results directory.
+
+    Called by the sweep-controller before each child AIPerfJob CR is created;
+    the marker survives parent-CR TTL reap so the operator's job_union can
+    populate the back-link on archived children. Atomic write via ``os.replace``.
+
+    Idempotent: overwriting an existing marker is fine, since deterministic
+    child names anchor identity to the apiserver, not to the marker.
+    """
+    target_dir = Path(base_dir) / namespace / child_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "sweep_name": sweep_name,
+        "variation_index": variation_index,
+        "variation_label": variation_label,
+        "trial_index": trial_index,
+    }
+    fd, tmp_path = tempfile.mkstemp(prefix=".sweep.", suffix=".json", dir=target_dir)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+        os.replace(tmp_path, target_dir / "sweep.json")
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
