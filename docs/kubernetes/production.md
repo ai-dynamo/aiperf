@@ -329,7 +329,7 @@ operator:
     resultsCompressOnDisk: "true"  # zstd compression
 
 storage:
-  enabled: true                    # default is false; must be true to provision the PVC
+  enabled: true                    # default; backs results in a PVC so they survive pod restarts
   size: 1Ti                        # only used when enabled: true
   storageClassName: ""             # cluster default; only used when enabled: true
 ```

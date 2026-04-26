@@ -156,8 +156,13 @@ rbac:
 
 # storage is the results storage configuration
 storage:
-  # storage.enabled enables persistent storage for benchmark results
-  enabled: false
+  # storage.enabled backs the results volume with a PersistentVolumeClaim.
+  # Default is true so benchmark results survive operator pod restarts
+  # (rollout, OOM, eviction). Set false to opt out — useful only for
+  # ephemeral test clusters where an emptyDir is fine and no default
+  # StorageClass is available. When false, the chart falls back to
+  # ``emptyDir`` (size-bounded by ``storage.emptyDirSizeLimit`` if set).
+  enabled: true
 
   # storage.size is the PVC storage size
   size: 1Ti

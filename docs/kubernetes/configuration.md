@@ -230,7 +230,7 @@ Results are stored on a PVC so they survive pod deletion:
 
 ```yaml
 storage:
-  enabled: false
+  enabled: true           # default — PVC-backed; set false for ephemeral emptyDir
   size: 1Ti
   storageClassName: ""    # empty = cluster default
   accessMode: "ReadWriteOnce"
