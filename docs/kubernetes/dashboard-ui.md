@@ -71,131 +71,183 @@ Do not expose this port via an unauthenticated Ingress.
 
 ## Navigation
 
-The top bar is split into two groups with a separator, followed by an
-external link labelled "Plots" that points at `/dashboard/`. The link target
-is a Plotly Dash app built by `aiperf.operator.dashboard_mount.build_dashboard`
-and mounted on the FastAPI results server at `/dashboard/` via
-`WSGIMiddleware(DashboardProxy(...))`. When no runs exist on the PVC yet the
-route is served by a small WSGI stub that returns `503` until the first run
-lands, so the "Plots" link is always present and friendly.
+The UI is organized as a **two-tier router**:
 
-```mermaid
-flowchart LR
-    subgraph TopNav["Top Navigation"]
-        direction LR
-        logo["AIPerf logo"]
-        dash["Dashboard"]
-        jobs["Jobs"]
-        sep1["|"]
-        lb["Leaderboard"]
-        cmp["Compare"]
-        hist["History"]
-        sep2["|"]
-        plots["Plots ↗"]
-        search["Search (Ctrl+K)"]
-    end
+- **Cross-namespace tier** (unprefixed): `/`, `/analysis`, `/log`. These views
+  give situational awareness across every namespace the operator has observed
+  jobs in, and host analytics that benefit from a wider lens.
+- **Per-namespace tier** (`/ns/<name>/...`): every operational view —
+  overview, launch, archive, single run, single epoch. The namespace segment
+  in the URL is the **authoritative scope** for any state-changing action: a
+  Launch from `/ns/foo/launch` cannot create a job in namespace `bar`, even
+  if the YAML body says so (see "Launch divergence lock" below).
 
-    logo -.-> dash
-    dash --> jobs
-    jobs --> sep1
-    sep1 --> lb
-    lb --> cmp
-    cmp --> hist
-    hist --> sep2
-    sep2 --> plots
-    plots -.-> search
-```
+Routes are hash-based, so reloading any page works without server-side route
+configuration. The full route table:
 
-Routes are hash-based (`#/jobs`, `#/jobs/:ns/:name`, etc.), so reloading any
-page works without server-side route configuration. The six top-level routes:
+| Route | Purpose |
+|---|---|
+| `/` | Cross-namespace picker — one tile per namespace observed in the operator's job list, with mini-status chips (running / failed-recent / completed counts) and a left-edge state tint. Click a tile to enter that namespace. |
+| `/ns/:ns` | Per-namespace overview — stats hero, active runs strip, recent runs table, all scoped to one namespace. Empty namespaces show a "Launch in `<ns>`" CTA. |
+| `/ns/:ns/launch` | Launch a benchmark into `:ns`. The `namespace:` field of the YAML is auto-filled from the URL. If the user edits the YAML to specify a different namespace, the LAUNCH button disables and the breadcrumb pill is tinted red until the YAML and URL agree. |
+| `/ns/:ns/archive` | Namespace history — flat list of past runs in `:ns`. |
+| `/ns/:ns/run/:name` | Single-run workbench. |
+| `/ns/:ns/run/:name/runs/:epoch` | Single-run epoch view. |
+| `/analysis` | Cross-namespace comparison view (cluster-key driven). |
+| `/log` | Durable run log (cross-namespace). |
 
 ```mermaid
 flowchart TB
-    root["#/"] --> Dashboard["Dashboard"]
-    jobs["#/jobs"] --> Jobs["Jobs list"]
-    Jobs -->|click row| detail["#/jobs/:ns/:name<br/>(Job Detail)"]
-    lb["#/leaderboard"] --> Leaderboard["Leaderboard"]
-    cmp["#/compare"] --> Compare["Compare"]
-    hist["#/history"] --> History["History"]
-    plots["/dashboard/<br/>(external, new tab)"] --> PlotlyDash["Plotly Dash app"]
+    root["/"] --> Picker["Namespace picker"]
+    Picker -->|click tile| nsRoot["/ns/:ns"]
+    nsRoot --> Overview["Namespace overview"]
+    Overview -->|Launch| launch["/ns/:ns/launch"]
+    Overview -->|Archive| archive["/ns/:ns/archive"]
+    Overview -->|click run| run["/ns/:ns/run/:name"]
+    run --> epoch["/ns/:ns/run/:name/runs/:epoch"]
+    analysis["/analysis"] --> Analysis["Cross-namespace analysis"]
+    log["/log"] --> Log["Durable run log"]
 ```
+
+### Sticky last-namespace
+
+When the app mounts at `/`, the router checks
+`localStorage.aiperf.ui.lastNamespace`. If that value is set **and** the
+namespace currently has at least one observed job in the operator's job list,
+the app redirects to `/ns/<last>`. Otherwise the picker renders. New users —
+and anyone whose last-used namespace has no current or historical jobs —
+always see the picker on first load.
+
+### Breadcrumb-pill switcher
+
+On every `/ns/...` route the breadcrumb starts with a clickable pill
+`[ns: <name> ▾]`. Clicking it opens a compact dropdown listing every
+namespace with at least one observed job (search-filterable). Selecting a
+namespace navigates to `/ns/<chosen>`. A "View all namespaces" footer item
+returns to `/`.
+
+This is the canonical way to switch namespaces — including when you want to
+launch into a different namespace than the one currently in the URL.
+
+### Launch divergence lock
+
+The URL is the source of truth for the namespace you're launching into. On
+`/ns/:ns/launch`, the YAML editor auto-fills `namespace: <ns>`. If a user
+edits the YAML so the `namespace:` field disagrees with the URL segment, two
+things happen at once:
+
+- The **LAUNCH** button disables.
+- The breadcrumb pill is tinted red.
+
+To launch into a different namespace, switch namespaces via the breadcrumb
+pill (which navigates to `/ns/<other>/launch`) — do not edit the YAML. This
+guarantees the namespace in the URL bar always matches the namespace any
+state-changing action will operate on.
+
+### Picker visibility caveat
+
+The `/` picker only renders namespaces with **at least one observed job**
+(current or historical). Empty-but-deployable namespaces are not surfaced.
+To launch into a namespace the operator has never seen, navigate to
+`/ns/<name>/launch` directly — the launch view works regardless of whether
+the namespace appears in the picker. After the first job lands, the
+namespace will appear on subsequent picker visits.
+
+### External Plots link
+
+A "Plots" link in the top bar points at `/dashboard/` — a Plotly Dash app
+built by `aiperf.operator.dashboard_mount.build_dashboard` and mounted on
+the FastAPI results server via `WSGIMiddleware(DashboardProxy(...))`. When
+no runs exist on the PVC yet the route is served by a small WSGI stub that
+returns `503` until the first run lands, so the link is always present and
+friendly.
 
 ---
 
 ## Pages
 
-> Screenshots in this section are reproduced from committed fixtures by
-> `tools/capture_operator_ui_screenshots.py` — no cluster or running
-> benchmark required to refresh them.
+### Namespace picker (`/`)
 
-### Dashboard (`#/`)
-
-![Dashboard](../media/images/operator-ui-01-dashboard.png)
-
-Cluster-wide overview, the landing page.
+The landing view for new sessions and anyone whose sticky-namespace pointer
+no longer resolves to an active namespace.
 
 **What it shows:**
 
-- **Status bar** — running / completed / failed job counts, total GPUs and
-  nodes in the cluster, and peak request throughput seen so far.
-- **Throughput vs Latency scatter** — completed jobs as points, grouped by
-  model (stable colors). Three axis modes (`TPS / P99`, `TPS / TTFT`,
-  `Tok/s / P99`) and a log-scale toggle. Quadrant labels hint "High
-  Throughput, Low Latency" (top right).
-- **KPI cards** — Running, Completed, Peak Throughput, Best TTFT, Token
-  Throughput.
-- **Active Jobs** — one card per running/initializing/pending job with model,
-  backend, elapsed time, GPU config, live throughput, and progress bar. Click
-  a card to open Job Detail.
-- **Failed Jobs** — surfaced separately when any exist, with the error
-  message inline.
-- **Leaderboard preview** — top-5 completed jobs by request throughput, with
-  an inline bar chart. "View All →" navigates to the full leaderboard.
+- One **tile per namespace** that has at least one observed job in the
+  operator's job list (current or historical).
+- Per tile: the namespace name, mini-status chips (running / failed-recent /
+  completed counts), and a left-edge state tint (green if anything is
+  running, red if anything failed in the recent window, neutral otherwise).
+- A search field for filtering the tile grid.
+
+**Interactions:**
+
+- Click a tile → navigate to `/ns/<name>`.
+- Empty-state copy ("No namespaces yet — deploy a job into any namespace and
+  it will appear here") when the operator's job list is empty.
 
 **Endpoints consumed:**
 
-- `GET /api/v1/jobs` — polled every 5s
-- `GET /api/v1/cluster` — polled every 10s (shows a banner if unavailable)
-- `GET /api/v1/analytics/leaderboard?metric=request_throughput&stat=avg` —
-  polled every 15s, then `GET /api/v1/analytics/summary/{ns}/{job_id}` for
-  each returned entry to enrich the scatter and KPIs
+- `GET /api/v1/jobs` — polled every 5s; the namespace tile set is the
+  distinct `metadata.namespace` values across that list.
 
-### Jobs (`#/jobs`)
+### Namespace overview (`/ns/:ns`)
 
-![Jobs](../media/images/operator-ui-02-jobs.png)
+Per-namespace landing page. Everything on this view is scoped to the single
+namespace in the URL.
 
-Tabular list of every AIPerfJob known to the operator.
+**What it shows:**
+
+- **Stats hero** — running / completed / failed counts, total GPUs and nodes
+  in jobs from this namespace, peak request throughput observed.
+- **Active runs strip** — one card per running/initializing/pending job with
+  model, backend, elapsed time, GPU config, live throughput, and progress
+  bar. Click a card to open the run workbench.
+- **Recent runs table** — completed and failed jobs in this namespace,
+  newest first, with phase badge, model, duration, and headline metrics.
+- **Empty state** — namespaces with no current jobs but past history show
+  the recent runs table only. Namespaces with no history at all show a
+  prominent "Launch in `<ns>`" CTA.
+
+**Endpoints consumed:**
+
+- `GET /api/v1/jobs` — polled every 5s, filtered client-side to `:ns`
+- `GET /api/v1/cluster` — polled every 10s
+
+### Launch (`/ns/:ns/launch`)
+
+YAML editor for submitting a new AIPerfJob into `:ns`.
+
+**Behavior:**
+
+- The `namespace:` field of the YAML is **auto-filled** from the URL.
+- Edits to the YAML that change `namespace:` to a different value trigger
+  the **divergence lock**: the LAUNCH button disables and the breadcrumb
+  pill turns red until the YAML and URL agree (or you switch namespaces via
+  the pill).
+- Templates and schema validation are unchanged from the legacy launch view.
+- On success, the page navigates to `/ns/:ns/run/<new-name>`.
+
+**Endpoints consumed:**
+
+- `POST /api/v1/jobs/{ns}` — creates the AIPerfJob CR in `:ns`
+
+### Archive (`/ns/:ns/archive`)
+
+Flat list of past runs in `:ns` — completed, failed, cancelled, and any run
+whose CR was deleted but whose results remain on the PVC.
 
 **Filters:**
 
-- Phase tabs: All / Running / Completed / Failed (with live counts).
-- Free-text search on name + namespace.
-- Model dropdown (populated from the distinct set of models across current
-  jobs).
-- Endpoint dropdown (same).
-- "Clear" button resets all four.
+- Phase tabs: All / Completed / Failed / Cancelled (with live counts).
+- Free-text search on name.
+- Model and Endpoint dropdowns (populated from the distinct sets in this
+  namespace's history).
 
-Clicking a row navigates to Job Detail. The list re-polls
-`GET /api/v1/jobs` every 5s.
+Clicking a row navigates to the run workbench. The list re-polls
+`GET /api/v1/results?ns=:ns` every 15s.
 
-### Job Detail (`#/jobs/:ns/:name`)
-
-Completed job, with the SLO hero strip, KPI tiles, per-phase cards, and the
-full artifacts + metadata tail:
-
-![Job Detail — Completed](../media/images/operator-ui-03-job-detail-completed.png)
-
-Running job. The hero reports live status; KPIs read from
-`status.liveSummary`; the Cancel button and Pods card appear only while
-the CR is live:
-
-![Job Detail — Running](../media/images/operator-ui-04-job-detail-running.png)
-
-Archived job (CR deleted, PVC results retained). A banner flags the missing
-cluster resource; KPIs + Phases + Job Configuration are synthesized from the
-`profile_export_aiperf.json` summary. Cancel and Pods are omitted:
-
-![Job Detail — Archived](../media/images/operator-ui-08-job-detail-archived.png)
+### Run workbench (`/ns/:ns/run/:name`)
 
 The deepest page, scoped to one AIPerfJob. Sections shown depend on whether
 the job is still running or has finished.
@@ -215,6 +267,7 @@ the job is still running or has finished.
 
 - **Live Throughput** — rolling line chart (last 60 samples).
 - **Latency Distribution** — live histogram.
+- **SLO hero strip** — live pass/fail against configured SLOs.
 
 **After completion (or once partial results exist):**
 
@@ -238,6 +291,11 @@ the job is still running or has finished.
   Download buttons and a "Download All" bulk action. Modal viewers preview
   JSON, CSV, and plain text inline before download.
 
+**Archived state.** When the CR has been deleted but results remain on the
+PVC, a banner flags the missing cluster resource; KPIs, Phases, and Job
+Configuration are synthesized from `profile_export_aiperf.json`. Cancel and
+Pods are omitted.
+
 **Endpoints consumed:**
 
 - `GET /api/v1/jobs/{ns}/{name}` (polled for live data; the summary block
@@ -248,61 +306,40 @@ the job is still running or has finished.
   fetches of `server_metrics_export.json` and `profile_export.jsonl`)
 - `POST /api/v1/jobs/{ns}/{name}/cancel` (Cancel button)
 
-### Leaderboard (`#/leaderboard`)
+### Run epoch view (`/ns/:ns/run/:name/runs/:epoch`)
 
-![Leaderboard](../media/images/operator-ui-05-leaderboard.png)
+The same workbench, pinned to a specific historical epoch of a multi-epoch
+run (concurrency sweeps, request-rate sweeps). Navigation widgets in the
+header let you walk forward and back through epochs without leaving the
+page; the URL updates as you navigate.
 
-Cross-job ranking for a single metric.
+### Cross-namespace analysis (`/analysis`)
 
-**Controls:**
-
-- Metric + statistic selector (throughput, latency, TTFT, ITL, token
-  throughput, …; `avg / p50 / p90 / p95 / p99 / min / max`).
-- Model and Endpoint free-text substring filters.
-
-**Views:**
-
-- Horizontal bar chart of the top 10.
-- Ranked table of all entries with gold/silver/bronze coloring on the top
-  three.
-- **Percentile Heatmap** column (shown only when entries carry `p50/p90/p99`
-  data): three cells per row, colored green (good) → yellow → red (poor),
-  normalized across the currently filtered set. Direction flips automatically
-  — lower is better for latency metrics, higher is better for throughput
-  metrics.
-
-**Endpoints:** `GET /api/v1/analytics/leaderboard?metric=...&stat=...`.
-
-### Compare (`#/compare`)
-
-![Compare](../media/images/operator-ui-06-compare.png)
-
-Side-by-side diff of 2 or more completed runs.
+Side-by-side diff of two or more completed runs **across any namespaces**.
 
 - **Left panel** — searchable checklist of every stored job (from
-  `GET /api/v1/results`). Tick 2+ jobs, press "Compare".
+  `GET /api/v1/results`), grouped by namespace. Tick 2+ jobs, press
+  "Compare".
 - **Right panel** —
   - **Metric Comparison** — table of every common metric × stat, with
     per-metric best-value highlighting (direction-aware: minimum for
     latency, maximum for throughput).
   - **Visual Comparison** — grouped bar chart, one group per metric, one
     colored bar per selected job.
+- **Cluster-key driven** — when comparing runs that share the same
+  `clusterKey` (model + backend + key tunables) the view promotes the
+  varying dimension into a per-axis selector.
 
 **Endpoints:** `GET /api/v1/analytics/compare?jobs=id1&jobs=id2&...`.
 
-### History (`#/history`)
+### Durable run log (`/log`)
 
-![History](../media/images/operator-ui-07-history.png)
+Append-only audit feed of every run the operator has observed, across all
+namespaces — submitted, started, completed, failed, cancelled, deleted —
+with timestamps. Useful for "what happened in the cluster yesterday?"
+forensics.
 
-Trend view of a single metric across all runs over time.
-
-- Same metric / statistic selector as Leaderboard.
-- Same model + endpoint substring filters.
-- Line chart ordered by `start_time`, with point tooltips that show the
-  underlying `job_id` and a formatted timestamp.
-- Table of every entry below the chart.
-
-**Endpoints:** `GET /api/v1/analytics/history?metric=...&stat=...`.
+**Endpoints:** `GET /api/v1/analytics/history`.
 
 ---
 
@@ -313,10 +350,14 @@ search icon in the top-right corner of the navigation bar opens the same modal.
 
 The palette indexes:
 
-- The five top-level nav pages: Dashboard, Jobs, Leaderboard, Compare, History
-  (sub-label: "Page"). Job Detail is not indexed directly — reach it by
-  selecting the target job instead.
-- Every AIPerfJob from the current `jobs` signal (sub-label: namespace).
+- The cross-namespace nav pages: Picker (`/`), Analysis (`/analysis`), Log
+  (`/log`) — sub-label "Page".
+- For the namespace currently in the URL (when on a `/ns/...` route): the
+  per-namespace views — Overview, Launch, Archive — sub-label "Namespace".
+- Every namespace with at least one observed job — sub-label "Namespace",
+  selecting navigates to `/ns/<name>`.
+- Every AIPerfJob from the current `jobs` signal — sub-label `<namespace>`,
+  selecting navigates to `/ns/<ns>/run/<name>`.
 
 Type to fuzzy-match either the label or the sub-label; matching is
 in-order-character, not substring. Navigation:
@@ -328,8 +369,8 @@ in-order-character, not substring. Navigation:
 | `Escape` or backdrop click | Close |
 | Mouse hover | Move highlight |
 
-Selecting a page navigates to its route; selecting a job navigates to
-`#/jobs/:ns/:name`.
+Selecting a page navigates to its route; selecting a namespace navigates to
+`/ns/<name>`; selecting a job navigates to `/ns/<ns>/run/<name>`.
 
 ---
 
@@ -373,12 +414,13 @@ missing, the live job and cluster endpoints will stay unavailable even after
 the analytics engine comes up. The Dashboard page surfaces this as a
 "Cluster endpoint unavailable — data may be stale" banner.
 
-### Dashboard page scatter empty but jobs exist
+### Namespace overview is missing throughput numbers
 
-The scatter only plots **completed** jobs that have both axis fields present
-in their summary. If your runs never finished, or the summary lacks
-`request_throughput.avg`, points are filtered out. Use the Jobs page to
-inspect individual runs instead.
+The overview's metric tiles only populate from **completed** jobs that have
+the relevant fields present in their summary. If your runs never finished,
+or the summary lacks `request_throughput.avg`, the overview falls back to
+"—". Open the run workbench from the recent-runs table to inspect individual
+runs instead.
 
 ### Port-forward drops during operator rollout
 
