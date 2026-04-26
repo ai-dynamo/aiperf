@@ -106,7 +106,7 @@ async def main() -> int:
         custom = CustomObjectsApi(api)
         sweep_cr = await custom.get_namespaced_custom_object(
             group="aiperf.nvidia.com",
-            version="v1",
+            version="v1alpha1",
             namespace=sweep_namespace,
             plural="aiperfsweeps",
             name=sweep_name,

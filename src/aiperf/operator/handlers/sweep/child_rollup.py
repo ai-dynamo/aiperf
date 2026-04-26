@@ -48,7 +48,7 @@ async def on_child_phase_transition(
 
     await _patch_parent_status(
         group="aiperf.nvidia.com",
-        version="v1",
+        version="v1alpha1",
         plural="aiperfsweeps",
         name=sweep_name,
         namespace=namespace,
@@ -77,7 +77,7 @@ async def _count_owned_children(
         custom = k8s.CustomObjectsApi(api)
         resp = await custom.list_namespaced_custom_object(
             group="aiperf.nvidia.com",
-            version="v1",
+            version="v1alpha1",
             namespace=namespace,
             plural="aiperfjobs",
             label_selector=f"aiperf.nvidia.com/sweep={sweep_name}",

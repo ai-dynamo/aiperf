@@ -195,7 +195,7 @@ class K8sChildJobExecutor(RunExecutor):
         try:
             return await custom.get_namespaced_custom_object(
                 group="aiperf.nvidia.com",
-                version="v1",
+                version="v1alpha1",
                 namespace=self.sweep_namespace,
                 plural="aiperfjobs",
                 name=name,
@@ -228,7 +228,7 @@ class K8sChildJobExecutor(RunExecutor):
         logger.info(f"creating child {name}")
         return await custom.create_namespaced_custom_object(
             group="aiperf.nvidia.com",
-            version="v1",
+            version="v1alpha1",
             namespace=self.sweep_namespace,
             plural="aiperfjobs",
             body=body,
@@ -263,7 +263,7 @@ class K8sChildJobExecutor(RunExecutor):
         custom = CustomObjectsApi(self._api)
         await custom.patch_namespaced_custom_object(
             group="aiperf.nvidia.com",
-            version="v1",
+            version="v1alpha1",
             namespace=self.sweep_namespace,
             plural="aiperfjobs",
             name=child_name,

@@ -89,7 +89,7 @@ class SweepStatusWriter:
         custom = CustomObjectsApi(self._api)
         await custom.patch_namespaced_custom_object_status(
             group="aiperf.nvidia.com",
-            version="v1",
+            version="v1alpha1",
             namespace=self.namespace,
             plural="aiperfsweeps",
             name=self.name,
