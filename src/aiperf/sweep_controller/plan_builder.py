@@ -73,12 +73,10 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
         plan_kwargs["convergence_threshold"] = spec.convergence.threshold
 
     plan = BenchmarkPlan(**plan_kwargs)
-    # Best-effort: attach sweep-specific config so downstream readers
-    # (orchestrator failure-threshold check, build_strategy adaptive flags)
-    # can use them. Tolerated as no-op when BenchmarkPlan is extra="forbid".
-    try:
-        plan.failure_policy = spec.failure_policy
-        plan.convergence_config = spec.convergence
-    except (ValueError, AttributeError):
-        pass
+    # Attach sweep-specific config so downstream readers (orchestrator
+    # failure-threshold check, build_strategy adaptive flags) can use them.
+    # BenchmarkPlan is a pydantic BaseModel without frozen/validate_assignment,
+    # so plain attribute assignment is allowed and won't be validated again.
+    plan.failure_policy = spec.failure_policy
+    plan.convergence_config = spec.convergence
     return plan

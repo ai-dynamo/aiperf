@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,6 +103,17 @@ class BenchmarkPlan(BaseModel):
     export_jsonl_file: str | None = Field(
         default=None,
         description="Path to JSONL export file for distribution convergence mode.",
+    )
+    # Sweep-specific config attached by sweep_controller.plan_builder when
+    # the plan is driven by an AIPerfSweep CR. Typed Any to avoid a circular
+    # import on aiperf.kubernetes.sweep_models. None for non-sweep plans.
+    failure_policy: Any = Field(
+        default=None,
+        description="Sweep failure-policy config (FailurePolicy); None for non-sweep plans.",
+    )
+    convergence_config: Any = Field(
+        default=None,
+        description="Sweep convergence config (ConvergenceConfig); None for non-sweep plans.",
     )
 
     @property

@@ -175,7 +175,10 @@ def _build_sweep_cr_dict(
         multirun_cfg = dict(multirun_cfg_from_yaml)
     if multi_run_trials is not None:
         multirun_cfg = multirun_cfg or {}
-        multirun_cfg.setdefault("trials", multi_run_trials)
+        # CLI flag overrides YAML, matching the documented behaviour of
+        # _TRIALS_PARAM ("overrides multi_run.trials in the YAML"). Earlier
+        # we used setdefault, which made YAML win silently.
+        multirun_cfg["trials"] = multi_run_trials
     if cooldown_seconds:
         multirun_cfg = multirun_cfg or {}
         multirun_cfg["cooldownSeconds"] = cooldown_seconds
@@ -261,4 +264,10 @@ async def _submit_sweep(
             raise
         kube_console.console.print(
             f"AIPerfSweep {namespace}/{cr_dict['metadata']['name']} created."
+        )
+        # Persist for `aiperf kube last-benchmark` parity with profile.
+        kube_console.save_last_benchmark(
+            cr_dict["metadata"]["name"],
+            namespace,
+            name=getattr(kube_options, "name", None),
         )

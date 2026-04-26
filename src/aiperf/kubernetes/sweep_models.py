@@ -202,4 +202,18 @@ class AIPerfSweepSpec(BaseConfig):
                     f"`template.spec.benchmark.{forbidden}` is not permitted on AIPerfSweep. "
                     f"Set `spec.{forbidden}` at the top level instead."
                 )
+        # Rule 5: template.spec must round-trip through AIPerfJobSpec.from_crd_spec
+        # so a missing/invalid endpoint or wrong-typed deployment field is
+        # caught at submit time rather than at child-create time. Imported
+        # lazily because aiperf.operator.models pulls in operator-only deps.
+        from aiperf.operator.models import AIPerfJobSpec
+
+        try:
+            AIPerfJobSpec.from_crd_spec(template_spec)
+        except Exception as e:
+            raise ValueError(
+                f"`template.spec` is not a valid AIPerfJobSpec: {e}. "
+                f"This is the spec that will be stamped onto every child "
+                f"AIPerfJob; fix it before submitting."
+            ) from e
         return self

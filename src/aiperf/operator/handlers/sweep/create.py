@@ -155,6 +155,13 @@ async def _provision_rbac(*, name: str, namespace: str, sweep_uid: str) -> None:
                     verbs=["get", "patch", "update"],
                     resource_names=[name],
                 ),
+                # Emit kubectl-visible events on the parent CR (progress,
+                # cancellation acks, aggregation phase).
+                k8s.V1PolicyRule(
+                    api_groups=[""],
+                    resources=["events"],
+                    verbs=["create", "patch"],
+                ),
             ],
         )
         await _create_or_skip_409(rbac.create_namespaced_role, namespace, role)
@@ -186,14 +193,27 @@ async def _provision_rbac(*, name: str, namespace: str, sweep_uid: str) -> None:
 
 
 async def _create_or_skip_409(create_fn: Any, namespace: str, body: Any) -> None:
-    """Create resource; tolerate 409 'already exists' for idempotent reconcile."""
+    """Create resource; tolerate 409 'already exists' for idempotent reconcile.
+
+    Transient apiserver failures (ApiException with non-409 status, connection
+    errors, timeouts) raise kopf.TemporaryError so kopf retries with backoff
+    rather than hammering the apiserver in an unbounded retry loop.
+    """
+    import aiohttp
     from kubernetes_asyncio.client import ApiException
 
     try:
         await create_fn(namespace, body)
     except ApiException as e:
-        if e.status != 409:
-            raise
+        if e.status == 409:
+            return
+        raise kopf.TemporaryError(
+            f"apiserver rejected create ({e.status}): {e.reason}", delay=30
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during create: {e}", delay=30
+        ) from e
 
 
 async def _create_sweep_controller_jobset(
@@ -229,6 +249,22 @@ async def _create_sweep_controller_jobset(
         ],
         "volumeMounts": [{"name": "results", "mountPath": "/results"}],
     }
+    # Merge user-supplied container env (template.spec.podTemplate.env) so
+    # users can pass HTTP_PROXY, HF_HOME, custom log levels, etc. The
+    # controller's reserved AIPERF_SWEEP_* vars take precedence on collision.
+    pod_template = template_spec.get("podTemplate") or {}
+    user_env = pod_template.get("env") or []
+    if user_env:
+        reserved = {e["name"] for e in container["env"]}
+        container["env"].extend(e for e in user_env if e.get("name") not in reserved)
+    # Container-level resources/securityContext from podTemplate. Without
+    # these, the sweep-controller pod gets no requests/limits (rejected by
+    # ResourceQuota on hardened clusters) and no securityContext (rejected
+    # by Pod Security Admission baseline/restricted).
+    if pod_template.get("resources") is not None:
+        container["resources"] = pod_template["resources"]
+    if pod_template.get("containerSecurityContext") is not None:
+        container["securityContext"] = pod_template["containerSecurityContext"]
 
     pod_spec: dict[str, Any] = {
         "restartPolicy": "OnFailure",
@@ -236,9 +272,10 @@ async def _create_sweep_controller_jobset(
         "containers": [container],
         "volumes": [{"name": "results", "emptyDir": {}}],
     }
-    # Lift scheduling primitives from the user's template.spec.podTemplate so the
-    # sweep-controller pod can land on the same nodes as its child workers will.
-    pod_template = template_spec.get("podTemplate") or {}
+    # Lift scheduling primitives + pod-level securityContext from the user's
+    # template.spec.podTemplate so the sweep-controller pod can land on the
+    # same nodes as its child workers will and meets cluster security
+    # baselines.
     for key in (
         "nodeSelector",
         "tolerations",
@@ -246,6 +283,7 @@ async def _create_sweep_controller_jobset(
         "imagePullSecrets",
         "priorityClassName",
         "runtimeClassName",
+        "securityContext",
     ):
         if key in pod_template and pod_template[key] is not None:
             value = pod_template[key]
@@ -309,6 +347,7 @@ async def _create_or_skip_409_custom(
     plural: str,
     body: Any,
 ) -> None:
+    import aiohttp
     from kubernetes_asyncio.client import ApiException
 
     try:
@@ -320,5 +359,12 @@ async def _create_or_skip_409_custom(
             body=body,
         )
     except ApiException as e:
-        if e.status != 409:
-            raise
+        if e.status == 409:
+            return
+        raise kopf.TemporaryError(
+            f"apiserver rejected JobSet create ({e.status}): {e.reason}", delay=30
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during JobSet create: {e}", delay=30
+        ) from e

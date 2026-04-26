@@ -85,31 +85,43 @@ async def _count_owned_children(
     namespace: str, sweep_uid: str, sweep_name: str
 ) -> dict[str, Any]:
     """List children with the sweep label and count by terminal phase."""
+    import aiohttp
+    import kopf
     from kubernetes_asyncio import client as k8s
+    from kubernetes_asyncio.client import ApiException
 
     from aiperf.kubernetes.client import k8s_client
 
     completed = failed = in_flight = 0
-    async with k8s_client() as api:
-        custom = k8s.CustomObjectsApi(api)
-        resp = await custom.list_namespaced_custom_object(
-            group="aiperf.nvidia.com",
-            version="v1alpha1",
-            namespace=namespace,
-            plural="aiperfjobs",
-            label_selector=f"aiperf.nvidia.com/sweep={sweep_name}",
-        )
-        for child in resp.get("items", []):
-            refs = (child.get("metadata") or {}).get("ownerReferences") or []
-            if not any(r.get("uid") == sweep_uid for r in refs):
-                continue
-            phase = (child.get("status") or {}).get("phase")
-            if phase in {"Succeeded", "Completed"}:
-                completed += 1
-            elif phase in {"Failed", "Cancelled", "PartiallyFailed"}:
-                failed += 1
-            else:
-                in_flight += 1
+    try:
+        async with k8s_client() as api:
+            custom = k8s.CustomObjectsApi(api)
+            resp = await custom.list_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="aiperfjobs",
+                label_selector=f"aiperf.nvidia.com/sweep={sweep_name}",
+            )
+    except ApiException as e:
+        raise kopf.TemporaryError(
+            f"apiserver rejected list ({e.status}): {e.reason}", delay=15
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during list: {e}", delay=15
+        ) from e
+    for child in resp.get("items", []):
+        refs = (child.get("metadata") or {}).get("ownerReferences") or []
+        if not any(r.get("uid") == sweep_uid for r in refs):
+            continue
+        phase = (child.get("status") or {}).get("phase")
+        if phase in {"Succeeded", "Completed"}:
+            completed += 1
+        elif phase in {"Failed", "Cancelled", "PartiallyFailed"}:
+            failed += 1
+        else:
+            in_flight += 1
 
     total = completed + failed + in_flight
     terminal_phase = None
@@ -133,24 +145,39 @@ async def _patch_parent_status(
     namespace: str,
     body: dict[str, Any],
 ) -> None:
+    import aiohttp
+    import kopf
     from kubernetes_asyncio import client as k8s
+    from kubernetes_asyncio.client import ApiException
 
     from aiperf.kubernetes.client import k8s_client
 
-    async with k8s_client() as api:
-        custom = k8s.CustomObjectsApi(api)
-        # Force merge-patch content-type — kubernetes_asyncio defaults to
-        # application/json-patch+json which expects a list of ops, not the dict
-        # body we send here. The api_client kwarg name is `_content_type`.
-        await custom.patch_namespaced_custom_object_status(
-            group=group,
-            version=version,
-            plural=plural,
-            namespace=namespace,
-            name=name,
-            body=body,
-            _content_type="application/merge-patch+json",
-        )
+    try:
+        async with k8s_client() as api:
+            custom = k8s.CustomObjectsApi(api)
+            # Force merge-patch content-type — kubernetes_asyncio defaults to
+            # application/json-patch+json which expects a list of ops, not the dict
+            # body we send here. The api_client kwarg name is `_content_type`.
+            await custom.patch_namespaced_custom_object_status(
+                group=group,
+                version=version,
+                plural=plural,
+                namespace=namespace,
+                name=name,
+                body=body,
+                _content_type="application/merge-patch+json",
+            )
+    except ApiException as e:
+        if e.status == 404:
+            # Parent CR was deleted between rollup and patch; not retryable.
+            return
+        raise kopf.TemporaryError(
+            f"apiserver rejected status patch ({e.status}): {e.reason}", delay=15
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during status patch: {e}", delay=15
+        ) from e
 
 
 async def _read_parent_phase(namespace: str, name: str) -> str | None:

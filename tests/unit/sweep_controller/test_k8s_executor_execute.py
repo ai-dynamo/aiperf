@@ -128,7 +128,11 @@ async def test_execute_creates_child_when_not_exists(monkeypatch):
     result = await executor.execute(_benchmark_run())
 
     custom.create_namespaced_custom_object.assert_awaited_once()
-    assert result.success is False
+    # Terminal phase=Succeeded with empty summary is now classified as success
+    # (the operator may not yet have written status.summary; failing here would
+    # trip failure_policy on a write race). See _collect_run_result.
+    assert result.success is True
+    assert result.summary_metrics == {}
     assert result.label == "run_0002"
 
 

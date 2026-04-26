@@ -327,13 +327,11 @@ class K8sChildJobExecutor(RunExecutor):
                 artifacts_path=run.artifact_dir,
             )
         metrics = await self._pull_summary_metrics(child)
-        if not metrics:
-            return RunResult(
-                label=run.label,
-                success=False,
-                error="No metrics found for terminal-success child",
-                artifacts_path=run.artifact_dir,
-            )
+        # A terminal-success child with empty summary is still a success — the
+        # child finished without error, the operator just hasn't written
+        # status.summary yet (or wrote an empty one). Surface this as success
+        # with empty metrics so failure_policy doesn't trip on a write race;
+        # the warning is logged inside _pull_summary_metrics.
         return RunResult(
             label=run.label,
             success=True,

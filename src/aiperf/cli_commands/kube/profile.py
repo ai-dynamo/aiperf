@@ -174,6 +174,8 @@ def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
 
     Skips when no config file was given, when the file is unparseable, or
     when the file is itself an AIPerfJob CR (which is handled by the CR path).
+    Redirects when the file is an AIPerfSweep CR — those belong to
+    `aiperf kube sweep`, not `aiperf kube profile`.
     """
     if config_file is None:
         return
@@ -185,6 +187,18 @@ def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
         return
     if not isinstance(raw, dict):
         return
+    if (
+        raw.get("apiVersion", "").startswith("aiperf.nvidia.com")
+        and raw.get("kind") == "AIPerfSweep"
+    ):
+        from aiperf import cli_utils
+
+        cli_utils.raise_startup_error_and_exit(
+            f"This config ({config_file}) is an AIPerfSweep CR, but "
+            f"`aiperf kube profile` only handles single AIPerfJob benchmarks.\n"
+            f"Use `aiperf kube sweep -f {config_file}` to submit it.",
+            title="AIPerfSweep CR detected",
+        )
     if (
         raw.get("apiVersion", "").startswith("aiperf.nvidia.com")
         and raw.get("kind") == AIPERF_KIND

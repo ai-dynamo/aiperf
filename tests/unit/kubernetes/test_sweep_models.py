@@ -12,6 +12,12 @@ from aiperf.kubernetes.sweep_models import (
     MultiRunConfig,
 )
 
+# Minimal benchmark dict accepted by AIPerfJobSpec.from_crd_spec (the
+# template validator added in fix-pass 2). Tests that focus on
+# axis-combination rules don't need a real endpoint, but the validator
+# does — so we provide the smallest one that round-trips.
+_VALID_BENCHMARK = {"endpoint": {"urls": ["http://x"], "type": "chat"}}
+
 
 def test_multirun_config_defaults_apply():
     cfg = MultiRunConfig(trials=3)
@@ -46,14 +52,14 @@ def test_failure_policy_default_continues():
     "data",
     [
         param({"sweep": {"type": "grid", "variables": {"x": [1, 2]}},
-               "template": {"spec": {"benchmark": {}}}},
+               "template": {"spec": {"benchmark": _VALID_BENCHMARK}}},
               id="sweep-only"),
         param({"multiRun": {"trials": 3},
-               "template": {"spec": {"benchmark": {}}}},
+               "template": {"spec": {"benchmark": _VALID_BENCHMARK}}},
               id="multirun-only"),
         param({"multiRun": {"cooldownSeconds": 5},
                "convergence": {"metric": "ttft_p99"},
-               "template": {"spec": {"benchmark": {}}}},
+               "template": {"spec": {"benchmark": _VALID_BENCHMARK}}},
               id="convergence-needs-multirun"),
     ],
 )  # fmt: skip
@@ -63,7 +69,7 @@ def test_aiperfsweep_spec_validates(data):
 
 def test_aiperfsweep_rejects_empty_axes():
     with pytest.raises(ValidationError, match="at least one of"):
-        AIPerfSweepSpec.model_validate({"template": {"spec": {"benchmark": {}}}})
+        AIPerfSweepSpec.model_validate({"template": {"spec": {"benchmark": _VALID_BENCHMARK}}})
 
 
 def test_aiperfsweep_rejects_convergence_without_multirun():
@@ -71,7 +77,7 @@ def test_aiperfsweep_rejects_convergence_without_multirun():
         AIPerfSweepSpec.model_validate(
             {
                 "convergence": {"metric": "ttft_p99"},
-                "template": {"spec": {"benchmark": {}}},
+                "template": {"spec": {"benchmark": _VALID_BENCHMARK}},
             }
         )
 
@@ -82,7 +88,7 @@ def test_aiperfsweep_rejects_convergence_with_explicit_trials():
             {
                 "multiRun": {"trials": 5},
                 "convergence": {"metric": "ttft_p99"},
-                "template": {"spec": {"benchmark": {}}},
+                "template": {"spec": {"benchmark": _VALID_BENCHMARK}},
             }
         )
 
@@ -103,7 +109,7 @@ def test_aiperfsweep_accepts_sweep_and_convergence_composing():
             "sweep": {"type": "grid", "variables": {"phases.x.concurrency": [8, 32]}},
             "multiRun": {"cooldownSeconds": 10},
             "convergence": {"metric": "ttft_p99"},
-            "template": {"spec": {"benchmark": {}}},
+            "template": {"spec": {"benchmark": _VALID_BENCHMARK}},
         }
     )
     assert spec.sweep is not None
@@ -142,7 +148,7 @@ def test_aiperfsweep_spec_ttl_bounds(ttl: int, ok: bool) -> None:
     data = {
         "multiRun": {"trials": 3},
         "ttlSecondsAfterFinished": ttl,
-        "template": {"spec": {"benchmark": {}}},
+        "template": {"spec": {"benchmark": _VALID_BENCHMARK}},
     }
     if ok:
         spec = AIPerfSweepSpec.model_validate(data)
@@ -174,7 +180,7 @@ def test_aiperfsweep_rejects_forbidden_key_under_template_spec(
         "multiRun": {"trials": 3},
         "template": {
             "spec": {
-                "benchmark": {},
+                "benchmark": _VALID_BENCHMARK,
                 forbidden_key: {"trials": 1}
                 if forbidden_key in ("multi_run", "multiRun")
                 else {"metric": "ttft_p99"}

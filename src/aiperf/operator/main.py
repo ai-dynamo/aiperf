@@ -158,6 +158,41 @@ async def on_aiperfjob_phase_transition(
     )
 
 
+@kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+async def on_aiperfsweep_delete(
+    name: str, namespace: str, **_: Any
+) -> None:
+    """On AIPerfSweep deletion, request cooperative cancellation of any running children.
+
+    OwnerReferences will cascade-GC child AIPerfJobs and the sweep-controller
+    JobSet, but cooperative cancel lets in-flight benchmarks shut down
+    cleanly (write-out partial results, signal workers) before the cascade
+    SIGKILLs them.
+    """
+    await sweep_lifecycle.on_delete(name=name, namespace=namespace)
+
+
+@kopf.timer(
+    AIPERF_GROUP,
+    AIPERF_VERSION,
+    AIPERF_SWEEPS_PLURAL,
+    interval=86400.0,
+    initial_delay=3600.0,
+    idle=3600.0,
+)
+async def cleanup_old_sweeps(
+    body: dict[str, Any],
+    status: dict[str, Any],
+    name: str,
+    namespace: str,
+    **_: Any,
+) -> None:
+    """Delete AIPerfSweep CRs whose ttlSecondsAfterFinished has elapsed."""
+    await sweep_lifecycle.maybe_reap_finished(
+        body=body, status=status, name=name, namespace=namespace
+    )
+
+
 @kopf.timer(
     AIPERF_GROUP,
     AIPERF_VERSION,

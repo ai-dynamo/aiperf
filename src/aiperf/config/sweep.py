@@ -221,31 +221,62 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
     Path segments traverse dicts by key; for list-of-named-dicts (e.g.
     ``phases: [{name: profiling, ...}]``) the segment is matched against
     each entry's ``name`` field, so ``phases.profiling.rate`` resolves to
-    the list entry whose name is ``profiling``. If no entry matches, a
-    new ``{name: <segment>}`` entry is appended (mirroring dict-key auto-
-    creation in the original implementation).
+    the list entry whose name is ``profiling``.
+
+    If a named-list segment does not match any existing entry, raises
+    ``ValueError`` rather than silently appending a phantom entry. Typos
+    like ``phases.profilling.rate`` (extra 'l') would otherwise create a
+    new phase missing required fields and surface as a confusing downstream
+    error.
     """
     keys = path.split(".")
     current: Any = data
     for key in keys[:-1]:
         if isinstance(current, list) and _is_named_dict_list(current):
-            current = _find_or_append_named(current, key)
+            match = _find_named(current, key)
+            if match is None:
+                names = [item.get("name") for item in current]
+                raise ValueError(
+                    f"sweep path {path!r}: no entry named {key!r} found "
+                    f"(existing: {names}). Add the entry first or fix the typo."
+                )
+            current = match
             continue
         if key not in current:
             current[key] = {}
         current = current[key]
     last = keys[-1]
     if isinstance(current, list) and _is_named_dict_list(current):
-        _find_or_append_named(current, last)[last] = value
+        match = _find_named(current, last)
+        if match is None:
+            names = [item.get("name") for item in current]
+            raise ValueError(
+                f"sweep path {path!r}: no entry named {last!r} found "
+                f"(existing: {names}). Add the entry first or fix the typo."
+            )
+        match[last] = value
     else:
         current[last] = value
 
 
-def _find_or_append_named(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
-    """Return the entry in ``items`` whose ``name`` matches; append if absent."""
+def _find_named(items: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    """Return the entry in ``items`` whose ``name`` matches, or None."""
     for item in items:
         if item.get("name") == name:
             return item
+    return None
+
+
+def _find_or_append_named(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    """Return the entry in ``items`` whose ``name`` matches; append if absent.
+
+    Used for scenario-sweep deep-merge where new named entries are an
+    intentional way to extend the base config. Grid/magic sweeps use
+    `_find_named` (via `_set_nested_value`) so typos error loudly.
+    """
+    existing = _find_named(items, name)
+    if existing is not None:
+        return existing
     new_item: dict[str, Any] = {"name": name}
     items.append(new_item)
     return new_item
