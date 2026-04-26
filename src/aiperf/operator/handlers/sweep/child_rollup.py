@@ -87,7 +87,7 @@ async def _count_owned_children(
             if not any(r.get("uid") == sweep_uid for r in refs):
                 continue
             phase = (child.get("status") or {}).get("phase")
-            if phase == "Succeeded":
+            if phase in {"Succeeded", "Completed"}:
                 completed += 1
             elif phase in {"Failed", "Cancelled"}:
                 failed += 1
