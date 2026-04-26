@@ -88,8 +88,8 @@ aiperf profile --config benchmark.yaml
 ## Configuration Structure
 
 All templates use a common top-level structure. Singular shorthand (`model`, `dataset`,
-`phases`) and plural/named forms (`models`, `datasets`, `phases` as a dict) are both
-accepted — use whichever fits the config complexity.
+`phases`) and plural/named forms (`models`, `datasets`, `phases` as a list of named
+entries) are both accepted — use whichever fits the config complexity.
 
 ```yaml
 # Shorthand (minimal configs)
@@ -112,8 +112,8 @@ endpoint:
 datasets:
   main: {type: synthetic, ...}
 phases:
-  warmup: {type: concurrency, ...}
-  benchmark: {type: rate, ...}
+  - {name: warmup, type: concurrency, ...}
+  - {name: benchmark, type: rate, ...}
 
 # Optional top-level sections
 output: {...}           # Export paths and console settings

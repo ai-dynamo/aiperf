@@ -178,14 +178,14 @@ datasets:
       osl: {type: normal, mean: 256, stddev: 50}
 
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     dataset: warmup_data
     requests: 100
     concurrency: 8
     exclude_from_results: true
 
-  profiling:
+  - name: profiling
     type: poisson
     dataset: profiling_data
     rate: 30.0
@@ -197,7 +197,7 @@ phases:
 
 ## Phases
 
-Phases define how requests are paced and when to stop. They run in declaration order.
+Phases define how requests are paced and when to stop. They run in list order.
 
 Every phase requires at least one stop condition: `requests`, `duration`, or `sessions` (except `fixed_schedule`, which infers stop from the dataset).
 
@@ -207,7 +207,7 @@ Dispatch a new request immediately when a concurrency slot opens. No rate limiti
 
 ```yaml
 phases:
-  burst_test:
+  - name: burst_test
     type: concurrency
     concurrency: 32
     requests: 1000
@@ -219,7 +219,7 @@ Rate-controlled with Poisson-distributed inter-arrival times (realistic traffic)
 
 ```yaml
 phases:
-  realistic:
+  - name: realistic
     type: poisson
     rate: 50.0        # Requests per second
     concurrency: 128  # Cap on in-flight requests
@@ -233,7 +233,7 @@ Rate-controlled with tunable burstiness via `smoothness`.
 
 ```yaml
 phases:
-  bursty:
+  - name: bursty
     type: gamma
     rate: 30.0
     smoothness: 0.5   # <1 bursty, 1 = Poisson, >1 smooth
@@ -248,7 +248,7 @@ Fixed inter-arrival time (deterministic, reproducible).
 
 ```yaml
 phases:
-  deterministic:
+  - name: deterministic
     type: constant
     rate: 10.0
     duration: 60
@@ -261,7 +261,7 @@ N simulated users sharing a global request rate. Requires multi-turn dataset.
 
 ```yaml
 phases:
-  users:
+  - name: users
     type: user_centric
     rate: 20.0
     users: 10
@@ -275,7 +275,7 @@ Replay requests at timestamps from a trace dataset. No stop condition required.
 
 ```yaml
 phases:
-  replay:
+  - name: replay
     type: fixed_schedule
     dataset: trace_data
     auto_offset: true    # Normalize timestamps to start at 0
@@ -301,13 +301,13 @@ phases:
 
 ```yaml
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     requests: 100
     concurrency: 8
     exclude_from_results: true
 
-  profiling:
+  - name: profiling
     type: gamma
     rate: 50.0
     smoothness: 1.5
@@ -459,7 +459,7 @@ sweep:
   type: grid
   variables:
     datasets.profiling.prompts.isl: [128, 512, 2048]
-    phases.profiling.rate: [10.0, 30.0, 50.0]
+    phases.profiling.rate: [10.0, 30.0, 50.0]  # TODO: name-targeted grid override syntax pending
 # Produces 3 x 3 = 9 benchmark runs
 ```
 
@@ -478,7 +478,7 @@ sweep:
             isl: {type: normal, mean: 128, stddev: 20}
             osl: {type: normal, mean: 64, stddev: 10}
       phases:
-        test:
+        - name: test
           rate: 50.0
 
     - name: summarization
@@ -488,7 +488,7 @@ sweep:
             isl: {type: lognormal, mean: 4096, sigma: 0.6}
             osl: {type: normal, mean: 128, stddev: 30}
       phases:
-        test:
+        - name: test
           rate: 5.0
 ```
 
@@ -537,7 +537,7 @@ models:
 # Works in nested fields, numeric fields, and lists
 random_seed: ${BENCHMARK_SEED:42}
 phases:
-  profiling:
+  - name: profiling
     type: gamma
     rate: ${TARGET_RATE:30.0}
     duration: ${DURATION:300}
@@ -576,7 +576,7 @@ datasets:
       osl: "{{ target_isl // 4 }}"            # 128
 
 phases:
-  test:
+  - name: test
     type: concurrency
     concurrency: "{{ base_concurrency }}"      # 16
     requests: "{{ base_concurrency * 100 }}"   # 1600
@@ -586,12 +586,12 @@ Jinja2 templates also support self-referencing config values via dot notation:
 
 ```yaml
 phases:
-  test:
+  - name: test
     type: poisson
     rate: 50.0
     duration: 120
-    # Reference another config value:
-    concurrency: "{{ phases.test.rate * 2 }}"  # 100
+    # Reference another config value (phases are addressed by index in Jinja paths):
+    concurrency: "{{ phases[0].rate * 2 }}"  # 100
 ```
 
 Templates render twice: once at load time (for validation) and again after sweep expansion (so sweep-injected values are available). This means Jinja2 and sweeps compose naturally.
@@ -658,14 +658,14 @@ datasets:
         max: 2048
 
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     dataset: warmup
     requests: 100
     concurrency: 8
     exclude_from_results: true
 
-  profiling:
+  - name: profiling
     type: gamma
     dataset: workload
     rate: 30.0
@@ -681,17 +681,17 @@ sweep:
   runs:
     - name: low_load
       phases:
-        profiling:
+        - name: profiling
           rate: 10.0
           concurrency: 32
     - name: medium_load
       phases:
-        profiling:
+        - name: profiling
           rate: 30.0
           concurrency: 64
     - name: high_load
       phases:
-        profiling:
+        - name: profiling
           rate: 50.0
           concurrency: 128
 

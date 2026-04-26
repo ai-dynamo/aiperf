@@ -245,7 +245,7 @@ datasets:
       osl: {type: clamped, distribution: {type: normal, mean: 256, stddev: 80}, min: 16, max: 1024}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     rate: 20.0
     duration: 120
@@ -287,7 +287,7 @@ datasets:
       batch_size: 4
 
 phases:
-  profiling:
+  - name: profiling
     type: concurrency
     concurrency: 16
     requests: 1000
@@ -325,7 +325,7 @@ datasets:
       query_tokens: {type: normal, mean: 32, stddev: 8}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     rate: 50.0
     duration: 120
@@ -358,7 +358,7 @@ datasets:
       osl: 128
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     rate: 20.0
     duration: 60

@@ -410,7 +410,7 @@ datasets:
       osl: {type: normal, mean: 256, stddev: 50}
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     rate: 20.0
     duration: 120
@@ -438,7 +438,7 @@ datasets:
       osl: 128
 
 phases:
-  profiling:
+  - name: profiling
     type: poisson
     rate: 20.0
     duration: 120
