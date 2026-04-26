@@ -54,6 +54,26 @@ class Distribution(BaseConfig):
         json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
     )
 
+    min: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description=(
+                "Inclusive lower bound; samples below are clamped up. Applies to "
+                "every distribution type — composes with mean/stddev/median/peaks/"
+                "points/value."
+            ),
+        ),
+    ] = None
+
+    max: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Inclusive upper bound; samples above are clamped down.",
+        ),
+    ] = None
+
     @model_validator(mode="before")
     @classmethod
     def _strip_explicit_type(cls, data: Any) -> Any:
@@ -67,12 +87,42 @@ class Distribution(BaseConfig):
             return {k: v for k, v in data.items() if k != "type"}
         return data
 
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> Self:
+        # Reject non-finite bounds explicitly: NaN/inf would silently disable
+        # clamping (NaN comparisons are always false; inf can never be exceeded).
+        for name, val in (("min", self.min), ("max", self.max)):
+            if val is not None and not math.isfinite(val):
+                raise ValueError(
+                    f"Distribution bound `{name}` must be finite, got {val!r}"
+                )
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(
+                f"Distribution bounds invalid: min={self.min} > max={self.max}; "
+                f"swap them or remove one."
+            )
+        return self
+
     def __getattr__(self, name: str) -> Any:
         if name == "mean":
             return self.expected_value
         raise AttributeError(f"{type(self).__name__!r} has no attribute {name!r}")
 
     def sample(self, rng: RandomGenerator) -> float:
+        """Draw one sample, clamping into [min, max] if bounds are set.
+
+        Subclasses implement ``_sample_raw``; the base class applies bounds
+        post-draw so every distribution type composes with ``min``/``max``
+        without nesting.
+        """
+        v = self._sample_raw(rng)
+        if self.min is not None and v < self.min:
+            v = self.min
+        if self.max is not None and v > self.max:
+            v = self.max
+        return v
+
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         raise NotImplementedError
 
     def sample_int(self, rng: RandomGenerator) -> int:
@@ -80,6 +130,9 @@ class Distribution(BaseConfig):
 
     @property
     def expected_value(self) -> float:
+        # Note: returns the unclamped analytic mean. Approximate when
+        # ``min``/``max`` bite — kept simple because callers use this for
+        # config-time displays, not statistical inference.
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -113,7 +166,7 @@ class FixedDistribution(Distribution):
             )
         return self
 
-    def sample(self, rng: RandomGenerator) -> float:
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         return self.value
 
     @property
@@ -136,7 +189,7 @@ class NormalDistribution(Distribution):
         ),
     ]
 
-    def sample(self, rng: RandomGenerator) -> float:
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         if self.stddev <= 0:
             return self.mean
         return rng.sample_positive_normal(self.mean, self.stddev)
@@ -186,7 +239,7 @@ class LogNormalDistribution(Distribution):
             return 0.0
         return math.sqrt(2.0 * math.log(self.mean / self.median))
 
-    def sample(self, rng: RandomGenerator) -> float:
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         sigma = self._sigma
         if sigma <= 0:
             return self.mean
@@ -272,7 +325,7 @@ class MultimodalDistribution(Distribution):
             raise ValueError("peaks requires at least 2 entries")
         return self
 
-    def sample(self, rng: RandomGenerator) -> float:
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         total = sum(p.weight for p in self.peaks)
         r = rng.random() * total
         cumulative = 0.0
@@ -333,7 +386,7 @@ class EmpiricalDistribution(Distribution):
             raise ValueError("Empirical distribution requires at least 1 point")
         return self
 
-    def sample(self, rng: RandomGenerator) -> float:
+    def _sample_raw(self, rng: RandomGenerator) -> float:
         total = sum(p.weight for p in self.points)
         r = rng.random() * total
         cumulative = 0.0

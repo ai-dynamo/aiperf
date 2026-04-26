@@ -434,16 +434,12 @@ isl:
 - Bimodal workloads (short Q&A + long summarization)
 - Mixed traffic from different application types
 
-### Clamped
+### Bounds (min/max)
 
-Wraps any distribution with hard min/max bounds. Requires at least one of min or max.
+`min:` and `max:` are optional fields on every distribution. Samples that fall outside the bounds are clamped (not redrawn). Either or both may be specified.
 
 ```yaml
-isl:
-  type: clamped
-  distribution: {type: normal, mean: 1024, stddev: 500}
-  min: 64
-  max: 4096
+isl: {mean: 1024, stddev: 500, min: 64, max: 4096}
 ```
 
 **Use cases:**
@@ -686,17 +682,10 @@ datasets:
     entries: 2000
     prompts:
       isl:
-        type: mixture
-        components:
-          - distribution: {type: lognormal, mean: 256, sigma: 0.6}
-            weight: 70
-          - distribution: {type: lognormal, mean: 2048, sigma: 0.4}
-            weight: 30
-      osl:
-        type: clamped
-        distribution: {type: lognormal, mean: 256, sigma: 0.5}
-        min: 16
-        max: 2048
+        peaks:
+          - {mean: 256, median: 200, weight: 70}
+          - {mean: 2048, median: 1800, weight: 30}
+      osl: {mean: 256, median: 200, min: 16, max: 2048}
 
 phases:
   - name: warmup

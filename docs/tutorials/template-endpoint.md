@@ -241,8 +241,8 @@ datasets:
     type: synthetic
     entries: 500
     prompts:
-      isl: {type: lognormal, mean: 512, sigma: 0.5}
-      osl: {type: clamped, distribution: {type: normal, mean: 256, stddev: 80}, min: 16, max: 1024}
+      isl: {mean: 512, median: 400}
+      osl: {mean: 256, stddev: 80, min: 16, max: 1024}
 
 phases:
   - name: profiling

@@ -21,7 +21,7 @@ AIPerf's distribution system lets you describe these patterns declaratively in Y
 | Exponential | `{type: exponential, mean: 2000}` | Think times, inter-event delays | Memoryless, always positive |
 | Zipf | `{type: zipf, alpha: 1.5, scale: 128}` | Power-law popularity patterns | Heavy-tailed: few values dominate |
 | Mixture | `{type: mixture, components: [...]}` | Bimodal/multi-modal workloads | Weighted combination of sub-distributions |
-| Clamped | `{type: clamped, distribution: {...}, max: 4096}` | Hardware-safe bounds | Wraps any distribution with min/max limits |
+| Bounds | `min: N, max: M` | Hardware-safe limits | Optional fields on any distribution; clamps samples post-draw. |
 | Empirical | `{type: empirical, points: [...]}` | Replaying production histograms | Discrete weighted values |
 
 ## Scalar Shorthand
@@ -156,7 +156,7 @@ Weighted combination of sub-distributions. Each sample first selects a component
 
 Weights are relative and normalized internally. `weight: 70` and `weight: 30` produce 70/30 split. `weight: 7` and `weight: 3` produce the same result.
 
-Requires at least 2 components. Components can themselves be any distribution type, including other mixtures, clamped distributions, or empirical distributions:
+Requires at least 2 components. Components can themselves be any distribution type, including bounded distributions or empirical distributions:
 
 ```yaml
 # Three-tier workload: chatbot, RAG, and batch summarization
@@ -166,46 +166,21 @@ prompts:
     components:
       - distribution: {type: normal, mean: 64, stddev: 15}
         weight: 50
-      - distribution:
-          type: clamped
-          distribution: {type: lognormal, mean: 1024, sigma: 0.4}
-          min: 256
-          max: 4096
+      - distribution: {type: lognormal, mean: 1024, sigma: 0.4, min: 256, max: 4096}
         weight: 35
       - distribution: {type: normal, mean: 8192, stddev: 500}
         weight: 15
 ```
 
-### Clamped
+### Bounds (min/max)
 
 ```yaml
 prompts:
-  isl:
-    type: clamped
-    distribution: {type: normal, mean: 1024, stddev: 500}
-    min: 64
-    max: 4096
+  isl: {mean: 1024, stddev: 500, min: 64, max: 4096}
+  osl: {mean: 4096, median: 2048, max: 8192}
 ```
 
-Wraps any distribution with hard minimum and/or maximum bounds. Values that fall outside the bounds are clamped (not redrawn). This prevents distributions with wide spread from producing values that exceed your model's context window or go below meaningful minimums.
-
-At least one of `min` or `max` must be specified. You can use just `max` to cap without a floor, or just `min` to enforce a minimum:
-
-```yaml
-# Cap ISL at the model's context window, no lower bound
-prompts:
-  isl:
-    type: clamped
-    distribution: {type: lognormal, mean: 2048, sigma: 0.8}
-    max: 8192
-
-# Enforce minimum OSL without an upper bound
-prompts:
-  osl:
-    type: clamped
-    distribution: {type: exponential, mean: 200}
-    min: 32
-```
+`min:` and `max:` are optional fields on **every** distribution. Samples that fall outside the bounds are clamped (not redrawn), preventing wide-spread distributions from producing values that exceed your model's context window or go below meaningful minimums. Either or both may be specified; bounds compose with all other distribution fields without nesting.
 
 ### Empirical
 
@@ -278,16 +253,8 @@ datasets:
     type: synthetic
     entries: 500
     prompts:
-      isl:
-        type: clamped
-        distribution: {type: lognormal, mean: 4096, sigma: 0.5}
-        min: 1024
-        max: 16384
-      osl:
-        type: clamped
-        distribution: {type: normal, mean: 256, stddev: 80}
-        min: 64
-        max: 512
+      isl: {type: lognormal, mean: 4096, sigma: 0.5, min: 1024, max: 16384}
+      osl: {type: normal, mean: 256, stddev: 80, min: 64, max: 512}
 ```
 
 ### Production Traffic Replay (Bimodal)

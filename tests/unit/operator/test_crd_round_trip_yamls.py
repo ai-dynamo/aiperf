@@ -141,16 +141,22 @@ def _all_configs() -> list[tuple[str, dict]]:
     return out
 
 
-# Pre-existing docs lag — these specific tutorial fences use the legacy
-# ``{type: clamped, ...}`` distribution shape, which has no replacement in
-# the current Distribution union (no ClampedDistribution exists). The
-# tutorial authors must decide between dropping the example or documenting
-# an alternative. Tracked separately; until then, mark these specific
-# fences xfail so the rest of the round-trip suite stays clean.
-_KNOWN_DOCS_LAG_FENCES = (
-    "docs/tutorials/template-endpoint.md::yaml-fence-0",
-    "docs/tutorials/yaml-config.md::yaml-fence-34",
-)
+# Pre-existing docs lag — when a documented YAML fence regresses against the
+# current schema, fix the fence (or open a docs ticket); do not add it back
+# to a silent xfail list.
+#
+# History:
+#   * 2026-04-26: legacy ``{type: clamped, ...}`` distribution wrapper replaced
+#     by ``min``/``max`` fields on every distribution; tutorial fences migrated
+#     to the flat shape in the same change.
+#   * 2026-04-26: ``docs/tutorials/yaml-config.md::yaml-fence-34`` xfailed
+#     separately because it uses ``${VAR:default}`` env-var template syntax
+#     throughout (``${NUM_RUNS:3}``, ``${COOLDOWN:30.0}``, etc.) and the doc
+#     itself notes substitution happens "at deploy time" — orthogonal to the
+#     distributions schema. Tracked as a docs/test-harness mismatch (the
+#     test should expand env-vars before validating, or the fence should
+#     drop the templating); kept narrow so the rest of the suite stays clean.
+_KNOWN_DOCS_LAG_FENCES = ("docs/tutorials/yaml-config.md::yaml-fence-34",)
 
 
 def _maybe_xfail(yaml_id: str) -> tuple:
@@ -159,8 +165,9 @@ def _maybe_xfail(yaml_id: str) -> tuple:
         if needle in yaml_id:
             return (
                 pytest.mark.xfail(
-                    reason="docs lag: legacy `type: clamped` distribution "
-                    "(no replacement in current union)",
+                    reason="docs lag: fence uses ${VAR:default} env-var template "
+                    "syntax (orthogonal to schema); doc notes substitution "
+                    "is deploy-time.",
                     strict=False,
                 ),
             )
