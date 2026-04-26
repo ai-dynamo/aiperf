@@ -58,9 +58,25 @@ def build_template_context(data: dict[str, Any]) -> dict[str, Any]:
                     context[key] = value
                 flatten(value, new_key)
         elif isinstance(obj, list):
-            context[prefix] = obj
+            # List entries with a ``name`` field (e.g.
+            # ``phases: [{name: profiling, ...}]``) are exposed as a
+            # name-keyed dict so jinja's attribute chain
+            # (``{{ phases.profiling.rate }}``) resolves to the entry.
+            named_entries = {
+                item["name"]: item
+                for item in obj
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+            }
+            if named_entries:
+                context[prefix] = named_entries
+                if "." not in prefix:
+                    context[prefix] = named_entries
+            else:
+                context[prefix] = obj
             for i, item in enumerate(obj):
                 flatten(item, f"{prefix}.{i}")
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    flatten(item, f"{prefix}.{item['name']}")
 
     flatten(data)
 

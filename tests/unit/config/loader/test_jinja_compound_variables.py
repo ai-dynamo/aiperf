@@ -22,11 +22,13 @@ def _expand(data: dict) -> dict:
     return render_jinja2_templates(data, context)
 
 
-@pytest.mark.skip(
-    reason="Wave 2: Jinja2 templates that reference phases.NAME.X need name-based "
-    "lookup helpers for list-shaped phases. See Task 14 for sweep-side migration."
-)
+def _phase_by_name(phases: list[dict], name: str) -> dict:
+    """Find the phase entry in a list-shaped phases by ``name``."""
+    return next(p for p in phases if p["name"] == name)
+
+
 def test_variable_references_another_variable_resolved_value() -> None:
+    """Compound variable visible in templated phase fields (list shape)."""
     data = {
         "variables": {
             "concurrency_per_gpu": 30,
@@ -37,7 +39,7 @@ def test_variable_references_another_variable_resolved_value() -> None:
     }
     result = _expand(data)
     assert result["variables"]["total_concurrency"] == 120
-    assert result["phases"]["profiling"]["concurrency"] == 120
+    assert _phase_by_name(result["phases"], "profiling")["concurrency"] == 120
 
 
 def test_variable_resolution_is_order_independent() -> None:
@@ -103,12 +105,12 @@ def test_variable_resolved_values_are_type_coerced() -> None:
     assert result["variables"]["is_big"] is True
 
 
-@pytest.mark.skip(
-    reason="Wave 2: Jinja2 templates that reference phases.NAME.X need name-based "
-    "lookup helpers for list-shaped phases. See Task 14 for sweep-side migration."
-)
 def test_variable_can_reference_top_level_config_field() -> None:
-    """A variable may reference any flattened path from the rest of the config."""
+    """A variable may reference any flattened path from the rest of the config.
+
+    For list-shaped phases, ``phases.<name>.<field>`` resolves to the entry
+    in the list whose ``name`` matches.
+    """
     data = {
         "variables": {
             "default_conc": "{{ phases.warmup.concurrency * 4 }}",
@@ -165,7 +167,9 @@ def test_resolved_variables_visible_in_run_time_user_files_context() -> None:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+        "phases": [
+            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+        ],
     }
     expanded = expand_config_dict(raw, substitute_env=False)
     config = AIPerfConfig.model_validate(expanded)

@@ -115,7 +115,14 @@ def expand_sweep(data: dict[str, Any]) -> list[tuple[dict[str, Any], SweepVariat
 
 
 def detect_sweep_fields(data: dict[str, Any]) -> dict[str, list[Any]]:
-    """Detect numeric list fields that qualify as magic list sweeps."""
+    """Detect numeric list fields that qualify as magic list sweeps.
+
+    Lists of name-bearing dicts (e.g. ``phases: [{name: profiling, ...}]``)
+    are traversed using the ``name`` value as the path segment, so a
+    nested magic list at ``phases[i].rate`` surfaces as
+    ``phases.<name>.rate``. List entries without a string ``name`` are
+    skipped — magic-list detection is a name-targeted feature.
+    """
     sweep_fields: dict[str, list[Any]] = {}
 
     def traverse(obj: Any, current_path: str = "") -> None:
@@ -130,9 +137,21 @@ def detect_sweep_fields(data: dict[str, Any]) -> dict[str, list[Any]]:
                     sweep_fields[new_path] = value
                 else:
                     traverse(value, new_path)
+        elif isinstance(obj, list) and _is_named_dict_list(obj):
+            for item in obj:
+                name = item.get("name")
+                if isinstance(name, str):
+                    traverse(item, f"{current_path}.{name}" if current_path else name)
 
     traverse(data)
     return sweep_fields
+
+
+def _is_named_dict_list(obj: list[Any]) -> bool:
+    """True if every entry of ``obj`` is a dict carrying a string ``name``."""
+    return bool(obj) and all(
+        isinstance(item, dict) and isinstance(item.get("name"), str) for item in obj
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,20 +216,73 @@ def _expand_magic_lists(
 
 
 def _set_nested_value(data: dict, path: str, value: Any) -> None:
-    """Set a nested value using dot-notation path."""
+    """Set a nested value using dot-notation path.
+
+    Path segments traverse dicts by key; for list-of-named-dicts (e.g.
+    ``phases: [{name: profiling, ...}]``) the segment is matched against
+    each entry's ``name`` field, so ``phases.profiling.rate`` resolves to
+    the list entry whose name is ``profiling``. If no entry matches, a
+    new ``{name: <segment>}`` entry is appended (mirroring dict-key auto-
+    creation in the original implementation).
+    """
     keys = path.split(".")
-    current = data
+    current: Any = data
     for key in keys[:-1]:
+        if isinstance(current, list) and _is_named_dict_list(current):
+            current = _find_or_append_named(current, key)
+            continue
         if key not in current:
             current[key] = {}
         current = current[key]
-    current[keys[-1]] = value
+    last = keys[-1]
+    if isinstance(current, list) and _is_named_dict_list(current):
+        _find_or_append_named(current, last)[last] = value
+    else:
+        current[last] = value
+
+
+def _find_or_append_named(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    """Return the entry in ``items`` whose ``name`` matches; append if absent."""
+    for item in items:
+        if item.get("name") == name:
+            return item
+    new_item: dict[str, Any] = {"name": name}
+    items.append(new_item)
+    return new_item
 
 
 def _deep_merge(base: dict, override: dict) -> None:
-    """Deep merge override into base (modifies base in-place)."""
+    """Deep merge override into base (modifies base in-place).
+
+    Lists of name-bearing dicts merge by ``name`` rather than being
+    replaced — entries with matching ``name`` are recursively merged,
+    new-name entries are appended, and base entries not mentioned in the
+    override are inherited unchanged. This is the semantics used by
+    scenario-sweep ``phases:`` overrides.
+    """
     for key, value in override.items():
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):
             _deep_merge(base[key], value)
+        elif (
+            key in base
+            and isinstance(base[key], list)
+            and isinstance(value, list)
+            and _is_named_dict_list(base[key])
+            and _is_named_dict_list(value)
+        ):
+            _merge_named_dict_lists(base[key], value)
         else:
             base[key] = value
+
+
+def _merge_named_dict_lists(
+    base_items: list[dict[str, Any]], override_items: list[dict[str, Any]]
+) -> None:
+    """Merge two lists of named dicts in-place, matching by ``name``."""
+    for override_item in override_items:
+        name = override_item["name"]
+        existing = next((b for b in base_items if b.get("name") == name), None)
+        if existing is None:
+            base_items.append(copy.deepcopy(override_item))
+        else:
+            _deep_merge(existing, override_item)

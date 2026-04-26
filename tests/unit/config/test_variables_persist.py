@@ -3,8 +3,6 @@
 
 """Variables block must persist on the resolved config so run-time renderers can use it."""
 
-import pytest
-
 from aiperf.config import AIPerfConfig
 from aiperf.config.loader import build_benchmark_plan, load_config_from_string
 from aiperf.config.loader.jinja import expand_config_dict
@@ -40,7 +38,9 @@ _BASE_DICT: dict = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
 }
 
 
@@ -79,9 +79,6 @@ def test_variables_block_persists_through_expand_config_dict():
     assert config.variables == {"isl": 1024, "osl": 512}
 
 
-@pytest.mark.skip(
-    reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-)
 def test_variables_block_persists_through_sweep_variations():
     """Sweep path: build_benchmark_plan must keep variables on each variation.
 

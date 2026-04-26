@@ -223,11 +223,6 @@ class TestScenarioSweepEdgeCases:
 class TestMagicListEdgeCases:
     """Boundary conditions for detect_sweep_fields and magic list expansion."""
 
-    pytestmark = pytest.mark.skip(
-        reason="Wave 2: detect_sweep_fields needs name-based phase targeting "
-        "for list-shaped phases. See Task 14."
-    )
-
     def test_mixed_int_float_list_detected(self) -> None:
         data = {"phases": {"concurrency": [1, 2.5, 3]}}
         fields = detect_sweep_fields(data)
@@ -252,7 +247,14 @@ class TestMagicListEdgeCases:
         """Empty list passes detection but itertools.product yields nothing."""
         data = {
             "models": ["m"],
-            "phases": [{"name": "default", "type": "concurrency", "concurrency": [], "requests": 10}],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "concurrency": [],
+                    "requests": 10,
+                }
+            ],
         }
         fields = detect_sweep_fields(data)
         assert "phases.default.concurrency" in fields
@@ -314,26 +316,38 @@ class TestMagicListEdgeCases:
         """End-to-end: magic list detected and expanded into separate variations."""
         data = {
             "models": ["m"],
-            "phases": [{"name": "default", "type": "concurrency", "concurrency": [4, 8, 16]}],
+            "phases": [
+                {"name": "default", "type": "concurrency", "concurrency": [4, 8, 16]}
+            ],
         }
         result = expand_sweep(data)
 
         assert len(result) == 3
-        values = [r[0]["phases"]["default"]["concurrency"] for r in result]
+        values = [
+            next(p for p in r[0]["phases"] if p["name"] == "default")["concurrency"]
+            for r in result
+        ]
         assert values == [4, 8, 16]
 
     def test_multiple_magic_lists_produce_cartesian_product(self) -> None:
         data = {
-            "phases": [{"name": "default", "concurrency": [1, 2],
-                    "rate": [10.0, 20.0],}]
+            "phases": [
+                {
+                    "name": "default",
+                    "concurrency": [1, 2],
+                    "rate": [10.0, 20.0],
+                }
+            ]
         }
         result = expand_sweep(data)
 
         assert len(result) == 4
         pairs = {
             (
-                r[0]["phases"]["default"]["concurrency"],
-                r[0]["phases"]["default"]["rate"],
+                next(p for p in r[0]["phases"] if p["name"] == "default")[
+                    "concurrency"
+                ],
+                next(p for p in r[0]["phases"] if p["name"] == "default")["rate"],
             )
             for r in result
         }

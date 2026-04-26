@@ -60,7 +60,9 @@ _MINIMAL_CONFIG_KWARGS: dict = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
 }
 
 
@@ -265,9 +267,6 @@ class TestSubstituteEnvVars:
 class TestBuildBenchmarkPlan:
     """Verify build_benchmark_plan expands sweeps and extracts multi_run settings."""
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_strips_sweep_from_expanded_configs(self) -> None:
         config = _make_aiperf_config(
             sweep={
@@ -298,9 +297,6 @@ class TestBuildBenchmarkPlan:
         assert plan.set_consistent_seed is True
         assert plan.disable_warmup_after_first is True
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_variations_parallel_to_configs(self) -> None:
         config = _make_aiperf_config(
             sweep={
@@ -339,9 +335,6 @@ class TestBuildBenchmarkPlan:
         assert plan.set_consistent_seed is False
         assert plan.disable_warmup_after_first is False
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_expanded_config_preserves_model_names(self) -> None:
         config = _make_aiperf_config(
             sweep={
@@ -377,9 +370,6 @@ class TestLoadBenchmarkPlan:
         with pytest.raises(ConfigurationError, match="not found"):
             load_benchmark_plan(missing)
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_plan_from_file_with_sweep(self, tmp_path: Path) -> None:
         yaml_with_sweep = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -395,7 +385,10 @@ class TestLoadBenchmarkPlan:
         plan = load_benchmark_plan(cfg_file)
 
         assert len(plan.configs) == 2
-        concurrencies = [next(p for p in c.phases if p.name == "default").concurrency for c in plan.configs]
+        concurrencies = [
+            next(p for p in c.phases if p.name == "default").concurrency
+            for c in plan.configs
+        ]
         assert concurrencies == [1, 2]
 
     def test_plan_from_file_with_env_vars(

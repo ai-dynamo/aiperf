@@ -68,7 +68,9 @@ _MINIMAL_CONFIG_KWARGS = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
 }
 
 
@@ -94,9 +96,6 @@ class TestYamlToBenchmarkPlan:
         assert len(plan.variations) == 1
         assert plan.variations[0].label == "base"
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_yaml_with_grid_sweep_expands_correctly(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -116,7 +115,10 @@ class TestYamlToBenchmarkPlan:
         assert len(plan.variations) == 6
 
         concurrency_request_pairs = {
-            (next(p for p in c.phases if p.name == "default").concurrency, next(p for p in c.phases if p.name == "default").requests)
+            (
+                next(p for p in c.phases if p.name == "default").concurrency,
+                next(p for p in c.phases if p.name == "default").requests,
+            )
             for c in plan.configs
         }
         assert concurrency_request_pairs == {
@@ -128,9 +130,6 @@ class TestYamlToBenchmarkPlan:
             (16, 300),
         }
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_yaml_with_scenario_sweep_preserves_base_fields(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -151,8 +150,14 @@ class TestYamlToBenchmarkPlan:
         assert plan.variations[0].label == "low-concurrency"
         assert plan.variations[1].label == "high-concurrency"
 
-        assert plan.configs[0].phases["default"].concurrency == 2
-        assert plan.configs[1].phases["default"].concurrency == 64
+        assert (
+            next(p for p in plan.configs[0].phases if p.name == "default").concurrency
+            == 2
+        )
+        assert (
+            next(p for p in plan.configs[1].phases if p.name == "default").concurrency
+            == 64
+        )
 
         # Base fields preserved in both variations
         for cfg in plan.configs:
@@ -173,9 +178,6 @@ class TestYamlToBenchmarkPlan:
         assert plan.confidence_level == 0.99
         assert not plan.is_single_run
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_yaml_with_sweep_and_multi_run_combined(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -194,9 +196,6 @@ class TestYamlToBenchmarkPlan:
         assert plan.trials == 3
         assert not plan.is_single_run
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_yaml_with_magic_lists_auto_expands(self) -> None:
         # Magic lists are detected by expand_sweep on raw dicts before Pydantic
         # validation. AIPerfConfig rejects list-valued concurrency, so we test
@@ -229,12 +228,12 @@ class TestYamlToBenchmarkPlan:
         variations = expand_sweep(data)
 
         assert len(variations) == 3
-        concurrencies = [v[0]["phases"]["default"]["concurrency"] for v in variations]
+        concurrencies = [
+            next(p for p in v[0]["phases"] if p["name"] == "default")["concurrency"]
+            for v in variations
+        ]
         assert concurrencies == [8, 16, 32]
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_sweep_field_stripped_from_expanded_configs(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -252,9 +251,6 @@ class TestYamlToBenchmarkPlan:
             assert not hasattr(cfg, "sweep") or not isinstance(cfg, AIPerfConfig)
             assert not hasattr(cfg, "multi_run") or not isinstance(cfg, AIPerfConfig)
 
-    @pytest.mark.skip(
-        reason="Wave 2: sweep dot-paths need name-based phase targeting. See Task 14."
-    )
     def test_expanded_configs_are_benchmark_config_not_aiperf_config(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
             sweep:
@@ -447,14 +443,27 @@ class TestBenchmarkRunSerialization:
     def test_json_round_trip_with_all_phase_types(self) -> None:
         cfg_kwargs = {
             **_MINIMAL_CONFIG_KWARGS,
-            "phases": [{"name": "warmup", "type": "concurrency",
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,}, {"name": "profiling", "type": "poisson",
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "profiling",
+                    "type": "poisson",
                     "rate": 10.0,
-                    "duration": 60,}, {"name": "constant_phase", "type": "constant",
+                    "duration": 60,
+                },
+                {
+                    "name": "constant_phase",
+                    "type": "constant",
                     "rate": 5.0,
-                    "requests": 50,}],
+                    "requests": 50,
+                },
+            ],
         }
         config = BenchmarkConfig(**cfg_kwargs)
         original = self._make_run(cfg=config)
@@ -465,9 +474,18 @@ class TestBenchmarkRunSerialization:
             "profiling",
             "constant_phase",
         }
-        assert next(p for p in restored.cfg.phases if p.name == "warmup").type == "concurrency"
-        assert next(p for p in restored.cfg.phases if p.name == "profiling").type == "poisson"
-        assert next(p for p in restored.cfg.phases if p.name == "constant_phase").type == "constant"
+        assert (
+            next(p for p in restored.cfg.phases if p.name == "warmup").type
+            == "concurrency"
+        )
+        assert (
+            next(p for p in restored.cfg.phases if p.name == "profiling").type
+            == "poisson"
+        )
+        assert (
+            next(p for p in restored.cfg.phases if p.name == "constant_phase").type
+            == "constant"
+        )
 
     def test_json_round_trip_with_file_dataset(self, tmp_path: Path) -> None:
         dataset_file = tmp_path / "prompts.jsonl"
@@ -481,10 +499,15 @@ class TestBenchmarkRunSerialization:
                     "path": str(dataset_file),
                 },
             },
-            "phases": [{"name": "default", "type": "concurrency",
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
                     "requests": 10,
                     "concurrency": 1,
-                    "dataset": "from_file",}],
+                    "dataset": "from_file",
+                }
+            ],
         }
         config = BenchmarkConfig(**cfg_kwargs)
         original = self._make_run(cfg=config)
@@ -525,21 +548,36 @@ class TestBenchmarkRunSerialization:
                     "prompts": {"isl": 64, "osl": 32},
                 },
             },
-            "phases": [{"name": "warmup", "type": "concurrency",
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
                     "requests": 100,
                     "concurrency": 8,
-                    "dataset": "secondary",}],
+                    "dataset": "secondary",
+                },
+            ],
         }
         config = BenchmarkConfig(**cfg_kwargs)
         original = self._make_run(cfg=config)
         restored = self._round_trip(original)
 
         assert set(restored.cfg.datasets.keys()) == {"default", "secondary"}
-        assert next(p for p in restored.cfg.phases if p.name == "profiling").dataset == "secondary"
-        assert next(p for p in restored.cfg.phases if p.name == "profiling").concurrency == 8
+        assert (
+            next(p for p in restored.cfg.phases if p.name == "profiling").dataset
+            == "secondary"
+        )
+        assert (
+            next(p for p in restored.cfg.phases if p.name == "profiling").concurrency
+            == 8
+        )
 
     def test_model_validate_rejects_missing_required_fields(self) -> None:
         with pytest.raises(ValidationError, match="benchmark_id"):
@@ -620,6 +658,9 @@ class TestFlatConfigYaml:
         """)
         config = load_config_from_string(yaml_str)
         assert [p.name for p in config.phases] == ["warmup", "profiling"]
-        assert next(p for p in config.phases if p.name == "warmup").exclude_from_results is True
+        assert (
+            next(p for p in config.phases if p.name == "warmup").exclude_from_results
+            is True
+        )
         plan = build_benchmark_plan(config)
         assert len(plan.configs) == 1

@@ -66,11 +66,6 @@ class TestSweepModels:
 class TestExpandSweep:
     """Tests for sweep expansion functions."""
 
-    pytestmark = pytest.mark.skip(
-        reason="Wave 2: sweep dot-path overrides (phases.NAME.X) need name-based "
-        "merge semantics for list-shaped phases. See Task 14 in 2026-04-26-phases-list-with-name.md."
-    )
-
     def _base_config(self, **overrides):
         base = {
             "models": ["test-model"],
@@ -82,12 +77,20 @@ class TestExpandSweep:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            "phases": [{"name": "default", "type": "concurrency",
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
                     "requests": 10,
-                    "concurrency": 1,}],
+                    "concurrency": 1,
+                }
+            ],
         }
         base.update(overrides)
         return base
+
+    def _phase(self, cfg: dict, name: str) -> dict:
+        return next(p for p in cfg["phases"] if p["name"] == name)
 
     def test_no_sweep_returns_single(self):
         data = self._base_config()
@@ -113,9 +116,8 @@ class TestExpandSweep:
 
         values_seen = set()
         for config_dict, _variation in result:
-            conc = config_dict["phases"]["default"]["concurrency"]
-            reqs = config_dict["phases"]["default"]["requests"]
-            values_seen.add((conc, reqs))
+            phase = self._phase(config_dict, "default")
+            values_seen.add((phase["concurrency"], phase["requests"]))
             assert "sweep" not in config_dict
 
         assert values_seen == {
@@ -137,7 +139,7 @@ class TestExpandSweep:
         result = expand_sweep(data)
         assert len(result) == 4
 
-        concurrencies = [r[0]["phases"]["default"]["concurrency"] for r in result]
+        concurrencies = [self._phase(r[0], "default")["concurrency"] for r in result]
         assert concurrencies == [1, 2, 4, 8]
 
     def test_scenario_sweep_deep_merge(self):
@@ -146,37 +148,49 @@ class TestExpandSweep:
                 "type": "scenarios",
                 "runs": [
                     {"name": "low", "phases": [{"name": "default", "concurrency": 2}]},
-                    {"name": "high", "phases": [{"name": "default", "concurrency": 64}]},
+                    {
+                        "name": "high",
+                        "phases": [{"name": "default", "concurrency": 64}],
+                    },
                 ],
             }
         )
         result = expand_sweep(data)
         assert len(result) == 2
 
-        assert result[0][0]["phases"]["default"]["concurrency"] == 2
+        assert self._phase(result[0][0], "default")["concurrency"] == 2
         assert result[0][1].label == "low"
 
-        assert result[1][0]["phases"]["default"]["concurrency"] == 64
+        assert self._phase(result[1][0], "default")["concurrency"] == 64
         assert result[1][1].label == "high"
 
-        # Other fields preserved
-        assert result[0][0]["phases"]["default"]["requests"] == 10
-        assert result[1][0]["phases"]["default"]["requests"] == 10
+        # Other fields preserved (deep-merge by name keeps base requests=10)
+        assert self._phase(result[0][0], "default")["requests"] == 10
+        assert self._phase(result[1][0], "default")["requests"] == 10
 
     def test_magic_list_detection(self):
         data = self._base_config()
-        data["phases"]["default"]["concurrency"] = [8, 16, 32]
+        # Replace the default phase with one whose concurrency is a magic list.
+        data["phases"] = [
+            {"name": "default", "type": "concurrency", "concurrency": [8, 16, 32]}
+        ]
 
         result = expand_sweep(data)
         assert len(result) == 3
 
-        concurrencies = [r[0]["phases"]["default"]["concurrency"] for r in result]
+        concurrencies = [self._phase(r[0], "default")["concurrency"] for r in result]
         assert concurrencies == [8, 16, 32]
 
     def test_magic_list_multiple_fields(self):
         data = self._base_config()
-        data["phases"]["default"]["concurrency"] = [8, 16]
-        data["phases"]["default"]["requests"] = [100, 200]
+        data["phases"] = [
+            {
+                "name": "default",
+                "type": "concurrency",
+                "concurrency": [8, 16],
+                "requests": [100, 200],
+            }
+        ]
 
         result = expand_sweep(data)
         assert len(result) == 4  # Cartesian product
@@ -189,7 +203,7 @@ class TestExpandSweep:
             }
         )
         # Also add magic list (should be ignored since explicit sweep exists)
-        data["phases"]["default"]["requests"] = [100, 200]
+        data["phases"][0]["requests"] = [100, 200]
 
         result = expand_sweep(data)
         assert len(result) == 2  # Only explicit sweep
@@ -255,14 +269,14 @@ class TestHelpers:
         _deep_merge(base, override)
         assert base["a"] == 2
 
-    @pytest.mark.skip(
-        reason="Wave 2: detect_sweep_fields needs name-based phase targeting "
-        "for list-shaped phases. See Task 14."
-    )
     def test_detect_sweep_fields_finds_numeric_lists(self):
         data = {
-            "phases": [{"name": "default", "concurrency": [8, 16, 32],
-                    "name": "test",}]
+            "phases": [
+                {
+                    "name": "default",
+                    "concurrency": [8, 16, 32],
+                }
+            ]
         }
         fields = detect_sweep_fields(data)
         assert "phases.default.concurrency" in fields
@@ -270,7 +284,12 @@ class TestHelpers:
 
     def test_detect_sweep_fields_ignores_string_lists(self):
         data = {
-            "phases": [{"name": "default", "concurrency": ["a", "b"],}]
+            "phases": [
+                {
+                    "name": "default",
+                    "concurrency": ["a", "b"],
+                }
+            ]
         }
         fields = detect_sweep_fields(data)
         assert len(fields) == 0
