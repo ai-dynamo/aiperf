@@ -1,36 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Debug router exposing controller-internal state used to diagnose CR
-``status.workers`` reporting issues.
+"""Debug router exposing per-pod / per-worker state used to diagnose the CR
+``status.workers`` reporting chain.
 
-Each endpoint returns a JSON snapshot of one piece of controller state so an
-operator-side debugger can ``curl`` the controller pod and tell *why* the CR
-shows ``ready=0``: did ``WorkerPodStateMessage`` ever arrive? Did any worker
-report ``startup_state == READY``? What does the resulting aggregate look
-like before it gets serialized into the CR patch?
-
-These endpoints are intended for live diagnosis only; they do not stream and
-do not retain history.
+The API service runs as its own container (``api`` sidecar in the controller
+pod), so it cannot read the SystemController's in-memory caches directly.
+Instead, this router subscribes to ``WORKER_POD_STATE`` and
+``WORKER_STARTUP_STATE`` on the message bus via :class:`PodStateTrackerMixin`
+and serves an eventually-consistent mirror — the same topology the controller
+also tracks for K8s startup gating.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter
 from pydantic import Field
 from starlette.requests import HTTPConnection
 
-from aiperf.api.routers.base_router import BaseRouter
+from aiperf.api.routers.base_router import BaseRouter, component_dependency
+from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.models import AIPerfBaseModel
+
+DebugDep = Annotated["DebugRouter", component_dependency("debug")]
 
 debug_router = APIRouter()
 
 
 class PodStatesResponse(AIPerfBaseModel):
-    """Snapshot of ``SystemController._pod_states``.
+    """Snapshot of the per-pod ``WorkerPodStateMessage`` cache.
 
     ``pods`` is keyed by ``WorkerPodStateMessage.pod_index`` (the
     ``AIPERF_POD_INDEX`` env var on the worker pod) and contains the full
@@ -47,12 +48,12 @@ class PodStatesResponse(AIPerfBaseModel):
 
 
 class WorkerStartupStatesResponse(AIPerfBaseModel):
-    """Snapshot of ``SystemController._worker_startup_states``.
+    """Snapshot of the per-worker startup-state cache.
 
     Each entry is a worker's most recently reported ``WorkerStartupState``
     (e.g. ``WAITING_FOR_DATASET``, ``ROUTER_PROBING``, ``READY``). If this
     map is empty during a benchmark, no worker has reported its startup
-    state to the controller.
+    state on the message bus.
     """
 
     worker_count: int = Field(description="Number of distinct workers seen so far.")
@@ -67,17 +68,8 @@ class WorkerStartupStatesResponse(AIPerfBaseModel):
     )
 
 
-def _get_controller(conn: HTTPConnection) -> Any | None:
-    """Return the SystemController bound to this app, or None if absent."""
-    controller = getattr(conn.app.state, "controller", None)
-    if controller is None:
-        service = getattr(conn.app.state, "service", None)
-        controller = getattr(service, "controller", None)
-    return controller
-
-
-class DebugRouter(BaseRouter):
-    """Owns controller-internal diagnostic endpoints under ``/api/debug``."""
+class DebugRouter(PodStateTrackerMixin, BaseRouter):
+    """Owns ``/api/debug/*`` diagnostic endpoints fed by the message bus."""
 
     def get_router(self) -> APIRouter:
         return debug_router
@@ -88,21 +80,17 @@ class DebugRouter(BaseRouter):
     response_model=PodStatesResponse,
     tags=["Debug"],
 )
-async def get_pod_states(conn: HTTPConnection) -> PodStatesResponse:
-    """Return the controller's per-pod ``WorkerPodStateMessage`` cache.
+async def get_pod_states(
+    conn: HTTPConnection, component: DebugDep
+) -> PodStatesResponse:
+    """Return the per-pod ``WorkerPodStateMessage`` cache.
 
     If ``pod_count == 0`` during a benchmark, no WorkerGroupManager has
-    successfully published ``WORKER_POD_STATE`` to the controller — this is
-    the most common cause of ``status.workers.ready=0`` on the CR.
+    successfully published ``WORKER_POD_STATE`` on the bus reachable from
+    this API service — this is the most common cause of
+    ``status.workers.ready=0`` on the CR.
     """
-    controller = _get_controller(conn)
-    if controller is None:
-        return PodStatesResponse(
-            pod_count=0,
-            pods={},
-            snapshot_time_ns=time.time_ns(),
-        )
-    pod_states: dict[str, Any] = getattr(controller, "_pod_states", {}) or {}
+    pod_states = component._pod_state_tracker.pod_states
     pods = {pod_index: msg.model_dump() for pod_index, msg in pod_states.items()}
     return PodStatesResponse(
         pod_count=len(pods),
@@ -117,23 +105,15 @@ async def get_pod_states(conn: HTTPConnection) -> PodStatesResponse:
     tags=["Debug"],
 )
 async def get_worker_startup_states(
-    conn: HTTPConnection,
+    conn: HTTPConnection, component: DebugDep
 ) -> WorkerStartupStatesResponse:
-    """Return the controller's per-worker startup-state cache.
+    """Return the per-worker startup-state cache.
 
     A non-empty map with no ``READY`` entries means workers connected but
     never finished startup (e.g. stuck in ``WAITING_FOR_DATASET``); an empty
     map means no worker reported at all.
     """
-    controller = _get_controller(conn)
-    if controller is None:
-        return WorkerStartupStatesResponse(
-            worker_count=0,
-            workers={},
-            ready_count=0,
-            snapshot_time_ns=time.time_ns(),
-        )
-    states: dict[str, str] = getattr(controller, "_worker_startup_states", {}) or {}
+    states = component._pod_state_tracker.worker_startup_states
     ready_count = sum(1 for s in states.values() if s == "ready")
     return WorkerStartupStatesResponse(
         worker_count=len(states),

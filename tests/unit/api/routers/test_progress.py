@@ -97,6 +97,61 @@ class TestProgressEndpoint:
             "degraded_pods": 0,
         }
 
+    def test_progress_falls_back_to_bus_cache_when_no_inprocess_controller(
+        self, progress_client: TestClient, progress_router: ProgressRouter
+    ) -> None:
+        """K8s mode: API runs in a separate container, so app.state.controller
+        is None. ProgressRouter must serve workers from its own bus-fed
+        cache instead of returning all zeros."""
+        # Simulate two WorkerGroupManagers publishing pod state on the bus.
+        import asyncio
+
+        async def feed() -> None:
+            await progress_router._on_worker_pod_state(
+                WorkerPodStateMessage(
+                    service_id="wpm-0",
+                    pod_index="0",
+                    benchmark_generation="g",
+                    dataset_generation="d",
+                    declared_workers=4,
+                    declared_record_processors=1,
+                    router_connected_workers=4,
+                    dispatchable_workers=4,
+                    ready_workers=4,
+                    ready_record_processors=1,
+                    degraded_workers=0,
+                    degraded_record_processors=0,
+                    pod_state="ready",
+                    admission_state="dispatchable",
+                )
+            )
+            await progress_router._on_worker_pod_state(
+                WorkerPodStateMessage(
+                    service_id="wpm-1",
+                    pod_index="1",
+                    benchmark_generation="g",
+                    dataset_generation="d",
+                    declared_workers=4,
+                    declared_record_processors=1,
+                    router_connected_workers=4,
+                    dispatchable_workers=2,
+                    ready_workers=2,
+                    ready_record_processors=1,
+                    degraded_workers=2,
+                    degraded_record_processors=0,
+                    pod_state="ready",
+                    admission_state="dispatchable",
+                )
+            )
+
+        asyncio.get_event_loop().run_until_complete(feed())
+        # No app.state.controller AND no app.state.service.controller.
+        data = progress_client.get("/api/progress").json()
+        assert data["workers"]["ready"] == 6
+        assert data["workers"]["total"] == 8
+        assert data["workers"]["ready_pods"] == 2
+        assert data["workers"]["total_pods"] == 2
+
     def test_build_aggregate_worker_status_mixed_states(self) -> None:
         aggregate = build_aggregate_worker_status(
             {

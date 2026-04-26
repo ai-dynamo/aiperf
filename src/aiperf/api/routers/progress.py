@@ -20,11 +20,13 @@ from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.enums import CreditPhase
 from aiperf.common.hooks import background_task
+from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.mixins.progress_tracker_mixin import (
     CombinedPhaseStats,
     ProgressTrackerMixin,
 )
 from aiperf.controller.system_controller import AggregateWorkerStatus
+from aiperf.controller.system_controller_models import build_aggregate_worker_status
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
@@ -85,8 +87,12 @@ def _build_progress_annotations(
     return annotations
 
 
-class ProgressRouter(ProgressTrackerMixin, BaseRouter):
+class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
     """Owns benchmark progress state and exposes /api/progress.
+
+    Subscribes to ``WORKER_POD_STATE`` directly so the K8s API sidecar
+    (which runs in a different container from the SystemController) can
+    answer ``progress.workers`` without an in-process controller handle.
 
     In Kubernetes mode, a background task periodically patches the JobSet
     annotations with current progress so that ``kubectl get jobset`` or
@@ -151,14 +157,23 @@ async def _patch_jobset_annotations(
 
 
 def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:
-    """Read aggregate worker status from controller-owned state when available."""
+    """Resolve aggregate worker status, preferring the in-process controller.
+
+    Single-process / local-dev mode: the SystemController is on
+    ``app.state.controller`` and we ask it directly. Kubernetes mode: the
+    API runs as a separate container, so we fall back to the
+    ``ProgressRouter``'s own ``WORKER_POD_STATE`` subscription cache.
+    """
     controller = getattr(conn.app.state, "controller", None)
     if controller is None:
         service = getattr(conn.app.state, "service", None)
         controller = getattr(service, "controller", None)
-    if controller is None:
+    if controller is not None:
+        return controller.get_aggregate_worker_status()
+    progress: ProgressRouter | None = getattr(conn.app.state, "progress", None)
+    if progress is None:
         return AggregateWorkerStatus()
-    return controller.get_aggregate_worker_status()
+    return build_aggregate_worker_status(progress._pod_state_tracker.pod_states)
 
 
 @progress_router.get("/api/progress", response_model=ProgressResponse, tags=["API"])
