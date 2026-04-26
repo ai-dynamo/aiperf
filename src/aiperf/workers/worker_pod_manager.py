@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -47,6 +48,7 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupPeerCommandAck,
     GroupPeerHello,
     GroupPeerShutdown,
+    GroupTokenizerReady,
     GroupWorkerHealth,
     GroupWorkerStartupState,
     PeerToGroupManagerMessage,
@@ -71,13 +73,13 @@ from aiperf.workers.worker_pod_helpers import (
     build_worker_group_stats,
     configure_local_peers,
     notify_registered_workers_of_dataset,
-    prefetch_tokenizers,
     run_dataset_download,
     shutdown_local_peers,
     wait_for_expected_peers,
     wait_for_record_processor_shutdowns,
     worker_health_message_from_struct,
 )
+from aiperf.workers.worker_pod_tokenizer_download import download_tokenizer
 from aiperf.workers.worker_pod_upload import (
     upload_raw_records,
     wait_for_raw_record_files,
@@ -303,7 +305,98 @@ class WorkerGroupManagerBase(BaseComponentService):
         await _dataset_dl._download_file(session, url, dest_path, self)
 
     async def _prefetch_tokenizers(self) -> None:
-        await prefetch_tokenizers(self.run, self)
+        """Fetch tokenizer bundles from the operator API and notify peers.
+
+        Mirrors the dataset-download path: each unique tokenizer (resolved from
+        ``cfg.tokenizer.name`` or, when absent, the model list) is pulled as a
+        tar+zstd bundle into ``MMAP_BASE_PATH/aiperf_tokenizers/{benchmark_id}``,
+        then a ``GroupTokenizerReady`` is fanned out to registered worker peers.
+        On failure the same struct is published with ``success=False`` and the
+        exception is re-raised so the WGM lifecycle fails the pod.
+        """
+        api_base = self.run.cfg.runtime.dataset_api_base_url
+        if not api_base:
+            raise RuntimeError("dataset_api_base_url required for tokenizer download")
+        names = self._unique_tokenizer_names()
+        if not names:
+            # Nothing to fetch (server token counting, tiktoken-only, etc.).
+            # Still emit ready so downstream waiters do not hang.
+            await self._publish_group_message(
+                GroupTokenizerReady(service_id=self.service_id, bundles={})
+            )
+            return
+        dest_root = self._tokenizer_dest_root()
+        dest_root.mkdir(parents=True, exist_ok=True)
+        try:
+            results = await asyncio.gather(
+                *(
+                    download_tokenizer(
+                        api_base_url=api_base,
+                        name=name,
+                        dest_root=dest_root,
+                        max_retries=Environment.DATASET.DOWNLOAD_MAX_RETRIES,
+                        logger=self,
+                    )
+                    for name in names
+                )
+            )
+        except Exception as exc:
+            await self._publish_group_message(
+                GroupTokenizerReady(
+                    service_id=self.service_id,
+                    bundles={},
+                    success=False,
+                    error_message=str(exc),
+                )
+            )
+            raise
+        bundles = {name: str(path) for name, path in zip(names, results, strict=True)}
+        await self._publish_group_message(
+            GroupTokenizerReady(service_id=self.service_id, bundles=bundles)
+        )
+
+    def _unique_tokenizer_names(self) -> list[str]:
+        """Return the unique tokenizer names this pod must serve.
+
+        Mirrors ``validate_tokenizer_early`` resolution: explicit
+        ``cfg.tokenizer.name`` wins; otherwise fall back to the configured
+        model names. Returns an empty list when neither is set.
+        """
+        seen: dict[str, None] = {}
+        cfg = self.run.cfg
+        tokenizer_cfg = getattr(cfg, "tokenizer", None)
+        if tokenizer_cfg is not None and getattr(tokenizer_cfg, "name", None):
+            seen.setdefault(tokenizer_cfg.name, None)
+        else:
+            for model_name in cfg.get_model_names():
+                seen.setdefault(model_name, None)
+        return list(seen)
+
+    def _tokenizer_dest_root(self) -> Path:
+        """Resolve the on-disk root for tokenizer bundles for this benchmark."""
+        base = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
+        return base / f"aiperf_tokenizers/{self.run.cfg.benchmark_id}"
+
+    async def _publish_group_message(self, message: GroupTokenizerReady) -> None:
+        """Fan out a tokenizer-ready struct to registered worker peers.
+
+        Sibling workers that have not registered yet by this point will pick up
+        the bundles via a future state query (parallel to how late workers
+        recover dataset state via ``GroupDatasetStateQuery``).
+        """
+        worker_identities = [
+            self._pod_peer_identities[sid]
+            for sid, stype in self._pod_peer_types.items()
+            if stype == str(ServiceType.WORKER) and sid in self._pod_peer_identities
+        ]
+        if not worker_identities:
+            return
+        await asyncio.gather(
+            *(
+                self.pod_lifecycle_router.send_to(identity, message)
+                for identity in worker_identities
+            )
+        )
 
     async def _wait_for_raw_record_files(self) -> None:
         await wait_for_raw_record_files(self.run, self.record_processors_per_pod, self)
