@@ -41,13 +41,14 @@ def _make_plan(num_variations: int, trials: int) -> BenchmarkPlan:
         {
             "models": ["m"],
             "endpoint": {"urls": ["http://x"], "type": "chat"},
-            "datasets": {
-                "default": {
+            "datasets": [
+                {
+                    "name": "default",
                     "type": "synthetic",
                     "entries": 10,
                     "prompts": {"isl": 8, "osl": 8},
-                },
-            },
+                }
+            ],
             "phases": [
                 {
                     "name": "profiling",
@@ -116,3 +117,86 @@ async def test_orchestrator_applies_cooldown_between_trials(tmp_path, monkeypatc
     # 3 trials -> 2 inter-trial cooldowns; orchestrator reads from strategy
     # which derives from plan.cooldown_seconds.
     assert sleeps == [1.5, 1.5]
+
+
+# ---------------------------------------------------------------------------
+# Adversarial regression-locks: cancel_check semantics in the orchestrator.
+#
+# Locks in the just-fixed orchestrator behavior:
+#   - cancel_check polled before each variation (between-variations bail).
+#   - cancel_check polled inside a variation's trial loop (mid-cell bail).
+#   - cancel_check=None preserves prior behavior (compatibility).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_cancel_check_between_variations_returns_partial_results(
+    tmp_path,
+):
+    """cancel_check goes True after the first variation's trials -> stop before var 1."""
+    plan = _make_plan(num_variations=3, trials=2)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+
+    # Flip cancel after variation 0 finishes (2 calls done).
+    state = {"flipped": False}
+
+    def cancel_check() -> bool:
+        # Once we've completed all trials of variation 0, signal cancel.
+        if not state["flipped"] and len(executor.calls) >= 2:
+            state["flipped"] = True
+        return state["flipped"]
+
+    results = await orchestrator.execute(plan, executor, cancel_check=cancel_check)
+
+    # Only variation 0's two trials should have run.
+    assert [c[0] for c in executor.calls] == [0, 0]
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_cancel_check_none_preserves_full_iteration(tmp_path):
+    """cancel_check=None => behavior unchanged (compat lock)."""
+    plan = _make_plan(num_variations=3, trials=2)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    results = await orchestrator.execute(plan, executor, cancel_check=None)
+    assert len(results) == 6
+    assert [c[0] for c in executor.calls] == [0, 0, 1, 1, 2, 2]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_cancel_check_inside_trial_loop_truncates_cell(tmp_path):
+    """cancel_check goes True mid-cell -> orchestrator bails before next trial.
+
+    The cancel check sits at the top of the trial loop, BEFORE issuing the
+    next run. Flipping after 2 trials in variation 0 means only those 2 trials
+    execute; trial 3+ are skipped and remaining variations are skipped too.
+    """
+    plan = _make_plan(num_variations=1, trials=5)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+
+    state = {"count": 0}
+
+    def cancel_check() -> bool:
+        # The orchestrator polls cancel_check both before each variation and
+        # at the top of each trial iteration. Returning True after 2 trials
+        # have completed means the 3rd-trial check fires and the loop bails.
+        return state["count"] >= 2
+
+    # We can't mutate state from FakeExecutor.execute directly without
+    # rewriting it — use a thin wrapper subclass.
+    class CountingExecutor(FakeExecutor):
+        async def execute(self, run):
+            result = await super().execute(run)
+            state["count"] += 1
+            return result
+
+    executor = CountingExecutor()
+    results = await orchestrator.execute(plan, executor, cancel_check=cancel_check)
+
+    # Exactly two trials ran; the 3rd-trial top-of-loop cancel_check fires.
+    assert len(executor.calls) == 2
+    assert [c[1] for c in executor.calls] == [0, 1]
+    assert len(results) == 2

@@ -72,3 +72,149 @@ async def test_current_cell_writes_index_label_trial(monkeypatch):
 
 def test_field_manager_constant():
     assert SWEEP_CONTROLLER_FIELD_MANAGER == "aiperf-sweep-controller"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial regression-locks: content-type and field-manager on every patch.
+#
+# Without `_content_type="application/merge-patch+json"`, kubernetes_asyncio
+# defaults to `application/json-patch+json`, which expects a JSON-Patch list
+# of ops (not a dict body). The apiserver returns 422 and the patch is
+# silently swallowed by the operator's status-writer wrapper. This was the
+# silent-failure bug fixed in this branch — the tests below lock it in.
+# ---------------------------------------------------------------------------
+
+
+def _patch_call_kwargs(custom_mock):
+    return custom_mock.patch_namespaced_custom_object_status.call_args.kwargs
+
+
+async def _invoke(method_name: str, writer: SweepStatusWriter) -> None:
+    if method_name == "current_cell":
+        await writer.current_cell(variation_index=0, label="v0", trial=0)
+    elif method_name == "aggregation_running":
+        await writer.aggregation_running()
+    elif method_name == "aggregation_complete":
+        await writer.aggregation_complete(
+            aggregate_path="/api/v1/results/ns/s/aggregate",
+            controller_host="ctrl-host",
+            port=19090,
+        )
+    elif method_name == "aggregation_failed":
+        await writer.aggregation_failed(error="boom")
+    else:
+        raise ValueError(method_name)
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "current_cell",
+        "aggregation_running",
+        "aggregation_complete",
+        "aggregation_failed",
+    ],
+)
+@pytest.mark.asyncio
+async def test_patch_uses_merge_patch_content_type_for_every_writer(
+    method_name: str, monkeypatch
+):
+    """Every status writer call MUST set _content_type=application/merge-patch+json.
+
+    Regression-lock: missing this kwarg silently 422s on the apiserver and the
+    sweep CR never reflects the controller's progress.
+    """
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await _invoke(method_name, writer)
+
+    kwargs = _patch_call_kwargs(custom)
+    assert kwargs.get("_content_type") == "application/merge-patch+json", (
+        f"{method_name}: expected merge-patch content-type, got {kwargs.get('_content_type')!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "current_cell",
+        "aggregation_running",
+        "aggregation_complete",
+        "aggregation_failed",
+    ],
+)
+@pytest.mark.asyncio
+async def test_patch_uses_sweep_controller_field_manager_for_every_writer(
+    method_name: str, monkeypatch
+):
+    """Every status writer call MUST set field_manager=aiperf-sweep-controller.
+
+    Required for SSA co-ownership with the operator (which writes phase /
+    completedRuns / etc.). Without it, conflict resolution fails on shared paths.
+    """
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await _invoke(method_name, writer)
+
+    kwargs = _patch_call_kwargs(custom)
+    assert kwargs.get("field_manager") == SWEEP_CONTROLLER_FIELD_MANAGER
+
+
+@pytest.mark.asyncio
+async def test_aggregation_complete_writes_full_aggregate_ref(monkeypatch):
+    """Locked-in payload shape: aggregateRef carries apiPath, port, resultsServerHost."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.aggregation_complete(
+        aggregate_path="/api/v1/results/ns/s/aggregate",
+        controller_host="ctrl-host",
+        port=19090,
+    )
+    body = _patch_call_kwargs(custom)["body"]
+
+    aggregation = body["status"]["aggregation"]
+    assert aggregation["phase"] == "Complete"
+    assert "completedAt" in aggregation and aggregation["completedAt"]
+
+    aggregate_ref = body["status"]["aggregateRef"]
+    assert aggregate_ref["apiPath"] == "/api/v1/results/ns/s/aggregate"
+    assert aggregate_ref["port"] == 19090
+    assert aggregate_ref["resultsServerHost"] == "ctrl-host"
+
+
+@pytest.mark.asyncio
+async def test_aggregation_failed_writes_error_and_completed_at(monkeypatch):
+    """Locked-in payload shape: aggregation_failed carries error and completedAt."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.aggregation_failed(error="export blew up at row 17")
+    body = _patch_call_kwargs(custom)["body"]
+
+    aggregation = body["status"]["aggregation"]
+    assert aggregation["phase"] == "Failed"
+    assert aggregation["error"] == "export blew up at row 17"
+    assert aggregation["completedAt"]  # non-empty
