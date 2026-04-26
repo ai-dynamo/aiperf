@@ -3,6 +3,9 @@ import { signal, computed } from '@preact/signals';
 // Raw jobs list from /api/v1/jobs
 export const jobs = signal([]);
 
+// Raw sweeps list from /api/v1/sweeps
+export const sweeps = signal([]);
+
 // Currently selected job (for detail page)
 export const selectedJob = signal(null);
 

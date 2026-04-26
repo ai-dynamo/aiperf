@@ -26,6 +26,21 @@ export const api = {
     return apiFetch('/jobs');
   },
 
+  /** List all AIPerfSweep records (live + archived) */
+  listSweeps() {
+    return apiFetch('/sweeps');
+  },
+
+  /** Get a single sweep by namespace and name */
+  getSweep(ns, name) {
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
+  },
+
+  /** Per-cell aggregate metrics for a sweep */
+  getSweepCells(ns, name) {
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cells`);
+  },
+
   /** Get a single job by namespace and name */
   getJob(ns, name) {
     return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
