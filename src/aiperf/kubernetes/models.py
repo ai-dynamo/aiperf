@@ -128,6 +128,12 @@ class CRMetadata(K8sCamelModel):
     name: str = Field(default="", description="Resource name.")
     namespace: str = Field(default="", description="Resource namespace.")
     creation_timestamp: str = Field(default="", description="Creation timestamp.")
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="K8s labels on the resource. Used to read sweep linkage "
+        "(aiperf.nvidia.com/sweep, /variation-index, /variation-label) for "
+        "AIPerfJob children of an AIPerfSweep.",
+    )
 
 
 class CREndpoint(K8sCamelModel):
@@ -271,6 +277,17 @@ class AIPerfJobCR(K8sCamelModel):
         throughput = rt.get("avg") if isinstance(rt, dict) else None
         latency = rl.get("p99") if isinstance(rl, dict) else None
 
+        # Sweep linkage labels are stamped on every AIPerfJob created by the
+        # sweep-controller; standalone jobs leave all three as None.
+        labels = self.metadata.labels
+        sweep_name = labels.get("aiperf.nvidia.com/sweep") or None
+        raw_idx = labels.get("aiperf.nvidia.com/variation-index")
+        try:
+            variation_index = int(raw_idx) if raw_idx is not None else None
+        except ValueError:
+            variation_index = None
+        variation_label = labels.get("aiperf.nvidia.com/variation-label") or None
+
         return AIPerfJobInfo(
             name=self.metadata.name,
             namespace=self.metadata.namespace,
@@ -289,6 +306,9 @@ class AIPerfJobCR(K8sCamelModel):
             latency_p99_ms=float(latency) if latency is not None else None,
             model=model,
             endpoint=endpoint_url,
+            sweep_name=sweep_name,
+            variation_index=variation_index,
+            variation_label=variation_label,
         )
 
 

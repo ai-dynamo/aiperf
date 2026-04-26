@@ -23,6 +23,7 @@ import orjson
 # Import at module level so tests can monkeypatch these bindings directly.
 from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator.models import MetricsSummary
 from aiperf.operator.results_layout import resolve_run_dir
 
 if TYPE_CHECKING:
@@ -33,6 +34,37 @@ logger = logging.getLogger("aiperf.operator.job_union")
 # Filename the operator writes once a run is persisted to the PVC. Its presence
 # marks a directory as "has a real completed run" for the union.
 _SUMMARY_FILE = "profile_export_aiperf.json"
+
+# Marker filename the sweep-controller drops into each child's results dir at
+# CR-create time. Persisting the sweep linkage on disk preserves the parent
+# pointer after the AIPerfJob CR is TTL-reaped.
+_SWEEP_MARKER_FILE = "sweep.json"
+
+
+def _sweep_linkage_from_marker(
+    job_dir: Path,
+) -> tuple[str | None, int | None, str | None]:
+    """Read sweep linkage from the per-child ``sweep.json`` marker.
+
+    Returns ``(None, None, None)`` if the marker is absent or unreadable —
+    this is the expected path for standalone (non-sweep) jobs.
+    """
+    marker = job_dir / _SWEEP_MARKER_FILE
+    if not marker.is_file():
+        return None, None, None
+    try:
+        doc = orjson.loads(marker.read_bytes())
+    except (OSError, orjson.JSONDecodeError) as e:
+        logger.warning(f"sweep.json unreadable at {marker}: {e}")
+        return None, None, None
+    sweep_name = doc.get("sweep_name") or None
+    raw_idx = doc.get("variation_index")
+    try:
+        variation_index = int(raw_idx) if raw_idx is not None else None
+    except (TypeError, ValueError):
+        variation_index = None
+    variation_label = doc.get("variation_label") or None
+    return sweep_name, variation_index, variation_label
 
 
 def _read_summary(path: Path) -> dict[str, Any] | None:
@@ -50,8 +82,14 @@ def _archived_from_summary(
     summary: dict[str, Any],
     *,
     mtime_iso: str,
+    name_dir: Path | None = None,
 ) -> AIPerfJobInfo:
-    """Build an archived ``AIPerfJobInfo`` from a summary JSON dict."""
+    """Build an archived ``AIPerfJobInfo`` from a summary JSON dict.
+
+    When ``name_dir`` is supplied, also reads ``sweep.json`` from that
+    directory to populate sweep linkage for archived sweep children whose
+    parent CR has been TTL-reaped.
+    """
     phase = str(summary.get("status") or "Archived")
     start_time = summary.get("start_time") or None
     end_time = summary.get("end_time") or None
@@ -71,6 +109,14 @@ def _archived_from_summary(
     urls = endpoint.get("urls") or []
     endpoint_url = urls[0] if urls else None
 
+    sweep_name: str | None = None
+    variation_index: int | None = None
+    variation_label: str | None = None
+    if name_dir is not None:
+        sweep_name, variation_index, variation_label = _sweep_linkage_from_marker(
+            name_dir
+        )
+
     return AIPerfJobInfo(
         name=name,
         namespace=namespace,
@@ -89,6 +135,9 @@ def _archived_from_summary(
         model=model,
         endpoint=endpoint_url,
         source="archived",
+        sweep_name=sweep_name,
+        variation_index=variation_index,
+        variation_label=variation_label,
     )
 
 
@@ -139,6 +188,7 @@ def _scan_pvc_jobs(
                     name_dir.name,
                     summary,
                     mtime_iso=mtime_iso,
+                    name_dir=name_dir,
                 )
             )
     return out
@@ -149,45 +199,16 @@ def _scan_pvc_jobs(
 # (value absent or nested missing) means the key is OMITTED from the output,
 # so downstream UI code that does ``summary.throughput_rps ?? null`` picks
 # up the fall-through instead of a silently-null key.
-_FLAT_METRIC_MAP: tuple[tuple[str, str, str], ...] = (
-    ("throughput_rps", "request_throughput", "avg"),
-    ("latency_avg_ms", "request_latency", "avg"),
-    ("latency_p99_ms", "request_latency", "p99"),
-    ("ttft_avg_ms", "time_to_first_token", "avg"),
-    ("ttft_p99_ms", "time_to_first_token", "p99"),
-    ("itl_avg_ms", "inter_token_latency", "avg"),
-    ("itl_p99_ms", "inter_token_latency", "p99"),
-    ("output_token_throughput_tps", "output_token_throughput", "avg"),
-)
+def _summary_from_profile_export(summary: dict[str, Any]) -> dict[str, Any]:
+    """Project a curated nested metric view from a profile_export summary.
 
-
-def _flat_summary_from_profile_export(summary: dict[str, Any]) -> dict[str, Any]:
-    """Flatten a profile_export summary into the camel-ish keys the UI reads.
-
-    The UI's job-detail page reads KPIs from ``status.summary.{throughput_rps,
-    ttft_avg_ms, latency_p99_ms, output_token_throughput_tps, error_rate,
-    total_requests}``. Live CRs write these flat keys directly; archived jobs
-    only have nested ``profile_export_aiperf.json`` metrics, which this helper
-    translates. Keys whose source is missing/None are omitted.
+    ``profile_export_aiperf.json`` stores AIPerf metric tags
+    (``request_throughput``, ``request_latency``, ...) at the top level of
+    the dict. This helper passes that through ``MetricsSummary.from_metrics``
+    so archived jobs land in ``status.summary`` with the same nested
+    ``{tag: {avg, p50, p99, ...}}`` shape as live CRs.
     """
-    flat: dict[str, Any] = {}
-    for flat_key, nested_key, field in _FLAT_METRIC_MAP:
-        nested = summary.get(nested_key)
-        if not isinstance(nested, dict):
-            continue
-        value = nested.get(field)
-        if value is None:
-            continue
-        flat[flat_key] = value
-
-    request_count = summary.get("request_count")
-    if request_count is not None:
-        flat["total_requests"] = request_count
-    # error_rate is always present in the UI's expected schema; default to 0.0
-    # when the source summary is silent so cards don't render "---" for a
-    # benchmark that simply had zero errors.
-    flat["error_rate"] = summary.get("error_rate") or 0.0
-    return flat
+    return MetricsSummary.from_metrics(summary).to_status_dict()
 
 
 def synthesize_status_from_summary(
@@ -201,9 +222,9 @@ def synthesize_status_from_summary(
     The returned dict matches the schema a live CR's ``status`` subresource
     exposes (jobId, phase, workers, conditions, phases, summary, timestamps),
     so the UI can consume it through the same code path as live jobs — just
-    with pods/workers empty. The flat ``status.summary.*`` keys (``throughput_rps``,
-    ``latency_p99_ms``, ...) are derived from the nested ``profile_export_aiperf.json``
-    metrics via :func:`_flat_summary_from_profile_export`.
+    with pods/workers empty. ``status.summary`` is a curated nested
+    ``{metric_tag: {avg, p50, p99, ...}}`` projection of the
+    ``profile_export_aiperf.json`` payload via :func:`_summary_from_profile_export`.
 
     Args:
         namespace: Kubernetes namespace of the original job (retained for
@@ -244,7 +265,7 @@ def synthesize_status_from_summary(
                 "requestsProgressPercent": 100,
             }
         },
-        "summary": _flat_summary_from_profile_export(summary),
+        "summary": _summary_from_profile_export(summary),
     }
 
 
@@ -296,6 +317,12 @@ async def list_all_jobs(
                         cj.model = pj.model
                     if cj.endpoint is None:
                         cj.endpoint = pj.endpoint
+                    if cj.sweep_name is None:
+                        cj.sweep_name = pj.sweep_name
+                    if cj.variation_index is None:
+                        cj.variation_index = pj.variation_index
+                    if cj.variation_label is None:
+                        cj.variation_label = pj.variation_label
                     break
         else:
             out.append(pj)
@@ -342,6 +369,7 @@ async def find_any_job(
                 name,
                 data,
                 mtime_iso=mtime_iso,
+                name_dir=results_dir / namespace / name,
             )
 
     if cr is None and pvc is None:
@@ -360,4 +388,10 @@ async def find_any_job(
         cr.model = pvc.model
     if cr.endpoint is None:
         cr.endpoint = pvc.endpoint
+    if cr.sweep_name is None:
+        cr.sweep_name = pvc.sweep_name
+    if cr.variation_index is None:
+        cr.variation_index = pvc.variation_index
+    if cr.variation_label is None:
+        cr.variation_label = pvc.variation_label
     return cr
