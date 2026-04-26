@@ -21,9 +21,11 @@ TERMINAL_PHASES = frozenset(
 PARENT_TERMINAL_PHASES = frozenset(
     {"Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
 )
-# SSA field manager for rollup writes. The sweep-controller pod uses
-# "aiperf-sweep-controller" — these two managers are intentionally
-# distinct so the apiserver tracks per-field ownership in managedFields.
+# Field-manager metadata on the merge-patch. Distinct from the
+# sweep-controller's "aiperf-sweep-controller" so kubectl can tell which
+# writer last touched each status field. Merge-patch does not enforce
+# field ownership — the disjoint-top-level-field invariant between
+# operator and controller writers does that.
 ROLLUP_FIELD_MANAGER = "aiperf-operator-rollup"
 
 __all__ = ["on_child_phase_transition"]
@@ -149,15 +151,19 @@ async def _patch_parent_status(
     namespace: str,
     body: dict[str, Any],
 ) -> None:
-    """Server-Side Apply of operator-owned rollup fields on AIPerfSweep.status.
+    """Merge-patch operator-owned rollup fields on AIPerfSweep.status.
 
-    Uses ``application/apply-patch+yaml`` with field manager
-    ``aiperf-operator-rollup``. The body's ``status`` content is the operator's
-    declared ownership: ``completedRuns``, ``failedRuns``, ``lastChildEvent``,
-    and conditionally ``phase``. The sweep-controller writes disjoint fields
-    (``currentCell``, ``aggregation``, ``aggregateRef``) under its own field
-    manager, so SSA tracks both without clobber. ``force=True`` reclaims fields
-    after operator restarts.
+    Uses ``application/merge-patch+json`` with field manager
+    ``aiperf-operator-rollup`` as observability metadata. The operator owns
+    ``completedRuns``, ``failedRuns``, ``lastChildEvent``, and
+    conditionally ``phase``; the sweep-controller writes disjoint fields
+    (``currentCell``, ``aggregation``, ``aggregateRef``) under its own
+    field manager. The disjoint-top-level-field invariant means merge-patch
+    is safe — neither writer can clobber the other's fields. (Server-Side
+    Apply was tried and reverted: SSA's relinquishment semantics drop a
+    manager's own previously-set fields between calls when the new apply
+    body doesn't include them, which broke the imperative event-style
+    write pattern this code uses.)
     """
     import aiohttp
     import kopf
@@ -166,12 +172,6 @@ async def _patch_parent_status(
 
     from aiperf.kubernetes.client import k8s_client
 
-    apply_body: dict[str, Any] = {
-        "apiVersion": f"{group}/{version}",
-        "kind": "AIPerfSweep",
-        "metadata": {"name": name, "namespace": namespace},
-        **body,
-    }
     try:
         async with k8s_client() as api:
             custom = k8s.CustomObjectsApi(api)
@@ -181,10 +181,9 @@ async def _patch_parent_status(
                 plural=plural,
                 namespace=namespace,
                 name=name,
-                body=apply_body,
+                body=body,
                 field_manager=ROLLUP_FIELD_MANAGER,
-                force=True,
-                _content_type="application/apply-patch+yaml",
+                _content_type="application/merge-patch+json",
             )
     except ApiException as e:
         if e.status == 404:

@@ -239,13 +239,20 @@ async def test_on_child_phase_transition_writes_aggregating_when_parent_non_term
 
 
 # ---------------------------------------------------------------------------
-# C) child_rollup — SSA contract regression-lock
+# C) child_rollup — content-type regression-lock
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_patch_parent_status_uses_apply_patch_content_type(monkeypatch):
-    """``_patch_parent_status`` must call the API with SSA content-type."""
+async def test_patch_parent_status_uses_merge_patch_content_type(monkeypatch):
+    """``_patch_parent_status`` must call the API with merge-patch content-type.
+
+    Locks the SSA revert: full Server-Side Apply was tried and reverted
+    because relinquishment semantics drop a manager's previously-set
+    fields between calls when the new apply body doesn't include them.
+    Merge-patch is the right primitive for the imperative event-style
+    rollup writes; ``field_manager`` here is observability metadata only.
+    """
     fake = _install_fake_k8s(monkeypatch)
 
     await child_rollup._patch_parent_status(
@@ -259,25 +266,26 @@ async def test_patch_parent_status_uses_apply_patch_content_type(monkeypatch):
 
     fake.patch_status.assert_awaited_once()
     kwargs = fake.patch_status.await_args.kwargs
-    assert kwargs.get("_content_type") == "application/apply-patch+yaml", (
-        "patch must be sent as apply-patch+yaml (SSA) so the apiserver tracks "
-        "per-field ownership and the operator's writes do not clobber the "
-        "sweep-controller's status fields"
+    assert kwargs.get("_content_type") == "application/merge-patch+json", (
+        "patch must be sent as merge-patch+json (json-patch+json would expect a list of ops)"
     )
     assert kwargs.get("field_manager") == child_rollup.ROLLUP_FIELD_MANAGER, (
-        "rollup must use a distinct field_manager so SSA can track ownership"
+        "rollup must tag its writes with a distinct field_manager so kubectl "
+        "shows which writer last touched each field"
     )
-    assert kwargs.get("force") is True, (
-        "SSA force=True required so an operator restart re-claims its fields"
+    # SSA-only kwargs must NOT leak in — they would change semantics.
+    assert "force" not in kwargs or kwargs["force"] is None, (
+        f"force={kwargs.get('force')!r} leaked from the SSA experiment; "
+        "merge-patch must not pass force=True"
     )
-    body = kwargs.get("body")
-    assert body is not None
-    assert body.get("apiVersion") == "aiperf.nvidia.com/v1alpha1"
-    assert body.get("kind") == "AIPerfSweep"
-    assert (body.get("metadata") or {}).get("name") == "s"
     assert kwargs.get("name") == "s"
     assert kwargs.get("namespace") == "ns"
     assert kwargs.get("plural") == "aiperfsweeps"
+    # Body is the merge-patch shape (no apiVersion/kind/metadata envelope).
+    body = kwargs.get("body")
+    assert body == {"status": {"phase": "Aggregating"}}, (
+        f"merge-patch body must be the bare status diff, got {body!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
