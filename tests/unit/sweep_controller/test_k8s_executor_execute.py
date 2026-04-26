@@ -1,0 +1,209 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from aiperf.config.benchmark import BenchmarkRun
+from aiperf.config.config import BenchmarkConfig
+from aiperf.config.sweep import SweepVariation
+from aiperf.sweep_controller.k8s_executor import (
+    ChildNameConflictError,
+    K8sChildJobExecutor,
+)
+
+
+def _sweep_cr() -> dict:
+    return {
+        "metadata": {"name": "s", "namespace": "ns", "uid": "uid"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "image": "x:latest",
+                    "benchmark": {
+                        "models": ["m"],
+                        "endpoint": {"urls": ["http://x"], "type": "chat"},
+                        "datasets": {"main": {"type": "synthetic"}},
+                        "phases": [
+                            {
+                                "name": "profiling",
+                                "type": "concurrency",
+                                "duration": 1,
+                                "concurrency": 1,
+                            }
+                        ],
+                    },
+                }
+            }
+        },
+    }
+
+
+def _benchmark_run(var_idx: int = 7, trial: int = 2) -> BenchmarkRun:
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://x"], "type": "chat"},
+            "datasets": {"main": {"type": "synthetic"}},
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 1,
+                    "concurrency": 64,
+                }
+            ],
+        }
+    )
+    return BenchmarkRun(
+        benchmark_id=f"s-v{var_idx:04d}-t{trial:02d}",
+        cfg=cfg,
+        variation=SweepVariation(
+            index=var_idx,
+            label="c=64",
+            values={"phases.profiling.concurrency": 64},
+        ),
+        trial=trial,
+        label=f"run_{trial:04d}",
+        artifact_dir=Path("/results"),
+    )
+
+
+class _NotFoundException(Exception):
+    """Mimics kubernetes_asyncio.client.ApiException(status=404)."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"ApiException({status})")
+
+
+@pytest.mark.asyncio
+async def test_execute_creates_child_when_not_exists(monkeypatch):
+    """When no child exists, executor creates one and waits for terminal phase."""
+    api = MagicMock()
+    custom = MagicMock()
+    # First read returns 404, second read (after watch) returns Succeeded child.
+    custom.get_namespaced_custom_object = AsyncMock(
+        side_effect=[
+            _NotFoundException(404),
+            {
+                "metadata": {
+                    "name": "s-v0007-t02",
+                    "ownerReferences": [{"uid": "uid"}],
+                    "labels": {"aiperf.nvidia.com/sweep": "s"},
+                },
+                "status": {
+                    "phase": "Succeeded",
+                    "runEpoch": "1714000000",
+                    "runtimeRef": {"controllerHost": "h"},
+                },
+            },
+        ]
+    )
+    custom.create_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {
+                "name": "s-v0007-t02",
+                "uid": "child-uid",
+                "ownerReferences": [{"uid": "uid"}],
+                "labels": {"aiperf.nvidia.com/sweep": "s"},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.CustomObjectsApi", lambda _api: custom
+    )
+    # The executor wraps ApiException-like errors; treat our fake as such.
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.ApiException",
+        _NotFoundException,
+    )
+
+    executor = K8sChildJobExecutor(api=api, sweep=_sweep_cr(), with_trial_suffix=True)
+    executor._wait_until_terminal = AsyncMock(return_value=None)
+    executor._pull_summary_metrics = AsyncMock(return_value={})
+
+    result = await executor.execute(_benchmark_run())
+
+    custom.create_namespaced_custom_object.assert_awaited_once()
+    assert result.success is False
+    assert result.label == "run_0002"
+
+
+@pytest.mark.asyncio
+async def test_execute_resumes_existing_owned_child(monkeypatch):
+    """When the child already exists and is owned, executor does NOT create."""
+    existing = {
+        "metadata": {
+            "name": "s-v0007-t02",
+            "ownerReferences": [{"uid": "uid"}],
+            "labels": {"aiperf.nvidia.com/sweep": "s"},
+        },
+        "status": {
+            "phase": "Succeeded",
+            "runEpoch": "1714000000",
+            "runtimeRef": {"controllerHost": "h"},
+        },
+    }
+    api = MagicMock()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(return_value=existing)
+    custom.create_namespaced_custom_object = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.CustomObjectsApi", lambda _api: custom
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.ApiException",
+        _NotFoundException,
+    )
+
+    executor = K8sChildJobExecutor(api=api, sweep=_sweep_cr(), with_trial_suffix=True)
+    executor._wait_until_terminal = AsyncMock(return_value=None)
+    executor._pull_summary_metrics = AsyncMock(return_value={})
+
+    await executor.execute(_benchmark_run())
+    custom.create_namespaced_custom_object.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_raises_on_name_conflict_with_unowned_child(monkeypatch):
+    """If a child name slot is occupied by an UNOWNED AIPerfJob, raise."""
+    foreign = {
+        "metadata": {
+            "name": "s-v0007-t02",
+            "ownerReferences": [{"uid": "different-uid"}],
+            "labels": {},
+        },
+    }
+    api = MagicMock()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(return_value=foreign)
+    custom.create_namespaced_custom_object = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.CustomObjectsApi", lambda _api: custom
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.ApiException",
+        _NotFoundException,
+    )
+
+    executor = K8sChildJobExecutor(api=api, sweep=_sweep_cr(), with_trial_suffix=True)
+
+    with pytest.raises(ChildNameConflictError, match="not owned by this sweep"):
+        await executor.execute(_benchmark_run())
+    custom.create_namespaced_custom_object.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_collect_run_result_from_failed_child():
+    """Collect path: failed phase -> success=False with reason."""
+    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
+    failed_child = {
+        "metadata": {"name": "s-v0007-t02"},
+        "status": {"phase": "Failed", "message": "endpoint timeout"},
+    }
+    result = await executor._collect_run_result(failed_child, _benchmark_run())
+    assert result.success is False
+    assert "endpoint timeout" in result.error

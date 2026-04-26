@@ -103,22 +103,3 @@ def test_build_child_metadata_sets_owner_and_labels():
 def test_derive_id_uses_deterministic_naming():
     executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
     assert executor.derive_id(plan=None, var_idx=7, trial=2) == "test-sweep-v0007-t02"
-
-
-def test_execute_raises_until_task_13():
-    """execute() body lands in Task 13."""
-    import asyncio
-
-    import pytest
-
-    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
-    run = BenchmarkRun(
-        benchmark_id="x",
-        cfg=_benchmark_config_for_run(),
-        variation=SweepVariation(index=0, label="v0", values={}),
-        trial=0,
-        label="run_0001",
-        artifact_dir=Path("/results"),
-    )
-    with pytest.raises(NotImplementedError):
-        asyncio.run(executor.execute(run))

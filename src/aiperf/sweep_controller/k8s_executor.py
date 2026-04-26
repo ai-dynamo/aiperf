@@ -10,16 +10,21 @@ construction.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from kubernetes_asyncio.client import ApiException, CustomObjectsApi
+
 from aiperf.orchestrator.executor import RunExecutor
+from aiperf.orchestrator.models import RunResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiperf.config.benchmark import BenchmarkPlan, BenchmarkRun
-    from aiperf.orchestrator.models import RunResult
 
 
 logger = logging.getLogger(__name__)
@@ -31,14 +36,23 @@ VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
 VARIATION_LABEL_LABEL = "aiperf.nvidia.com/variation-label"
 TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
 
+TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+RESULTS_SERVER_PORT = 19090
+DEFAULT_POLL_INTERVAL_SECONDS = 5.0
+
 
 __all__ = [
+    "DEFAULT_POLL_INTERVAL_SECONDS",
+    "RESULTS_SERVER_PORT",
     "SWEEP_LABEL",
     "SWEEP_UID_LABEL",
+    "TERMINAL_PHASES",
     "TRIAL_INDEX_LABEL",
     "VARIATION_INDEX_LABEL",
     "VARIATION_LABEL_LABEL",
+    "ApiException",
     "ChildNameConflictError",
+    "CustomObjectsApi",
     "K8sChildJobExecutor",
     "derive_child_name",
     "is_my_child",
@@ -160,5 +174,171 @@ class K8sChildJobExecutor(RunExecutor):
         }
 
     async def execute(self, run: BenchmarkRun) -> RunResult:
-        """Body lands in Task 13 (apiserver create/watch/result-pull)."""
-        raise NotImplementedError("execute() body landed in Task 13")
+        """Get-or-create the child, await terminal phase, then collect a RunResult."""
+        var_idx = run.variation.index if run.variation else 0
+        child_name = self.derive_id(plan=None, var_idx=var_idx, trial=run.trial)
+        await self._get_or_create(child_name, run)
+        await self._wait_until_terminal(child_name)
+        terminal = await self._try_read_child(child_name)
+        if terminal is None:
+            return RunResult(
+                label=run.label,
+                success=False,
+                error=f"child {child_name} disappeared before terminal phase",
+                artifacts_path=run.artifact_dir,
+            )
+        return await self._collect_run_result(terminal, run)
+
+    async def _try_read_child(self, name: str) -> dict[str, Any] | None:
+        """Read an AIPerfJob by name; return None on 404."""
+        custom = CustomObjectsApi(self._api)
+        try:
+            return await custom.get_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1",
+                namespace=self.sweep_namespace,
+                plural="aiperfjobs",
+                name=name,
+            )
+        except ApiException as e:
+            if getattr(e, "status", None) == 404:
+                return None
+            raise
+
+    async def _get_or_create(self, name: str, run: BenchmarkRun) -> dict[str, Any]:
+        """Read the child if it exists; otherwise create it from the sweep template."""
+        existing = await self._try_read_child(name)
+        if existing is not None:
+            if is_my_child(
+                existing, sweep_uid=self.sweep_uid, sweep_name=self.sweep_name
+            ):
+                logger.info(f"resuming existing child {name}")
+                return existing
+            raise ChildNameConflictError(
+                f"child name {name!r} exists but is not owned by this sweep "
+                f"(uid={self.sweep_uid})"
+            )
+        body = {
+            "apiVersion": "aiperf.nvidia.com/v1",
+            "kind": "AIPerfJob",
+            "metadata": self._build_child_metadata(run, name),
+            "spec": self._build_child_spec(run),
+        }
+        custom = CustomObjectsApi(self._api)
+        logger.info(f"creating child {name}")
+        return await custom.create_namespaced_custom_object(
+            group="aiperf.nvidia.com",
+            version="v1",
+            namespace=self.sweep_namespace,
+            plural="aiperfjobs",
+            body=body,
+        )
+
+    async def _wait_until_terminal(
+        self,
+        child_name: str,
+        *,
+        poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> None:
+        """Poll the child until status.phase reaches a terminal value.
+
+        Periodic list-fallback rather than long-lived Watch: simpler under
+        partial network failures, and AIPerfJob phase transitions are rare
+        enough that a 5s poll is fine.
+        """
+        while True:
+            child = await self._try_read_child(child_name)
+            phase = (child or {}).get("status", {}).get("phase")
+            if phase in TERMINAL_PHASES:
+                return
+            if cancel_check is not None and cancel_check():
+                logger.info(f"cancel requested while waiting on {child_name}")
+                await self._patch_child_cancel(child_name)
+                # Continue polling; the operator will eventually mark Cancelled.
+            await asyncio.sleep(poll_interval)
+
+    async def _patch_child_cancel(self, child_name: str) -> None:
+        """Patch the child's spec.cancel = true to propagate the cancel signal."""
+        custom = CustomObjectsApi(self._api)
+        await custom.patch_namespaced_custom_object(
+            group="aiperf.nvidia.com",
+            version="v1",
+            namespace=self.sweep_namespace,
+            plural="aiperfjobs",
+            name=child_name,
+            body={"spec": {"cancel": True}},
+        )
+
+    async def _collect_run_result(
+        self, child: dict[str, Any], run: BenchmarkRun
+    ) -> RunResult:
+        """Translate a terminal child + summary metrics into a RunResult."""
+        status = child.get("status") or {}
+        phase = status.get("phase")
+        if phase != "Succeeded":
+            return RunResult(
+                label=run.label,
+                success=False,
+                error=status.get("message") or f"child terminal phase={phase}",
+                artifacts_path=run.artifact_dir,
+            )
+        metrics = await self._pull_summary_metrics(child)
+        if not metrics:
+            return RunResult(
+                label=run.label,
+                success=False,
+                error="No metrics found for terminal-success child",
+                artifacts_path=run.artifact_dir,
+            )
+        return RunResult(
+            label=run.label,
+            success=True,
+            summary_metrics=metrics,
+            artifacts_path=run.artifact_dir,
+        )
+
+    async def _pull_summary_metrics(self, child: dict[str, Any]) -> dict[str, Any]:
+        """Pull profile_export_aiperf.json from the child's results-server.
+
+        Uses the explicit `/runs/<child-epoch>/` URL so retention pruning on
+        the operator side does not race the fetch.
+        """
+        import aiohttp
+        import orjson
+
+        from aiperf.common.models.export_models import JsonMetricResult
+
+        status = child.get("status") or {}
+        epoch = status.get("runEpoch")
+        runtime_ref = status.get("runtimeRef") or {}
+        host = runtime_ref.get("controllerHost")
+        name = child["metadata"]["name"]
+        if not host or not epoch:
+            logger.warning(
+                f"child {name}: missing host/epoch in status; cannot fetch metrics"
+            )
+            return {}
+        url = (
+            f"http://{host}:{RESULTS_SERVER_PORT}"
+            f"/api/v1/results/{self.sweep_namespace}/{name}/runs/{epoch}"
+            f"/profile_export_aiperf.json"
+        )
+        try:
+            async with aiohttp.ClientSession() as session, session.get(
+                url, timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                resp.raise_for_status()
+                data = orjson.loads(await resp.read())
+        except Exception:  # noqa: BLE001
+            logger.exception(f"failed to pull metrics from {url}")
+            return {}
+
+        metrics: dict[str, Any] = {}
+        for field_name, field_value in data.items():
+            if isinstance(field_value, dict) and "unit" in field_value:
+                try:
+                    metrics[field_name] = JsonMetricResult(**field_value)
+                except TypeError:
+                    continue
+        return metrics
