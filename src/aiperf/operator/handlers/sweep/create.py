@@ -165,7 +165,7 @@ async def _provision_rbac(*, name: str, namespace: str, sweep_uid: str) -> None:
                 owner_references=[owner_ref],
             ),
             subjects=[
-                k8s.V1Subject(
+                k8s.RbacV1Subject(
                     kind="ServiceAccount",
                     name=sa_name,
                     namespace=namespace,
