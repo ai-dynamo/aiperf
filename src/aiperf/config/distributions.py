@@ -54,6 +54,19 @@ class Distribution(BaseConfig):
         json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_explicit_type(cls, data: Any) -> Any:
+        """Drop the optional `type:` key after the discriminator has already used it.
+
+        The discriminator at the union level dispatches by `type:` if present;
+        once a concrete subclass is chosen, the `type:` key is redundant and
+        would trigger extra_forbidden under each subclass's strict ConfigDict.
+        """
+        if isinstance(data, dict) and "type" in data:
+            return {k: v for k, v in data.items() if k != "type"}
+        return data
+
     def __getattr__(self, name: str) -> Any:
         if name == "mean":
             return self.expected_value
@@ -353,24 +366,36 @@ _TAG_MAP = {
     "EmpiricalDistribution": "empirical",
 }
 
+_CANONICAL_TYPES = ("fixed", "normal", "lognormal", "multimodal", "empirical")
+
 
 def _distribution_discriminator(v: Any) -> str:
-    """Detect distribution type from field structure — no 'type' key needed.
+    """Detect distribution type from `type:` key OR field structure.
 
     Order:
-        scalar             -> "fixed"
-        "peaks" in dict    -> "bimodal"
-        "points" in dict   -> "empirical"
-        "median" in dict   -> "lognormal"
-        "stddev" in dict   -> "normal"
-        "value" in dict    -> "fixed"
-        already-built      -> pass through via _TAG_MAP
-        "mean" alone       -> ValueError (ambiguous)
-        unknown            -> ValueError
+        scalar              -> "fixed"
+        explicit "type:"    -> use it (must be one of _CANONICAL_TYPES)
+        "peaks" in dict     -> "multimodal"
+        "points" in dict    -> "empirical"
+        "median" in dict    -> "lognormal"
+        "stddev" in dict    -> "normal"
+        "value" in dict     -> "fixed"
+        "mean" in dict      -> "normal"
+        already-built       -> pass through via _TAG_MAP
+        unknown             -> ValueError
     """
     if isinstance(v, (int, float)):
         return "fixed"
     if isinstance(v, dict):
+        explicit = v.get("type")
+        if isinstance(explicit, str):
+            if explicit in _CANONICAL_TYPES:
+                return explicit
+            raise ValueError(
+                f"Unknown distribution type {explicit!r}. "
+                f"Expected one of {_CANONICAL_TYPES} or omit `type:` and rely on "
+                f"structural inference (e.g. {{mean: 512, stddev: 100}})."
+            )
         if "peaks" in v:
             return "multimodal"
         if "points" in v:

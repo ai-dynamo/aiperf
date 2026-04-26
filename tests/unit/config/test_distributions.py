@@ -111,9 +111,14 @@ class TestDiscriminatorRouting:
         d = _TA.validate_python({"points": [{"value": 128}, {"value": 512}]})
         assert isinstance(d, EmpiricalDistribution)
 
-    def test_extra_type_field_rejected(self) -> None:
-        with pytest.raises((ValidationError, ValueError)):
-            _TA.validate_python({"mean": 512, "stddev": 50, "type": "normal"})
+    def test_extra_type_field_accepted_when_matches(self) -> None:
+        # `type:` is now optional; when present and matching, it's accepted and
+        # stripped before subclass validation. See test_distribution_explicit_type.py
+        # for the full strict-but-tolerant matrix.
+        d = _TA.validate_python({"mean": 512, "stddev": 50, "type": "normal"})
+        assert isinstance(d, NormalDistribution)
+        assert d.mean == 512
+        assert d.stddev == 50
 
     def test_mean_alone_routes_to_normal_with_stddev_zero(self) -> None:
         d = _TA.validate_python({"mean": 512})
