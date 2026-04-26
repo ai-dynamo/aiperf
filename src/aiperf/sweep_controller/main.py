@@ -104,6 +104,53 @@ def _write_aggregate_manifest(
     )
 
 
+def _write_sweep_parent_aggregate(
+    *,
+    base_dir: Path,
+    sweep_cr: dict[str, Any],
+    spec: Any,
+    results: list,
+    plan: Any,
+) -> None:
+    """Persist the durable parent ``aggregate.json`` under ``<base>/<ns>/sweeps/<name>/``.
+
+    Anchors the dual-backed sweep API: while the controller pod is alive the
+    operator can read live status from the CR; once the pod is gone the
+    operator falls back to this file. Conditions are owned by the operator and
+    not yet collected here, so we pass ``conditions=None`` and the
+    ``conditions.json`` sibling is omitted.
+    """
+    from aiperf.sweep_controller.aggregator import write_sweep_aggregate
+
+    metadata = sweep_cr.get("metadata") or {}
+    namespace = metadata["namespace"]
+    name = metadata["name"]
+    completed = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+    doc: dict[str, Any] = {
+        "phase": "Succeeded" if failed == 0 else "Failed",
+        "totalVariations": len(plan.configs),
+        "completedRuns": completed,
+        "failedRuns": failed,
+        "spec_snapshot": spec.model_dump() if hasattr(spec, "model_dump") else {},
+        "child_runs": [
+            {
+                "label": r.label,
+                "status": "Succeeded" if r.success else "Failed",
+                "error": r.error or "",
+            }
+            for r in results
+        ],
+    }
+    write_sweep_aggregate(
+        base_dir=base_dir,
+        namespace=namespace,
+        sweep_name=name,
+        doc=doc,
+        conditions=None,
+    )
+
+
 async def _idle_until_terminated() -> None:
     """Sleep forever; SIGTERM from K8s ends us cleanly."""
     while True:
@@ -172,6 +219,7 @@ async def main() -> int:
                 multi_run_trials=(spec.multi_run.trials if spec.multi_run else None),
                 has_convergence=spec.convergence is not None,
             ),
+            base_dir=RESULTS_DIR,
             status_writer=status_writer,
             cancel_check=lambda: cancel_flag["requested"],
         )
@@ -205,6 +253,13 @@ async def main() -> int:
                     logger=aiperf_logger,
                 )
                 _write_aggregate_manifest(aggregate_dir, sweep_cr, all_results, plan)
+                _write_sweep_parent_aggregate(
+                    base_dir=RESULTS_DIR,
+                    sweep_cr=sweep_cr,
+                    spec=spec,
+                    results=all_results,
+                    plan=plan,
+                )
                 write_aggregate_marker(RESULTS_DIR)
                 controller_host = os.environ.get("HOSTNAME", "")
                 await status_writer.aggregation_complete(
