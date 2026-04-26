@@ -4,7 +4,7 @@
 
 from cyclopts import App
 
-from aiperf.config.cli_model import CLIModel
+from aiperf.config.v1 import ServiceConfig, UserConfig
 
 app = App(name="profile")
 
@@ -12,7 +12,8 @@ app = App(name="profile")
 @app.default
 def profile(
     *,
-    cli_model: CLIModel,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
 ) -> None:
     """Run the Profile subcommand.
 
@@ -42,21 +43,25 @@ def profile(
         aiperf profile --model your_model --url localhost:8000 --goodput "request_latency:250 inter_token_latency:10"
 
     Args:
-        cli_model: Dynamically generated CLI model from CLI flags.
+        user_config: Cyclopts-populated UserConfig DTO carrying every CLI flag.
+        service_config: Cyclopts-populated ServiceConfig DTO; defaults to ServiceConfig().
     """
     from aiperf.cli_utils import exit_on_error
 
     with exit_on_error(title="Error Running AIPerf System"):
         from aiperf.cli_runner import run_benchmark
-        from aiperf.config.cli_converter import build_aiperf_config
         from aiperf.config.loader import build_benchmark_plan
+        from aiperf.config.v1.converter import convert_user_to_aiperf
 
-        config_file = getattr(cli_model, "config_file", None)
+        if service_config is None:
+            service_config = ServiceConfig()
+
+        config_file = user_config.config_file
         if config_file is not None:
             from aiperf.config.loader import load_benchmark_plan
 
             plan = load_benchmark_plan(config_file)
         else:
-            config = build_aiperf_config(cli_model)
+            config = convert_user_to_aiperf(user_config, service_config)
             plan = build_benchmark_plan(config)
         run_benchmark(plan)

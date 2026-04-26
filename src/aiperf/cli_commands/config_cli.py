@@ -10,7 +10,7 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from aiperf.cli_utils import exit_on_error
-from aiperf.config.cli_model import CLIModel
+from aiperf.config.v1 import ServiceConfig, UserConfig
 
 config_app = App(name="config", help="Manage AIPerf YAML configurations")
 
@@ -266,7 +266,8 @@ def _find_differences(dict1: dict, dict2: dict, path: str = "") -> list[dict]:
 @config_app.command(name="generate")
 def generate_config(
     *,
-    cli_model: CLIModel,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
     output: Annotated[
         Path | None,
         Parameter(help="Path to write the config. If not provided, prints to stdout."),
@@ -294,11 +295,13 @@ def generate_config(
     """
     import orjson
 
-    from aiperf.config.cli_converter import build_aiperf_config
     from aiperf.config.loader import dump_config
+    from aiperf.config.v1.converter import convert_user_to_aiperf
 
     with exit_on_error(title="Error Generating Configuration"):
-        aiperf_config = build_aiperf_config(cli_model)
+        if service_config is None:
+            service_config = ServiceConfig()
+        aiperf_config = convert_user_to_aiperf(user_config, service_config)
 
         if format == "json":
             config_output = orjson.dumps(
