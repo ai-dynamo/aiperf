@@ -314,7 +314,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "docs/tutorials/yaml-config.md#phases for the new shape."
             )
         if not isinstance(v, list):
-            raise ValueError("phases must be a list of named phase configs")
+            raise ValueError(
+                f"phases must be a list of named phase configs, got {type(v).__name__}; "
+                "see docs/tutorials/yaml-config.md#phases for the expected shape."
+            )
         return v
 
     @field_validator("datasets", mode="before")
