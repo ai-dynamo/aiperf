@@ -693,7 +693,7 @@ SPDX-License-Identifier: Apache-2.0
             // Schema matches BenchmarkConfig (src/aiperf/config/config.py): top-level
             // is { models, endpoint, datasets, phases, ... } — no `loadgen`/`input`.
             const ep = cfg.endpoint || {};
-            const phases = cfg.phases || {};
+            const phases = cfg.phases || [];
             const items = [];
             const add = (label, value) => items.push({ label, value: String(value) });
 
@@ -702,15 +702,11 @@ SPDX-License-Identifier: Apache-2.0
             if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
             if (ep.urls?.length) add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
 
-            // Phases are a list of named phase configs (post-2026-04 list-with-name);
-            // tolerate the legacy dict shape until older payloads on the bus expire.
-            const phaseEntries = Array.isArray(phases)
-              ? phases.map((p) => [p?.name ?? '', p])
-              : Object.entries(phases);
-            const showName = phaseEntries.length > 1;
-            for (const [name, phase] of phaseEntries) {
+            // Phases are a list of named phase configs (post-2026-04 list-with-name).
+            const showName = phases.length > 1;
+            for (const phase of phases) {
                 if (!phase) continue;
-                const prefix = showName ? `${name} ` : '';
+                const prefix = showName ? `${phase.name ?? ''} ` : '';
                 if (phase.type) add(`${prefix}Type`, phase.type);
                 if (phase.concurrency != null) add(`${prefix}Concurrency`, phase.concurrency);
                 if (phase.prefill_concurrency != null) add(`${prefix}Prefill`, phase.prefill_concurrency);

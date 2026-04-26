@@ -25,15 +25,11 @@ function buildItems(cfg) {
   }
 
   // phases is a list of named phase configs (post-2026-04 list-with-name shape).
-  // Tolerate the legacy dict shape for older payloads in case the bus has not
-  // re-published since the upgrade.
-  const phaseList = Array.isArray(cfg.phases)
-    ? cfg.phases.map((p) => [p?.name ?? '', p])
-    : Object.entries(cfg.phases || {});
+  const phaseList = cfg.phases || [];
   const showPrefix = phaseList.length > 1;
-  for (const [name, phase] of phaseList) {
+  for (const phase of phaseList) {
     if (!phase) continue;
-    const prefix = showPrefix ? `${name} ` : '';
+    const prefix = showPrefix ? `${phase.name ?? ''} ` : '';
     if (phase.type) add(`${prefix}Type`, phase.type);
     if (phase.concurrency != null) add(`${prefix}Concurrency`, phase.concurrency);
     if (phase.prefill_concurrency != null) add(`${prefix}Prefill`, phase.prefill_concurrency);
