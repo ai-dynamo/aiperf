@@ -2,6 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useMemo } from 'preact/hooks';
 import { phaseColor, palette } from '../lib/theme.js';
 import { fmtNumber, fmtThroughput } from '../lib/format.js';
+import { navigate } from '../lib/router.js';
 
 const COLUMNS = [
   { key: 'name', label: 'Name' },
@@ -177,7 +178,18 @@ export function JobTable({ jobs, onRowClick, filter }) {
               style=${onRowClick ? 'cursor: pointer' : ''}
               data-testid=${'job-row-' + (job.namespace ?? '') + '-' + (job.name ?? '')}
             >
-              <td class="job-table-td job-table-name">${job.name}</td>
+              <td class="job-table-td job-table-name">
+                ${job.name}
+                ${job.sweepName && html`
+                  <div class="text-dim" style="font-size:11px;font-style:italic;margin-top:2px">
+                    <a href=${`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`}
+                       data-testid="job-row-sweep-link"
+                       onclick=${e => { e.stopPropagation(); navigate(`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`); e.preventDefault(); }}>
+                      ↳ sweep: ${job.sweepName}
+                    </a>
+                  </div>
+                `}
+              </td>
               <td class="job-table-td text-dim">${job.namespace}</td>
               <td class="job-table-td">${renderPhase(job.phase)}</td>
               <td class="job-table-td">${renderWorkers(job)}</td>
