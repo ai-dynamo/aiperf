@@ -529,6 +529,12 @@
       "additionalProperties": false,
       "description": "Composed dataset configuration (unique to AIPerf).\n\nCombines file-based data with synthetic augmentation.\nThis enables advanced scenarios like:\n- Adding system prompts to existing queries\n- Testing KV cache with file-based prompts\n- Adding multimodal content to text datasets\n- Extending small datasets with padding",
       "properties": {
+        "name": {
+          "description": "Dataset identifier — unique within the benchmark's datasets list. Used in `phase.dataset = '<name>'` references and in result file paths. Common names: 'main', 'eval', 'warmup_data'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "composed",
           "default": "composed",
@@ -595,6 +601,7 @@
         }
       },
       "required": [
+        "name",
         "source",
         "augment"
       ],
@@ -1753,6 +1760,12 @@
       "additionalProperties": false,
       "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
       "properties": {
+        "name": {
+          "description": "Dataset identifier — unique within the benchmark's datasets list. Used in `phase.dataset = '<name>'` references and in result file paths. Common names: 'main', 'eval', 'warmup_data'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "file",
           "description": "Dataset type discriminator. Must be 'file'.",
@@ -1838,6 +1851,7 @@
         }
       },
       "required": [
+        "name",
         "type",
         "path"
       ],
@@ -3937,15 +3951,21 @@
       "additionalProperties": false,
       "description": "Public dataset configuration.\n\nUses well-known public benchmarking datasets that are\nautomatically downloaded and processed by AIPerf.",
       "properties": {
+        "name": {
+          "description": "Dataset identifier — unique within the benchmark's datasets list. Used in `phase.dataset = '<name>'` references and in result file paths. Common names: 'main', 'eval', 'warmup_data'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "public",
           "description": "Dataset type discriminator. Must be 'public'.",
           "title": "Type",
           "type": "string"
         },
-        "name": {
+        "dataset": {
           "$ref": "#/$defs/PublicDatasetType",
-          "description": "Pre-configured public dataset to download and use for benchmarking. AIPerf automatically downloads and parses these datasets. "
+          "description": "Pre-configured public dataset to download and use for benchmarking. Name of the HuggingFace public dataset enum (e.g. 'sharegpt', 'alpaca'). AIPerf automatically downloads and parses these datasets."
         },
         "entries": {
           "anyOf": [
@@ -4016,8 +4036,9 @@
         }
       },
       "required": [
+        "name",
         "type",
-        "name"
+        "dataset"
       ],
       "title": "PublicDataset",
       "type": "object"
@@ -4943,6 +4964,12 @@
       "additionalProperties": false,
       "description": "Synthetic dataset configuration.\n\nGenerates prompts programmatically based on token length\nspecifications. Ideal for controlled experiments.",
       "properties": {
+        "name": {
+          "description": "Dataset identifier — unique within the benchmark's datasets list. Used in `phase.dataset = '<name>'` references and in result file paths. Common names: 'main', 'eval', 'warmup_data'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "synthetic",
           "description": "Dataset type discriminator. Must be 'synthetic'.",
@@ -5160,6 +5187,7 @@
         }
       },
       "required": [
+        "name",
         "type"
       ],
       "title": "SyntheticDataset",
@@ -6143,7 +6171,8 @@
       "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
     },
     "datasets": {
-      "additionalProperties": {
+      "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+      "items": {
         "discriminator": {
           "propertyName": "type",
           "mapping": {
@@ -6168,10 +6197,9 @@
           }
         ]
       },
-      "description": "Named dataset configurations. Keys are dataset names that can be referenced in phases. Values are dataset configs (synthetic, file, public, or composed with source+augment).",
-      "minProperties": 1,
+      "minItems": 1,
       "title": "Datasets",
-      "type": "object"
+      "type": "array"
     },
     "phases": {
       "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
@@ -6371,7 +6399,7 @@
       "x-singular-alias-of": "models"
     },
     "dataset": {
-      "description": "Shorthand for 'datasets'. Accepts a single value which will be converted to a list/dict. Named dataset configurations. Keys are dataset names that can be referenced in phases. Values are dataset configs (synthetic, file, public, or composed with source+augment).",
+      "description": "Shorthand for 'datasets'. Accepts a single value which will be converted to a list/dict. Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
       "oneOf": [
         {
           "discriminator": {
@@ -6399,7 +6427,8 @@
           ]
         },
         {
-          "additionalProperties": {
+          "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+          "items": {
             "discriminator": {
               "propertyName": "type",
               "mapping": {
@@ -6424,10 +6453,9 @@
               }
             ]
           },
-          "description": "Named dataset configurations. Keys are dataset names that can be referenced in phases. Values are dataset configs (synthetic, file, public, or composed with source+augment).",
-          "minProperties": 1,
+          "minItems": 1,
           "title": "Datasets",
-          "type": "object"
+          "type": "array"
         }
       ],
       "x-singular-alias-of": "datasets"

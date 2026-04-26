@@ -143,6 +143,7 @@ spec:
                 default: false
               ttlSecondsAfterFinished:
                 type: integer
+                minimum: 0
                 description: Parent CR retention after terminal phase; children use their own TTL.
               template:
                 type: object
