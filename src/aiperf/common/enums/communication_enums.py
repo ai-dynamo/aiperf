@@ -50,6 +50,11 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_START = "profile_start"
     REALTIME_METRICS = "realtime_metrics"
     REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
+    GET_POD_STATES = "get_pod_states"
+    """Service → controller request: return the controller's authoritative
+    snapshot of ``_pod_states`` and ``_worker_startup_states``. Lets the
+    FastAPI sidecar serve ``/api/progress.workers`` and ``/api/debug/*``
+    from the controller's view instead of its own bus-fed mirror."""
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"

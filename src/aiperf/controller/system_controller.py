@@ -83,6 +83,7 @@ from aiperf.controller.system_controller_models import (
     build_aggregate_worker_status,
 )
 from aiperf.controller.system_controller_output import SystemControllerOutputMixin
+from aiperf.controller.system_controller_query import SystemControllerQueryMixin
 from aiperf.controller.system_controller_raw_records import (
     SystemControllerRawRecordsMixin,
 )
@@ -99,6 +100,7 @@ class SystemController(
     SystemControllerDispatchMixin,
     SystemControllerOutputMixin,
     SystemControllerCommandMixin,
+    SystemControllerQueryMixin,
     SystemControllerRawRecordsMixin,
     SignalHandlerMixin,
     BaseService,
@@ -755,9 +757,7 @@ class SystemController(
                     ),
                 )
         except Exception as e:  # noqa: BLE001 - sibling-check is best-effort; never raise into configure loop
-            self.debug(
-                lambda: f"Sibling-container check skipped (pod list failed): {e}"
-            )
+            self.debug(f"Sibling-container check skipped (pod list failed): {e!r}")
             return
 
         own_pod = next(
@@ -784,7 +784,9 @@ class SystemController(
             container_name = cs.name or ""
             if container_name in INFRA_CONTAINERS:
                 continue
-            terminated = cs.state.terminated if cs.state and cs.state.terminated else None
+            terminated = (
+                cs.state.terminated if cs.state and cs.state.terminated else None
+            )
             if not terminated:
                 continue
             reason = terminated.reason or "Terminated"
@@ -797,9 +799,7 @@ class SystemController(
             service_id = container_name.replace("-", "_")
             service_info = ServiceRegistry.services.get(service_id)
             service_type = (
-                service_info.service_type
-                if service_info
-                else service_id  # type: ignore[assignment] — registry accepts string fallbacks
+                service_info.service_type if service_info else service_id  # type: ignore[assignment] — registry accepts string fallbacks
             )
 
             self.error(

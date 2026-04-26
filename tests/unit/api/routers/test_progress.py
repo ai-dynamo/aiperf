@@ -277,3 +277,93 @@ class TestProgressEndpoint:
         )
 
         assert aggregate.degraded_pods == 1
+
+
+class TestProgressEndpointControllerRPC:
+    """Verifies /api/progress prefers the GET_POD_STATES RPC over the cache."""
+
+    def _ok_payload(self, pods: dict[str, dict]) -> object:
+        import orjson
+
+        from aiperf.common.control_structs import CommandOk
+
+        return CommandOk(
+            cid="cid-1",
+            sid="system_controller",
+            payload=orjson.dumps({"pod_states": pods, "worker_startup_states": {}}),
+        )
+
+    def test_progress_uses_controller_rpc_when_available(
+        self, progress_client: TestClient, progress_router: ProgressRouter
+    ) -> None:
+        from aiperf.common.enums import CommandType
+
+        # Cache deliberately empty — the only way the response can be
+        # non-zero is if the RPC path runs and decodes the payload.
+        controller_pods = {
+            "0": WorkerPodStateMessage(
+                service_id="wpm-0",
+                pod_index="0",
+                benchmark_generation="g",
+                dataset_generation="d",
+                declared_workers=4,
+                declared_record_processors=1,
+                router_connected_workers=4,
+                dispatchable_workers=4,
+                ready_workers=4,
+                ready_record_processors=1,
+                degraded_workers=0,
+                degraded_record_processors=0,
+                pod_state="ready",
+                admission_state="dispatchable",
+            ).model_dump(),
+        }
+        ok = self._ok_payload(controller_pods)
+
+        class _FakeService:
+            async def send_command_to_controller(
+                self, cmd: str, timeout: float = 2.0
+            ) -> object:
+                assert cmd == CommandType.GET_POD_STATES
+                return ok
+
+        progress_client.app.state.service = _FakeService()
+        data = progress_client.get("/api/progress").json()
+        assert data["workers"]["ready"] == 4
+        assert data["workers"]["total"] == 4
+        assert data["workers"]["ready_pods"] == 1
+        assert data["workers"]["total_pods"] == 1
+
+    @pytest.mark.asyncio
+    async def test_progress_falls_back_to_cache_when_rpc_fails(
+        self, progress_client: TestClient, progress_router: ProgressRouter
+    ) -> None:
+        # Seed cache with a known shape; RPC raises → fallback.
+        await progress_router._on_worker_pod_state(
+            WorkerPodStateMessage(
+                service_id="wpm-cache",
+                pod_index="0",
+                benchmark_generation="g",
+                dataset_generation="d",
+                declared_workers=2,
+                declared_record_processors=1,
+                router_connected_workers=2,
+                dispatchable_workers=2,
+                ready_workers=2,
+                ready_record_processors=1,
+                degraded_workers=0,
+                degraded_record_processors=0,
+                pod_state="ready",
+                admission_state="dispatchable",
+            )
+        )
+
+        class _Boom:
+            async def send_command_to_controller(self, *_args, **_kw):
+                raise RuntimeError("control client not initialized")
+
+        progress_client.app.state.service = _Boom()
+        data = progress_client.get("/api/progress").json()
+        # Falls back to cache → 2 ready, 2 total from the seeded message.
+        assert data["workers"]["ready"] == 2
+        assert data["workers"]["total"] == 2

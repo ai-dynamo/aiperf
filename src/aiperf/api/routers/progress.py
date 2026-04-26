@@ -10,16 +10,21 @@ the controller pod's API.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import Annotated
 
+import orjson
 from fastapi import APIRouter
 from starlette.requests import HTTPConnection
 
 from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.enums import CreditPhase
+from aiperf.common.control_structs import CommandOk
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.hooks import background_task
+from aiperf.common.messages import WorkerPodStateMessage
 from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.mixins.progress_tracker_mixin import (
     CombinedPhaseStats,
@@ -28,12 +33,18 @@ from aiperf.common.mixins.progress_tracker_mixin import (
 from aiperf.controller.system_controller import AggregateWorkerStatus
 from aiperf.controller.system_controller_models import build_aggregate_worker_status
 
+_logger = logging.getLogger(__name__)
+
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
 progress_router = APIRouter()
 
 # Interval between JobSet annotation patches (seconds)
 _JOBSET_PATCH_INTERVAL = 10.0
+
+# Timeout for the GET_POD_STATES RPC. Kept short so a slow / unresponsive
+# controller falls back to the bus-fed cache rather than hanging the endpoint.
+_GET_POD_STATES_TIMEOUT = 2.0
 
 
 def _build_progress_annotations(
@@ -156,13 +167,19 @@ async def _patch_jobset_annotations(
         )
 
 
-def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:
-    """Resolve aggregate worker status, preferring the in-process controller.
+async def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:
+    """Resolve aggregate worker status, preferring authoritative paths.
 
-    Single-process / local-dev mode: the SystemController is on
-    ``app.state.controller`` and we ask it directly. Kubernetes mode: the
-    API runs as a separate container, so we fall back to the
-    ``ProgressRouter``'s own ``WORKER_POD_STATE`` subscription cache.
+    Resolution order:
+
+    1. Single-process / local-dev — SystemController is on
+       ``app.state.controller`` and we ask it directly.
+    2. K8s sidecar mode — send a ``GET_POD_STATES`` command to the
+       SystemController over the existing DEALER↔ROUTER control channel
+       and rebuild the aggregate from its authoritative cache.
+    3. Fallback — rebuild from the ProgressRouter's own bus-fed
+       ``_pod_state_tracker.pod_states`` mirror. Only reached when the
+       controller RPC is unavailable (controller starting / shutting down).
     """
     controller = getattr(conn.app.state, "controller", None)
     if controller is None:
@@ -170,10 +187,49 @@ def _get_controller_workers(conn: HTTPConnection) -> AggregateWorkerStatus:
         controller = getattr(service, "controller", None)
     if controller is not None:
         return controller.get_aggregate_worker_status()
+
+    service = getattr(conn.app.state, "service", None)
+    if service is not None and hasattr(service, "send_command_to_controller"):
+        try:
+            response = await service.send_command_to_controller(
+                CommandType.GET_POD_STATES,
+                timeout=_GET_POD_STATES_TIMEOUT,
+            )
+            if isinstance(response, CommandOk):
+                return _aggregate_from_payload(response.payload)
+        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - any RPC failure falls back to local cache
+            _logger.debug(
+                "GET_POD_STATES RPC failed, falling back to bus-fed cache: %r", e
+            )
+
     progress: ProgressRouter | None = getattr(conn.app.state, "progress", None)
     if progress is None:
         return AggregateWorkerStatus()
     return build_aggregate_worker_status(progress._pod_state_tracker.pod_states)
+
+
+def _aggregate_from_payload(payload: bytes) -> AggregateWorkerStatus:
+    """Rebuild the aggregate from a ``GET_POD_STATES`` RPC payload.
+
+    The controller encodes ``{"pod_states": {pod_index: msg.model_dump()},
+    "worker_startup_states": {...}}``; we re-validate each ``pod_states``
+    entry through :class:`WorkerPodStateMessage` so the existing
+    :func:`build_aggregate_worker_status` aggregator does not have to learn
+    the dict shape.
+
+    The msgspec ``model_dump()`` shim emits the tag field ``message_type``
+    which the constructor does not accept as a kwarg — strip it before
+    re-instantiating.
+    """
+    snapshot = orjson.loads(payload)
+    raw_pods: dict[str, dict] = snapshot.get("pod_states", {}) or {}
+    pod_states = {
+        pod_index: WorkerPodStateMessage(
+            **{k: v for k, v in raw.items() if k != "message_type"}
+        )
+        for pod_index, raw in raw_pods.items()
+    }
+    return build_aggregate_worker_status(pod_states)
 
 
 @progress_router.get("/api/progress", response_model=ProgressResponse, tags=["API"])
@@ -183,5 +239,5 @@ async def get_progress(
     """Get benchmark progress with full phase stats."""
     return ProgressResponse(
         phases=component._progress_tracker._phases,
-        workers=_get_controller_workers(conn),
+        workers=await _get_controller_workers(conn),
     )

@@ -348,6 +348,32 @@ class BaseComponentService(BaseService):
     # Command dispatch (DEALER/ROUTER control channel)
     # -------------------------------------------------------------------------
 
+    async def send_command_to_controller(
+        self,
+        cmd: str,
+        payload: bytes = b"",
+        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+    ) -> CommandOk | CommandAck | CommandErr:
+        """Send a Command to the SystemController and await its response.
+
+        Reuses the existing DEALER↔ROUTER control channel — no new socket,
+        no new bind point. The controller's :meth:`_dispatch_control_command`
+        already routes inbound ``Command`` structs to its ``@on_command``
+        hooks; this helper just initiates the request from the service side.
+
+        Example
+        -------
+        ::
+
+            response = await self.send_command_to_controller(
+                CommandType.GET_POD_STATES
+            )
+            if isinstance(response, CommandOk):
+                snapshot = orjson.loads(response.payload)
+        """
+        command = Command(cid=uuid.uuid4().hex, cmd=cmd, payload=payload)
+        return await self.control_client.request(command, timeout=timeout)
+
     async def _handle_control_command(self, message: Any) -> None:
         """Handle incoming messages from the controller via DEALER.
 
