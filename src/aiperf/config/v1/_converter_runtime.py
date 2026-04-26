@@ -120,6 +120,10 @@ def _apply_runtime_basics(runtime_dict: dict[str, Any], service: ServiceConfig) 
         and service.record_processor_service_count is not None
     ):
         runtime_dict["record_processors"] = service.record_processor_service_count
+    if "api_port" in svc_set:
+        runtime_dict["api_port"] = service.api_port
+    if "api_host" in svc_set:
+        runtime_dict["api_host"] = service.api_host
 
 
 def _apply_verbosity_and_ui(

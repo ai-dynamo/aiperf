@@ -170,3 +170,34 @@ def test_logging_runtime_emits_record_processors_when_user_set():
     service = ServiceConfig.model_validate({"record_processor_service_count": 4})
     _log, runtime = build_logging_runtime(user, service)
     assert runtime["record_processors"] == 4
+
+
+def test_api_port_emitted_to_runtime_dict_when_user_set():
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"api_port": 19090})
+    _log, runtime = build_logging_runtime(user, service)
+    assert runtime["api_port"] == 19090
+
+
+def test_api_host_emitted_when_user_set_with_port():
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"api_port": 19090, "api_host": "0.0.0.0"})
+    _log, runtime = build_logging_runtime(user, service)
+    assert runtime["api_host"] == "0.0.0.0"
+    assert runtime["api_port"] == 19090
+
+
+def test_api_port_omitted_when_not_user_set():
+    user = UserConfig()
+    service = ServiceConfig()
+    _log, runtime = build_logging_runtime(user, service)
+    assert "api_port" not in runtime
+    assert "api_host" not in runtime
+
+
+def test_api_host_without_port_still_raises():
+    """The pre-existing validator check must continue to fire."""
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"api_host": "0.0.0.0"})
+    with pytest.raises(ValueError, match="api_host requires"):
+        build_logging_runtime(user, service)
