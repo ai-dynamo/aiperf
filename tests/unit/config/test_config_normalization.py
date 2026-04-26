@@ -87,12 +87,20 @@ class TestModelNormalization:
         assert cfg.models.items[1].name == "mistral-7b"
 
     def test_singular_model_ignored_when_models_present(self) -> None:
-        """Normalizer skips "model" when "models" exists; leftover key triggers extra="forbid"."""
+        """When both `model` and `models` are present, `models` wins and `model` is dropped.
+
+        `model` is now a real schema-visible shortcut field with exclude=True; the
+        before-validator only hoists it into `models` when `models` is missing,
+        so the singular key is silently ignored when the plural is supplied.
+        """
         data = _minimal(models=["keep-me"])
         data["model"] = "ignore-me"
 
-        with pytest.raises(Exception, match="Extra inputs are not permitted"):
-            BenchmarkConfig.model_validate(data)
+        cfg = BenchmarkConfig.model_validate(data)
+
+        assert [m.name for m in cfg.models.items] == ["keep-me"]
+        # The shortcut must not leak into canonical dump.
+        assert "model" not in cfg.model_dump(exclude_none=True)
 
 
 # ============================================================

@@ -137,6 +137,20 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    model: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `models`. Accepts a string, list of strings, "
+                "or ModelsAdvanced object. Hoisted into `models` by the before-"
+                "validator and not present after validation."
+            ),
+        ),
+    ]
+
     endpoint: Annotated[
         EndpointConfig,
         Field(
@@ -157,6 +171,21 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    dataset: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `datasets`. Accepts a single dataset config "
+                "(dict). Hoisted into `datasets` as a one-entry list with "
+                "name='default' by the before-validator and not present after "
+                "validation."
+            ),
+        ),
+    ]
+
     phases: Annotated[
         list[PhaseConfig],
         Field(
@@ -167,6 +196,36 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             "({'type': 'concurrency', ...}) is normalized to a list of one. "
             "Top-level 'warmup:'/'profiling:' shorthand is normalized to a "
             "[warmup, profiling] list pre-validation.",
+        ),
+    ]
+
+    warmup: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `phases`. Accepts a phase config dict; "
+                "rolled into `phases` as the warmup entry by the before-validator "
+                "and not present after validation. Mutually exclusive with "
+                "`phases`; requires `profiling` alongside it."
+            ),
+        ),
+    ]
+
+    profiling: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `phases`. Accepts a phase config dict; "
+                "rolled into `phases` as the profiling entry by the before-"
+                "validator and not present after validation. Mutually exclusive "
+                "with `phases`."
+            ),
         ),
     ]
 

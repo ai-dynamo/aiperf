@@ -14,12 +14,13 @@ here so existing ``from aiperf.config.dataset import X`` imports keep working.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    model_validator,
 )
 
 from aiperf.common.enums import (
@@ -27,6 +28,7 @@ from aiperf.common.enums import (
     DatasetType,
 )
 from aiperf.config._base import BaseConfig
+from aiperf.config._benchmark_normalizers import _hoist_synthetic_prompt_fields
 from aiperf.config._dataset_content import (
     AudioConfig,
     ImageConfig,
@@ -140,6 +142,34 @@ class SyntheticDataset(BaseConfig):
         ),
     ]
 
+    isl: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `prompts.isl`. Accepts a fixed integer or "
+                "distribution dict. Hoisted into `prompts.isl` by the before-"
+                "validator and not present after validation."
+            ),
+        ),
+    ]
+
+    osl: Annotated[
+        Any | None,
+        Field(
+            default=None,
+            exclude=True,
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+            description=(
+                "Shorthand sibling for `prompts.osl`. Accepts a fixed integer or "
+                "distribution dict. Hoisted into `prompts.osl` by the before-"
+                "validator and not present after validation."
+            ),
+        ),
+    ]
+
     prefix_prompts: Annotated[
         PrefixPromptConfig | None,
         Field(
@@ -219,6 +249,19 @@ class SyntheticDataset(BaseConfig):
             "Only relevant for rankings endpoint types.",
         ),
     ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hoist_isl_osl_shortcuts(cls, data: Any) -> Any:
+        """Hoist top-level isl/osl into prompts.{isl,osl} for direct validation.
+
+        AIPerfConfig.parse_datasets already runs this hoist at the list level via
+        `_normalize_single_dataset_listed`. This validator covers direct
+        `SyntheticDataset.model_validate({...isl...})` callers (programmatic use).
+        """
+        if isinstance(data, dict):
+            _hoist_synthetic_prompt_fields(data)
+        return data
 
 
 class FileDataset(BaseConfig):

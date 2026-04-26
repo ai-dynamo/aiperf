@@ -90,3 +90,116 @@ def test_distribution_subclasses_mark_preserve_unknown_fields():
             f"via FixedDistribution coerce_scalar / discriminated union); "
             f"got top-level keys: {list(sub_schema.keys())}"
         )
+
+
+def test_aiperf_config_schema_exposes_top_level_shortcuts():
+    """model/dataset/warmup/profiling appear as optional schema siblings with preserve-unknown."""
+    schema = AIPerfConfig.model_json_schema()
+    props = schema["properties"]
+    for key in ("model", "dataset", "warmup", "profiling"):
+        assert key in props, f"AIPerfConfig schema missing shortcut sibling {key!r}"
+        assert props[key].get(PRESERVE) is True, (
+            f"shortcut {key!r} must mark {PRESERVE}=true; got: {props[key]!r}"
+        )
+
+
+def test_aiperf_config_runtime_still_validates_with_string_model_shortcut():
+    """The before-validator hoist is unchanged — passing model: 'foo' still works after the field is exposed."""
+    cfg = AIPerfConfig.model_validate(
+        {
+            "model": "test-model",
+            "endpoint": {"type": "chat", "url": "http://x:8000"},
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+            "datasets": [{"name": "default", "type": "synthetic"}],
+        }
+    )
+    assert cfg.models.items[0].name == "test-model"
+
+
+def test_aiperf_config_dump_excludes_shortcut_siblings():
+    """Adding the shortcut as a real field must not pollute model_dump output."""
+    cfg = AIPerfConfig.model_validate(
+        {
+            "model": "test-model",
+            "endpoint": {"type": "chat", "url": "http://x:8000"},
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 1,
+                }
+            ],
+            "datasets": [{"name": "default", "type": "synthetic"}],
+        }
+    )
+    dumped = cfg.model_dump(exclude_none=True)
+    for shortcut in ("model", "dataset", "warmup", "profiling"):
+        assert shortcut not in dumped, (
+            f"{shortcut!r} leaked into canonical model_dump; the field must be exclude=True"
+        )
+
+
+def test_synthetic_dataset_schema_exposes_isl_osl_shortcuts():
+    """SyntheticDataset exposes isl/osl as optional schema siblings with preserve-unknown."""
+    from aiperf.config.dataset import SyntheticDataset
+
+    schema = SyntheticDataset.model_json_schema()
+    props = schema["properties"]
+    for key in ("isl", "osl"):
+        assert key in props, f"SyntheticDataset schema missing shortcut sibling {key!r}"
+        assert props[key].get(PRESERVE) is True, (
+            f"shortcut {key!r} must mark {PRESERVE}=true; got: {props[key]!r}"
+        )
+
+
+def test_synthetic_dataset_runtime_still_validates_with_top_level_isl():
+    """Before-validator hoist (isl -> prompts.isl) is unchanged after the field is exposed."""
+    from aiperf.config.dataset import SyntheticDataset
+
+    ds = SyntheticDataset.model_validate(
+        {
+            "name": "test",
+            "type": "synthetic",
+            "isl": 512,
+            "osl": 128,
+        }
+    )
+    # The shortcut should have been hoisted; verify by checking the canonical location.
+    assert ds.prompts is not None
+    isl_val = ds.prompts.isl
+    osl_val = ds.prompts.osl
+    # SamplingDistribution may wrap a scalar; check both raw and .value
+    assert isl_val == 512 or getattr(isl_val, "value", None) == 512, (
+        f"prompts.isl expected 512, got {isl_val!r}"
+    )
+    assert osl_val == 128 or getattr(osl_val, "value", None) == 128, (
+        f"prompts.osl expected 128, got {osl_val!r}"
+    )
+
+
+def test_synthetic_dataset_dump_excludes_isl_osl_shortcuts():
+    """isl/osl shortcuts must not pollute SyntheticDataset.model_dump output."""
+    from aiperf.config.dataset import SyntheticDataset
+
+    ds = SyntheticDataset.model_validate(
+        {
+            "name": "test",
+            "type": "synthetic",
+            "isl": 512,
+            "osl": 128,
+        }
+    )
+    dumped = ds.model_dump(exclude_none=True)
+    for shortcut in ("isl", "osl"):
+        assert shortcut not in dumped, (
+            f"{shortcut!r} leaked into canonical SyntheticDataset.model_dump; "
+            f"the field must be exclude=True"
+        )
