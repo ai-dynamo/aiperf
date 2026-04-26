@@ -54,6 +54,7 @@ spec:
             description: Top-level spec for an AIPerfSweep CR.
             properties:
               sweep:
+                type: object
                 x-kubernetes-preserve-unknown-fields: true
                 description: Variation generator (grid | scenarios). Reuses aiperf.config.sweep.SweepConfig.
                 x-kubernetes-validations:
@@ -940,7 +941,7 @@ spec:
                               uses system entropy.
                           variables:
                             type: object
-                            description: User-defined values exposed to Jinja2 in `{{ ... }}` expressions during config load.
+                            description: User-defined values exposed to Jinja2 in `{{`"{{"`}} ... {{`"}}"`}}` expressions during config load.
                               Preserved on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve
                               them again at run time.
                             additionalProperties: true

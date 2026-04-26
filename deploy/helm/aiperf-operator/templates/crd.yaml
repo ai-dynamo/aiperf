@@ -418,6 +418,8 @@ spec:
                               description: 'Serialization format. If omitted: ''text'' when content is a string, ''json''
                                 otherwise.'
                             content:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
                               description: Templated value. Structured (dict/list/scalar) for json/yaml; string for text.
                                 Jinja2 expressions in any string leaf are rendered with the user_files context.
                           required:
@@ -674,7 +676,7 @@ spec:
                       entropy.
                   variables:
                     type: object
-                    description: User-defined values exposed to Jinja2 in `{{ ... }}` expressions during config load. Preserved
+                    description: User-defined values exposed to Jinja2 in `{{`"{{"`}} ... {{`"}}"`}}` expressions during config load. Preserved
                       on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve them again at
                       run time.
                     additionalProperties: true
