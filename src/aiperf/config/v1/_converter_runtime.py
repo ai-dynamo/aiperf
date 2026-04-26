@@ -96,34 +96,23 @@ def build_artifacts(user: UserConfig) -> dict[str, Any]:
     return artifacts
 
 
-def build_logging_runtime(
-    user: UserConfig, service: ServiceConfig
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build (logging, runtime) dicts for AIPerfConfig from v1 inputs.
-
-    Folds in the four ServiceConfig validators that v1 strips: verbose/
-    extra_verbose log-level promotion, TTY-based ui defaulting, zmq_* ->
-    communication discriminator, and the api_host-requires-api_port check.
-    """
-    from aiperf.common.enums import AIPerfLogLevel, CommunicationType
-    from aiperf.common.utils import is_tty
-    from aiperf.plugin.enums import UIType
-
-    # Fold validate_api_host_requires_port from origin/main ServiceConfig.
-    if service.api_host is not None and service.api_port is None:
-        raise ValueError(
-            "api_host requires api_port (or AIPERF_API_SERVER_PORT) to be set"
-        )
-
-    logging_dict: dict[str, Any] = {"level": service.log_level}
-    runtime_dict: dict[str, Any] = {}
-
+def _apply_runtime_basics(runtime_dict: dict[str, Any], service: ServiceConfig) -> None:
     if service.ui_type is not None:
         runtime_dict["ui"] = service.ui_type
     if service.workers is not None and service.workers.max is not None:
         runtime_dict["workers"] = service.workers.max
     if service.record_processor_service_count is not None:
         runtime_dict["record_processors"] = service.record_processor_service_count
+
+
+def _apply_verbosity_and_ui(
+    logging_dict: dict[str, Any],
+    runtime_dict: dict[str, Any],
+    service: ServiceConfig,
+) -> None:
+    from aiperf.common.enums import AIPerfLogLevel
+    from aiperf.common.utils import is_tty
+    from aiperf.plugin.enums import UIType
 
     ui_set = "ui" in runtime_dict
     if service.extra_verbose:
@@ -135,18 +124,43 @@ def build_logging_runtime(
     elif not ui_set and not is_tty():
         runtime_dict["ui"] = UIType.NONE
 
-    # Discriminator: pick whichever zmq_* sub-config is set.
+
+def _build_communication(service: ServiceConfig) -> dict[str, Any] | None:
+    from aiperf.common.enums import CommunicationType
+
     if service.zmq_ipc is not None:
         comm: dict[str, Any] = {"type": CommunicationType.IPC}
         if service.zmq_ipc.path is not None:
             comm["path"] = str(service.zmq_ipc.path)
+        return comm
+    if service.zmq_tcp is not None:
+        return {"type": CommunicationType.TCP, "host": service.zmq_tcp.host}
+    if service.zmq_dual_bind is not None:
+        return {"type": CommunicationType.DUAL}
+    return None
+
+
+def build_logging_runtime(
+    user: UserConfig, service: ServiceConfig
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build (logging, runtime) dicts for AIPerfConfig from v1 inputs.
+
+    Folds in the four ServiceConfig validators that v1 strips: verbose/
+    extra_verbose log-level promotion, TTY-based ui defaulting, zmq_* ->
+    communication discriminator, and the api_host-requires-api_port check.
+    """
+    # Fold validate_api_host_requires_port from origin/main ServiceConfig.
+    if service.api_host is not None and service.api_port is None:
+        raise ValueError(
+            "api_host requires api_port (or AIPERF_API_SERVER_PORT) to be set"
+        )
+
+    logging_dict: dict[str, Any] = {"level": service.log_level}
+    runtime_dict: dict[str, Any] = {}
+
+    _apply_runtime_basics(runtime_dict, service)
+    _apply_verbosity_and_ui(logging_dict, runtime_dict, service)
+    if (comm := _build_communication(service)) is not None:
         runtime_dict["communication"] = comm
-    elif service.zmq_tcp is not None:
-        runtime_dict["communication"] = {
-            "type": CommunicationType.TCP,
-            "host": service.zmq_tcp.host,
-        }
-    elif service.zmq_dual_bind is not None:
-        runtime_dict["communication"] = {"type": CommunicationType.DUAL}
 
     return logging_dict, runtime_dict

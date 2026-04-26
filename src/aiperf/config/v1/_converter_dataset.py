@@ -88,32 +88,31 @@ def _build_prefix_prompts(user: UserConfig) -> dict[str, Any]:
 # --- rankings -------------------------------------------------------------
 
 
+def _mean_stddev_pair(model: Any, mean_field: str, stddev_field: str) -> dict[str, Any]:
+    """Return ``{"mean": ..., "stddev": ...}`` for whichever of the two fields was set."""
+    out: dict[str, Any] = {}
+    if _set(model, mean_field):
+        out["mean"] = getattr(model, mean_field)
+    if _set(model, stddev_field):
+        out["stddev"] = getattr(model, stddev_field)
+    return out
+
+
 def _build_rankings(user: UserConfig) -> dict[str, Any]:
     inp = _input(user)
     if inp is None:
         return {}
     r = inp.rankings
     out: dict[str, Any] = {}
-    if _set(r.passages, "mean") or _set(r.passages, "stddev"):
-        passages: dict[str, Any] = {}
-        if _set(r.passages, "mean"):
-            passages["mean"] = r.passages.mean
-        if _set(r.passages, "stddev"):
-            passages["stddev"] = r.passages.stddev
+    if passages := _mean_stddev_pair(r.passages, "mean", "stddev"):
         out["passages"] = passages
-    if _set(r.passages, "prompt_token_mean") or _set(r.passages, "prompt_token_stddev"):
-        passage_tokens: dict[str, Any] = {}
-        if _set(r.passages, "prompt_token_mean"):
-            passage_tokens["mean"] = r.passages.prompt_token_mean
-        if _set(r.passages, "prompt_token_stddev"):
-            passage_tokens["stddev"] = r.passages.prompt_token_stddev
+    if passage_tokens := _mean_stddev_pair(
+        r.passages, "prompt_token_mean", "prompt_token_stddev"
+    ):
         out["passage_tokens"] = passage_tokens
-    if _set(r.query, "prompt_token_mean") or _set(r.query, "prompt_token_stddev"):
-        query_tokens: dict[str, Any] = {}
-        if _set(r.query, "prompt_token_mean"):
-            query_tokens["mean"] = r.query.prompt_token_mean
-        if _set(r.query, "prompt_token_stddev"):
-            query_tokens["stddev"] = r.query.prompt_token_stddev
+    if query_tokens := _mean_stddev_pair(
+        r.query, "prompt_token_mean", "prompt_token_stddev"
+    ):
         out["query_tokens"] = query_tokens
     return out
 
@@ -453,38 +452,45 @@ def _composed_augment_video(user: UserConfig) -> dict[str, Any]:
     return out
 
 
-def _build_composed_dataset(user: UserConfig) -> dict[str, Any]:
-    """File dataset with augmentation overlay."""
+def _composed_source(user: UserConfig) -> dict[str, Any]:
     from aiperf.common.enums import DatasetType
 
-    inp = _input(user)
     source: dict[str, Any] = {"type": DatasetType.FILE}
-    if inp is not None:
-        if "file" in inp.model_fields_set and inp.file is not None:
-            source["path"] = inp.file
-        if (
-            "custom_dataset_type" in inp.model_fields_set
-            and inp.custom_dataset_type is not None
-        ):
-            source["format"] = inp.custom_dataset_type
-        if (
-            "dataset_sampling_strategy" in inp.model_fields_set
-            and inp.dataset_sampling_strategy is not None
-        ):
-            source["sampling"] = inp.dataset_sampling_strategy
+    inp = _input(user)
+    if inp is None:
+        return source
+    if "file" in inp.model_fields_set and inp.file is not None:
+        source["path"] = inp.file
+    if (
+        "custom_dataset_type" in inp.model_fields_set
+        and inp.custom_dataset_type is not None
+    ):
+        source["format"] = inp.custom_dataset_type
+    if (
+        "dataset_sampling_strategy" in inp.model_fields_set
+        and inp.dataset_sampling_strategy is not None
+    ):
+        source["sampling"] = inp.dataset_sampling_strategy
+    return source
 
+
+def _composed_augment_osl(user: UserConfig) -> dict[str, Any] | None:
+    inp = _input(user)
+    if inp is None:
+        return None
+    out_tokens = inp.prompt.output_tokens
+    if "mean" not in out_tokens.model_fields_set or out_tokens.mean is None:
+        return None
+    osl: dict[str, Any] = {"mean": out_tokens.mean}
+    if "stddev" in out_tokens.model_fields_set and out_tokens.stddev is not None:
+        osl["stddev"] = out_tokens.stddev
+    return osl
+
+
+def _composed_augment(user: UserConfig) -> dict[str, Any]:
     augment: dict[str, Any] = {}
-    if inp is not None:
-        out_tokens = inp.prompt.output_tokens
-        if "mean" in out_tokens.model_fields_set and out_tokens.mean is not None:
-            osl: dict[str, Any] = {"mean": out_tokens.mean}
-            if (
-                "stddev" in out_tokens.model_fields_set
-                and out_tokens.stddev is not None
-            ):
-                osl["stddev"] = out_tokens.stddev
-            augment["osl"] = osl
-
+    if (osl := _composed_augment_osl(user)) is not None:
+        augment["osl"] = osl
     if (aug_prefix := _composed_augment_prefix(user)) is not None:
         augment["prefix"] = aug_prefix
     if images := _composed_augment_images(user):
@@ -493,12 +499,19 @@ def _build_composed_dataset(user: UserConfig) -> dict[str, Any]:
         augment["audio"] = audio
     if video := _composed_augment_video(user):
         augment["video"] = video
+    return augment
 
+
+def _build_composed_dataset(user: UserConfig) -> dict[str, Any]:
+    """File dataset with augmentation overlay."""
+    from aiperf.common.enums import DatasetType
+
+    inp = _input(user)
     random_seed = inp.random_seed if inp is not None else None
     return {
         "type": DatasetType.COMPOSED,
-        "source": source,
-        "augment": augment,
+        "source": _composed_source(user),
+        "augment": _composed_augment(user),
         "entries": _resolve_entries(user),
         "random_seed": random_seed,
     }
