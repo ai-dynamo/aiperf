@@ -6,6 +6,7 @@ const NAV_GROUPS = [
     items: [
       { path: '/', label: 'Dashboard' },
       { path: '/jobs', label: 'Jobs' },
+      { path: '/sweeps', label: 'Sweeps' },
     ],
   },
   {
