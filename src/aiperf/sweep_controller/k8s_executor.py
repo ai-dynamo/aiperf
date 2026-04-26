@@ -136,9 +136,24 @@ class K8sChildJobExecutor(RunExecutor):
     def _build_child_spec(self, run: BenchmarkRun) -> dict[str, Any]:
         """Produce the child AIPerfJob spec from the sweep template + this run."""
         template_spec = copy.deepcopy(self.sweep["spec"]["template"]["spec"])
-        template_spec["benchmark"] = run.cfg.model_dump(
+        benchmark_dump = run.cfg.model_dump(
             mode="json", by_alias=True, exclude_none=True
         )
+        # The orchestrator validates each variant as BenchmarkConfig, which fills in
+        # runtime.service_run_type=multiprocessing (and similar k8s-context fields).
+        # The child AIPerfJob operator validates as AIPerfConfig, which rejects
+        # service_run_type as extra_forbidden — apply_k8s_runtime_config sets it
+        # itself on the child side. Strip these fields so the child re-resolves them.
+        runtime = benchmark_dump.get("runtime") or {}
+        for k8s_resolved in (
+            "serviceRunType", "service_run_type",
+            "apiHost", "api_host", "apiPort", "api_port",
+            "datasetApiBaseUrl", "dataset_api_base_url",
+            "communication",
+        ):
+            runtime.pop(k8s_resolved, None)
+        benchmark_dump["runtime"] = runtime
+        template_spec["benchmark"] = benchmark_dump
         return template_spec
 
     def _build_child_metadata(
