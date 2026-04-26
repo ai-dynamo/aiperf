@@ -55,6 +55,7 @@ __all__ = [
     "migrate_legacy_layout",
     "resolve_latest",
     "resolve_run_dir",
+    "resolve_sweep_dir",
     "run_dir",
     "write_latest",
 ]
@@ -184,6 +185,25 @@ def resolve_run_dir(
             return None
         epoch = resolved
     candidate = run_dir(base, namespace, name, epoch)
+    if not candidate.is_dir():
+        return None
+    return candidate
+
+
+def resolve_sweep_dir(base: Path, namespace: str, name: str) -> Path | None:
+    """Return the persisted sweep directory ``<base>/<ns>/sweeps/<name>``, or None.
+
+    The directory is the durable parent manifest location for AIPerfSweep CRs:
+    sweep-controllers write ``aggregate.json`` + ``conditions.json`` here at
+    terminal phase. The dual-backed sweep API uses this to render archived
+    sweeps after the parent CR has been TTL-reaped.
+
+    Example
+    -------
+    >>> resolve_sweep_dir(Path("/data"), "bench", "saturation-sweep")
+    PosixPath('/data/bench/sweeps/saturation-sweep')
+    """
+    candidate = base / namespace / "sweeps" / name
     if not candidate.is_dir():
         return None
     return candidate

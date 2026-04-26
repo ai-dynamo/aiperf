@@ -23,6 +23,7 @@ from aiperf.operator.results_layout import (
     migrate_legacy_layout,
     resolve_latest,
     resolve_run_dir,
+    resolve_sweep_dir,
     run_dir,
     write_latest,
 )
@@ -304,3 +305,22 @@ def test_enforce_retention_dry_run_matches_live_candidates(
         retain_days=0,
     )
     assert sorted(dry) == sorted(live)
+
+
+def test_resolve_sweep_dir_returns_path_when_present(tmp_path: Path) -> None:
+    base = tmp_path
+    sweep_dir = base / "bench" / "sweeps" / "saturation-sweep"
+    sweep_dir.mkdir(parents=True)
+    (sweep_dir / "aggregate.json").write_text("{}")
+    assert resolve_sweep_dir(base, "bench", "saturation-sweep") == sweep_dir
+
+
+def test_resolve_sweep_dir_returns_none_when_missing(tmp_path: Path) -> None:
+    assert resolve_sweep_dir(tmp_path, "bench", "nope") is None
+
+
+def test_resolve_sweep_dir_returns_none_when_not_a_directory(tmp_path: Path) -> None:
+    base = tmp_path
+    (base / "bench" / "sweeps").mkdir(parents=True)
+    (base / "bench" / "sweeps" / "saturation-sweep").write_text("not a dir")
+    assert resolve_sweep_dir(base, "bench", "saturation-sweep") is None
