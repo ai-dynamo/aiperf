@@ -135,7 +135,7 @@ function App() {
       <main class="bench-main" data-testid="bench-main">
         <div class="alpha-banner" role="status" data-testid="alpha-banner">
           <span class="alpha-banner-tag">ALPHA</span>
-          <span>Work-in-progress build — features may break or change before release.</span>
+          <span>Developer testing ground — features here are experimental and unverified. Most will change, break, or be cut before any release.</span>
         </div>
         ${error && html`
           <div class="bench-error-flash" data-testid="global-error">
