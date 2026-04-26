@@ -581,6 +581,75 @@ def test_name_from_config_file_produces_valid_dns1123_label(stem: str) -> None:
     assert len(out) <= 63
 
 
+# DNS-1123 hardening regression-locks (third-pass fix).
+# A strict DNS-1123 *label* (single component, no dots) follows
+# ``^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`` and is at most 63 chars. Consecutive
+# hyphens are technically legal, but we collapse them so the user-visible
+# name doesn't surface ugly ``--`` runs.
+_DNS_1123_LABEL_STRICT = r"[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+
+
+@pytest.mark.parametrize(
+    "stem, must_not_contain",
+    [
+        param("__a__b__", "--", id="collapse-runs-of-special-chars"),
+        param("a" * 29 + "-", "--", id="trailing-hyphen-after-truncation"),
+        param("---abc---", "--", id="leading-and-trailing-hyphens"),
+        param("a..b..c", "--", id="dots-do-not-double-collapse"),
+        param("foo!@#bar", "--", id="adjacent-specials-collapse-once"),
+    ],
+)  # fmt: skip
+def test_name_from_config_file_collapses_consecutive_hyphens(
+    stem: str, must_not_contain: str
+) -> None:
+    """No ``--`` runs survive in the output — sanitization collapses runs."""
+    out = sweep_cmd._name_from_config_file(Path(f"{stem}.yaml"))
+    assert must_not_contain not in out, (
+        f"name {out!r} from stem {stem!r} contains {must_not_contain!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        param("a" * 30, id="cap-fits-exactly"),
+        param("a" * 31, id="cap-truncates-by-one"),
+        param("a" * 200, id="far-over-cap"),
+        param("a" * 30 + "-bar", id="cap-falls-on-hyphen-after-prefix"),
+        param("ab-" * 20, id="cap-falls-mid-hyphen-run"),
+        param("a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p", id="cap-bisects-trailing-hyphen"),
+    ],
+)  # fmt: skip
+def test_name_from_config_file_strict_dns1123_after_truncation(stem: str) -> None:
+    """Output matches strict DNS-1123 label form even after the 30-char cap."""
+    out = sweep_cmd._name_from_config_file(Path(f"{stem}.yaml"))
+    assert re.fullmatch(_DNS_1123_LABEL_STRICT, out), (
+        f"name {out!r} from stem {stem!r} fails strict DNS-1123 (start/end alnum, no consecutive '-')"
+    )
+    assert out.endswith("-sweep")
+    assert len(out) <= 63
+
+
+def test_name_from_config_file_all_digits_stem_is_valid() -> None:
+    """All-digit stems produce a valid label (DNS-1123 labels may start with a digit)."""
+    out = sweep_cmd._name_from_config_file(Path("123456.yaml"))
+    assert out == "123456-sweep"
+    assert re.fullmatch(_DNS_1123_LABEL_STRICT, out)
+
+
+def test_name_from_config_file_empty_stem_falls_back_to_aiperf() -> None:
+    """A stem that sanitizes to empty (all special chars) falls back to ``aiperf``."""
+    out = sweep_cmd._name_from_config_file(Path("___.yaml"))
+    assert out == "aiperf-sweep"
+
+
+def test_name_from_config_file_unicode_stem_sanitizes_safely() -> None:
+    """Non-ASCII chars (emoji, accented) are replaced with ``-`` and collapsed."""
+    out = sweep_cmd._name_from_config_file(Path("héllo🚀world.yaml"))
+    assert re.fullmatch(_DNS_1123_LABEL_STRICT, out)
+    assert out.endswith("-sweep")
+
+
 # =============================================================================
 # Adversarial regression-locks for second-pass fixes (commit 793260d7b).
 # `--trials` must OVERRIDE YAML multi_run.trials (was setdefault, so YAML won),

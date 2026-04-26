@@ -100,10 +100,23 @@ def is_my_child(child: dict[str, Any], *, sweep_uid: str, sweep_name: str) -> bo
 
 
 def _sanitize_for_label(value: str) -> str:
-    """Reduce a free-form string to a valid k8s label value (RFC 1123, <=63 chars)."""
+    """Reduce a free-form string to a valid k8s label value.
+
+    Label values must match ``(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?`` and
+    be at most 63 characters. We:
+
+    1. Lowercase + replace runs of disallowed chars with a single ``-``.
+    2. Strip leading/trailing non-alnum.
+    3. Truncate to 63.
+    4. Re-strip leading/trailing non-alnum (the truncation may have left a
+       trailing ``.``/``_``/``-``, which would re-fail validation).
+    5. Fall back to ``"v"`` when sanitization eats every character.
+    """
     sanitized = re.sub(r"[^a-z0-9._-]+", "-", value.lower())
     sanitized = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", sanitized)
-    return sanitized[:63] or "v"
+    sanitized = sanitized[:63]
+    sanitized = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", sanitized)
+    return sanitized or "v"
 
 
 class K8sChildJobExecutor(RunExecutor):

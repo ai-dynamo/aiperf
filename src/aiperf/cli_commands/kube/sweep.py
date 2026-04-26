@@ -209,22 +209,34 @@ def _build_sweep_cr_dict(
 
 
 def _name_from_config_file(config_file: Path) -> str:
-    """Derive a DNS-safe AIPerfSweep name from `config_file.stem`.
+    """Derive a DNS-1123 label name from ``config_file.stem``.
 
     Args:
         config_file: Path to the user's sweep YAML.
 
     Returns:
-        ``"<stem>-sweep"`` lowercased and sanitized to ``[a-z0-9-]`` with
-        leading/trailing hyphens stripped, stem capped at 30 chars to leave
-        room for the suffix within Kubernetes' 63-char DNS-label limit.
+        ``"<stem>-sweep"``: lowercased, every disallowed char collapsed into a
+        single ``-``, leading/trailing ``-`` stripped (both before AND after
+        the 30-char truncation, so a cut that lands inside a hyphen run does
+        not produce ``...---sweep``), with ``"aiperf"`` substituted when the
+        stem sanitizes to empty (e.g. ``___.yaml``).
+
+    The returned string always matches DNS-1123 label rules
+    (``[a-z0-9]([-a-z0-9]*[a-z0-9])?``, ≤63 chars). The 30-char stem cap
+    leaves head-room for ``-sweep`` (6) and any downstream
+    ``-vNNNN-tNN`` suffixes (10) that ``derive_child_name`` appends.
     """
     stem = config_file.stem.lower()
-    sanitized = re.sub(r"[^a-z0-9-]", "-", stem).strip("-")
-    # Fall back to a fixed prefix when sanitization eats everything (e.g.,
-    # stems that are all underscores, dots, or empty) so we don't emit a name
-    # starting with "-" — DNS-1123 labels must start with [a-z0-9].
-    safe_stem = sanitized[:30] or "aiperf"
+    sanitized = re.sub(r"[^a-z0-9-]", "-", stem)
+    # Collapse runs of '-' into a single '-' so '__a__b__' doesn't become
+    # '--a--b--' which then survives the strip with embedded '--'.
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    safe_stem = sanitized[:30].rstrip("-")
+    # Fall back when sanitization eats everything (all-underscore stems,
+    # leading-only-special stems, empty stems). DNS-1123 labels must start
+    # with [a-z0-9].
+    if not safe_stem:
+        safe_stem = "aiperf"
     return f"{safe_stem}-sweep"
 
 
