@@ -1291,3 +1291,388 @@ h1, h2, h3, h4 {
   color: var(--muted);
   font-style: italic;
 }
+
+/* ════════════════════════════════════════════════════════════
+   Pizzaz pass — global visual polish
+   ════════════════════════════════════════════════════════════ */
+
+/* Subtle dot-grid substrate. Sits behind every view; cards punch through. */
+body {
+  background-image:
+    radial-gradient(circle at 25% 8%, rgba(118, 185, 0, 0.06), transparent 55%),
+    radial-gradient(circle at 90% 95%, rgba(38, 198, 218, 0.04), transparent 55%),
+    radial-gradient(circle, rgba(118, 185, 0, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 22px 22px;
+  background-position: 0 0, 0 0, 0 0;
+  background-attachment: fixed;
+}
+
+/* Animated keyframes used across the UI */
+@keyframes shimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+@keyframes pulse-strong {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(1.05); }
+}
+@keyframes glow-rotate {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes drift-up {
+  from { transform: translateY(6px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* Logo gets a small live pulse — feels alive even when nothing is running */
+.topbar-logo-badge {
+  position: relative;
+  box-shadow: 0 0 0 0 rgba(118, 185, 0, 0.55);
+  animation: pulse-strong 3s ease-in-out infinite;
+}
+
+/* Card hover lift + soft accent glow */
+.card, .hm-row, .arch-ns, .arch-row, .home-pitch,
+.run-hero, .run-identity, .run-conditions, .run-phases,
+.run-pods, .run-events, .run-logs, .run-gpu, .run-results, .run-config,
+.run-kpi, .run-spark-tile, .v-analysis-chart, .v-analysis-board,
+.v-log-row, .v-log-day, .v-log-pane, .compare-table {
+  transition: transform var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              background var(--transition-fast);
+}
+
+.hm-row:hover, .arch-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(118, 185, 0, 0.08);
+}
+
+/* KPI tiles: bigger numbers, soft state-colored glow halos */
+.run-kpi-big-val { font-size: 32px; letter-spacing: -0.02em; }
+.run-kpi--good { box-shadow: 0 0 0 1px rgba(118, 185, 0, 0.18) inset, 0 8px 22px -10px rgba(118, 185, 0, 0.55); }
+.run-kpi--warn { box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.18) inset, 0 8px 22px -10px rgba(255, 193, 7, 0.45); }
+.run-kpi--bad  { box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.20) inset, 0 8px 22px -10px rgba(239, 83, 80, 0.55); }
+.run-kpi {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%),
+    var(--bg-tile);
+}
+.run-kpi:hover { transform: translateY(-1px); }
+
+/* Hero — top accent stripe + animated gradient border for live runs */
+.run-hero { position: relative; overflow: hidden; }
+.run-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.run-hero--ok    { color: var(--green); }
+.run-hero--warn  { color: var(--amber); }
+.run-hero--error { color: var(--red); }
+.run-hero--ok::before, .run-hero--warn::before, .run-hero--error::before { opacity: 0.85; }
+.run-hero-label { letter-spacing: -0.02em; font-size: 22px; }
+
+/* Phase progress bar — running phases get a subtle shimmer scanline */
+.run-phase--running .run-phase-fill,
+.run-hero-phase-fill:not(.run-hero-phase-fill--done) {
+  background:
+    linear-gradient(90deg,
+      var(--blue) 0%,
+      rgba(255, 255, 255, 0.35) 50%,
+      var(--blue) 100%) 0 0 / 200px 100% repeat-x,
+    var(--blue);
+  animation: shimmer 1.6s linear infinite;
+}
+.run-hero--error .run-hero-phase-fill {
+  background:
+    linear-gradient(90deg,
+      var(--red) 0%,
+      rgba(255, 255, 255, 0.35) 50%,
+      var(--red) 100%) 0 0 / 200px 100% repeat-x,
+    var(--red);
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Status chips & condition chips — inset glow */
+.chip--good, .run-condition-chip--true   { box-shadow: inset 0 0 0 1px rgba(118, 185, 0, 0.35); }
+.chip--bad,  .run-condition-chip--false  { box-shadow: inset 0 0 0 1px rgba(239, 83, 80, 0.35); }
+.chip--warn { box-shadow: inset 0 0 0 1px rgba(255, 193, 7, 0.35); }
+.chip--info { box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35); }
+
+/* Section eyebrows — small bracket marks before the title */
+.run-phases-title::before,
+.run-pods-title::before,
+.run-events-title::before,
+.run-logs-title::before,
+.run-gpu-title::before,
+.run-results-title::before,
+.card-title::before {
+  content: '▸ ';
+  color: var(--accent);
+  margin-right: 2px;
+  font-weight: 700;
+}
+
+/* Hero phase progress glows on success */
+.run-hero-phase-fill--done {
+  box-shadow: 0 0 12px rgba(118, 185, 0, 0.5);
+}
+
+/* Subtle drift-up animation when cards mount */
+.hm-row, .arch-row, .v-log-row { animation: drift-up 320ms ease-out backwards; }
+.hm-row:nth-child(1), .arch-row:nth-child(1), .v-log-row:nth-child(1) { animation-delay: 0ms; }
+.hm-row:nth-child(2), .arch-row:nth-child(2), .v-log-row:nth-child(2) { animation-delay: 40ms; }
+.hm-row:nth-child(3), .arch-row:nth-child(3), .v-log-row:nth-child(3) { animation-delay: 80ms; }
+.hm-row:nth-child(4), .arch-row:nth-child(4), .v-log-row:nth-child(4) { animation-delay: 120ms; }
+.hm-row:nth-child(5), .arch-row:nth-child(5), .v-log-row:nth-child(5) { animation-delay: 160ms; }
+.hm-row:nth-child(n+6), .arch-row:nth-child(n+6), .v-log-row:nth-child(n+6) { animation-delay: 200ms; }
+
+/* ════════════════════════════════════════════════════════════
+   Home view — mission-control redesign
+   ════════════════════════════════════════════════════════════ */
+
+.hm-mission {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1100px) { .hm-mission { grid-template-columns: 1fr; } }
+
+/* Big stats hero — replaces the boring summary bar */
+.hm-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.hm-stat {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%),
+    var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.hm-stat::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--tint, var(--accent)), transparent);
+  opacity: 0.6;
+}
+.hm-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.hm-stat-val {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.hm-stat-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--sub);
+  font-family: var(--font-mono);
+}
+.hm-stat--running { --tint: var(--blue); }
+.hm-stat--running .hm-stat-val { color: var(--blue); }
+.hm-stat--passed  { --tint: var(--green); }
+.hm-stat--passed  .hm-stat-val { color: var(--green); }
+.hm-stat--failed  { --tint: var(--red); }
+.hm-stat--failed  .hm-stat-val { color: var(--red); }
+.hm-stat--gpus    { --tint: var(--cyan); }
+.hm-stat--gpus    .hm-stat-val { color: var(--cyan); }
+.hm-stat--total   { --tint: var(--accent); }
+
+/* Active run cards — full hero treatment when something's running */
+.hm-active-section { display: grid; gap: 10px; }
+.hm-active-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: 4px;
+}
+.hm-active-title {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+.hm-active-title::before {
+  content: '◉ ';
+  color: var(--blue);
+  animation: pulse-strong 2s ease-in-out infinite;
+  display: inline-block;
+}
+.hm-active-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+}
+.hm-active-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  background:
+    radial-gradient(ellipse 600px 200px at 10% 0%, rgba(59, 130, 246, 0.08), transparent 60%),
+    var(--bg-card);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.hm-active-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--blue), transparent);
+  opacity: 0.7;
+}
+.hm-active-card:hover {
+  border-color: var(--blue);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -10px rgba(59, 130, 246, 0.6);
+}
+.hm-active-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hm-active-card-name { font-weight: 600; color: var(--text); font-size: var(--font-md); }
+.hm-active-card-ns   { color: var(--sub); font-size: var(--font-xs); font-family: var(--font-mono); margin-top: 2px; }
+.hm-active-card-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.hm-active-card-fill {
+  height: 100%;
+  background:
+    linear-gradient(90deg, var(--blue) 0%, rgba(255, 255, 255, 0.35) 50%, var(--blue) 100%) 0 0 / 200px 100% repeat-x,
+    var(--blue);
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 3px;
+}
+.hm-active-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+}
+.hm-active-card-stat-val { font-size: var(--font-md); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.hm-active-card-stat-lab { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+
+/* Top-performers strip */
+.hm-podium { display: grid; gap: 10px; }
+.hm-podium-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.hm-podium-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 60%),
+    var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+.hm-podium-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.5;
+}
+.hm-podium-card:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: 0 8px 22px -10px rgba(118, 185, 0, 0.55); }
+.hm-podium-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+.hm-podium-val   { font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--accent); line-height: 1; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.hm-podium-unit  { font-size: 11px; color: var(--muted); font-weight: 500; }
+.hm-podium-name  { color: var(--sub); font-size: var(--font-xs); font-family: var(--font-mono); margin-top: 6px; }
+
+/* Scatter pod */
+.hm-scatter-pod {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 360px;
+}
+.hm-scatter-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.hm-scatter-title {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+.hm-scatter-title::before { content: '▸ '; color: var(--accent); margin-right: 2px; }
+.hm-scatter-axes { display: flex; gap: 4px; }
+.hm-scatter-axes button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--sub);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hm-scatter-axes button:hover { color: var(--text); border-color: var(--border-hover); }
+.hm-scatter-axes button.is-active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.hm-scatter-body { position: relative; flex: 1; min-height: 280px; }
+.hm-scatter-body canvas { display: block; width: 100% !important; height: 100% !important; }
+.hm-scatter-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-style: italic; font-size: var(--font-sm);
+}
+
+/* Recent runs section header */
+.hm-recent-section { display: grid; gap: 10px; }
+.hm-section-title {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  padding-left: 4px;
+}
+.hm-section-title::before { content: '▸ '; color: var(--accent); }
+
+/* Recent run cards — hover-lift + state-tinted left edge */
+.hm-row {
+  border-left-width: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.hm-row::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--row-tint, var(--border));
+}
+.hm-row[data-state="live"]   { --row-tint: var(--blue);  }
+.hm-row[data-state="fault"]  { --row-tint: var(--red);   }
+.hm-row[data-state="passed"] { --row-tint: var(--green); }
+.hm-row[data-state="other"]  { --row-tint: var(--muted); }
