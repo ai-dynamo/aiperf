@@ -141,18 +141,14 @@ def _all_configs() -> list[tuple[str, dict]]:
     return out
 
 
-# Pre-existing docs lag — these snippets use legacy dict shapes for
-# ``datasets`` and ``phases`` that AIPerfConfig now rejects with explicit
-# migration messages. Mark xfail rather than rewriting tutorials in this
-# task; tracked separately under docs cleanup.
+# Pre-existing docs lag — these tutorial snippets use legacy distribution
+# shorthand (``{type: normal, mean, stddev}`` → ``{mean, stddev}``), the
+# legacy ``{type: clamped, ...}`` / ``{type: mixture, ...}`` distribution
+# shapes (no longer supported), or are intentionally partial illustrations
+# of one section that would need synthetic ``models`` / ``endpoint`` /
+# ``datasets`` / ``phases`` added to validate as a full ``AIPerfConfig``.
+# Mark xfail rather than rewriting tutorials here; tracked separately.
 _KNOWN_DOCS_LAG_SUBSTRINGS = (
-    "docs/kubernetes/configuration.md",
-    "docs/kubernetes/getting-started.md",
-    "docs/kubernetes/init-and-generate.md",
-    "docs/kubernetes/kueue.md",
-    "docs/kubernetes/rbac-security.md",
-    "docs/kubernetes/sweeps.md",
-    "docs/kubernetes/user-files.md",
     "docs/tutorials/sweeps.md",
     "docs/tutorials/template-endpoint.md",
     "docs/tutorials/yaml-config.md",

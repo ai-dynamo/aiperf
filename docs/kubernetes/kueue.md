@@ -172,7 +172,18 @@ spec:
     priorityClass: aiperf-high
   benchmark:
     models: ["Qwen/Qwen3-0.6B"]
-    # ...
+    endpoint:
+      urls: ["http://dynamo-agg-frontend.dynamo-server.svc:8000/v1"]
+      streaming: true
+    datasets:
+      - name: main
+        type: synthetic
+        entries: 1000
+    phases:
+      - name: profiling
+        type: concurrency
+        concurrency: 50
+        requests: 500
 ```
 
 ### 3. Namespace default via Helm

@@ -28,14 +28,14 @@ spec:
       urls: ["http://dynamo-agg-frontend.dynamo-server.svc:8000/v1"]
       streaming: true
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 1000
         prompts:
           isl: { mean: 512, stddev: 0 }
           osl: { mean: 128, stddev: 0 }
     phases:
-      profiling:
+      - name: profiling
         type: concurrency
         concurrency: 50
         requests: 500
@@ -108,12 +108,12 @@ Each phase defines a load pattern:
 
 ```yaml
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     concurrency: 10
     requests: 10
     exclude_from_results: true    # don't include warmup in final metrics
-  profiling:
+  - name: profiling
     type: concurrency
     concurrency: 50
     requests: 500
@@ -358,16 +358,16 @@ Use multiple phases to warm up before measuring:
 
 ```yaml
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     concurrency: 10
     requests: 20
     exclude_from_results: true
-  low_load:
+  - name: low_load
     type: concurrency
     concurrency: 25
     requests: 250
-  high_load:
+  - name: high_load
     type: concurrency
     concurrency: 100
     requests: 500

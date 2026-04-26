@@ -21,7 +21,7 @@ endpoint:
   type: chat
   streaming: true
 datasets:
-  main:
+  - name: main
     type: synthetic
 phases:
   - name: profiling

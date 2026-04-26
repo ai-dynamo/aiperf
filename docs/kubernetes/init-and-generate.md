@@ -87,7 +87,7 @@ spec:
 
     # Dataset configuration
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 1000
         prompts:
@@ -100,12 +100,12 @@ spec:
 
     # Load phases
     phases:
-      warmup:
+      - name: warmup
         type: concurrency
         concurrency: 10
         requests: 10
         exclude_from_results: true
-      profiling:
+      - name: profiling
         type: concurrency
         concurrency: 50
         requests: 500

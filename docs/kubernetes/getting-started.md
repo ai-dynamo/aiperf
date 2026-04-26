@@ -343,7 +343,7 @@ spec:
         - "http://dynamo-agg-frontend.dynamo-server.svc:8000/v1"
       streaming: true
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 1000
         prompts:
@@ -354,12 +354,12 @@ spec:
             mean: 128
             stddev: 0
     phases:
-      warmup:
+      - name: warmup
         type: concurrency
         concurrency: 10
         requests: 20
         exclude_from_results: true
-      profiling:
+      - name: profiling
         type: concurrency
         concurrency: 50
         requests: 500

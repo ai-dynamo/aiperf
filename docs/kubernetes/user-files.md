@@ -38,6 +38,14 @@ models:
 endpoint:
   type: chat
   urls: ["http://my-frontend:8000"]
+datasets:
+  - name: main
+    type: synthetic
+phases:
+  - name: profiling
+    type: concurrency
+    concurrency: 10
+    requests: 100
 ```
 
 Result in the run directory:

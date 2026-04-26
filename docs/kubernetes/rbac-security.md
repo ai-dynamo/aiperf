@@ -258,6 +258,14 @@ spec:
   benchmark:
     models: [meta-llama/Meta-Llama-3-8B-Instruct]
     endpoint: {type: chat, url: https://llm.example.com/v1}
+    datasets:
+      - name: main
+        type: synthetic
+    phases:
+      - name: profiling
+        type: concurrency
+        concurrency: 10
+        requests: 100
 ```
 
 ### What `readOnlyRootFilesystem: true` requires
