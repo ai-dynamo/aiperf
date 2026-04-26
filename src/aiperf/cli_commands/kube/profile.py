@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 
+from aiperf.cli_commands.kube._kube_common import (
+    generate_benchmark_name,
+    print_memory_estimate,
+    resolve_config,
+)
 from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
 
@@ -15,6 +20,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.config import AIPerfConfig
+
+# Re-exported for back-compat — external callers historically imported it from here.
+__all__ = ["app", "generate_benchmark_name"]
 
 app = App(name="profile")
 
@@ -101,37 +109,9 @@ def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     return spec, config
 
 
-def generate_benchmark_name(config: AIPerfConfig) -> str:
-    """Generate a short benchmark name from config.
-
-    Used by both profile and generate commands.
-
-    Args:
-        config: AIPerfConfig instance.
-
-    Returns:
-        A short hyphenated name like "qwen3-openai-throughput".
-    """
-    import re
-
-    model_name = config.get_model_names()[0].split("/")[-1].lower()
-    endpoint_type = str(config.endpoint.type)
-    first_phase = config.phases[0]
-    phase_type = str(first_phase.type)
-    raw = "-".join([model_name, endpoint_type, phase_type])
-    # Sanitize to valid DNS label: replace invalid chars, strip leading/trailing hyphens
-    return re.sub(r"[^a-z0-9-]", "-", raw).strip("-")[:40]
-
-
 def _resolve_config(cli_model: CLIModel, config_file: Path | None) -> AIPerfConfig:
-    """Return AIPerfConfig from a plain YAML file or CLI flags."""
-    if config_file is not None:
-        from aiperf.config.loader import load_config
-
-        return load_config(config_file)
-    from aiperf.config.cli_converter import build_aiperf_config
-
-    return build_aiperf_config(cli_model)
+    """Backwards-compatible alias for `_kube_common.resolve_config`."""
+    return resolve_config(cli_model, config_file)
 
 
 def _resolve_spec_and_name(
@@ -149,24 +129,15 @@ def _resolve_spec_and_name(
         cr_name = cr_raw.get("metadata", {}).get("name")
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
-        config = _resolve_config(cli_model, config_file)
+        config = resolve_config(cli_model, config_file)
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
     return spec, config, name
 
 
 def _print_memory_estimate(config: Any, kube_options: KubeOptions, spec: dict) -> None:
-    """Compute and display the memory estimate for the planned benchmark."""
-    from aiperf.kubernetes import console as kube_console
-    from aiperf.kubernetes.memory_estimator import estimate_memory, format_estimate
-
-    mem_est = estimate_memory(
-        config,
-        total_workers=kube_options.workers,
-        workers_per_pod=config.runtime.workers_per_pod,
-        connections_per_worker=spec.get("connectionsPerWorker", 100),
-    )
-    kube_console.console.print(format_estimate(mem_est), highlight=False)
+    """Backwards-compatible alias for `_kube_common.print_memory_estimate`."""
+    print_memory_estimate(config, kube_options, spec)
 
 
 @app.default
