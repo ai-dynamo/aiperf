@@ -139,6 +139,20 @@ class LaunchPage(BasePage):
         await self.page.get_by_test_id("launch-submit").click()
 
 
+class NamespacePickerPage(BasePage):
+    """The ``/`` view — cross-namespace picker with one tile per namespace."""
+
+    async def goto(self) -> None:
+        await self._goto("/")
+        await expect(self.page.get_by_test_id("page-namespace-picker")).to_be_visible()
+
+    def tile(self, namespace: str) -> Locator:
+        return self.page.get_by_test_id(f"np-tile-{namespace}")
+
+    def search(self) -> Locator:
+        return self.page.get_by_test_id("np-search")
+
+
 class CommandPalette:
     def __init__(self, page: Page) -> None:
         self.page = page

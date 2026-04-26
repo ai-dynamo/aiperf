@@ -40,6 +40,7 @@ import { Archive } from './views/archive.js';
 import { Analysis } from './views/analysis.js';
 import { Compare } from './views/compare.js';
 import { Log } from './views/log.js';
+import { NamespacePicker } from './views/namespace-picker.js';
 
 function resolveView(currentRoute) {
   const runEpochMatch = matchRoute('/run/:ns/:name/runs/:epoch', currentRoute)
@@ -59,6 +60,7 @@ function resolveView(currentRoute) {
     || currentRoute === '/analysis')                   return { kind: 'analysis' };
   if (currentRoute === '/log'
     || currentRoute === '/history')                    return { kind: 'log' };
+  if (currentRoute === '/')                            return { kind: 'namespace-picker' };
   return { kind: 'home' };
 }
 
@@ -121,6 +123,8 @@ function App() {
     mainView = html`<${Analysis} />`;
   } else if (resolved.kind === 'log') {
     mainView = html`<${Log} />`;
+  } else if (resolved.kind === 'namespace-picker') {
+    mainView = html`<${NamespacePicker} />`;
   } else {
     mainView = html`<${Home} />`;
   }
