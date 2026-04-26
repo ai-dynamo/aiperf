@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""End-to-end tests for the v1 ``convert_user_to_aiperf`` entrypoint.
+
+Exercises the full composition: each test builds a ``UserConfig`` and a
+``ServiceConfig`` from CLI-shaped dicts, runs them through the converter,
+and asserts on the resulting validated ``AIPerfConfig``.
+"""
+
+from aiperf.config.config import AIPerfConfig
+from aiperf.config.v1 import ServiceConfig, UserConfig
+from aiperf.config.v1.converter import convert_user_to_aiperf
+
+
+def test_minimal_concurrency_run_produces_valid_aiperf_config():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["llama"], "urls": ["http://localhost:8000"]},
+            "loadgen": {"concurrency": 100, "request_count": 1000},
+        }
+    )
+    service = ServiceConfig()
+    cfg = convert_user_to_aiperf(user, service)
+    assert isinstance(cfg, AIPerfConfig)
+    assert cfg.endpoint.urls == ["http://localhost:8000"]
+    assert len(cfg.phases) == 1
+    assert cfg.phases[0].name == "profiling"
+    assert str(cfg.phases[0].type).lower().endswith("concurrency")
+    assert cfg.phases[0].concurrency == 100
+    assert len(cfg.datasets) == 1
+    assert cfg.datasets[0].name == "main"
+
+
+def test_warmup_phase_added_when_warmup_set():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {
+                "concurrency": 10,
+                "request_count": 100,
+                "warmup_concurrency": 2,
+                "warmup_request_count": 10,
+            },
+        }
+    )
+    service = ServiceConfig()
+    cfg = convert_user_to_aiperf(user, service)
+    names = [p.name for p in cfg.phases]
+    assert names == ["warmup", "profiling"]
+    assert cfg.phases[0].exclude_from_results is True
+
+
+def test_request_rate_run_picks_poisson_phase_type():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"request_rate": 50.0, "request_count": 100},
+        }
+    )
+    service = ServiceConfig()
+    cfg = convert_user_to_aiperf(user, service)
+    assert str(cfg.phases[0].type).lower().endswith("poisson")
+    assert cfg.phases[0].rate == 50.0
+
+
+def test_public_dataset_uses_dataset_field():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"concurrency": 1, "request_count": 1},
+            "input": {"public_dataset": "sharegpt"},
+        }
+    )
+    service = ServiceConfig()
+    cfg = convert_user_to_aiperf(user, service)
+    ds = cfg.datasets[0]
+    assert ds.name == "main"
+    assert ds.dataset == "sharegpt"
