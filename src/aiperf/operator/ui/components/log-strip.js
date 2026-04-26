@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * LOG STRIP — always-on bottom event feed.
+ * LogStrip — always-on bottom event feed.
  *
- * Persistent (not collapsible) 180px-tall strip at the bottom of the
- * Workbench shell. Streams derived lifecycle events — diffs successive
- * ``jobs`` snapshots and emits events on phase transitions, worker-ready
- * changes, fault discovery.
+ * Persistent strip at the bottom of the shell. Streams derived lifecycle
+ * events — diffs successive ``jobs`` snapshots and emits events on phase
+ * transitions, worker-ready changes, and error discovery.
  *
  * Derivation is purely client-side: no backend streaming. First snapshot
  * primes the state; thereafter only transitions produce entries.
@@ -26,12 +25,14 @@ function fmtTs(ts) {
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
-function phaseBucket(phase) {
+// Map a job phase string to a severity bucket used by the filter UI and
+// to choose the entry's color class.
+function phaseSeverity(phase) {
   const p = (phase ?? '').toLowerCase();
-  if (p === 'running' || p === 'initializing' || p === 'pending') return 'live';
-  if (p === 'failed'  || p === 'error')                            return 'fault';
-  if (p === 'completed' || p === 'succeeded')                      return 'passed';
-  return 'other';
+  if (p === 'failed' || p === 'error')                return 'error';
+  if (p === 'running' || p === 'initializing' || p === 'pending') return 'info';
+  if (p === 'completed' || p === 'succeeded')         return 'info';
+  return 'info';
 }
 
 function useEventFeed() {
@@ -52,32 +53,36 @@ function useEventFeed() {
         if (prev === null) continue;  // first snapshot — prime, don't emit
         const p = prev.get(key);
         if (!p) {
-          const b = phaseBucket(j.phase);
+          const sev = phaseSeverity(j.phase);
           fresh.push({
-            ts: now, kind: b === 'fault' ? 'fault' : b === 'live' ? 'info' : 'dim',
+            ts: now,
+            severity: sev,
+            cat: 'phase',
             ns: j.namespace, name: j.name,
-            msg: b === 'fault' ? 'discovered in FAULT state'
-               : b === 'live'  ? 'new run detected'
-               : 'new run archived',
+            msg: sev === 'error'
+              ? `${j.namespace}/${j.name} discovered in error state`
+              : `${j.namespace}/${j.name} new run detected`,
           });
           continue;
         }
 
         if (p.phase !== j.phase) {
-          const to = (j.phase ?? '').toLowerCase();
-          const b = phaseBucket(j.phase);
+          const sev = phaseSeverity(j.phase);
           fresh.push({
             ts: now,
-            kind: b === 'fault' ? 'fault' : b === 'passed' ? 'pass' : 'info',
+            severity: sev,
+            cat: 'phase',
             ns: j.namespace, name: j.name,
-            msg: `phase ▸ ${to}`,
+            msg: `${j.namespace}/${j.name} phase ▸ ${(j.phase ?? '').toLowerCase()}`,
           });
         }
         if (p.workersReady !== j.workersReady && j.workersTotal > 0) {
           fresh.push({
-            ts: now, kind: 'dim',
+            ts: now,
+            severity: 'info',
+            cat: 'worker',
             ns: j.namespace, name: j.name,
-            msg: `workers ${j.workersReady}/${j.workersTotal}`,
+            msg: `${j.namespace}/${j.name} workers ${j.workersReady}/${j.workersTotal}`,
           });
         }
       }
@@ -96,52 +101,60 @@ export function LogStrip() {
   const events = useEventFeed();
   const [filter, setFilter] = useState('all');
 
+  const counts = {
+    all: events.length,
+    warn: events.filter(e => e.severity === 'warn').length,
+    error: events.filter(e => e.severity === 'error').length,
+  };
+
   const visible = events.filter(e => {
     if (filter === 'all') return true;
-    if (filter === 'fault') return e.kind === 'fault';
-    if (filter === 'pass') return e.kind === 'pass';
-    return e.kind !== 'dim';
+    return e.severity === filter;
   });
+
+  const filters = [
+    { key: 'all',   label: 'All' },
+    { key: 'warn',  label: 'Warn' },
+    { key: 'error', label: 'Error' },
+  ];
 
   return html`
     <section class="log-strip" aria-label="Event log" data-testid="log-strip">
       <div class="log-strip-head">
-        <div class="log-strip-title">
-          <span class="log-strip-caret">▸</span>
-          EVENTS
-          <span class="log-strip-count">${events.length}</span>
-        </div>
+        <div class="log-strip-title">Event Log</div>
         <div class="log-strip-filters" role="tablist">
-          ${['all', 'events', 'fault', 'pass'].map(k => html`
+          ${filters.map(f => html`
             <button
-              key=${k}
-              class=${'log-strip-filter' + (filter === k ? ' is-active' : '')}
-              onclick=${() => setFilter(k)}
+              key=${f.key}
+              type="button"
+              class=${'log-strip-filter' + (filter === f.key ? ' log-strip-filter--active' : '')}
+              onclick=${() => setFilter(f.key)}
               role="tab"
-              aria-selected=${filter === k}
-            >${k.toUpperCase()}</button>
+              aria-selected=${filter === f.key}
+            >
+              ${f.label}
+              <span class="log-strip-filter-count">${counts[f.key]}</span>
+            </button>
           `)}
         </div>
       </div>
       <div class="log-strip-body">
-        ${visible.length === 0
-          ? html`<div class="log-strip-empty">no events yet — waiting for run activity</div>`
-          : html`
-              <ol class="log-strip-list">
-                ${visible.map((e, i) => html`
-                  <li
-                    key=${e.ts + '-' + i}
-                    class=${'log-event log-event--' + e.kind}
-                    onclick=${() => navigate('/run/' + encodeURIComponent(e.ns) + '/' + encodeURIComponent(e.name))}
-                  >
-                    <span class="log-event-ts">${fmtTs(e.ts)}</span>
-                    <span class="log-event-tag">${e.kind === 'fault' ? 'FAIL' : e.kind === 'pass' ? 'PASS' : e.kind === 'dim' ? 'INFO' : 'EVT'}</span>
-                    <span class="log-event-src">${e.ns}/${e.name}</span>
-                    <span class="log-event-msg">${e.msg}</span>
-                  </li>
-                `)}
-              </ol>
-            `}
+        ${visible.map((e, i) => {
+          const sevClass = e.severity === 'error' ? ' log-strip-entry--error'
+                         : e.severity === 'warn'  ? ' log-strip-entry--warn'
+                         : '';
+          return html`
+            <div
+              key=${e.ts + '-' + i}
+              class=${'log-strip-entry' + sevClass}
+              onclick=${() => navigate('/run/' + encodeURIComponent(e.ns) + '/' + encodeURIComponent(e.name))}
+            >
+              <span class="ts">${fmtTs(e.ts)}</span>
+              <span class=${'log-strip-cat log-strip-cat--' + e.cat}>${e.cat}</span>
+              <span>${e.msg}</span>
+            </div>
+          `;
+        })}
       </div>
     </section>
   `;

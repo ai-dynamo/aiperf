@@ -135,7 +135,7 @@ function App() {
       <main class="bench-main" data-testid="bench-main">
         ${error && html`
           <div class="bench-error-flash" data-testid="global-error">
-            <strong>FAULT</strong> ${error}
+            <strong>Error</strong> ${error}
           </div>
         `}
         ${mainView}

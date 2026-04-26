@@ -103,54 +103,46 @@ export function CommandPalette({ onClose }) {
 
   return html`
     <div
-      class="command-palette-backdrop"
+      class="cmdp-overlay"
       onclick=${onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
     >
       <div
-        class="command-palette"
+        class="cmdp"
         onclick=${(e) => e.stopPropagation()}
         onkeydown=${handleKeyDown}
         data-testid="command-palette"
       >
-        <div class="command-palette-search">
-          <svg class="command-palette-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            ref=${inputRef}
-            type="text"
-            class="command-palette-input"
-            placeholder="Search pages and jobs..."
-            value=${query}
-            oninput=${(e) => setQuery(e.target.value)}
-            data-testid="command-palette-input"
-          />
-          <kbd class="command-palette-esc">Esc</kbd>
+        <input
+          ref=${inputRef}
+          type="text"
+          class="cmdp-input"
+          placeholder="Search runs, namespaces, or commands…"
+          value=${query}
+          oninput=${(e) => setQuery(e.target.value)}
+          data-testid="command-palette-input"
+        />
+        <div class="cmdp-list">
+          ${filtered.length === 0
+            ? html`<div class="cmdp-empty">No matches</div>`
+            : filtered.map(
+              (item, i) => html`
+                <div
+                  key=${item.label + item.sub}
+                  class=${'cmdp-row' + (i === cursor ? ' cmdp-row--active' : '')}
+                  role="option"
+                  aria-selected=${i === cursor}
+                  onmouseenter=${() => setCursor(i)}
+                  onclick=${() => selectItem(item)}
+                >
+                  <span class="cmdp-row-label">${item.label}</span>
+                  <span class="cmdp-row-kind">${item.sub}</span>
+                </div>
+              `,
+            )}
         </div>
-        <ul class="command-palette-list" role="listbox">
-          ${filtered.length === 0 && html`
-            <li class="command-palette-empty">No results for "${query}"</li>
-          `}
-          ${filtered.map(
-            (item, i) => html`
-              <li
-                key=${item.label + item.sub}
-                class=${'command-palette-item' + (i === cursor ? ' command-palette-item--active' : '')}
-                role="option"
-                aria-selected=${i === cursor}
-                onmouseenter=${() => setCursor(i)}
-                onclick=${() => selectItem(item)}
-              >
-                <span class="command-palette-item-label">${item.label}</span>
-                <span class="command-palette-item-sub">${item.sub}</span>
-              </li>
-            `,
-          )}
-        </ul>
       </div>
     </div>
   `;
