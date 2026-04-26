@@ -171,7 +171,8 @@ but **NO validators** — `AIPerfConfig` is the single validation gate.
 
 The converter (`src/aiperf/config/v1/converter.py`) is the only allowed v1→v2
 boundary. Downstream of `cli_commands/`, only `AIPerfConfig` / `BenchmarkPlan`
-/ `BenchmarkRun` flow. Enforced by ruff TID251 in `pyproject.toml`.
+/ `BenchmarkRun` flow. Enforced by ruff TID251 in `pyproject.toml` and a
+redundant `v1-import-leak` AST check in `tools/check_ergonomics.py`.
 
 Hard rules for adding new CLI flags:
 1. Fits an existing v1 nested class (Endpoint/Input/LoadGen/Output/Tokenizer/

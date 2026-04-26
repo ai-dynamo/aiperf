@@ -37,6 +37,9 @@ Checks (each can also be run in isolation with --only <check>):
     exception-message   raised exceptions must include a context message
     isinstance-tuple    isinstance/issubclass must use tuple form, not A | B
                         (PEP 604 unions construct a new object each call)
+    v1-import-leak      ``aiperf.config.v1`` imports allowed only in
+                        cli_commands/** and config/v1/** (redundant with
+                        ruff TID251)
 
 Usage:
     python -m tools.check_ergonomics                 # run all checks
@@ -84,7 +87,20 @@ CHECKS = [
     "stdlib-json",
     "exception-message",
     "isinstance-tuple",
+    "v1-import-leak",
 ]
+
+# Config v1 is the cyclopts-facing CLI input layer. It deliberately mirrors the
+# origin/main pre-v2 shape and re-defines DTOs that v2 also defines (PromptConfig,
+# EndpointConfig, ZMQ*, etc.). Cross-pair v1<->v2 duplicates are by design and
+# fenced from accidental downstream use by ruff TID251 + the v1-import-leak
+# rule below. The two paths exempted here are the only ones allowed to import
+# aiperf.config.v1 (matching pyproject.toml's TID251 per-file-ignores).
+V1_PATH_PREFIX = "src/aiperf/config/v1/"
+V1_IMPORT_ALLOWLIST_PREFIXES = (
+    "src/aiperf/cli_commands/",
+    "src/aiperf/config/v1/",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +354,11 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
 
 
 def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
+    # Config v1 is exempt: it is the CLI input layer that mirrors origin/main
+    # shape and is fenced by TID251 + v1-import-leak — no risk of leaking the
+    # large LoadGeneratorConfig downstream.
+    if rel.replace("\\", "/").startswith(V1_PATH_PREFIX):
+        return []
     out: list[Violation] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and _is_pydantic_model(node):
@@ -431,6 +452,59 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
     return out
 
 
+def check_v1_import_leak(tree: ast.Module, rel: str) -> list[Violation]:
+    """Flag ``aiperf.config.v1`` imports outside the CLI/converter allowlist.
+
+    Redundant with the ruff TID251 ban in ``pyproject.toml``; this AST check
+    catches leaks even when ruff config drifts. Allowed only in
+    ``src/aiperf/cli_commands/**`` and ``src/aiperf/config/v1/**``. Tests are
+    skipped (TID251 already fences them and they own their own exemptions).
+    """
+    rel_norm = rel.replace("\\", "/")
+    if not rel_norm.startswith("src/aiperf/"):
+        return []
+    if any(rel_norm.startswith(p) for p in V1_IMPORT_ALLOWLIST_PREFIXES):
+        return []
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if mod == "aiperf.config.v1" or mod.startswith("aiperf.config.v1."):
+                out.append(
+                    Violation(
+                        check="v1-import-leak",
+                        file=rel,
+                        line=node.lineno,
+                        identifier=mod,
+                        message=(
+                            f"import from '{mod}' is restricted to "
+                            f"cli_commands/** and config/v1/**; "
+                            f"downstream code must use AIPerfConfig / "
+                            f"BenchmarkPlan / BenchmarkRun"
+                        ),
+                    )
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                mod = alias.name
+                if mod == "aiperf.config.v1" or mod.startswith("aiperf.config.v1."):
+                    out.append(
+                        Violation(
+                            check="v1-import-leak",
+                            file=rel,
+                            line=node.lineno,
+                            identifier=mod,
+                            message=(
+                                f"import '{mod}' is restricted to "
+                                f"cli_commands/** and config/v1/**; "
+                                f"downstream code must use AIPerfConfig / "
+                                f"BenchmarkPlan / BenchmarkRun"
+                            ),
+                        )
+                    )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Tree-wide checks (need all files together)
 # ---------------------------------------------------------------------------
@@ -485,7 +559,15 @@ def check_isinstance_tuple(tree: ast.Module, rel: str) -> list[Violation]:
 def check_duplicate_classes(
     trees: dict[Path, ast.Module], rels: dict[Path, str]
 ) -> list[Violation]:
-    """Flag class names defined in more than one module under src/aiperf/."""
+    """Flag class names defined in more than one module under src/aiperf/.
+
+    v1<->v2 cross-pairs are intentionally exempted: Config v1 is a deliberate
+    compatibility shell that mirrors origin/main's pre-v2 DTO shape, fenced
+    from downstream code by ruff TID251 + the ``v1-import-leak`` rule. A
+    duplicate is dropped only when EXACTLY ONE occurrence is under
+    ``src/aiperf/config/v1/``; v1<->v1 duplicates (within v1) and v2<->v2
+    duplicates are still reported.
+    """
     # Allowlist: framework entry points / duplicate `main`-style is fine.
     allowlist = set()
     locations: dict[str, list[tuple[str, int]]] = defaultdict(list)
@@ -498,6 +580,18 @@ def check_duplicate_classes(
     out: list[Violation] = []
     for name, locs in locations.items():
         if name in allowlist or len(locs) < 2:
+            continue
+        v1_locs = [
+            (f, ln) for f, ln in locs if f.replace("\\", "/").startswith(V1_PATH_PREFIX)
+        ]
+        non_v1_locs = [
+            (f, ln)
+            for f, ln in locs
+            if not f.replace("\\", "/").startswith(V1_PATH_PREFIX)
+        ]
+        # v1<->v2 cross-pair: exactly one v1 occurrence + one or more outside.
+        # Drop entirely (the only "duplicates" are between v1 and v2 — by design).
+        if len(v1_locs) == 1 and non_v1_locs:
             continue
         # report each duplicate site; baseline keys on (check, file, name)
         locs_str = ", ".join(f"{f}:{ln}" for f, ln in locs)
@@ -553,6 +647,8 @@ def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
         out.extend(check_exception_message(tree, rel))
     if "isinstance-tuple" in enabled:
         out.extend(check_isinstance_tuple(tree, rel))
+    if "v1-import-leak" in enabled:
+        out.extend(check_v1_import_leak(tree, rel))
     return out
 
 

@@ -169,8 +169,6 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
-from aiperf.config.v1 import ServiceConfig, UserConfig
-from aiperf.config.v1.converter import convert_user_to_aiperf
 from aiperf.config.zmq import (
     BaseZMQCommunicationConfig,
     BaseZMQProxyConfig,
@@ -253,7 +251,6 @@ __all__ = [
     "SequenceDistributionEntry",
     "ServerMetricsConfig",
     "ServerMetricsDiscoveryConfig",
-    "ServiceConfig",
     "ServiceDefaults",
     "SweepConfig",
     "SweepVariation",
@@ -265,7 +262,6 @@ __all__ = [
     "TokenizerConfig",
     "TokenizerOverride",
     "UserCentricPhase",
-    "UserConfig",
     "VIDEO_AUDIO_CODEC_MAP",
     "VideoAudioConfig",
     "VideoConfig",
@@ -279,7 +275,6 @@ __all__ = [
     "build_comm_config",
     "build_default_resolver_chain",
     "coerce_value",
-    "convert_user_to_aiperf",
     "dump_config",
     "load_benchmark_plan",
     "load_config",
