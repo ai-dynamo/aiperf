@@ -59,7 +59,7 @@ datasets:
 
 phases:
   # Warmup with shorter contexts
-  warmup:
+  - name: warmup
     type: concurrency
     dataset: mixed_context
     excludeFromResults: true
@@ -68,7 +68,7 @@ phases:
     prefillConcurrency: 2
 
   # Mixed context test
-  mixed_context_test:
+  - name: mixed_context_test
     type: poisson
     dataset: mixed_context
     requests: 500
@@ -80,7 +80,7 @@ phases:
     gracePeriod: 300
 
   # 32K dedicated test
-  long_32k_test:
+  - name: long_32k_test
     type: constant
     dataset: long_32k
     requests: 100

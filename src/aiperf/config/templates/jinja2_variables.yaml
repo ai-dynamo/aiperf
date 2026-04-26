@@ -62,14 +62,14 @@ datasets:
         stddev: "{{ osl_target // 5 }}"
 
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     dataset: warmup
     requests: "{{ base_concurrency * 5 }}"
     concurrency: "{{ base_concurrency // 2 }}"
     excludeFromResults: true
 
-  ramp_up:
+  - name: ramp_up
     type: poisson
     dataset: profiling
     rate: "{{ target_rate // 2 }}"
@@ -79,7 +79,7 @@ phases:
     seamless: true
     gracePeriod: 30
 
-  steady_state:
+  - name: steady_state
     type: gamma
     dataset: profiling
     rate: "{{ target_rate }}"

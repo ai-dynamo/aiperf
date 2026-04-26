@@ -41,14 +41,14 @@ dataset:
 
 phases:
   # Warmup
-  warmup:
+  - name: warmup
     type: concurrency
     excludeFromResults: true
     requests: 100
     concurrency: 16
 
   # Goodput measurement at low load
-  low_load:
+  - name: low_load
     type: poisson
     duration: 120
     rate: 10.0
@@ -57,7 +57,7 @@ phases:
     gracePeriod: 60
 
   # Goodput measurement at medium load
-  medium_load:
+  - name: medium_load
     type: poisson
     duration: 120
     rate: 30.0
@@ -66,7 +66,7 @@ phases:
     gracePeriod: 60
 
   # Goodput measurement at high load
-  high_load:
+  - name: high_load
     type: poisson
     duration: 120
     rate: 50.0

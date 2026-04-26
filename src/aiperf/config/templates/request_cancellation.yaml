@@ -43,7 +43,7 @@ dataset:
     osl: {mean: 512, stddev: 100}  # Long output gives cancellation time to trigger
 
 phases:
-  baseline:
+  - name: baseline
     type: poisson
     requests: 500
     concurrency: 32
@@ -52,7 +52,7 @@ phases:
     gracePeriod: 60
 
   # Simulates users abandoning slow requests
-  cancel_10_percent:
+  - name: cancel_10_percent
     type: poisson
     requests: 500
     concurrency: 32
@@ -65,7 +65,7 @@ phases:
     gracePeriod: 60
 
   # Simulates aggressive load balancer or client timeout
-  cancel_25_percent_immediate:
+  - name: cancel_25_percent_immediate
     type: poisson
     requests: 500
     concurrency: 32

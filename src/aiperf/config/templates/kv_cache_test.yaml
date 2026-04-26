@@ -66,7 +66,7 @@ datasets:
       userContextLength: 256    # Unique 256-token context per session
 
 phases:
-  prefix_pool_test:
+  - name: prefix_pool_test
     type: user_centric
     dataset: prefix_pool
     duration: 120
@@ -74,7 +74,7 @@ phases:
     rate: 2.0         # 2 QPS total (each user sends ~0.067 QPS)
     gracePeriod: 60
 
-  system_context_test:
+  - name: system_context_test
     type: user_centric
     dataset: system_context
     duration: 120

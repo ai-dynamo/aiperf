@@ -45,13 +45,13 @@ datasets:
       osl: {mean: 128, stddev: 25}
 
 phases:
-  warmup:
+  - name: warmup
     type: concurrency
     requests: 50
     concurrency: 8
     excludeFromResults: true
 
-  profiling:
+  - name: profiling
     type: poisson
     rate: 20.0  # Overridden by sweep
     duration: 120

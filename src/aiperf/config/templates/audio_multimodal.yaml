@@ -60,7 +60,7 @@ datasets:
       channels: 1
 
 phases:
-  short_audio_test:
+  - name: short_audio_test
     type: poisson
     dataset: short_audio
     requests: 500
@@ -69,7 +69,7 @@ phases:
     duration: 300
     gracePeriod: 120
 
-  long_audio_test:
+  - name: long_audio_test
     type: poisson
     dataset: long_audio
     requests: 200

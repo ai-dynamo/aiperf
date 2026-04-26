@@ -57,14 +57,14 @@ datasets:
       format: jpeg
 
 phases:
-  single_image:
+  - name: single_image
     type: poisson
     dataset: vision_test
     requests: 500
     concurrency: 16
     rate: 10.0
 
-  multi_image:
+  - name: multi_image
     type: poisson
     dataset: multi_image_test
     requests: 200
