@@ -215,6 +215,13 @@ h1, h2, h3, h4 {
   font-style: italic;
 }
 
+/* ───── Chart wrapper (v2 reskin) ───── */
+.chart-box {
+  position: relative;
+  height: 260px;
+}
+.chart-box canvas { display: block; width: 100% !important; height: 100% !important; }
+
 /* Scrollbars */
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }

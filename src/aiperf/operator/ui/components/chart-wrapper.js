@@ -83,7 +83,7 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
   }, [options]);
 
   return html`
-    <div class="chart-container" style=${'height: ' + height + 'px'}>
+    <div class="card chart-box" style=${'height: ' + height + 'px'}>
       <canvas ref=${canvasRef} />
     </div>
   `;
