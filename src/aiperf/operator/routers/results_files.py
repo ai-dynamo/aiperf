@@ -73,7 +73,8 @@ async def _build_job_bundle(job_dir: Path) -> bytes:
             for f in files:
                 arcname = _display_name(f)
                 if f.suffix == ".zst":
-                    payload = dctx.decompress(f.read_bytes())
+                    with f.open("rb") as fh, dctx.stream_reader(fh) as reader:
+                        payload = reader.read()
                 else:
                     payload = f.read_bytes()
                 zf.writestr(arcname, payload)
