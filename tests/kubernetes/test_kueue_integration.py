@@ -54,13 +54,14 @@ def kube_config() -> AIPerfConfig:
     return AIPerfConfig(
         models=["test-model"],
         endpoint={"urls": ["http://llm-server:8000"]},
-        datasets={
-            "default": {
+        datasets=[
+            {
+                "name": "default",
                 "type": "synthetic",
                 "entries": 10,
                 "prompts": {"isl": 32, "osl": 16},
             }
-        },
+        ],
         phases=[
             {
                 "name": "default",
@@ -119,13 +120,14 @@ def full_spec_with_scheduling() -> dict[str, Any]:
             "endpoint": {
                 "urls": ["http://api.example.com"],
             },
-            "datasets": {
-                "default": {
+            "datasets": [
+                {
+                    "name": "default",
                     "type": "synthetic",
                     "entries": 10,
                     "prompts": {"isl": 32, "osl": 16},
                 }
-            },
+            ],
             "phases": [
                 {
                     "name": "default",
@@ -657,13 +659,14 @@ class TestKueueOperatorFlow:
             "benchmark": {
                 "models": ["test"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {
-                    "default": {
+                "datasets": [
+                    {
+                        "name": "default",
                         "type": "synthetic",
                         "entries": 10,
                         "prompts": {"isl": 32, "osl": 16},
                     }
-                },
+                ],
                 "phases": [
                     {
                         "name": "default",

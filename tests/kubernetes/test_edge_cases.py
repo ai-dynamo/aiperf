@@ -109,13 +109,14 @@ class TestConfigValidation:
         config = AIPerfConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
+            datasets=[
+                {
+                    "name": "default",
                     "type": "synthetic",
                     "entries": 50,
                     "prompts": {"isl": 128, "osl": 64},
                 }
-            },
+            ],
             phases=[
                 {
                     "name": "default",
@@ -145,13 +146,14 @@ class TestConfigValidation:
         config = AIPerfConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
+            datasets=[
+                {
+                    "name": "default",
                     "type": "synthetic",
                     "entries": 10,
                     "prompts": {"isl": 32, "osl": 16},
                 }
-            },
+            ],
             phases=[
                 {
                     "name": "default",

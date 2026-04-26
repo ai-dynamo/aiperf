@@ -92,13 +92,14 @@ class AIPerfJobConfig:
         return {
             "models": {"items": [{"name": self.model_name}]},
             "endpoint": {"urls": [self.endpoint_url]},
-            "datasets": {
-                "main": {
+            "datasets": [
+                {
+                    "name": "main",
                     "type": "synthetic",
                     "entries": max(self.request_count or 100, 10),
                     "prompts": {"isl": {"mean": 550}},
                 },
-            },
+            ],
             "phases": load,
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
