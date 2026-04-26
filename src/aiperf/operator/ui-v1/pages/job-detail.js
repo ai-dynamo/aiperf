@@ -429,8 +429,8 @@ function SLACompliance({ results, summary }) {
   if (errorRate != null) {
     checks.push({
       label: 'Error rate < 1%',
-      pass: errorRate < 1,
-      value: `${fmtNumber(errorRate, 2)}%`,
+      pass: errorRate < 0.01,
+      value: `${fmtNumber(errorRate * 100, 2)}%`,
     });
   }
 
@@ -458,8 +458,8 @@ function SLACompliance({ results, summary }) {
 }
 
 // Job Configuration Section
-function JobConfigSection({ config }) {
-  const [expanded, setExpanded] = useState(false);
+function JobConfigSection({ config, namespace, name }) {
+  const [showSpec, setShowSpec] = useState(false);
 
   if (!config) return null;
 
@@ -516,12 +516,13 @@ function JobConfigSection({ config }) {
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
-      <div
-        onclick=${() => setExpanded(e => !e)}
-        style=${'display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none'}
-      >
+      <div style=${'display: flex; align-items: center; justify-content: space-between'}>
         <div class="card-title" style="margin: 0">Job Configuration</div>
-        <span class="text-dim" style="font-size: var(--font-size-xs)">${expanded ? '\u25B2 Collapse' : '\u25BC Expand'}</span>
+        <button
+          onclick=${() => setShowSpec(true)}
+          data-testid="job-config-view-spec"
+          style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
+        >View YAML · ${config.source ?? 'spec'}</button>
       </div>
 
       ${summaryItems.length > 0 && html`
@@ -535,13 +536,17 @@ function JobConfigSection({ config }) {
         </div>
       `}
 
-      ${expanded && html`
-        <div style="margin-top: var(--space-4)">
-          <div style=${'font-size: var(--font-size-xs); font-weight: 600; color: ' + palette.overlay1 + '; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--space-2)'}>Full Spec (${config.source ?? 'unknown'})</div>
-          <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text + '; background: ' + palette.base + '; padding: var(--space-3); border-radius: var(--radius-sm); max-height: 400px; overflow: auto'}>
-            ${JSON.stringify(spec, null, 2)}
-          </pre>
-        </div>
+      ${showSpec && html`
+        <${SpecViewerModal}
+          filename=${(name ?? 'aiperfjob') + '.yaml'}
+          content=${serializeYaml({
+            apiVersion: 'aiperf.nvidia.com/v1alpha1',
+            kind: 'AIPerfJob',
+            metadata: { name: name ?? 'aiperfjob', namespace: namespace ?? 'default' },
+            spec,
+          }) + '\n'}
+          onClose=${() => setShowSpec(false)}
+        />
       `}
     </div>
   `;
@@ -800,6 +805,164 @@ function FileViewerModal({ filename, url, onClose }) {
       <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text + '; tab-size: 4'}>${plain}</pre>
     `;
   }
+
+  return html`
+    <${ModalChrome}
+      filename=${filename}
+      onCopy=${handleCopy}
+      onDownload=${handleDownload}
+      onClose=${onClose}
+      copyLabel=${copyLabel}
+    >
+      ${body}
+    </${ModalChrome}>
+  `;
+}
+
+// Minimal YAML emitter for AIPerfJob CR specs. Handles strings, numbers,
+// bools, null, lists, objects. Quotes strings that contain YAML-significant
+// characters; not a full emitter.
+function serializeYaml(obj, indent = 0) {
+  const pad = ' '.repeat(indent);
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') {
+    if (obj === '') return "''";
+    if (/^[\w./:@\-+]+$/.test(obj) && !/^(true|false|null|~)$/i.test(obj) && !/^-?\d+(\.\d+)?$/.test(obj)) {
+      return obj;
+    }
+    return "'" + obj.replace(/'/g, "''") + "'";
+  }
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    return obj.map(item => {
+      if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+        const body = serializeYaml(item, indent + 2);
+        const lines = body.split('\n');
+        const first = lines[0].trimStart();
+        const rest = lines.slice(1).join('\n');
+        return `${pad}- ${first}${rest ? '\n' + rest : ''}`;
+      }
+      return `${pad}- ${serializeYaml(item, indent + 2).trimStart()}`;
+    }).join('\n');
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    return keys.map(k => {
+      const v = obj[k];
+      if (v !== null && typeof v === 'object') {
+        const isEmpty = Array.isArray(v) ? v.length === 0 : Object.keys(v).length === 0;
+        if (isEmpty) return `${pad}${k}: ${Array.isArray(v) ? '[]' : '{}'}`;
+        return `${pad}${k}:\n${serializeYaml(v, indent + 2)}`;
+      }
+      return `${pad}${k}: ${serializeYaml(v, indent + 2)}`;
+    }).join('\n');
+  }
+  return String(obj);
+}
+
+function colorYamlScalar(s) {
+  if (!s) return [];
+  if (/^(true|false)$/.test(s)) return [{ text: s, color: palette.blue }];
+  if (/^(null|~)$/.test(s)) return [{ text: s, color: palette.overlay0 }];
+  if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) return [{ text: s, color: palette.peach }];
+  if (s === '[]' || s === '{}') return [{ text: s, color: null }];
+  // Strings (quoted or unquoted) — our emitter never emits flow sequences
+  // containing scalars, so any leftover scalar is a string value.
+  return [{ text: s, color: palette.green }];
+}
+
+function findYamlCommentStart(line) {
+  // `#` only starts a comment when not inside a quoted string and preceded
+  // by whitespace or start-of-line.
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(line[i - 1]))) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function syntaxHighlightYaml(text) {
+  // Line-oriented tokenizer. Returns the same {text, color} shape as
+  // syntaxHighlight so the rendering loop is symmetric.
+  const tokens = [];
+  const lines = text.split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const commentIdx = findYamlCommentStart(line);
+    const code = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
+    const comment = commentIdx >= 0 ? line.slice(commentIdx) : '';
+
+    const m = code.match(/^(\s*)(- +)?(.*)$/);
+    const indent = m[1];
+    const dash = m[2] || '';
+    const rest = m[3];
+    if (indent) tokens.push({ text: indent, color: null });
+    if (dash) tokens.push({ text: dash, color: null });
+
+    const kv = rest.match(/^([^:\s][^:]*?)(:)(\s*)(.*)$/);
+    if (kv) {
+      tokens.push({ text: kv[1], color: palette.mauve });
+      tokens.push({ text: kv[2], color: null });
+      if (kv[3]) tokens.push({ text: kv[3], color: null });
+      if (kv[4]) tokens.push(...colorYamlScalar(kv[4]));
+    } else if (rest) {
+      tokens.push(...colorYamlScalar(rest));
+    }
+
+    if (comment) tokens.push({ text: comment, color: palette.overlay0 });
+    if (li < lines.length - 1) tokens.push({ text: '\n', color: null });
+  }
+  return tokens;
+}
+
+// Spec viewer modal: in-memory YAML content (no URL fetch). Mirrors
+// FileViewerModal's chrome but owns its own Escape listener so it's
+// self-contained — JobConfigSection state is local to that component.
+function SpecViewerModal({ filename, content, onClose }) {
+  const [copyLabel, setCopyLabel] = useState('Copy');
+
+  useEffect(() => {
+    function onKeyDown(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  function handleDownload() {
+    const blob = new Blob([content], { type: 'application/yaml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCopy() {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopyLabel('Copied!');
+      setTimeout(() => setCopyLabel('Copy'), 2000);
+    });
+  }
+
+  const tokens = syntaxHighlightYaml(content);
+  const body = html`
+    <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text}>
+      ${tokens.map((t, i) =>
+        t.color
+          ? html`<span key=${i} style=${'color: ' + t.color}>${t.text}</span>`
+          : t.text
+      )}
+    </pre>
+  `;
 
   return html`
     <${ModalChrome}
@@ -1294,8 +1457,8 @@ export function JobDetail({ namespace, name }) {
         // Append to throughput chart
         const summary = extractSummary(data);
         const tps =
-          summary?.throughput_rps ??
-          data?.status?.metrics?.request_throughput?.avg ??
+          summary?.request_throughput?.avg ??
+          data?.status?.liveMetrics?.metrics?.request_throughput?.avg ??
           null;
 
         if (tps != null) {
@@ -1444,18 +1607,26 @@ export function JobDetail({ namespace, name }) {
   const isRunning = phase.toLowerCase() === 'running';
   const isCompleted = phase.toLowerCase() === 'completed' || phase.toLowerCase() === 'succeeded';
 
-  // Extract metrics from status.summary (completed) or status.liveSummary (running)
-  const summary = status.liveSummary ?? status.summary ?? {};
-  const throughput = summary.throughput_rps ?? info.throughputRps ?? null;
-  const ttftAvg = summary.ttft_avg_ms ?? null;
-  const latP99 = summary.latency_p99_ms ?? info.latencyP99Ms ?? null;
+  // status.summary (completed) and status.liveSummary (running) carry the same
+  // curated nested ``{tag: {avg, p50, p99, ...}}`` projection of the AIPerf
+  // metrics dict. status.results.metrics and status.liveMetrics.metrics are the
+  // unfiltered superset; they fall in as fallbacks when summary is empty.
+  const summary =
+    status.results?.metrics ??
+    status.liveMetrics?.metrics ??
+    status.summary ??
+    status.liveSummary ??
+    {};
+  const throughput = summary.request_throughput?.avg ?? info.throughputRps ?? null;
+  const ttftAvg = summary.time_to_first_token?.avg ?? null;
+  const latP99 = summary.request_latency?.p99 ?? info.latencyP99Ms ?? null;
   const errorRate = summary.error_rate ?? null;
-  const errorCount = errorRate != null ? fmtNumber(errorRate, 1) + '%' : null;
+  const errorCount = errorRate != null ? fmtNumber(errorRate * 100, 1) + '%' : null;
 
-  // Metrics from results (nested under .metrics in the CR status)
-  const rawResults = status.results ?? null;
-  const results = rawResults?.metrics ?? rawResults ?? null;
-  const outputTokenThroughput = results?.output_token_throughput?.avg ?? summary.output_token_throughput_tps ?? null;
+  // Convenience alias: results = summary so percentile-aware components work
+  // unchanged whether the job is running (liveMetrics) or completed (results).
+  const results = summary;
+  const outputTokenThroughput = summary.output_token_throughput?.avg ?? null;
 
   const conditions = status.conditions ?? [];
   // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array
@@ -1556,6 +1727,16 @@ export function JobDetail({ namespace, name }) {
               ${namespace} · ${model}
               ${endpointUrl && html` · <span style="color: ${palette.blue}">${endpointUrl}</span>`}
             </div>
+            ${info.sweepName && html`
+              <p class="text-dim" data-testid="job-detail-sweep-link" style="margin: var(--space-1) 0 0 0; font-size: var(--font-size-sm)">
+                Part of sweep
+                <a href=${`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
+                   onclick=${e => { e.preventDefault(); navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`); }}>
+                  ${info.sweepName}
+                </a>
+                ${info.variationLabel && html` — variation ${info.variationLabel}`}
+              </p>
+            `}
           </div>
           ${isRunning && html`
             <button
@@ -1664,7 +1845,7 @@ export function JobDetail({ namespace, name }) {
       ${isCompleted && serverMetrics && html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`}
 
       <!-- Job Configuration (always shown if available) -->
-      ${jobConfig && html`<${JobConfigSection} config=${jobConfig} />`}
+      ${jobConfig && html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`}
 
       <!-- Feature 8: Run Metadata (completed only) -->
       ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
