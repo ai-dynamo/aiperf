@@ -87,6 +87,12 @@ class TestMetricResultsProcessor:
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
         """Test list-valued record metrics use the default exact aggregator."""
+        # Synthetic tag isn't in the real registry; raising MetricTypeError
+        # is the contract the production builder relies on to fall back to
+        # the global default mode (EXACT here).
+        from aiperf.common.exceptions import MetricTypeError
+
+        mock_metric_registry.get_class.side_effect = MetricTypeError("test_record")
         processor = MetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 

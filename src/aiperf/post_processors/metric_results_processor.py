@@ -22,7 +22,7 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.list_metric_aggregation import (
     ListMetricAggregator,
-    build_list_metric_aggregator,
+    build_list_metric_aggregator_for_tag,
 )
 from aiperf.metrics.metric_dicts import (
     MetricArray,
@@ -136,8 +136,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         if isinstance(value, list):
             existing_values = results_dict.get(tag)
             if existing_values is None:
-                existing_values = build_list_metric_aggregator(
-                    self._list_metric_aggregation_mode
+                existing_values = build_list_metric_aggregator_for_tag(
+                    tag,
+                    self._list_metric_aggregation_mode,
                 )
                 results_dict[tag] = existing_values
             if not isinstance(existing_values, ListMetricAggregator):

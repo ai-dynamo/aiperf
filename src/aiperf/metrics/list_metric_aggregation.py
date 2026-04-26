@@ -20,6 +20,7 @@ __all__ = [
     "ListMetricAggregator",
     "TDigestListMetricAggregator",
     "build_list_metric_aggregator",
+    "build_list_metric_aggregator_for_tag",
 ]
 
 
@@ -165,3 +166,36 @@ def build_list_metric_aggregator(
     if mode == ListMetricAggregationMode.TDIGEST:
         return TDigestListMetricAggregator()
     raise ValueError(f"Unsupported list metric aggregation mode: {mode}")
+
+
+def build_list_metric_aggregator_for_tag(
+    tag: MetricTagT,
+    default_mode: ListMetricAggregationMode,
+) -> ListMetricAggregator:
+    """Build a list metric aggregator, honouring the metric's per-class
+    ``MetricFlags.AGGREGATE_TDIGEST`` override.
+
+    Metrics that legitimately stay as ``list[...]`` per record (today only
+    ``inter_chunk_latency``, which contributes one sample per inter-chunk
+    gap per request) can request t-digest aggregation regardless of the
+    global default — exact storage at ramp scale is multi-GB, t-digest is
+    a few KB. Other list-valued metrics (none currently, but room to grow)
+    follow the global default.
+
+    Tags not registered in :class:`MetricRegistry` (e.g. synthetic tags used
+    in tests) silently fall back to the default mode.
+    """
+    # Local import to avoid circular dependency: metric_registry imports
+    # base_metric → list_metric_aggregation indirectly via this module's
+    # peers. Importing at call time keeps module load order intact.
+    from aiperf.common.enums import MetricFlags  # noqa: PLC0415
+    from aiperf.common.exceptions import MetricTypeError  # noqa: PLC0415
+    from aiperf.metrics.metric_registry import MetricRegistry  # noqa: PLC0415
+
+    try:
+        metric_class = MetricRegistry.get_class(tag)
+    except MetricTypeError:
+        return build_list_metric_aggregator(default_mode)
+    if metric_class.has_flags(MetricFlags.AGGREGATE_TDIGEST):
+        return TDigestListMetricAggregator()
+    return build_list_metric_aggregator(default_mode)
