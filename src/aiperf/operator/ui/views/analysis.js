@@ -227,8 +227,8 @@ export function Analysis() {
       },
     },
     scales: {
-      x: { title: { display: true, text: axis.xl.toUpperCase(), color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' } },
-      y: { title: { display: true, text: axis.yl.toUpperCase(), color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' } },
+      x: { title: { display: true, text: axis.xl, color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+      y: { title: { display: true, text: axis.yl, color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
     },
   });
   const overlayOpts = applyChartTheme({
@@ -241,38 +241,29 @@ export function Analysis() {
       },
     },
     scales: {
-      x: { title: { display: true, text: 'STAT', color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' } },
-      y: { title: { display: true, text: axis.yl.toUpperCase(), color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' } },
+      x: { title: { display: true, text: 'Stat', color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+      y: { title: { display: true, text: axis.yl, color: 'var(--paper-faint)', font: { size: 10, weight: '700' } }, grid: { color: 'var(--edge-1)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
     },
   });
 
   return html`
     <div class="v-analysis" data-testid="page-leaderboard">
-      <header class="v-head">
-        <div class="v-head-title">
-          <span class="v-head-caret">▸</span>
-          <h1>COMPARE</h1>
-        </div>
-        <div class="v-head-meta">PARETO · LEADERBOARD · OVERLAY</div>
-      </header>
-
-      ${err && html`<div class="v-analysis-err">FETCH FAILED — ${err}</div>`}
+      ${err && html`<div class="v-analysis-err">Fetch failed — ${err}</div>`}
 
       <div class="v-analysis-grid">
         <section class="v-analysis-chart">
-          <header class="slab-head slab-head--flush">
+          <div class="v-analysis-toolbar">
             <div class="slab-head-title">
-              <span class="slab-head-caret">▸</span>
-              ${overlayActive ? `OVERLAY · ${axis.yl}` : `PARETO · ${axis.xl} × ${axis.yl}`}
+              ${overlayActive ? `Overlay · ${axis.yl}` : `Pareto · ${axis.xl} × ${axis.yl}`}
             </div>
             <div class="v-analysis-axes">
               ${AXES.map(a => html`
-                <button key=${a.key} class=${axes === a.key ? 'is-active' : ''} onclick=${() => setAxes(a.key)}>${a.key.replace('_', '×').toUpperCase()}</button>
+                <button key=${a.key} class=${axes === a.key ? 'is-active' : ''} onclick=${() => setAxes(a.key)}>${a.key.replace('_', '×')}</button>
               `)}
             </div>
-          </header>
+          </div>
           ${allClusterKeys.length > 0 && html`
-            <div class="v-analysis-axes" style=${{ padding: '8px 12px', borderBottom: '1px solid var(--edge-1)', gap: '6px', flexWrap: 'wrap' }}>
+            <div class="v-analysis-toolbar">
               ${allClusterKeys.map(ck => {
                 const grp = clusterGroups[ck];
                 const isSingleton = grp.points.length < 2;
@@ -295,16 +286,16 @@ export function Analysis() {
             </div>
           `}
           ${selected.size > 0 && html`
-            <div class="v-analysis-axes" style=${{ padding: '8px 12px', borderBottom: '1px solid var(--edge-1)', gap: '8px' }}>
+            <div class="v-analysis-toolbar">
               <button
                 class=${overlayActive ? 'is-active' : ''}
                 disabled=${!overlayRenderable}
                 onclick=${() => setOverlayMode(m => !m)}
                 title=${overlayRenderable ? '' : 'Need at least 2 selected runs with renderable data'}
-              >${overlayActive ? 'SHOW PARETO' : `OVERLAY ${selected.size} RUNS`}</button>
-              <button onclick=${clearSelection}>CLEAR SELECTION</button>
+              >${overlayActive ? 'Show pareto' : `Overlay ${selected.size} runs`}</button>
+              <button onclick=${clearSelection}>Clear selection</button>
               ${selected.size >= 2 && !overlayRenderable && html`
-                <span class="cond cond--idle" style=${{ marginLeft: '8px' }}>INSUFFICIENT SERIES DATA</span>
+                <span class="cond cond--idle" style=${{ marginLeft: '8px' }}>Insufficient series data</span>
               `}
             </div>
           `}
@@ -312,19 +303,16 @@ export function Analysis() {
             ${overlayActive
               ? html`<${ChartWrapper} type="line" data=${{ labels: OVERLAY_STATS, datasets: overlayDatasets }} options=${overlayOpts} height=${520} />`
               : datasets.length === 0
-                ? html`<div class="slab-placeholder"><i class="ph ph-chart-scatter"></i>AWAITING DATA</div>`
+                ? html`<div class="slab-placeholder"><i class="ph ph-chart-scatter"></i>Awaiting data</div>`
                 : html`<${ChartWrapper} type="scatter" data=${{ datasets }} options=${chartOpts} height=${520} />`
             }
           </div>
         </section>
 
         <aside class="v-analysis-board">
-          <header class="slab-head slab-head--flush">
-            <div class="slab-head-title">
-              <span class="slab-head-caret">▸</span>
-              LEADERBOARD
-            </div>
-          </header>
+          <div class="v-analysis-toolbar">
+            <div class="slab-head-title">Leaderboard</div>
+          </div>
           <div class="v-analysis-board-controls">
             <select value=${board.metric} onchange=${e => setBoard(b => ({ ...b, metric: e.target.value }))}>
               ${METRICS.map(m => html`<option key=${m.value} value=${m.value}>${m.label}</option>`)}
@@ -335,7 +323,7 @@ export function Analysis() {
           </div>
           <ol class="v-analysis-board-list">
             ${entries.length === 0
-              ? html`<li class="v-analysis-board-empty">NO ENTRIES</li>`
+              ? html`<li class="v-analysis-board-empty">No entries</li>`
               : entries.map((e, i) => {
                   const isSel = selected.has(jobKey(e.namespace, e.job_id));
                   return html`

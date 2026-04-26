@@ -140,7 +140,7 @@ export function Compare({ ns, name, epochA, epochB }) {
           <i class="ph ph-arrow-left"></i>
         </button>
         <div>
-          <div class="compare-head-eyebrow">COMPARE · ${ns} / ${name}</div>
+          <div class="compare-head-eyebrow">Compare · ${ns} / ${name}</div>
           <h1 class="compare-head-name">Run diff</h1>
         </div>
       </div>
