@@ -48,12 +48,12 @@ spec:
           isl: {mean: "{{ isl }}", stddev: 0}
           osl: {mean: "{{ osl }}", stddev: 0}
     phases:
-      warmup:
+      - name: warmup
         type: concurrency
         concurrency: "{{ total_concurrency }}"
         requests: "{{ total_concurrency }}"
         exclude_from_results: true
-      profiling:
+      - name: profiling
         type: concurrency
         concurrency: "{{ total_concurrency }}"
         requests: "{{ total_concurrency * 10 }}"

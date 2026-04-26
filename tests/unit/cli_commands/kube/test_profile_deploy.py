@@ -89,9 +89,8 @@ class TestGenerateBenchmarkName:
         config = MagicMock()
         config.get_model_names.return_value = [model]
         config.endpoint.type = endpoint_type
-        config.phases.values.return_value = [phase]
-        # first phase iteration uses values() iterator
-        config.phases.__iter__ = lambda self_: iter(["default"])
+        # phases is now list[PhaseConfig]; first-phase access is config.phases[0]
+        config.phases = [phase]
         return config
 
     def test_basic_name(self) -> None:

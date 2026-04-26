@@ -22,15 +22,10 @@ _MINIMAL_CONFIG_KWARGS = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": {
-        "warmup": {
-            "type": "concurrency",
+    "phases": [{"name": "warmup", "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
-            "exclude_from_results": True,
-        },
-        "default": {"type": "concurrency", "requests": 100, "concurrency": 1},
-    },
+            "exclude_from_results": True,}, {"name": "default", "type": "concurrency", "requests": 100, "concurrency": 1}],
     "random_seed": 42,
 }
 
@@ -42,7 +37,7 @@ def _make_config(**overrides) -> BenchmarkConfig:
 
 def _has_warmup_phase(config: BenchmarkConfig) -> bool:
     """Return True if config has any phase with exclude_from_results=True."""
-    return any(p.exclude_from_results for p in config.phases.values())
+    return any(p.exclude_from_results for p in config.phases)
 
 
 class TestFixedTrialsStrategy:
@@ -208,7 +203,7 @@ class TestFixedTrialsStrategy:
         # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first_config)
-        assert "warmup" in first_config.phases
+        assert any(p.name == "warmup" for p in first_config.phases)
 
         results = [
             RunResult(
@@ -222,11 +217,11 @@ class TestFixedTrialsStrategy:
         # Second run should have warmup disabled
         second_config = strategy.get_next_config(config, results)
         assert not _has_warmup_phase(second_config)
-        assert "warmup" not in second_config.phases
+        assert not any(p.name == "warmup" for p in second_config.phases)
 
         # Original config should be unchanged
         assert _has_warmup_phase(config)
-        assert "warmup" in config.phases
+        assert any(p.name == "warmup" for p in config.phases)
 
     def test_disable_warmup_after_first_disabled(self):
         """Test that warmup is preserved for all runs when disable_warmup_after_first=False."""
@@ -237,7 +232,7 @@ class TestFixedTrialsStrategy:
         # First run should preserve warmup
         first_config = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first_config)
-        assert "warmup" in first_config.phases
+        assert any(p.name == "warmup" for p in first_config.phases)
 
         results = [
             RunResult(
@@ -251,7 +246,7 @@ class TestFixedTrialsStrategy:
         # Second run should STILL have warmup (not disabled)
         second_config = strategy.get_next_config(config, results)
         assert _has_warmup_phase(second_config)
-        assert "warmup" in second_config.phases
+        assert any(p.name == "warmup" for p in second_config.phases)
 
     def test_disable_warmup_creates_deep_copy(self):
         """Test that disabling warmup creates a deep copy and doesn't modify original."""
@@ -274,7 +269,7 @@ class TestFixedTrialsStrategy:
         assert not _has_warmup_phase(second_config)
 
         assert _has_warmup_phase(config)
-        assert "warmup" in config.phases
+        assert any(p.name == "warmup" for p in config.phases)
 
     def test_get_run_path(self):
         """Test get_run_path returns correct path structure."""
@@ -481,17 +476,17 @@ class TestAdaptiveStrategy:
         # First run: warmup preserved
         first = strategy.get_next_config(config, [])
         assert _has_warmup_phase(first)
-        assert "warmup" in first.phases
+        assert any(p.name == "warmup" for p in first.phases)
 
         # Second run: warmup disabled
         results = self._make_results(1)
         second = strategy.get_next_config(config, results)
         assert not _has_warmup_phase(second)
-        assert "warmup" not in second.phases
+        assert not any(p.name == "warmup" for p in second.phases)
 
         # Original unchanged
         assert _has_warmup_phase(config)
-        assert "warmup" in config.phases
+        assert any(p.name == "warmup" for p in config.phases)
 
     def test_disable_warmup_after_first_disabled(self):
         """Warmup preserved for all runs when disable_warmup_after_first=False."""
@@ -505,7 +500,7 @@ class TestAdaptiveStrategy:
         results = self._make_results(1)
         second = strategy.get_next_config(config, results)
         assert _has_warmup_phase(second)
-        assert "warmup" in second.phases
+        assert any(p.name == "warmup" for p in second.phases)
 
     def test_config_parity_seed_and_warmup_with_fixed_trials(self):
         """Full config transformation parity between Adaptive and Fixed strategies."""

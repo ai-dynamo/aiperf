@@ -45,13 +45,9 @@ def _valid_doc() -> dict:
                         "prompts": {"isl": 128, "osl": 64},
                     }
                 },
-                "phases": {
-                    "default": {
-                        "type": "concurrency",
+                "phases": [{"name": "default", "type": "concurrency",
                         "concurrency": 1,
-                        "requests": 10,
-                    }
-                },
+                        "requests": 10,}],
             }
         },
     }

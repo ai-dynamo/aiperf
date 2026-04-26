@@ -34,14 +34,10 @@ _BASE = dict(
 def _make_config(phases: dict | None = None) -> AIPerfConfig:
     """Create an AIPerfConfig for timing manager tests."""
     if phases is None:
-        phases = {
-            "profiling": {
-                "type": "poisson",
+        phases = [{"name": "profiling", "type": "poisson",
                 "rate": 10.0,
                 "requests": 100,
-                "concurrency": 10,
-            }
-        }
+                "concurrency": 10,}]
     return AIPerfConfig(**_BASE, phases=phases)
 
 
@@ -92,9 +88,9 @@ class TestTimingManagerDatasetConfiguration:
     async def test_profile_configure_waits_for_dataset_notification(
         self, create_manager, mock_metadata, phase_type
     ) -> None:
-        phases = {"profiling": {"type": phase_type, "requests": 100}}
+        phases = [{"name": "profiling", "type": phase_type, "requests": 100}]
         if phase_type != "fixed_schedule":
-            phases["profiling"]["rate"] = 10.0
+            phases[0]["rate"] = 10.0
         cfg = _make_config(phases=phases)
         mgr = create_manager(cfg)
         mock_engine = MagicMock()
@@ -131,7 +127,7 @@ class TestTimingManagerDatasetConfiguration:
     @pytest.mark.looptime
     async def test_dataset_configuration_timeout(self, create_manager) -> None:
         cfg = _make_config(
-            phases={"profiling": {"type": "fixed_schedule", "requests": 100}}
+            phases=[{"name": "profiling", "type": "fixed_schedule", "requests": 100}]
         )
         mgr = create_manager(cfg)
         with (
@@ -147,7 +143,7 @@ class TestTimingManagerDatasetConfiguration:
         self, create_manager, mock_metadata
     ) -> None:
         cfg = _make_config(
-            phases={"profiling": {"type": "fixed_schedule", "requests": 100}}
+            phases=[{"name": "profiling", "type": "fixed_schedule", "requests": 100}]
         )
         mgr = create_manager(cfg)
         await mgr._on_dataset_configured_notification(

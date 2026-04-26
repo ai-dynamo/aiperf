@@ -63,7 +63,7 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 }
 
 
@@ -136,7 +136,7 @@ def mock_user_config() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
     )
 
 
@@ -157,7 +157,7 @@ def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         artifacts={
             "dir": str(tmp_artifact_dir),
             "raw": True,

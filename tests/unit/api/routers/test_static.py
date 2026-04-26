@@ -130,11 +130,14 @@ class TestDashboardLiveContract:
             f"api_key must be excluded from /api/config (found {ep.get('api_key')!r})"
         )
 
-        # phases is a dict of phase-name -> phase config; every phase has `type`.
-        assert isinstance(cfg["phases"], dict) and cfg["phases"]
-        for phase_name, phase in cfg["phases"].items():
+        # phases is a list of named phase configs; every entry has `type` and `name`.
+        assert isinstance(cfg["phases"], list) and cfg["phases"]
+        for phase in cfg["phases"]:
+            assert "name" in phase, (
+                f"phase {phase!r} missing `name`; renderConfig would skip it"
+            )
             assert "type" in phase, (
-                f"phase {phase_name!r} missing `type`; renderConfig would skip it"
+                f"phase {phase['name']!r} missing `type`; renderConfig would skip it"
             )
 
     def test_dashboard_worker_status_whitelist_closed(

@@ -34,14 +34,10 @@ def make_phase_config(**overrides) -> CreditPhaseConfig:
 def make_config(phases: dict | None = None) -> AIPerfConfig:
     """Create an AIPerfConfig with the given phases."""
     if phases is None:
-        phases = {
-            "profiling": {
-                "type": "poisson",
+        phases = [{"name": "profiling", "type": "poisson",
                 "requests": 100,
                 "rate": 10.0,
-                "concurrency": 10,
-            }
-        }
+                "concurrency": 10,}]
     return AIPerfConfig(**_BASE, phases=phases)
 
 
@@ -146,7 +142,7 @@ class TestTimingConfigFromConfig:
     def test_maps_fixed_schedule_type(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={"profiling": {"type": "fixed_schedule", "requests": 100}}
+                phases=[{"name": "profiling", "type": "fixed_schedule", "requests": 100}]
             )
         )
         profiling = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -155,7 +151,7 @@ class TestTimingConfigFromConfig:
     def test_maps_poisson_type(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={"profiling": {"type": "poisson", "rate": 50.0, "requests": 500}}
+                phases=[{"name": "profiling", "type": "poisson", "rate": 50.0, "requests": 500}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -165,15 +161,11 @@ class TestTimingConfigFromConfig:
     def test_maps_phase_fields(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "poisson",
+                phases=[{"name": "profiling", "type": "poisson",
                         "concurrency": 8,
                         "prefill_concurrency": 4,
                         "rate": 50.0,
-                        "requests": 500,
-                    }
-                }
+                        "requests": 500,}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -187,15 +179,10 @@ class TestTimingConfigFromConfig:
     def test_creates_warmup_from_excluded_phase(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "warmup": {
-                        "type": "concurrency",
+                phases=[{"name": "warmup", "type": "concurrency",
                         "concurrency": 1,
                         "requests": 25,
-                        "exclude_from_results": True,
-                    },
-                    "profiling": {"type": "poisson", "rate": 10.0, "requests": 100},
-                }
+                        "exclude_from_results": True,}, {"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 100}]
             )
         )
         phases = [pc.phase for pc in cfg.phase_configs]
@@ -205,7 +192,7 @@ class TestTimingConfigFromConfig:
     def test_no_warmup_when_no_excluded_phase(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={"profiling": {"type": "poisson", "rate": 10.0, "requests": 100}}
+                phases=[{"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 100}]
             )
         )
         phases = [pc.phase for pc in cfg.phase_configs]
@@ -215,13 +202,9 @@ class TestTimingConfigFromConfig:
     def test_maps_fixed_schedule_auto_offset_false(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "fixed_schedule",
+                phases=[{"name": "profiling", "type": "fixed_schedule",
                         "requests": 100,
-                        "auto_offset": False,
-                    }
-                }
+                        "auto_offset": False,}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -230,13 +213,9 @@ class TestTimingConfigFromConfig:
     def test_maps_fixed_schedule_end_offset(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "fixed_schedule",
+                phases=[{"name": "profiling", "type": "fixed_schedule",
                         "requests": 100,
-                        "end_offset": 8000,
-                    }
-                }
+                        "end_offset": 8000,}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -245,14 +224,10 @@ class TestTimingConfigFromConfig:
     def test_maps_cancellation_from_phase(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "poisson",
+                phases=[{"name": "profiling", "type": "poisson",
                         "rate": 10.0,
                         "requests": 100,
-                        "cancellation": {"rate": 25.0, "delay": 1.5},
-                    }
-                }
+                        "cancellation": {"rate": 25.0, "delay": 1.5},}]
             )
         )
         assert (cfg.request_cancellation.rate, cfg.request_cancellation.delay) == (
@@ -263,14 +238,10 @@ class TestTimingConfigFromConfig:
     def test_maps_user_centric_type(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "user_centric",
+                phases=[{"name": "profiling", "type": "user_centric",
                         "rate": 15.0,
                         "users": 5,
-                        "requests": 100,
-                    }
-                }
+                        "requests": 100,}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -281,13 +252,9 @@ class TestTimingConfigFromConfig:
     def test_maps_sessions(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "poisson",
+                phases=[{"name": "profiling", "type": "poisson",
                         "rate": 10.0,
-                        "sessions": 50,
-                    }
-                }
+                        "sessions": 50,}]
             )
         )
         p = next(pc for pc in cfg.phase_configs if pc.phase == "profiling")
@@ -310,10 +277,10 @@ class TestTimingConfigFromConfig:
             warmup_phase["grace_period"] = grace_period
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "warmup": warmup_phase,
-                    "profiling": {"type": "poisson", "rate": 10.0, "requests": 100},
-                }
+                phases=[
+                    {"name": "warmup", **warmup_phase},
+                    {"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 100},
+                ]
             )
         )
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == "warmup")
@@ -327,13 +294,9 @@ class TestTimingConfigFromConfig:
     def test_maps_concurrency_type(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "concurrency",
+                phases=[{"name": "profiling", "type": "concurrency",
                         "concurrency": 10,
-                        "requests": 100,
-                    }
-                }
+                        "requests": 100,}]
             )
         )
         p = cfg.phase_configs[0]
@@ -344,9 +307,7 @@ class TestTimingConfigFromConfig:
     def test_maps_constant_type(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {"type": "constant", "rate": 10.0, "requests": 100}
-                }
+                phases=[{"name": "profiling", "type": "constant", "rate": 10.0, "requests": 100}]
             )
         )
         p = cfg.phase_configs[0]
@@ -355,14 +316,10 @@ class TestTimingConfigFromConfig:
     def test_maps_gamma_type_with_smoothness(self) -> None:
         cfg = TimingConfig.from_config(
             make_config(
-                phases={
-                    "profiling": {
-                        "type": "gamma",
+                phases=[{"name": "profiling", "type": "gamma",
                         "rate": 10.0,
                         "requests": 100,
-                        "smoothness": 2.5,
-                    }
-                }
+                        "smoothness": 2.5,}]
             )
         )
         p = cfg.phase_configs[0]

@@ -153,7 +153,7 @@ class AIPerfJobSpecConverter:
             config_dict = expand_config_dict(config_dict)
 
         runtime = config_dict.get("runtime", {})
-        phases = config_dict.get("phases", {})
+        phases = config_dict.get("phases", [])
 
         def _int(v: object, default: int = 1) -> int:
             try:
@@ -166,14 +166,16 @@ class AIPerfJobSpecConverter:
             return explicit_workers
 
         # Find max concurrency across all phases.
-        # phases can be a single config (has "type") or named phases (dict of dicts).
-        if "type" in phases:
+        # phases is a list of named phase configs (each a dict with "name" and "type").
+        if isinstance(phases, dict) and "type" in phases:
+            # legacy single-config dict shorthand still understood by normalizer
             concurrency = _int(phases.get("concurrency", 1))
         else:
+            phase_iter = phases if isinstance(phases, list) else []
             concurrency = max(
                 (
                     _int(phase.get("concurrency", 1))
-                    for phase in phases.values()
+                    for phase in phase_iter
                     if isinstance(phase, dict)
                 ),
                 default=1,

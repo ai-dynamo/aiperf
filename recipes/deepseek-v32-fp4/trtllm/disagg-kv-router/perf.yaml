@@ -40,13 +40,13 @@ spec:
         path: /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
         format: mooncake_trace
     phases:
-      warmup:
+      - name: warmup
         type: concurrency
         dataset: warmup
         concurrency: 4
         requests: 10
         exclude_from_results: true
-      replay:
+      - name: replay
         type: fixed_schedule
         dataset: trace
         auto_offset: true

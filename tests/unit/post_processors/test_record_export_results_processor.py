@@ -69,7 +69,7 @@ def user_config_records_export(tmp_artifact_dir: Path) -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         artifacts={
             "dir": str(tmp_artifact_dir),
             "records": ["jsonl"],
@@ -571,9 +571,7 @@ class TestRecordExportResultsProcessorHttpTrace:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             artifacts={
                 "dir": str(tmp_artifact_dir),
                 "records": ["jsonl"],
@@ -891,9 +889,7 @@ class TestRecordExportResultsProcessorPerChunkData:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             artifacts={
                 "dir": str(tmp_artifact_dir),
                 "records": ["jsonl"],

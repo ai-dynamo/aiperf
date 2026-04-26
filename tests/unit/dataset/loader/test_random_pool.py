@@ -407,9 +407,7 @@ class TestRandomPoolBatchSize:
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
             datasets={"default": dataset_config},
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
 
     def test_batch_size_image_produces_correct_image_count(self, default_user_run):

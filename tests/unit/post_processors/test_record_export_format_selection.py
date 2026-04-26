@@ -25,7 +25,7 @@ _MINIMAL_DATASETS = {
         "prompts": {"isl": 128, "osl": 64},
     }
 }
-_MINIMAL_PHASES = {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}}
+_MINIMAL_PHASES = [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}]
 
 
 @pytest.fixture

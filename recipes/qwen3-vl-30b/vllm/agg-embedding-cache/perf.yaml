@@ -29,12 +29,12 @@ spec:
         path: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
         format: single_turn
     phases:
-      warmup:
+      - name: warmup
         type: concurrency
         concurrency: 64
         requests: 3
         exclude_from_results: true
-      profiling:
+      - name: profiling
         type: constant
         rate: 64.0
         concurrency: 64

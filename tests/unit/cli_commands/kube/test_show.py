@@ -28,9 +28,7 @@ def _minimal_cr() -> dict:
                         "prompts": {"isl": 32, "osl": 16},
                     }
                 },
-                "phases": {
-                    "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-                },
+                "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             },
         },
     }
@@ -76,10 +74,10 @@ def test_show_renders_jinja_templates(
         "concurrency_per_gpu": 2,
         "deployment_gpu_count": 16,
     }
-    doc["spec"]["benchmark"]["phases"]["default"]["concurrency"] = (
+    doc["spec"]["benchmark"]["phases"][0]["concurrency"] = (
         "{{ concurrency_per_gpu * deployment_gpu_count }}"
     )
-    doc["spec"]["benchmark"]["phases"]["default"]["requests"] = (
+    doc["spec"]["benchmark"]["phases"][0]["requests"] = (
         "{{ concurrency_per_gpu * deployment_gpu_count * 10 }}"
     )
     path = _write(tmp_path / "job.yaml", doc)
@@ -87,7 +85,8 @@ def test_show_renders_jinja_templates(
     out = _run_show(path, capsys)
     rendered = yaml.safe_load(out)
 
-    phase = rendered["spec"]["benchmark"]["phases"]["default"]
+    phase = rendered["spec"]["benchmark"]["phases"][0]
+    assert phase["name"] == "default"
     assert phase["concurrency"] == 32
     assert phase["requests"] == 320
     assert rendered["spec"]["benchmark"]["variables"] == {
@@ -180,7 +179,7 @@ def test_show_invalid_benchmark_exits_nonzero(tmp_path: Path) -> None:
 
     doc = _minimal_cr()
     # Seamless is only valid on non-first phases; AIPerfConfig rejects it here.
-    doc["spec"]["benchmark"]["phases"]["default"]["seamless"] = True
+    doc["spec"]["benchmark"]["phases"][0]["seamless"] = True
     path = _write(tmp_path / "job.yaml", doc)
 
     with pytest.raises(SystemExit) as exc_info:

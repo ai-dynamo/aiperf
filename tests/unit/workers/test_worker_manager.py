@@ -37,31 +37,19 @@ def _make_config(
     if concurrency is not None:
         # Concurrency mode
         req = request_count or max(concurrency, 10)
-        phases = {
-            "default": {
-                "type": "concurrency",
+        phases = [{"name": "default", "type": "concurrency",
                 "requests": req,
-                "concurrency": concurrency,
-            }
-        }
+                "concurrency": concurrency,}]
     elif request_rate is not None:
         # Request rate mode (no concurrency cap on workers)
-        phases = {
-            "default": {
-                "type": "poisson",
+        phases = [{"name": "default", "type": "poisson",
                 "requests": request_count or 100,
-                "rate": request_rate,
-            }
-        }
+                "rate": request_rate,}]
     else:
         # Default: concurrency of 1
-        phases = {
-            "default": {
-                "type": "concurrency",
+        phases = [{"name": "default", "type": "concurrency",
                 "requests": request_count or 10,
-                "concurrency": 1,
-            }
-        }
+                "concurrency": 1,}]
 
     runtime = {}
     if max_workers is not None:

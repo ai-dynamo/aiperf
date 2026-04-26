@@ -32,7 +32,7 @@ def _minimal(**overrides: object) -> dict:
         "models": ["m"],
         "endpoint": _ENDPOINT,
         "datasets": {"default": _SYNTHETIC_DATASET},
-        "phases": {"default": _CONCURRENCY_PHASE},
+        "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
     }
     base.update(overrides)
     return base
@@ -178,53 +178,57 @@ class TestLoadNormalization:
 
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert "default" in cfg.phases
-        assert cfg.phases["default"].type == "concurrency"
-        assert cfg.phases["default"].duration == 60.0
+        assert any(p.name == "default" for p in cfg.phases)
+        assert next(p for p in cfg.phases if p.name == "default").type == "concurrency"
+        assert next(p for p in cfg.phases if p.name == "default").duration == 60.0
 
     def test_dict_of_phases_passthrough(self) -> None:
-        multi = {
-            "warmup": {
+        multi = [
+            {
+                "name": "warmup",
                 "type": "concurrency",
                 "concurrency": 2,
                 "requests": 10,
                 "exclude_from_results": True,
             },
-            "main": {
+            {
+                "name": "main",
                 "type": "concurrency",
                 "concurrency": 8,
                 "requests": 100,
             },
-        }
+        ]
         cfg = BenchmarkConfig.model_validate(_minimal(phases=multi))
 
-        assert list(cfg.phases.keys()) == ["warmup", "main"]
+        assert [p.name for p in cfg.phases] == ["warmup", "main"]
 
     def test_phase_names_injected(self) -> None:
-        multi = {
-            "ramp_up": {
+        multi = [
+            {
+                "name": "ramp_up",
                 "type": "concurrency",
                 "concurrency": 4,
                 "requests": 50,
                 "exclude_from_results": True,
             },
-            "profiling": {
+            {
+                "name": "profiling",
                 "type": "concurrency",
                 "concurrency": 16,
                 "requests": 200,
             },
-        }
+        ]
         cfg = BenchmarkConfig.model_validate(_minimal(phases=multi))
 
-        assert cfg.phases["ramp_up"].name == "ramp_up"
-        assert cfg.phases["profiling"].name == "profiling"
+        assert next(p for p in cfg.phases if p.name == "ramp_up").name == "ramp_up"
+        assert next(p for p in cfg.phases if p.name == "profiling").name == "profiling"
 
     def test_single_phase_gets_default_name(self) -> None:
         flat_load = {"type": "concurrency", "requests": 10, "concurrency": 1}
 
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert cfg.phases["default"].name == "default"
+        assert next(p for p in cfg.phases if p.name == "default").name == "default"
 
     @pytest.mark.parametrize(
         "phase_type,extra_fields",
@@ -240,15 +244,15 @@ class TestLoadNormalization:
         flat_load = {"type": phase_type, **extra_fields}
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert "default" in cfg.phases
-        assert cfg.phases["default"].type == phase_type
+        assert any(p.name == "default" for p in cfg.phases)
+        assert next(p for p in cfg.phases if p.name == "default").type == phase_type
 
     def test_load_not_dict_raises(self) -> None:
-        with pytest.raises(Exception, match="phases must be a dictionary"):
+        with pytest.raises(Exception, match="phases must be a list"):
             BenchmarkConfig.model_validate(_minimal(phases="invalid"))
 
     def test_phase_value_not_dict_raises(self) -> None:
-        with pytest.raises(Exception, match="must be a dictionary"):
+        with pytest.raises(Exception, match="phases must be a list"):
             BenchmarkConfig.model_validate(_minimal(phases={"bad": "not-a-dict"}))
 
 
@@ -269,8 +273,8 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert "profiling" in cfg.phases
-        assert cfg.phases["profiling"].type == "concurrency"
+        assert any(p.name == "profiling" for p in cfg.phases)
+        assert next(p for p in cfg.phases if p.name == "profiling").type == "concurrency"
 
     def test_warmup_and_profiling(self) -> None:
         data = {
@@ -282,8 +286,8 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert list(cfg.phases.keys()) == ["warmup", "profiling"]
-        assert cfg.phases["warmup"].exclude_from_results is True
+        assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
+        assert next(p for p in cfg.phases if p.name == "warmup").exclude_from_results is True
 
     def test_warmup_auto_sets_exclude_from_results(self) -> None:
         data = {
@@ -295,7 +299,7 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert cfg.phases["warmup"].exclude_from_results is True
+        assert next(p for p in cfg.phases if p.name == "warmup").exclude_from_results is True
 
     def test_warmup_without_profiling_rejected(self) -> None:
         data = {
@@ -313,7 +317,7 @@ class TestPhaseFlattening:
             "endpoint": _ENDPOINT,
             "datasets": {"default": _SYNTHETIC_DATASET},
             "warmup": _CONCURRENCY_PHASE,
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="'warmup' cannot be used with 'phases'"):
             BenchmarkConfig.model_validate(data)
@@ -324,7 +328,7 @@ class TestPhaseFlattening:
             "endpoint": _ENDPOINT,
             "datasets": {"default": _SYNTHETIC_DATASET},
             "profiling": _CONCURRENCY_PHASE,
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="'profiling' cannot be used with 'phases'"):
             BenchmarkConfig.model_validate(data)
@@ -333,7 +337,7 @@ class TestPhaseFlattening:
         data = _minimal()
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert "default" in cfg.phases
+        assert any(p.name == "default" for p in cfg.phases)
 
     def test_warmup_preserves_execution_order(self) -> None:
         data = {
@@ -345,7 +349,7 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert list(cfg.phases.keys()) == ["warmup", "profiling"]
+        assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
 
 
 class TestDatasetMutualExclusivity:
@@ -357,7 +361,7 @@ class TestDatasetMutualExclusivity:
             "endpoint": _ENDPOINT,
             "dataset": _SYNTHETIC_DATASET,
             "datasets": {"other": _SYNTHETIC_DATASET},
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="'dataset' cannot be used with 'datasets'"):
             BenchmarkConfig.model_validate(data)
@@ -376,7 +380,7 @@ class TestIslOslHoisting:
             "models": ["m"],
             "endpoint": _ENDPOINT,
             "dataset": {"type": "synthetic", "entries": 100, "isl": 512, "osl": 128},
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 
@@ -399,7 +403,7 @@ class TestIslOslHoisting:
                     "osl": 128,
                 },
             },
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 
@@ -411,7 +415,7 @@ class TestIslOslHoisting:
             "models": ["m"],
             "endpoint": _ENDPOINT,
             "dataset": {"type": "synthetic", "entries": 100, "isl": 512},
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 
@@ -436,7 +440,7 @@ class TestIslOslHoisting:
             "datasets": {
                 "default": {"type": "file", "path": "/tmp/data.jsonl", "isl": 512},
             },
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):
             BenchmarkConfig.model_validate(data)
@@ -448,7 +452,7 @@ class TestIslOslHoisting:
             "datasets": {
                 "default": {"type": "public", "name": "sharegpt", "isl": 512},
             },
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):
             BenchmarkConfig.model_validate(data)
@@ -459,7 +463,7 @@ class TestIslOslHoisting:
             "models": ["m"],
             "endpoint": _ENDPOINT,
             "dataset": {"entries": 100, "isl": 512, "osl": 128},
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 
@@ -478,7 +482,7 @@ class TestIslOslHoisting:
                 "isl": 512,
                 "prompts": {"osl": 64, "batch_size": 4},
             },
-            "phases": {"default": _CONCURRENCY_PHASE},
+            "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 

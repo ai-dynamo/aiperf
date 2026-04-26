@@ -18,7 +18,7 @@ from tests.unit.dataset.composer.conftest import _make_run
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 )
 
 
@@ -95,9 +95,7 @@ class TestSyntheticDatasetComposer:
                     "audio": {"length": {"mean": 0}},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
 
         with pytest.raises(ValueError):
@@ -694,9 +692,7 @@ class TestSyntheticDatasetComposer:
                     },
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
         composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
 
@@ -725,9 +721,7 @@ class TestSyntheticDatasetComposer:
                     },
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
 
         composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)

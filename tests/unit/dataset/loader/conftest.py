@@ -46,13 +46,9 @@ def create_user_config_and_composer(mock_tokenizer_cls):
                     "format": "single_turn",
                 }
             },
-            phases={
-                "default": {
-                    "type": "concurrency",
+            phases=[{"name": "default", "type": "concurrency",
                     "requests": 10,
-                    "concurrency": 1,
-                }
-            },
+                    "concurrency": 1,}],
         )
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
@@ -79,13 +75,9 @@ def default_user_config() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={
-            "default": {
-                "type": "concurrency",
+        phases=[{"name": "default", "type": "concurrency",
                 "requests": 10,
-                "concurrency": 1,
-            }
-        },
+                "concurrency": 1,}],
     )
 
 

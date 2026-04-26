@@ -26,7 +26,7 @@ spec:
         path: /perf-cache/traces/conversation_trace.jsonl
         format: mooncake_trace
     phases:
-      replay:
+      - name: replay
         type: fixed_schedule
         auto_offset: true
     slos:

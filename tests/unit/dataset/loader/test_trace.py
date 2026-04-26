@@ -19,7 +19,7 @@ from tests.unit.dataset.loader.conftest import _make_run
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 )
 
 
@@ -161,7 +161,7 @@ class TestMooncakeTraceDatasetLoader:
                 load_config["end_offset"] = end_offset
             return _make_file_config(
                 path=file or "test_data.jsonl",
-                phases={"default": load_config},
+                phases=[{"name": "default", **load_config}],
             )
         return _make_file_config(path=file or "test_data.jsonl")
 
@@ -811,15 +811,11 @@ class TestMooncakeTraceDatasetLoader:
         config = _make_file_config(
             path=filename,
             synthesis={"max_isl": 200},
-            phases={
-                "default": {
-                    "type": "fixed_schedule",
+            phases=[{"name": "default", "type": "fixed_schedule",
                     "requests": 100,
                     "auto_offset": False,
                     "start_offset": 1000,
-                    "end_offset": 3000,
-                }
-            },
+                    "end_offset": 3000,}],
         )
         loader = MooncakeTraceDatasetLoader(
             filename=filename,

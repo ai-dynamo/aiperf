@@ -38,14 +38,14 @@ class TestConcurrencyMode:
 
     def test_default_concurrency_mode(self, base_kwargs: dict) -> None:
         config = _build(base_kwargs, concurrency=8, request_count=100)
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "concurrency"
         assert profiling.concurrency == 8
         assert profiling.requests == 100
 
     def test_concurrency_with_duration(self, base_kwargs: dict) -> None:
         config = _build(base_kwargs, concurrency=4, benchmark_duration=60.0)
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.duration == 60.0
         assert profiling.concurrency == 4
 
@@ -60,7 +60,7 @@ class TestRequestRateMode:
             arrival_pattern=ArrivalPattern.POISSON,
             request_count=100,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "poisson"
         assert profiling.rate == 10.0
 
@@ -71,7 +71,7 @@ class TestRequestRateMode:
             arrival_pattern=ArrivalPattern.CONSTANT,
             request_count=50,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "constant"
         assert profiling.rate == 5.0
 
@@ -83,7 +83,7 @@ class TestRequestRateMode:
             arrival_smoothness=1.5,
             request_count=200,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "gamma"
         assert profiling.rate == 20.0
         assert profiling.smoothness == 1.5
@@ -98,7 +98,7 @@ class TestFixedScheduleMode:
             fixed_schedule=True,
             request_count=100,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "fixed_schedule"
 
 
@@ -114,7 +114,7 @@ class TestUserCentricMode:
             num_turns_mean=2,
             num_turns_stddev=0,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.type == "user_centric"
         assert profiling.rate == 5.0
         assert profiling.users == 10
@@ -130,8 +130,8 @@ class TestWarmupPhase:
             concurrency=4,
             request_count=100,
         )
-        assert "warmup" in config.phases
-        warmup = config.phases["warmup"]
+        assert any(p.name == "warmup" for p in config.phases)
+        warmup = next(p for p in config.phases if p.name == "warmup")
         assert warmup.exclude_from_results is True
         assert warmup.requests == 10
 
@@ -142,7 +142,7 @@ class TestWarmupPhase:
             concurrency=4,
             request_count=100,
         )
-        warmup = config.phases["warmup"]
+        warmup = next(p for p in config.phases if p.name == "warmup")
         assert warmup.exclude_from_results is True
         assert warmup.duration == 30.0
 
@@ -153,7 +153,7 @@ class TestWarmupPhase:
             concurrency=8,
             request_count=100,
         )
-        warmup = config.phases["warmup"]
+        warmup = next(p for p in config.phases if p.name == "warmup")
         assert warmup.concurrency == 8
 
     def test_warmup_overrides_concurrency(self, base_kwargs: dict) -> None:
@@ -164,12 +164,12 @@ class TestWarmupPhase:
             concurrency=8,
             request_count=100,
         )
-        warmup = config.phases["warmup"]
+        warmup = next(p for p in config.phases if p.name == "warmup")
         assert warmup.concurrency == 2
 
     def test_no_warmup_by_default(self, base_kwargs: dict) -> None:
         config = _build(base_kwargs, concurrency=4, request_count=100)
-        assert "warmup" not in config.phases
+        assert not any(p.name == "warmup" for p in config.phases)
 
 
 class TestDatasetInference:
@@ -321,14 +321,14 @@ class TestCancellationConfig:
             concurrency=4,
             request_count=100,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.cancellation is not None
         assert profiling.cancellation.rate == 10.0
         assert profiling.cancellation.delay == 1.0
 
     def test_no_cancellation_by_default(self, base_kwargs: dict) -> None:
         config = _build(base_kwargs, concurrency=4, request_count=100)
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.cancellation is None
 
 
@@ -342,7 +342,7 @@ class TestRampConfig:
             concurrency_ramp_duration=10.0,
             request_count=100,
         )
-        profiling = config.phases["profiling"]
+        profiling = next(p for p in config.phases if p.name == "profiling")
         assert profiling.concurrency_ramp is not None
         assert profiling.concurrency_ramp.duration == 10.0
 
@@ -354,7 +354,7 @@ class TestRampConfig:
             concurrency_ramp_duration=10.0,
             request_count=100,
         )
-        warmup = config.phases["warmup"]
+        warmup = next(p for p in config.phases if p.name == "warmup")
         assert warmup.concurrency_ramp is not None
         assert warmup.concurrency_ramp.duration == 10.0
 
@@ -419,7 +419,7 @@ class TestCLIDefaultsMatchConfig:
         rt = RuntimeConfig()
         mr = MultiRunConfig()
         acc = AccuracyConfig(benchmark="mmlu")
-        phase = ConcurrencyPhase(type="concurrency", requests=1)
+        phase = ConcurrencyPhase(name="default", type="concurrency", requests=1)
         prompt = PromptConfig()
         audio = AudioConfig()
         image = ImageConfig()

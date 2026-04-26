@@ -24,7 +24,7 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
             "name": "sharegpt",
         }
     },
-    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 }
 
 

@@ -26,7 +26,7 @@ MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis n
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 )
 
 

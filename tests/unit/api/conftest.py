@@ -201,7 +201,7 @@ def api_config() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         runtime={"api_port": 8080, "api_host": "0.0.0.0"},
     )
 

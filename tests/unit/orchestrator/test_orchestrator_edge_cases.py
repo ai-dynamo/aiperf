@@ -74,21 +74,21 @@ class TestFixedTrialsStrategyEdgeCases:
         run0 = strategy.get_next_config(config, [])
         run1 = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
 
-        assert "warmup" in run0.phases
-        assert "warmup" not in run1.phases
-        assert "profiling" in run1.phases
+        assert any(p.name == "warmup" for p in run0.phases)
+        assert not any(p.name == "warmup" for p in run1.phases)
+        assert any(p.name == "profiling" for p in run1.phases)
 
     def test_warmup_kept_on_first_run(self) -> None:
         config = _make_config()
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
         run = strategy.get_next_config(config, [])
-        assert "warmup" in run.phases
+        assert any(p.name == "warmup" for p in run.phases)
 
     def test_warmup_kept_when_flag_false(self) -> None:
         config = _make_config()
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=False)
         run = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
-        assert "warmup" in run.phases
+        assert any(p.name == "warmup" for p in run.phases)
 
     def test_warmup_removal_only_removes_excluded_phases(self) -> None:
         config = _make_config(
@@ -116,9 +116,9 @@ class TestFixedTrialsStrategyEdgeCases:
         )
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
         run = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
-        assert "warmup" not in run.phases
-        assert "main" in run.phases
-        assert "cooldown_phase" in run.phases
+        assert not any(p.name == "warmup" for p in run.phases)
+        assert any(p.name == "main" for p in run.phases)
+        assert any(p.name == "cooldown_phase" for p in run.phases)
 
     def test_config_deep_copy_when_seed_set(self) -> None:
         """Mutating returned config must not affect the original when auto_set_seed modifies it."""
@@ -133,8 +133,8 @@ class TestFixedTrialsStrategyEdgeCases:
         config = _make_config()
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
         result = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
-        assert "warmup" not in result.phases
-        assert "warmup" in config.phases
+        assert not any(p.name == "warmup" for p in result.phases)
+        assert any(p.name == "warmup" for p in config.phases)
 
     def test_run_label_format(self) -> None:
         strategy = FixedTrialsStrategy(num_trials=3)

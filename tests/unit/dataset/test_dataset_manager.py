@@ -35,7 +35,7 @@ def _make_run(config: AIPerfConfig) -> BenchmarkRun:
 _BASE_CONFIG = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 )
 
 
@@ -601,9 +601,7 @@ class TestDatasetManagerTokenizerSkip:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -639,9 +637,7 @@ class TestDatasetManagerTokenizerSkip:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),

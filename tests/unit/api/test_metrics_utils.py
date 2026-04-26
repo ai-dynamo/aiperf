@@ -32,9 +32,7 @@ _BASE: dict = {
             "prompts": {"isl": 32, "osl": 16},
         },
     },
-    "phases": {
-        "default": {"type": "concurrency", "requests": 10, "concurrency": 1},
-    },
+    "phases": [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
 }
 
 

@@ -89,19 +89,19 @@ def _composed_dataset(**kwargs) -> ComposedDataset:
 
 
 def _concurrency_phase(**kwargs) -> ConcurrencyPhase:
-    defaults = {"type": "concurrency", "concurrency": 8, "requests": 100}
+    defaults = {"name": "default", "type": "concurrency", "concurrency": 8, "requests": 100}
     defaults.update(kwargs)
     return ConcurrencyPhase(**defaults)
 
 
 def _fixed_schedule_phase(**kwargs) -> FixedSchedulePhase:
-    defaults = {"type": "fixed_schedule"}
+    defaults = {"name": "default", "type": "fixed_schedule"}
     defaults.update(kwargs)
     return FixedSchedulePhase(**defaults)
 
 
 def _user_centric_phase(**kwargs) -> UserCentricPhase:
-    defaults = {"type": "user_centric", "rate": 10.0, "users": 5, "requests": 50}
+    defaults = {"name": "default", "type": "user_centric", "rate": 10.0, "users": 5, "requests": 50}
     defaults.update(kwargs)
     return UserCentricPhase(**defaults)
 

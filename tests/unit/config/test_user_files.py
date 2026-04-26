@@ -114,7 +114,7 @@ datasets:
       isl: 128
       osl: 64
 phases:
-  default:
+  - name: default
     type: concurrency
     requests: 10
     concurrency: 1

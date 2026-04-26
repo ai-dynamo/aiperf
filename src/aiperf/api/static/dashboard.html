@@ -702,8 +702,11 @@ SPDX-License-Identifier: Apache-2.0
             if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
             if (ep.urls?.length) add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
 
-            // Phases are a dict keyed by phase name; summarize each.
-            const phaseEntries = Object.entries(phases);
+            // Phases are a list of named phase configs (post-2026-04 list-with-name);
+            // tolerate the legacy dict shape until older payloads on the bus expire.
+            const phaseEntries = Array.isArray(phases)
+              ? phases.map((p) => [p?.name ?? '', p])
+              : Object.entries(phases);
             const showName = phaseEntries.length > 1;
             for (const [name, phase] of phaseEntries) {
                 if (!phase) continue;

@@ -156,7 +156,7 @@ def _build_app(
 
     # Pre-computed phase announcements (for the v2 tests that need to see the
     # PhaseCards component render an entry per configured phase name).
-    phase_names = list(cfg.phases.keys())
+    phase_names = [p.name for p in cfg.phases]
     ws_payloads = list(extra_ws_payloads or [])
 
     # NOTE: FastAPI's ``@app.websocket`` rejects the upgrade (HTTP 403) unless
@@ -222,15 +222,10 @@ def _build_multi_phase_cfg() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases={
-            "warmup": {"type": "concurrency", "requests": 50, "concurrency": 4},
-            "profiling": {
-                "type": "poisson",
+        phases=[{"name": "warmup", "type": "concurrency", "requests": 50, "concurrency": 4}, {"name": "profiling", "type": "poisson",
                 "rate": 20,
                 "duration": 300,
-                "concurrency": 32,
-            },
-        },
+                "concurrency": 32,}],
         runtime={"api_port": 8080},
     )
 
@@ -249,9 +244,7 @@ def _build_single_phase_cfg() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 32},
             }
         },
-        phases={
-            "default": {"type": "concurrency", "requests": 100, "concurrency": 8},
-        },
+        phases=[{"name": "default", "type": "concurrency", "requests": 100, "concurrency": 8}],
         runtime={"api_port": 8080},
     )
 
@@ -630,19 +623,11 @@ class TestDashboardV2Render:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "phase_alpha": {
-                    "type": "concurrency",
+            phases=[{"name": "phase_alpha", "type": "concurrency",
                     "requests": 10,
-                    "concurrency": 1,
-                },
-                "phase_beta": {"type": "concurrency", "requests": 20, "concurrency": 2},
-                "phase_gamma": {
-                    "type": "concurrency",
+                    "concurrency": 1,}, {"name": "phase_beta", "type": "concurrency", "requests": 20, "concurrency": 2}, {"name": "phase_gamma", "type": "concurrency",
                     "requests": 30,
-                    "concurrency": 3,
-                },
-            },
+                    "concurrency": 3,}],
             runtime={"api_port": 8080},
         )
 
@@ -885,9 +870,7 @@ class TestDashboardV2RealtimeMetrics:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             slos={
                 "time_to_first_token": 100.0,
                 "inter_token_latency": 10.0,
@@ -1092,9 +1075,7 @@ class TestDashboardV2RealtimeMetrics:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -1154,9 +1135,7 @@ class TestDashboardV2RealtimeMetrics:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             slos={"time_to_first_token": 500.0},
             runtime={"api_port": 8080},
         )
@@ -1220,9 +1199,7 @@ class TestDashboardV2RealtimeMetrics:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -1580,9 +1557,7 @@ class TestDashboardV2HeroStrip:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 1000, "concurrency": 4}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 1000, "concurrency": 4}],
             slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
             runtime={"api_port": 8080},
         )
@@ -1649,9 +1624,7 @@ class TestDashboardV2HeroStrip:
                     "prompts": {"isl": 128, "osl": 32},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 100, "concurrency": 4}
-            },
+            phases=[{"name": "default", "type": "concurrency", "requests": 100, "concurrency": 4}],
             slos={"time_to_first_token": 200.0},
             runtime={"api_port": 8080},
         )

@@ -24,9 +24,14 @@ function buildItems(cfg) {
     add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
   }
 
-  const phaseEntries = Object.entries(cfg.phases || {});
-  const showPrefix = phaseEntries.length > 1;
-  for (const [name, phase] of phaseEntries) {
+  // phases is a list of named phase configs (post-2026-04 list-with-name shape).
+  // Tolerate the legacy dict shape for older payloads in case the bus has not
+  // re-published since the upgrade.
+  const phaseList = Array.isArray(cfg.phases)
+    ? cfg.phases.map((p) => [p?.name ?? '', p])
+    : Object.entries(cfg.phases || {});
+  const showPrefix = phaseList.length > 1;
+  for (const [name, phase] of phaseList) {
     if (!phase) continue;
     const prefix = showPrefix ? `${name} ` : '';
     if (phase.type) add(`${prefix}Type`, phase.type);
