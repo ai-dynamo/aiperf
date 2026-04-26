@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
+import tempfile
 import traceback
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -57,10 +60,11 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records import _tokenizer_preload
 from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.workers.worker_pod_tokenizer_download import download_tokenizer
 
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
@@ -91,6 +95,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self._pending_metric_records: list[MetricRecordsData] = []
         self._ingest_batch_size = Environment.RECORD.INGEST_BATCH_SIZE
         self.tokenizers: dict[str, Tokenizer] = {}
+        self._tokenizer_local_paths: dict[str, str] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.inference_result_parser = InferenceResultParser(run=self.run)
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
@@ -234,9 +239,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                         self.run.cfg.tokenizer.name if self.run.cfg.tokenizer else None
                     ) or model
                     resolve_alias = True
+                # In K8s, fetch the tokenizer bundle from the operator API and
+                # load from the on-disk snapshot; pods never reach huggingface.co.
+                # The download helper's per-bundle file lock + .ready sentinel
+                # makes the second-arriving sibling container reuse the WGM's
+                # extracted directory rather than re-downloading.
+                load_target = await self._resolve_tokenizer_load_target(tokenizer_name)
                 self.tokenizers[model] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
-                    tokenizer_name,
+                    load_target,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
                     else False,
@@ -246,6 +257,41 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     resolve_alias=resolve_alias,
                 )
             return self.tokenizers[model]
+
+    async def _resolve_tokenizer_load_target(self, tokenizer_name: str) -> str:
+        """Return the argument to pass to ``Tokenizer.from_pretrained``.
+
+        In K8s mode this downloads the operator-served bundle into the shared
+        ``aiperf_tokenizers/{benchmark_id}`` directory and returns the local
+        snapshot path. In every other mode it returns ``tokenizer_name`` so
+        the loader follows its existing HF-cache / alias-resolution path.
+        """
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            return tokenizer_name
+        cached = self._tokenizer_local_paths.get(tokenizer_name)
+        if cached is not None:
+            return cached
+        api_base_url = self.run.cfg.runtime.dataset_api_base_url
+        if not api_base_url:
+            # K8s mode without an API URL configured — fall back to name-based
+            # loading so the controller-side validator's HF cache is still hit.
+            return tokenizer_name
+        # dataset_api_base_url is http://{host}:{port}/api/dataset; strip the
+        # /api/dataset suffix so download_tokenizer can append /api/tokenizer/...
+        api_base = api_base_url.rsplit("/api/dataset", 1)[0]
+        base = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
+        dest_root = base / f"aiperf_tokenizers/{self.run.cfg.benchmark_id}"
+        dest_root.mkdir(parents=True, exist_ok=True)
+        local_path = await download_tokenizer(
+            api_base_url=api_base,
+            name=tokenizer_name,
+            dest_root=dest_root,
+            max_retries=Environment.DATASET.DOWNLOAD_MAX_RETRIES,
+            logger=logging.getLogger(self.service_id),
+        )
+        resolved = str(local_path)
+        self._tokenizer_local_paths[tokenizer_name] = resolved
+        return resolved
 
     def _create_metric_record_metadata(
         self,
