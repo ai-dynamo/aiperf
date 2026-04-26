@@ -21,9 +21,14 @@ def _base_config(**overrides) -> dict:
         "endpoint": {
             "urls": ["http://localhost:8000/v1/chat/completions"],
         },
-        "datasets": [{"name": "main", "type": "synthetic",
+        "datasets": [
+            {
+                "name": "main",
+                "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},}],
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
         "phases": [
             {
                 "name": "profiling",
@@ -218,10 +223,15 @@ class TestFixedScheduleSampling:
     def test_fixed_schedule_with_sequential_passes(self):
         config = AIPerfConfig(
             **_base_config(
-                datasets=[{"name": "trace", "type": "file",
+                datasets=[
+                    {
+                        "name": "trace",
+                        "type": "file",
                         "path": "/tmp/trace.jsonl",
                         "format": "mooncake_trace",
-                        "sampling": "sequential",}],
+                        "sampling": "sequential",
+                    }
+                ],
                 phases=[
                     {
                         "name": "replay",
@@ -242,10 +252,15 @@ class TestFixedScheduleSampling:
         ):
             AIPerfConfig(
                 **_base_config(
-                    datasets=[{"name": "trace", "type": "file",
+                    datasets=[
+                        {
+                            "name": "trace",
+                            "type": "file",
                             "path": "/tmp/trace.jsonl",
                             "format": "mooncake_trace",
-                            "sampling": "random",}],
+                            "sampling": "random",
+                        }
+                    ],
                     phases=[
                         {
                             "name": "replay",
@@ -286,9 +301,14 @@ class TestUserCentricRequiresMultiTurn:
     def test_user_centric_with_multi_turn_passes(self):
         config = AIPerfConfig(
             **_base_config(
-                datasets=[{"name": "conversations", "type": "file",
+                datasets=[
+                    {
+                        "name": "conversations",
+                        "type": "file",
                         "path": "/tmp/conversations.jsonl",
-                        "format": "multi_turn",}],
+                        "format": "multi_turn",
+                    }
+                ],
                 phases=[
                     {
                         "name": "profiling",
@@ -310,9 +330,14 @@ class TestUserCentricRequiresMultiTurn:
         with pytest.raises(ValidationError, match="user_centric.*multi_turn.*format"):
             AIPerfConfig(
                 **_base_config(
-                    datasets=[{"name": "data", "type": "file",
+                    datasets=[
+                        {
+                            "name": "data",
+                            "type": "file",
                             "path": "/tmp/data.jsonl",
-                            "format": "single_turn",}],
+                            "format": "single_turn",
+                        }
+                    ],
                     phases=[
                         {
                             "name": "profiling",

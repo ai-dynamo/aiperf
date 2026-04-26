@@ -44,10 +44,15 @@ def _make_config(**audio_overrides) -> AIPerfConfig:
     audio.update(audio_overrides)
     return AIPerfConfig(
         **_BASE,
-        datasets=[{"name": "default", "type": "synthetic",
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
                 "entries": 100,
                 "prompts": {"isl": 128, "osl": 64},
-                "audio": audio,}],
+                "audio": audio,
+            }
+        ],
     )
 
 

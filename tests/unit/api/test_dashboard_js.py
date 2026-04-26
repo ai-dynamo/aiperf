@@ -215,9 +215,14 @@ def _build_multi_phase_cfg() -> AIPerfConfig:
             "streaming": True,
             "api_key": "SHOULD_NOT_LEAK",
         },
-        datasets=[{"name": "default", "type": "synthetic",
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},}],
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
         phases=[
             {"name": "warmup", "type": "concurrency", "requests": 50, "concurrency": 4},
             {
@@ -239,9 +244,14 @@ def _build_single_phase_cfg() -> AIPerfConfig:
             "urls": ["http://srv:8000/v1/chat/completions"],
             "type": "chat",
         },
-        datasets=[{"name": "default", "type": "synthetic",
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
                 "entries": 50,
-                "prompts": {"isl": 128, "osl": 32},}],
+                "prompts": {"isl": 128, "osl": 32},
+            }
+        ],
         phases=[
             {
                 "name": "default",
@@ -621,9 +631,14 @@ class TestDashboardV2Render:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "phase_alpha",
@@ -879,9 +894,14 @@ class TestDashboardV2RealtimeMetrics:
         cfg_with_slo = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",
@@ -1087,9 +1107,14 @@ class TestDashboardV2RealtimeMetrics:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",
@@ -1150,9 +1175,14 @@ class TestDashboardV2RealtimeMetrics:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",
@@ -1217,9 +1247,14 @@ class TestDashboardV2RealtimeMetrics:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",
@@ -1578,9 +1613,14 @@ class TestDashboardV2HeroStrip:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",
@@ -1648,9 +1688,14 @@ class TestDashboardV2HeroStrip:
         cfg = AIPerfConfig(
             models=["llama3-8b"],
             endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},}],
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "default",

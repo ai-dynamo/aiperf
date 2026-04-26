@@ -145,7 +145,9 @@ def _normalize_single_dataset_listed(
         return config
     if not isinstance(config, dict):
         raise ValueError(
-            f"datasets[{idx}] must be a dictionary or Pydantic model"
+            f"datasets[{idx}] must be a dict (or a SyntheticDataset/FileDataset/"
+            f"PublicDataset/ComposedDataset Pydantic model); got {type(config).__name__}. "
+            f"Each entry needs at minimum a 'name' field; see docs/tutorials/yaml-config.md#datasets."
         )
     if "name" not in config:
         raise ValueError(

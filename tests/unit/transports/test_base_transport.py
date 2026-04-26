@@ -24,9 +24,14 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
         "urls": ["http://localhost:8000"],
         "path": "/v1/chat/completions",
     },
-    "datasets": [{"name": "default", "type": "synthetic",
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
             "entries": 1,
-            "prompts": {"isl": 128, "osl": 64},}],
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    ],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],

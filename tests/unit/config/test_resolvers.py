@@ -48,7 +48,9 @@ def minimal_config():
     return BenchmarkConfig(
         models=["test-model"],
         endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[{"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}],
+        datasets=[
+            {"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
+        ],
         phases=[
             {"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}
         ],
@@ -336,7 +338,9 @@ class TestDatasetResolver:
         config = BenchmarkConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "file", "path": "/nonexistent/data.jsonl"}],
+            datasets=[
+                {"name": "main", "type": "file", "path": "/nonexistent/data.jsonl"}
+            ],
             phases=[
                 {
                     "name": "default",
@@ -358,7 +362,15 @@ class TestDatasetResolver:
         config = BenchmarkConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "synth", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}, {"name": "real", "type": "file", "path": str(dataset_file)}],
+            datasets=[
+                {
+                    "name": "synth",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32},
+                },
+                {"name": "real", "type": "file", "path": str(dataset_file)},
+            ],
             phases=[
                 {
                     "name": "default",
@@ -387,7 +399,14 @@ class TestTimingResolver:
         config = BenchmarkConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "warmup",
@@ -414,7 +433,14 @@ class TestTimingResolver:
         config = BenchmarkConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "main",
@@ -435,7 +461,14 @@ class TestTimingResolver:
         config = BenchmarkConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32},
+                }
+            ],
             phases=[
                 {
                     "name": "warmup",

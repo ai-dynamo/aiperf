@@ -36,7 +36,9 @@ VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
 VARIATION_LABEL_LABEL = "aiperf.nvidia.com/variation-label"
 TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
 
-TERMINAL_PHASES = frozenset({"Completed", "Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+TERMINAL_PHASES = frozenset(
+    {"Completed", "Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
+)
 RESULTS_SERVER_PORT = 19090
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 

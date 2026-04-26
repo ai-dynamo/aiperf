@@ -39,9 +39,14 @@ def _base_config(**overrides: object) -> dict:
         "endpoint": {
             "urls": ["http://localhost:8000/v1/chat/completions"],
         },
-        "datasets": [{"name": "main", "type": "synthetic",
+        "datasets": [
+            {
+                "name": "main",
+                "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},}],
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
         "phases": [
             {
                 "name": "profiling",
@@ -205,10 +210,15 @@ class TestStopConditionRequired:
         """FixedSchedulePhase opts out of stop condition requirement."""
         cfg = BenchmarkConfig(
             **_base_config(
-                datasets=[{"name": "trace", "type": "file",
+                datasets=[
+                    {
+                        "name": "trace",
+                        "type": "file",
                         "path": "/tmp/trace.jsonl",
                         "format": "mooncake_trace",
-                        "sampling": "sequential",}],
+                        "sampling": "sequential",
+                    }
+                ],
                 phases=[
                     {
                         "name": "replay",
@@ -500,11 +510,20 @@ class TestDatasetReferences:
     def test_multiple_phases_different_datasets_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                datasets=[{"name": "train", "type": "synthetic",
+                datasets=[
+                    {
+                        "name": "train",
+                        "type": "synthetic",
                         "entries": 100,
-                        "prompts": {"isl": 128},}, {"name": "eval", "type": "synthetic",
+                        "prompts": {"isl": 128},
+                    },
+                    {
+                        "name": "eval",
+                        "type": "synthetic",
                         "entries": 50,
-                        "prompts": {"isl": 256},}],
+                        "prompts": {"isl": 256},
+                    },
+                ],
                 phases=[
                     {
                         "name": "warmup",

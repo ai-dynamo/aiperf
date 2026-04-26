@@ -1009,9 +1009,14 @@ class TestMooncakeTraceReproducibility:
         return _make_run(
             AIPerfConfig(
                 **_BASE,
-                datasets=[{"name": "default", "type": "synthetic",
+                datasets=[
+                    {
+                        "name": "default",
+                        "type": "synthetic",
                         "entries": 100,
-                        "prompts": {"isl": 100, "osl": 50, "block_size": 64},}],
+                        "prompts": {"isl": 100, "osl": 50, "block_size": 64},
+                    }
+                ],
             )
         )
 
@@ -1174,12 +1179,21 @@ def _make_synthesis_config(
         # Use a synthetic dataset to set block_size via prompts config
         return AIPerfConfig(
             **_BASE,
-            datasets=[{"name": "default", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},}, {"name": "traces", "type": "file",
+                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
+                },
+                {
+                    "name": "traces",
+                    "type": "file",
                     "path": "dummy.jsonl",
                     "format": "mooncake_trace",
-                    "synthesis": synthesis,}],
+                    "synthesis": synthesis,
+                },
+            ],
         )
 
     return _make_file_config(synthesis=synthesis)

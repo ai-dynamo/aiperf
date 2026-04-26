@@ -73,9 +73,14 @@ def _make_config(
     return AIPerfConfig(
         models=["test-model"],
         endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[{"name": "default", "type": "synthetic",
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},}],
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
         phases=phases,
         **({"runtime": runtime} if runtime else {}),
     )

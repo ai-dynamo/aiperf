@@ -46,9 +46,7 @@ class BenchmarkHelpersMixin:
             if d.name == name:
                 return d
         available = [d.name for d in self.datasets]  # type: ignore[attr-defined]
-        raise KeyError(
-            f"Dataset '{name}' not found. Available: {sorted(available)}"
-        )
+        raise KeyError(f"Dataset '{name}' not found. Available: {sorted(available)}")
 
     def _dataset_by_name(self, name: str) -> DatasetConfig:
         """Look up a dataset by name; raises KeyError if not found."""

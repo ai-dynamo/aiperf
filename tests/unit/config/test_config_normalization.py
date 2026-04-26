@@ -157,9 +157,14 @@ class TestDatasetNormalization:
     def test_explicit_type_preserved(self) -> None:
         cfg = BenchmarkConfig.model_validate(
             _minimal(
-                datasets=[{"name": "trace", "type": "file",
+                datasets=[
+                    {
+                        "name": "trace",
+                        "type": "file",
                         "path": "/tmp/trace.jsonl",
-                        "format": "mooncake_trace",}]
+                        "format": "mooncake_trace",
+                    }
+                ]
             )
         )
 
@@ -403,10 +408,22 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": [{"name": "a", "type": "synthetic", "entries": 50, "isl": 256, "osl": 64}, {"name": "b", "type": "synthetic",
+            "datasets": [
+                {
+                    "name": "a",
+                    "type": "synthetic",
+                    "entries": 50,
+                    "isl": 256,
+                    "osl": 64,
+                },
+                {
+                    "name": "b",
+                    "type": "synthetic",
                     "entries": 50,
                     "isl": {"mean": 512, "stddev": 50},
-                    "osl": 128,}],
+                    "osl": 128,
+                },
+            ],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
@@ -441,7 +458,14 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": [{"name": "default", "type": "file", "path": "/tmp/data.jsonl", "isl": 512}],
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "file",
+                    "path": "/tmp/data.jsonl",
+                    "isl": 512,
+                }
+            ],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):
@@ -451,7 +475,9 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": [{"name": "default", "type": "public", "dataset": "sharegpt", "isl": 512}],
+            "datasets": [
+                {"name": "default", "type": "public", "dataset": "sharegpt", "isl": 512}
+            ],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):

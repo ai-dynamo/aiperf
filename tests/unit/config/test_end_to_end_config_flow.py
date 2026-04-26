@@ -61,9 +61,14 @@ _MINIMAL_YAML = textwrap.dedent("""\
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
     "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-    "datasets": [{"name": "default", "type": "synthetic",
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
             "entries": 100,
-            "prompts": {"isl": 128, "osl": 64},}],
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    ],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],
@@ -489,8 +494,13 @@ class TestBenchmarkRunSerialization:
 
         cfg_kwargs = {
             **_MINIMAL_CONFIG_KWARGS,
-            "datasets": [{"name": "from_file", "type": "file",
-                    "path": str(dataset_file),}],
+            "datasets": [
+                {
+                    "name": "from_file",
+                    "type": "file",
+                    "path": str(dataset_file),
+                }
+            ],
             "phases": [
                 {
                     "name": "default",
@@ -528,11 +538,20 @@ class TestBenchmarkRunSerialization:
     def test_json_round_trip_with_nested_config(self) -> None:
         cfg_kwargs = {
             **_MINIMAL_CONFIG_KWARGS,
-            "datasets": [{"name": "default", "type": "synthetic",
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
                     "entries": 500,
-                    "prompts": {"isl": 256, "osl": 128},}, {"name": "secondary", "type": "synthetic",
+                    "prompts": {"isl": 256, "osl": 128},
+                },
+                {
+                    "name": "secondary",
+                    "type": "synthetic",
                     "entries": 200,
-                    "prompts": {"isl": 64, "osl": 32},}],
+                    "prompts": {"isl": 64, "osl": 32},
+                },
+            ],
             "phases": [
                 {
                     "name": "warmup",

@@ -66,6 +66,19 @@ __all__ = [
 ]
 
 
+# Shared name field for all DatasetConfig subclasses — extracted to keep each
+# class definition compact (file-size budget under tools/ergonomics_baseline).
+_DatasetName = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description="Dataset identifier — unique within the benchmark's datasets list. "
+        "Used in `phase.dataset = '<name>'` references and in result file paths. "
+        "Common names: 'main', 'eval', 'warmup_data'.",
+    ),
+]
+
+
 # Dataset type variants using discriminated unions
 class SyntheticDataset(BaseConfig):
     """
@@ -77,15 +90,7 @@ class SyntheticDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Annotated[
-        str,
-        Field(
-            min_length=1,
-            description="Dataset identifier — unique within the benchmark's datasets list. "
-            "Used in `phase.dataset = '<name>'` references and in result file paths. "
-            "Common names: 'main', 'eval', 'warmup_data'.",
-        ),
-    ]
+    name: _DatasetName
 
     type: Annotated[
         Literal[DatasetType.SYNTHETIC],
@@ -226,15 +231,7 @@ class FileDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Annotated[
-        str,
-        Field(
-            min_length=1,
-            description="Dataset identifier — unique within the benchmark's datasets list. "
-            "Used in `phase.dataset = '<name>'` references and in result file paths. "
-            "Common names: 'main', 'eval', 'warmup_data'.",
-        ),
-    ]
+    name: _DatasetName
 
     type: Annotated[
         Literal[DatasetType.FILE],
@@ -315,15 +312,7 @@ class PublicDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Annotated[
-        str,
-        Field(
-            min_length=1,
-            description="Dataset identifier — unique within the benchmark's datasets list. "
-            "Used in `phase.dataset = '<name>'` references and in result file paths. "
-            "Common names: 'main', 'eval', 'warmup_data'.",
-        ),
-    ]
+    name: _DatasetName
 
     type: Annotated[
         Literal[DatasetType.PUBLIC],
@@ -437,15 +426,7 @@ class ComposedDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Annotated[
-        str,
-        Field(
-            min_length=1,
-            description="Dataset identifier — unique within the benchmark's datasets list. "
-            "Used in `phase.dataset = '<name>'` references and in result file paths. "
-            "Common names: 'main', 'eval', 'warmup_data'.",
-        ),
-    ]
+    name: _DatasetName
 
     type: Annotated[
         Literal[DatasetType.COMPOSED],

@@ -160,9 +160,14 @@ def test_resolved_variables_visible_in_run_time_user_files_context() -> None:
         },
         "models": ["test/model"],
         "endpoint": {"type": "chat", "urls": ["http://localhost:8000"]},
-        "datasets": [{"name": "default", "type": "synthetic",
+        "datasets": [
+            {
+                "name": "default",
+                "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},}],
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
         "phases": [
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],

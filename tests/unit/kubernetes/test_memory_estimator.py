@@ -532,9 +532,14 @@ class TestFromConfig:
         config = AIPerfConfig(
             models="test-model",
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
                     "entries": 500,
-                    "prompts": {"isl": 256, "osl": 64},}],
+                    "prompts": {"isl": 256, "osl": 64},
+                }
+            ],
             phases=[
                 {
                     "name": "profiling",
@@ -558,7 +563,14 @@ class TestFromConfig:
         config = AIPerfConfig(
             models="test-model",
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 100, "prompts": {"isl": 128}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128},
+                }
+            ],
             phases=[
                 {
                     "name": "warmup",
@@ -588,7 +600,14 @@ class TestFromConfig:
                 "urls": ["http://localhost:8000/v1/chat/completions"],
                 "streaming": True,
             },
-            datasets=[{"name": "main", "type": "synthetic", "entries": 100, "prompts": {"isl": 128}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128},
+                }
+            ],
             phases=[{"name": "profiling", "type": "concurrency", "requests": 100}],
         )
         params = MemoryEstimationParams.from_config(config)
@@ -600,9 +619,14 @@ class TestFromConfig:
         config = AIPerfConfig(
             models="test-model",
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic",
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
                     "entries": 1000,
-                    "prompts": {"isl": 512, "osl": 128},}],
+                    "prompts": {"isl": 512, "osl": 128},
+                }
+            ],
             phases=[
                 {
                     "name": "profiling",
@@ -625,7 +649,14 @@ class TestFromConfig:
         config = AIPerfConfig(
             models="test-model",
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 100, "prompts": {"isl": 128}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128},
+                }
+            ],
             phases=[
                 {"name": "profiling", "type": "poisson", "rate": 50, "duration": 120}
             ],
@@ -641,7 +672,14 @@ class TestFromConfig:
         config = AIPerfConfig(
             models="test-model",
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "main", "type": "synthetic", "entries": 100, "prompts": {"isl": 128}}],
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128},
+                }
+            ],
             phases=[{"name": "profiling", "type": "concurrency", "requests": 100}],
         )
         params = MemoryEstimationParams.from_config(config)

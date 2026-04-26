@@ -13,10 +13,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed", "Completed"})
+TERMINAL_PHASES = frozenset(
+    {"Succeeded", "Failed", "Cancelled", "PartiallyFailed", "Completed"}
+)
 # Parent (AIPerfSweep) terminal phases the controller may write; the
 # rollup must not clobber these once set.
-PARENT_TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+PARENT_TERMINAL_PHASES = frozenset(
+    {"Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
+)
 
 __all__ = ["on_child_phase_transition"]
 
@@ -53,7 +57,10 @@ async def on_child_phase_transition(
     # the audit). The list `Aggregating` itself is non-terminal so it is safe
     # to set repeatedly.
     parent_phase = (await _read_parent_phase(namespace, sweep_name)) or ""
-    if counts.get("total_terminal_phase") and parent_phase not in PARENT_TERMINAL_PHASES:
+    if (
+        counts.get("total_terminal_phase")
+        and parent_phase not in PARENT_TERMINAL_PHASES
+    ):
         body_patch["status"]["phase"] = counts["total_terminal_phase"]
 
     await _patch_parent_status(

@@ -34,9 +34,7 @@ _JINJA_ENV = jinja2.Environment(
 )
 
 
-def _flatten_into_context(
-    obj: Any, prefix: str, context: dict[str, Any]
-) -> None:
+def _flatten_into_context(obj: Any, prefix: str, context: dict[str, Any]) -> None:
     """Recursively flatten ``obj`` into ``context`` keyed by dot-paths.
 
     Dict children are exposed at both the dotted path (``a.b``) and at the

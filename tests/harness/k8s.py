@@ -216,9 +216,14 @@ def build_sample_config() -> AIPerfConfig:
     return AIPerfConfig(
         models=["test-model"],
         endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[{"name": "main", "type": "synthetic",
+        datasets=[
+            {
+                "name": "main",
+                "type": "synthetic",
                 "entries": 10,
-                "prompts": {"isl": 32, "osl": 16},}],
+                "prompts": {"isl": 32, "osl": 16},
+            }
+        ],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],

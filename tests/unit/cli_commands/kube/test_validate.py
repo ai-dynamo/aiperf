@@ -46,9 +46,14 @@ def _minimal_doc() -> dict:
                 "endpoint": {
                     "urls": ["http://localhost:8000/v1/chat/completions"],
                 },
-                "datasets": [{"name": "main", "type": "synthetic",
+                "datasets": [
+                    {
+                        "name": "main",
+                        "type": "synthetic",
                         "entries": 10,
-                        "prompts": {"isl": 32, "osl": 16},}],
+                        "prompts": {"isl": 32, "osl": 16},
+                    }
+                ],
                 "phases": [
                     {
                         "name": "default",

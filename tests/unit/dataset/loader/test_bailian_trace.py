@@ -123,9 +123,14 @@ class TestBailianTraceDatasetLoader:
     def default_user_config(self):
         return AIPerfConfig(
             **_BASE,
-            datasets=[{"name": "default", "type": "file",
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "file",
                     "path": "dummy.jsonl",
-                    "format": "mooncake_trace",}],
+                    "format": "mooncake_trace",
+                }
+            ],
         )
 
     def _make_config(
@@ -143,9 +148,14 @@ class TestBailianTraceDatasetLoader:
         return AIPerfConfig(
             **{
                 **_BASE,
-                "datasets": [{"name": "default", "type": "file",
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
                         "path": file or "dummy.jsonl",
-                        "format": "mooncake_trace",}],
+                        "format": "mooncake_trace",
+                    }
+                ],
                 "phases": [{"name": "default", **load_kwargs}],
             },
         )
@@ -363,10 +373,15 @@ class TestBailianTraceDatasetLoader:
         config = AIPerfConfig(
             **{
                 **_BASE,
-                "datasets": [{"name": "default", "type": "file",
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
                         "path": filename,
                         "format": "mooncake_trace",
-                        **({"synthesis": synthesis} if synthesis else {}),}],
+                        **({"synthesis": synthesis} if synthesis else {}),
+                    }
+                ],
             },
         )
         loader = BailianTraceDatasetLoader(
@@ -402,10 +417,15 @@ class TestBailianTraceDatasetLoader:
         config = AIPerfConfig(
             **{
                 **_BASE,
-                "datasets": [{"name": "default", "type": "file",
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
                         "path": filename,
                         "format": "mooncake_trace",
-                        **({"synthesis": synthesis} if synthesis else {}),}],
+                        **({"synthesis": synthesis} if synthesis else {}),
+                    }
+                ],
             },
         )
         loader = BailianTraceDatasetLoader(
@@ -622,12 +642,21 @@ def _make_synthesis_config(
     return AIPerfConfig(
         **{
             **_BASE,
-            "datasets": [{"name": "default", "type": "file",
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "file",
                     "path": "dummy.jsonl",
                     "format": "mooncake_trace",
-                    "synthesis": synthesis,}, {"name": "synthetic", "type": "synthetic",
+                    "synthesis": synthesis,
+                },
+                {
+                    "name": "synthetic",
+                    "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},}],
+                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
+                },
+            ],
         },
     )
 
