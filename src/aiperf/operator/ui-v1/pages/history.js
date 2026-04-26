@@ -6,7 +6,6 @@ import { navigate } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { fmtNumber } from '../lib/format.js';
-import { applyChartTheme } from '../lib/chart-theme.js';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -88,7 +87,7 @@ export function History() {
     ],
   };
 
-  const chartOptions = applyChartTheme({
+  const chartOptions = {
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -123,7 +122,7 @@ export function History() {
         },
       },
     },
-  });
+  };
 
   return html`
     <div class="history-page" data-testid="page-history">

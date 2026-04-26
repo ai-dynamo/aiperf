@@ -4,7 +4,6 @@ import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { fmtNumber } from '../lib/format.js';
-import { applyChartTheme, PALETTE } from '../lib/chart-theme.js';
 
 // Metrics where lower is better
 const LOWER_IS_BETTER = new Set([
@@ -13,7 +12,16 @@ const LOWER_IS_BETTER = new Set([
   'inter_token_latency',
 ]);
 
-const JOB_COLORS = PALETTE;
+const JOB_COLORS = [
+  palette.mauve,
+  palette.blue,
+  palette.green,
+  palette.peach,
+  palette.pink,
+  palette.teal,
+  palette.sapphire,
+  palette.yellow,
+];
 
 function isBetter(metric, a, b) {
   if (a == null || b == null) return false;
@@ -123,7 +131,7 @@ export function Compare() {
     return { labels: metrics, datasets };
   })();
 
-  const chartOptions = applyChartTheme({
+  const chartOptions = {
     plugins: {
       legend: {
         display: true,
@@ -140,7 +148,7 @@ export function Compare() {
         grid: { color: palette.surface0 + '40' },
       },
     },
-  });
+  };
 
   return html`
     <div class="compare-page" data-testid="page-compare">

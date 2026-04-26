@@ -5,14 +5,10 @@ import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { PhaseBar } from '../components/phase-bar.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
-import { HeroStrip } from '../components/hero-strip.js';
-import { PhaseCards } from '../components/phase-cards.js';
-import { GpuTelemetryCard } from '../components/gpu-telemetry.js';
-import { ReliabilityTile } from '../components/reliability-tile.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
-import { applyChartTheme } from '../lib/chart-theme.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -212,7 +208,7 @@ function LatencyPercentileChart({ results }) {
     ],
   };
 
-  const chartOptions = applyChartTheme({
+  const chartOptions = {
     indexAxis: 'y',
     plugins: {
       legend: { display: false },
@@ -233,7 +229,7 @@ function LatencyPercentileChart({ results }) {
         grid: { color: palette.surface0 },
       },
     },
-  });
+  };
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -293,7 +289,7 @@ function ConcurrencyThroughputChart({ status }) {
     }],
   };
 
-  const chartOptions = applyChartTheme({
+  const chartOptions = {
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -314,7 +310,7 @@ function ConcurrencyThroughputChart({ status }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  });
+  };
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -354,7 +350,7 @@ function ISLDistributionChart({ results }) {
     }],
   };
 
-  const chartOptions = applyChartTheme({
+  const chartOptions = {
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -375,7 +371,7 @@ function ISLDistributionChart({ results }) {
         title: { display: true, text: 'Tokens', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  });
+  };
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -820,29 +816,6 @@ function FileViewerModal({ filename, url, onClose }) {
 
 // --- Server Metrics Section ---
 
-/** Flatten ``server_metrics_export.json`` into the shape ``GpuTelemetryCard``
- *  expects: ``[{header, tag, current, avg, unit}, ...]``. Non-GPU entries
- *  (those without a DCGM-style header) are passed through but ignored by the
- *  card's ``parseHeader`` guard. */
-function toGpuMetricsList(serverMetrics) {
-  const dict = serverMetrics?.metrics;
-  if (!dict || typeof dict !== 'object') return [];
-  const out = [];
-  for (const [tag, m] of Object.entries(dict)) {
-    if (!m || typeof m !== 'object') continue;
-    const series = Array.isArray(m.series) && m.series.length > 0 ? m.series[0] : null;
-    const stats = series?.stats ?? null;
-    out.push({
-      header: m.header ?? null,
-      tag: m.tag ?? tag,
-      current: stats?.current ?? series?.value ?? null,
-      avg: stats?.avg ?? series?.avg ?? null,
-      unit: m.unit ?? series?.unit ?? '',
-    });
-  }
-  return out;
-}
-
 function getSeriesValue(metric) {
   // Server metrics store stats under series[0].stats.avg (or series[0].value for simple counters)
   const series = metric?.series;
@@ -981,7 +954,7 @@ function ServerMetricsSection({ serverMetrics }) {
     { key: 'vllm:request_queue_time_seconds', label: 'Queue Time', color: palette.sapphire, unit: 's' },
   ];
 
-  const histogramChartOptions = (unit) => applyChartTheme({
+  const histogramChartOptions = (unit) => ({
     plugins: {
       legend: { display: false },
       tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} requests` } },
@@ -1096,7 +1069,7 @@ function PerRecordAnalysis({ records }) {
         }],
   };
 
-  const latencyScatterOptions = applyChartTheme({
+  const latencyScatterOptions = {
     plugins: {
       legend: { display: multiPhase, labels: { color: palette.overlay1, font: { size: 10 } } },
       quadrantLabels: false,
@@ -1118,7 +1091,7 @@ function PerRecordAnalysis({ records }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  });
+  };
 
   // Scatter: TTFT vs ISL
   const hasTtftIsl = rows.some(r => r.ttft != null && r.isl != null);
@@ -1140,7 +1113,7 @@ function PerRecordAnalysis({ records }) {
         }],
   } : null;
 
-  const ttftIslOptions = applyChartTheme({
+  const ttftIslOptions = {
     plugins: {
       legend: { display: multiPhase, labels: { color: palette.overlay1, font: { size: 10 } } },
       quadrantLabels: false,
@@ -1162,7 +1135,7 @@ function PerRecordAnalysis({ records }) {
         grid: { color: palette.surface0 + '60' },
       },
     },
-  });
+  };
 
   // Sortable table
   const hasItl = rows.some(r => r.itl != null);
@@ -1301,18 +1274,11 @@ export function JobDetail({ namespace, name }) {
   const throughputPoints = useRef({ labels: [], values: [] });
   const [chartData, setChartData] = useState(null);
 
-  // Per-KPI rolling window of {t, v} samples for inline sparklines. Keyed by
-  // the same short tag (``throughput``, ``token_throughput``, ``ttft``, ...)
-  // we pass into each KpiCard's ``points`` prop below. Capped at 60 samples
-  // per key — matches the throughput chart buffer.
-  const [kpiSeries, setKpiSeries] = useState({});
-
   useEffect(() => {
     const ac = new AbortController();
     // Reset chart points when job changes
     throughputPoints.current = { labels: [], values: [] };
     setChartData(null);
-    setKpiSeries({});
     setPolling(true);
 
     poll(
@@ -1331,34 +1297,6 @@ export function JobDetail({ namespace, name }) {
           summary?.throughput_rps ??
           data?.status?.metrics?.request_throughput?.avg ??
           null;
-
-        // Accumulate rolling samples per KPI tile (60 max). Keys mirror the
-        // short tag we hand to each ``<KpiCard points=...>`` below — mutate
-        // locally, then setState once so React re-renders all tiles in sync.
-        const liveOrStaticSummary =
-          data?.status?.liveSummary ?? data?.status?.summary ?? summary ?? {};
-        const kpiSample = {
-          throughput: tps,
-          token_throughput: liveOrStaticSummary?.output_token_throughput_tps ?? null,
-          ttft:
-            liveOrStaticSummary?.ttft_p99_ms ??
-            liveOrStaticSummary?.ttft_avg_ms ??
-            null,
-          latency: liveOrStaticSummary?.latency_p99_ms ?? null,
-          errors: liveOrStaticSummary?.error_rate ?? null,
-        };
-        const now = Date.now();
-        setKpiSeries((prev) => {
-          const next = { ...prev };
-          for (const [k, v] of Object.entries(kpiSample)) {
-            if (v == null || !isFinite(v)) continue;
-            const buf = next[k] ? [...next[k]] : [];
-            buf.push({ t: now, v });
-            if (buf.length > MAX_CHART_POINTS) buf.shift();
-            next[k] = buf;
-          }
-          return next;
-        });
 
         if (tps != null) {
           const pts = throughputPoints.current;
@@ -1510,29 +1448,23 @@ export function JobDetail({ namespace, name }) {
   const summary = status.liveSummary ?? status.summary ?? {};
   const throughput = summary.throughput_rps ?? info.throughputRps ?? null;
   const ttftAvg = summary.ttft_avg_ms ?? null;
-  const ttftP99 = summary.ttft_p99_ms ?? null;
   const latP99 = summary.latency_p99_ms ?? info.latencyP99Ms ?? null;
-  const latAvg = summary.latency_avg_ms ?? null;
   const errorRate = summary.error_rate ?? null;
   const errorCount = errorRate != null ? fmtNumber(errorRate, 1) + '%' : null;
 
   // Metrics from results (nested under .metrics in the CR status)
   const rawResults = status.results ?? null;
   const results = rawResults?.metrics ?? rawResults ?? null;
-  const outputTokenThroughputAvg = results?.output_token_throughput?.avg ?? summary.output_token_throughput_tps ?? null;
-  // Current throughput: prefer live current-window value when available;
-  // fall back to avg so completed/archived jobs still populate the headline.
-  const outputTokenThroughputCurrent = summary.output_token_throughput_tps ?? outputTokenThroughputAvg;
-
-  // SLO source of truth: config endpoint may wrap benchmark or unwrap it
-  // (summary-fallback path). Check both shapes; fall back to {} when unset.
-  const slos = jobConfig?.spec?.benchmark?.slos ?? jobConfig?.spec?.slos ?? {};
-  const sloTtft = slos.time_to_first_token;
-  const sloLatency = slos.request_latency;
-  const sloThroughput = slos.request_throughput;
+  const outputTokenThroughput = results?.output_token_throughput?.avg ?? summary.output_token_throughput_tps ?? null;
 
   const conditions = status.conditions ?? [];
+  // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array
   const rawPhases = status.phases ?? {};
+  const phasesArray = Object.entries(rawPhases).map(([phaseName, p]) => ({
+    name: phaseName,
+    completed: p.requestsCompleted ?? p.requests_completed ?? 0,
+    total: p.requestsTotal ?? p.requests_total ?? 0,
+  }));
   const pods = job?.pods ?? [];
   const jobError = info.error ?? status.error ?? null;
 
@@ -1554,7 +1486,7 @@ export function JobDetail({ namespace, name }) {
     };
   })();
 
-  const throughputChartOptions = applyChartTheme({
+  const throughputChartOptions = {
     plugins: { legend: { display: false } },
     scales: {
       x: {
@@ -1567,9 +1499,9 @@ export function JobDetail({ namespace, name }) {
         title: { display: true, text: 'req/s', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  });
+  };
 
-  const histogramOptions = applyChartTheme({
+  const histogramOptions = {
     plugins: { legend: { display: false } },
     scales: {
       x: {
@@ -1583,7 +1515,7 @@ export function JobDetail({ namespace, name }) {
         title: { display: true, text: 'Count', color: palette.overlay1, font: { size: 10 } },
       },
     },
-  });
+  };
 
   const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
 
@@ -1625,7 +1557,7 @@ export function JobDetail({ namespace, name }) {
               ${endpointUrl && html` · <span style="color: ${palette.blue}">${endpointUrl}</span>`}
             </div>
           </div>
-          ${isRunning && info?.source !== 'archived' && html`
+          ${isRunning && html`
             <button
               class="btn btn-danger"
               onclick=${handleCancel}
@@ -1637,13 +1569,6 @@ export function JobDetail({ namespace, name }) {
           `}
         </div>
       </div>
-
-      ${info?.source === 'archived' && html`
-        <div class="banner banner-info" style="margin-bottom: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--color-overlay-0, rgba(255,255,255,0.04)); color: var(--color-text-dim)">
-          This run's Kubernetes resource has been deleted. Showing archived
-          results from the results volume.
-        </div>
-      `}
 
       <!-- Conditions -->
       ${conditions.length > 0 && html`
@@ -1659,63 +1584,37 @@ export function JobDetail({ namespace, name }) {
         </div>
       `}
 
-      <!-- Hero strip: SLO-aware health + elapsed/ETA + active-phase progress -->
-      <div style="margin-bottom: var(--space-4)">
-        <${HeroStrip} info=${info} status=${status} config=${jobConfig} />
-      </div>
-
-      <!-- KPI row: tone is rule-based — peak metrics amber, neutral metrics
-           paper, errors red only when non-zero. Keeps the CONSOLE amber
-           dominance instead of fanning across blue/teal/peach per-metric. -->
+      <!-- KPI row -->
       <div class="kpi-row" style="margin-bottom: var(--space-6)">
         <${KpiCard}
           label="Throughput"
           value=${fmtRps(throughput) ?? '---'}
           unit=${throughput != null ? 'req/s' : ''}
-          tone=${throughput != null ? 'amber' : undefined}
-          sub=${throughput != null ? `avg ${fmtRps(throughput)} req/s` : null}
-          rawValue=${throughput}
-          slo=${sloThroughput != null ? { threshold: sloThroughput, compare: 'gt' } : null}
-          points=${kpiSeries.throughput}
-          icon="ph-trend-up"
+          color=${colors.phaseRunning}
         />
         <${KpiCard}
           label="Token Throughput"
-          value=${outputTokenThroughputCurrent != null ? fmtNum(outputTokenThroughputCurrent, 0) : '---'}
-          unit=${outputTokenThroughputCurrent != null ? 'tok/s' : ''}
-          tone=${outputTokenThroughputCurrent != null ? 'amber' : undefined}
-          sub=${outputTokenThroughputAvg != null ? `avg ${fmtNum(outputTokenThroughputAvg, 0)} tok/s` : null}
-          points=${kpiSeries.token_throughput}
-          icon="ph-activity"
+          value=${outputTokenThroughput != null ? fmtNum(outputTokenThroughput, 0) : '---'}
+          unit=${outputTokenThroughput != null ? 'tok/s' : ''}
+          color=${palette.sapphire}
         />
         <${KpiCard}
-          label="TTFT"
-          value=${ttftP99 != null ? fmtMs(ttftP99) : (ttftAvg != null ? fmtMs(ttftAvg) : '---')}
-          unit=${(ttftP99 ?? ttftAvg) != null ? 'ms' : ''}
-          sub=${ttftAvg != null ? `avg ${fmtNum(ttftAvg, 0)} ms` : null}
-          rawValue=${ttftP99 ?? ttftAvg}
-          slo=${sloTtft != null ? { threshold: sloTtft, compare: 'lt' } : null}
-          points=${kpiSeries.ttft}
-          icon="ph-timer"
+          label="TTFT avg"
+          value=${fmtMs(ttftAvg) ?? '---'}
+          unit=${ttftAvg != null ? 'ms' : ''}
+          color=${palette.teal}
         />
         <${KpiCard}
           label="Latency P99"
           value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
           unit=${latP99 != null ? 'ms' : ''}
-          sub=${latAvg != null ? `avg ${fmtNum(latAvg, 0)} ms` : null}
-          rawValue=${latP99}
-          slo=${sloLatency != null ? { threshold: sloLatency, compare: 'lt' } : null}
-          points=${kpiSeries.latency}
-          icon="ph-gauge"
+          color=${palette.peach}
         />
         <${KpiCard}
           label="Errors"
           value=${errorCount ?? '---'}
-          tone=${errorCount > 0 ? 'red' : undefined}
-          points=${kpiSeries.errors}
-          icon="ph-warning"
+          color=${errorCount ? colors.error : colors.textMuted}
         />
-        <${ReliabilityTile} summary=${summary} config=${jobConfig} />
         <!-- Feature 5: Token Efficiency -->
         ${isCompleted && results && html`<${TokenEfficiencyCard} results=${results} info=${info} />`}
       </div>
@@ -1724,13 +1623,14 @@ export function JobDetail({ namespace, name }) {
       <div class="detail-split">
         <!-- Left: Phase progress + pods -->
         <div>
-          ${Object.keys(rawPhases).length > 0 && html`
-            <div style="margin-bottom: var(--space-4)">
-              <${PhaseCards} phases=${rawPhases} />
+          ${phasesArray.length > 0 && html`
+            <div class="card" style="margin-bottom: var(--space-4)">
+              <div class="card-title">Phases</div>
+              <${PhaseBar} phases=${phasesArray} />
             </div>
           `}
 
-          ${pods.length > 0 && info?.source !== 'archived' && html`
+          ${pods.length > 0 && html`
             <div class="card" data-testid="job-detail-pods">
               <div class="card-title">Pods</div>
               <${PodsBar} pods=${pods} />
@@ -1762,13 +1662,6 @@ export function JobDetail({ namespace, name }) {
 
       <!-- Server Metrics (completed only, when available) -->
       ${isCompleted && serverMetrics && html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`}
-
-      <!-- GPU Telemetry (hidden when no DCGM-format headers are present) -->
-      ${serverMetrics && html`
-        <div style="margin-top: var(--space-4)">
-          <${GpuTelemetryCard} metrics=${toGpuMetricsList(serverMetrics)} />
-        </div>
-      `}
 
       <!-- Job Configuration (always shown if available) -->
       ${jobConfig && html`<${JobConfigSection} config=${jobConfig} />`}
