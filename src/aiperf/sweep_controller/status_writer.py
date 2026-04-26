@@ -4,8 +4,14 @@
 
 The operator owns: phase, totalVariations, runEpoch, completedRuns, failedRuns,
 runtimeRef, lastChildEvent, conditions[Progressing/Cancelling].
-The sweep-controller owns: currentCell, aggregation, aggregateRef,
-conditions[Aggregating]. SSA with distinct field managers prevents conflicts.
+The sweep-controller owns: currentCell, aggregation, aggregateRef.
+
+Each writer applies through SSA with a distinct field manager. The k8s
+apiserver tracks per-field ownership via managedFields, so concurrent
+writes to disjoint top-level fields cannot clobber each other and a
+revert by one writer cannot accidentally overwrite the other writer's
+fields. ``force=True`` is set so a controller restart can re-claim its
+own fields if the previous pod's apiserver session is still tracked.
 """
 
 from __future__ import annotations
@@ -36,61 +42,65 @@ class SweepStatusWriter:
         trial: int,
         converged: bool = False,
     ) -> None:
-        await self._patch(
+        await self._apply(
             {
-                "status": {
-                    "currentCell": {
-                        "variationIndex": variation_index,
-                        "label": label,
-                        "trial": trial,
-                        "converged": converged,
-                    }
+                "currentCell": {
+                    "variationIndex": variation_index,
+                    "label": label,
+                    "trial": trial,
+                    "converged": converged,
                 }
             }
         )
 
     async def aggregation_running(self) -> None:
-        await self._patch({"status": {"aggregation": {"phase": "Running"}}})
+        await self._apply({"aggregation": {"phase": "Running"}})
 
     async def aggregation_complete(
         self, *, aggregate_path: str, controller_host: str, port: int
     ) -> None:
-        await self._patch(
+        await self._apply(
             {
-                "status": {
-                    "aggregation": {
-                        "phase": "Complete",
-                        "completedAt": _now_iso(),
-                        "error": "",
-                    },
-                    "aggregateRef": {
-                        "resultsServerHost": controller_host,
-                        "port": port,
-                        "apiPath": aggregate_path,
-                    },
-                }
+                "aggregation": {
+                    "phase": "Complete",
+                    "completedAt": _now_iso(),
+                    "error": "",
+                },
+                "aggregateRef": {
+                    "resultsServerHost": controller_host,
+                    "port": port,
+                    "apiPath": aggregate_path,
+                },
             }
         )
 
     async def aggregation_failed(self, *, error: str) -> None:
-        await self._patch(
+        await self._apply(
             {
-                "status": {
-                    "aggregation": {
-                        "phase": "Failed",
-                        "error": error,
-                        "completedAt": _now_iso(),
-                    }
+                "aggregation": {
+                    "phase": "Failed",
+                    "error": error,
+                    "completedAt": _now_iso(),
                 }
             }
         )
 
-    async def _patch(self, body: dict[str, Any]) -> None:
+    async def _apply(self, status_fields: dict[str, Any]) -> None:
+        """Server-Side Apply of the controller's owned status fields.
+
+        SSA bodies must include ``apiVersion``, ``kind``, and ``metadata.name``
+        — the apiserver uses these to build the canonical object identity
+        before merging the supplied fields against the current state.
+        ``force=True`` reclaims fields if a previous pod incarnation still
+        appears in managedFields.
+        """
+        body = {
+            "apiVersion": "aiperf.nvidia.com/v1alpha1",
+            "kind": "AIPerfSweep",
+            "metadata": {"name": self.name, "namespace": self.namespace},
+            "status": status_fields,
+        }
         custom = CustomObjectsApi(self._api)
-        # Force merge-patch content-type — kubernetes_asyncio defaults to
-        # application/json-patch+json which expects a list of ops, not the dict
-        # body we send here. Mirrors the operator child_rollup fix from
-        # commit 27f788aef. The api_client kwarg name is `_content_type`.
         await custom.patch_namespaced_custom_object_status(
             group="aiperf.nvidia.com",
             version="v1alpha1",
@@ -99,7 +109,8 @@ class SweepStatusWriter:
             name=self.name,
             body=body,
             field_manager=SWEEP_CONTROLLER_FIELD_MANAGER,
-            _content_type="application/merge-patch+json",
+            force=True,
+            _content_type="application/apply-patch+yaml",
         )
 
 

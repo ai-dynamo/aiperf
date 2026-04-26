@@ -75,13 +75,15 @@ def test_field_manager_constant():
 
 
 # ---------------------------------------------------------------------------
-# Adversarial regression-locks: content-type and field-manager on every patch.
+# Adversarial regression-locks: SSA contract on every patch.
 #
-# Without `_content_type="application/merge-patch+json"`, kubernetes_asyncio
-# defaults to `application/json-patch+json`, which expects a JSON-Patch list
-# of ops (not a dict body). The apiserver returns 422 and the patch is
-# silently swallowed by the operator's status-writer wrapper. This was the
-# silent-failure bug fixed in this branch — the tests below lock it in.
+# The status writer uses Server-Side Apply (`application/apply-patch+yaml`)
+# with `field_manager=aiperf-sweep-controller` and `force=True`. The body
+# carries `apiVersion`, `kind`, `metadata.name`, and the `status` fields the
+# controller owns. The earlier merge-patch+json contract was upgraded so
+# the apiserver tracks per-field ownership in managedFields and concurrent
+# writes from the operator (which uses a distinct field manager) cannot
+# clobber the controller's fields.
 # ---------------------------------------------------------------------------
 
 
@@ -116,13 +118,14 @@ async def _invoke(method_name: str, writer: SweepStatusWriter) -> None:
     ],
 )
 @pytest.mark.asyncio
-async def test_patch_uses_merge_patch_content_type_for_every_writer(
+async def test_patch_uses_apply_patch_content_type_for_every_writer(
     method_name: str, monkeypatch
 ):
-    """Every status writer call MUST set _content_type=application/merge-patch+json.
+    """Every status writer call MUST set _content_type=application/apply-patch+yaml.
 
-    Regression-lock: missing this kwarg silently 422s on the apiserver and the
-    sweep CR never reflects the controller's progress.
+    Regression-lock: missing this kwarg falls back to a non-SSA path and the
+    apiserver does not track per-field ownership, allowing the operator's
+    rollup writes to clobber the controller's status.
     """
     api = MagicMock()
     custom = MagicMock()
@@ -135,9 +138,73 @@ async def test_patch_uses_merge_patch_content_type_for_every_writer(
     await _invoke(method_name, writer)
 
     kwargs = _patch_call_kwargs(custom)
-    assert kwargs.get("_content_type") == "application/merge-patch+json", (
-        f"{method_name}: expected merge-patch content-type, got {kwargs.get('_content_type')!r}"
+    assert kwargs.get("_content_type") == "application/apply-patch+yaml", (
+        f"{method_name}: expected SSA content-type, got {kwargs.get('_content_type')!r}"
     )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "current_cell",
+        "aggregation_running",
+        "aggregation_complete",
+        "aggregation_failed",
+    ],
+)
+@pytest.mark.asyncio
+async def test_patch_uses_force_true_for_every_writer(method_name: str, monkeypatch):
+    """SSA force=True is required so a controller restart can re-claim its fields."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await _invoke(method_name, writer)
+
+    kwargs = _patch_call_kwargs(custom)
+    assert kwargs.get("force") is True, (
+        f"{method_name}: SSA must pass force=True, got {kwargs.get('force')!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "current_cell",
+        "aggregation_running",
+        "aggregation_complete",
+        "aggregation_failed",
+    ],
+)
+@pytest.mark.asyncio
+async def test_patch_body_carries_apiversion_kind_metadata(
+    method_name: str, monkeypatch
+):
+    """SSA bodies MUST include apiVersion, kind, and metadata.name."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await _invoke(method_name, writer)
+
+    body = _patch_call_kwargs(custom).get("body")
+    assert body is not None, f"{method_name}: body kwarg missing"
+    assert body.get("apiVersion") == "aiperf.nvidia.com/v1alpha1", (
+        f"{method_name}: SSA body apiVersion is {body.get('apiVersion')!r}"
+    )
+    assert body.get("kind") == "AIPerfSweep"
+    assert (body.get("metadata") or {}).get("name") == "s"
+    # Status content lives at top level of body["status"], not nested under
+    # an outer "status" key (which was the merge-patch shape).
+    assert "status" in body, f"{method_name}: body missing status key"
 
 
 @pytest.mark.parametrize(

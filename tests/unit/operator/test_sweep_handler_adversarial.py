@@ -239,13 +239,13 @@ async def test_on_child_phase_transition_writes_aggregating_when_parent_non_term
 
 
 # ---------------------------------------------------------------------------
-# C) child_rollup — content-type regression-lock
+# C) child_rollup — SSA contract regression-lock
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_patch_parent_status_uses_merge_patch_content_type(monkeypatch):
-    """``_patch_parent_status`` must call the API with merge-patch content-type."""
+async def test_patch_parent_status_uses_apply_patch_content_type(monkeypatch):
+    """``_patch_parent_status`` must call the API with SSA content-type."""
     fake = _install_fake_k8s(monkeypatch)
 
     await child_rollup._patch_parent_status(
@@ -259,9 +259,22 @@ async def test_patch_parent_status_uses_merge_patch_content_type(monkeypatch):
 
     fake.patch_status.assert_awaited_once()
     kwargs = fake.patch_status.await_args.kwargs
-    assert kwargs.get("_content_type") == "application/merge-patch+json", (
-        "patch must be sent as merge-patch+json (json-patch+json would expect a list of ops)"
+    assert kwargs.get("_content_type") == "application/apply-patch+yaml", (
+        "patch must be sent as apply-patch+yaml (SSA) so the apiserver tracks "
+        "per-field ownership and the operator's writes do not clobber the "
+        "sweep-controller's status fields"
     )
+    assert kwargs.get("field_manager") == child_rollup.ROLLUP_FIELD_MANAGER, (
+        "rollup must use a distinct field_manager so SSA can track ownership"
+    )
+    assert kwargs.get("force") is True, (
+        "SSA force=True required so an operator restart re-claims its fields"
+    )
+    body = kwargs.get("body")
+    assert body is not None
+    assert body.get("apiVersion") == "aiperf.nvidia.com/v1alpha1"
+    assert body.get("kind") == "AIPerfSweep"
+    assert (body.get("metadata") or {}).get("name") == "s"
     assert kwargs.get("name") == "s"
     assert kwargs.get("namespace") == "ns"
     assert kwargs.get("plural") == "aiperfsweeps"

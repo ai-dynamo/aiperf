@@ -21,6 +21,10 @@ TERMINAL_PHASES = frozenset(
 PARENT_TERMINAL_PHASES = frozenset(
     {"Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
 )
+# SSA field manager for rollup writes. The sweep-controller pod uses
+# "aiperf-sweep-controller" — these two managers are intentionally
+# distinct so the apiserver tracks per-field ownership in managedFields.
+ROLLUP_FIELD_MANAGER = "aiperf-operator-rollup"
 
 __all__ = ["on_child_phase_transition"]
 
@@ -145,6 +149,16 @@ async def _patch_parent_status(
     namespace: str,
     body: dict[str, Any],
 ) -> None:
+    """Server-Side Apply of operator-owned rollup fields on AIPerfSweep.status.
+
+    Uses ``application/apply-patch+yaml`` with field manager
+    ``aiperf-operator-rollup``. The body's ``status`` content is the operator's
+    declared ownership: ``completedRuns``, ``failedRuns``, ``lastChildEvent``,
+    and conditionally ``phase``. The sweep-controller writes disjoint fields
+    (``currentCell``, ``aggregation``, ``aggregateRef``) under its own field
+    manager, so SSA tracks both without clobber. ``force=True`` reclaims fields
+    after operator restarts.
+    """
     import aiohttp
     import kopf
     from kubernetes_asyncio import client as k8s
@@ -152,20 +166,25 @@ async def _patch_parent_status(
 
     from aiperf.kubernetes.client import k8s_client
 
+    apply_body: dict[str, Any] = {
+        "apiVersion": f"{group}/{version}",
+        "kind": "AIPerfSweep",
+        "metadata": {"name": name, "namespace": namespace},
+        **body,
+    }
     try:
         async with k8s_client() as api:
             custom = k8s.CustomObjectsApi(api)
-            # Force merge-patch content-type — kubernetes_asyncio defaults to
-            # application/json-patch+json which expects a list of ops, not the dict
-            # body we send here. The api_client kwarg name is `_content_type`.
             await custom.patch_namespaced_custom_object_status(
                 group=group,
                 version=version,
                 plural=plural,
                 namespace=namespace,
                 name=name,
-                body=body,
-                _content_type="application/merge-patch+json",
+                body=apply_body,
+                field_manager=ROLLUP_FIELD_MANAGER,
+                force=True,
+                _content_type="application/apply-patch+yaml",
             )
     except ApiException as e:
         if e.status == 404:
