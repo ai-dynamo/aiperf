@@ -62,15 +62,17 @@ class TimingConfig(AIPerfBaseModel):
     def from_config(cls, config: BenchmarkConfig) -> TimingConfig:
         """Build TimingConfig from AIPerfConfig phases in config order.
 
-        Each phase uses its dict key as the phase name and preserves
+        Each phase uses its `name` field as the phase name and preserves
         exclude_from_results from the config.
         """
         phase_configs: list[CreditPhaseConfig] = []
         cancellation = RequestCancellationConfig()
 
-        for name, phase in config.phases.items():
+        for phase in config.phases:
             phase_config = _build_credit_phase_config(
-                phase, phase_name=name, exclude_from_results=phase.exclude_from_results
+                phase,
+                phase_name=phase.name,
+                exclude_from_results=phase.exclude_from_results,
             )
             phase_configs.append(phase_config)
 

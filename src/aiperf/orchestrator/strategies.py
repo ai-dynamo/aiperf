@@ -346,11 +346,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
             Configuration with warmup phases removed
         """
         config = config.model_copy(deep=True)
-        warmup_keys = [
-            name for name, phase in config.phases.items() if phase.exclude_from_results
-        ]
-        for key in warmup_keys:
-            del config.phases[key]
+        config.phases = [p for p in config.phases if not p.exclude_from_results]
         return config
 
 
