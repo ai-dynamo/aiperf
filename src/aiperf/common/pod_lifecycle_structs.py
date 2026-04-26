@@ -155,6 +155,29 @@ class GroupDatasetReady(
     """Dataset acquisition error message when success is false."""
 
 
+class GroupTokenizerReady(
+    Struct,
+    frozen=True,
+    kw_only=True,
+    omit_defaults=True,
+    tag_field="t",
+    tag="tokenizer",
+):
+    """Group-local tokenizer availability notification from WorkerGroupManager."""
+
+    service_id: str
+    """Service identifier for the group manager publishing tokenizer readiness."""
+
+    bundles: dict[str, str]
+    """Map of tokenizer name to local snapshot directory path."""
+
+    success: bool = True
+    """Whether tokenizer acquisition completed successfully."""
+
+    error_message: str | None = None
+    """Tokenizer acquisition error message when success is false."""
+
+
 class GroupDatasetStateQuery(
     Struct, frozen=True, kw_only=True, tag_field="t", tag="dq"
 ):
@@ -249,7 +272,11 @@ PeerToGroupManagerMessage: TypeAlias = (
 )
 
 GroupManagerToPeerMessage: TypeAlias = (
-    GroupPeerAck | GroupDatasetReady | GroupDatasetStateSnapshot | GroupPeerCommand
+    GroupPeerAck
+    | GroupDatasetReady
+    | GroupTokenizerReady
+    | GroupDatasetStateSnapshot
+    | GroupPeerCommand
 )
 
 
