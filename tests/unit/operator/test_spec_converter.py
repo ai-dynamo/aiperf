@@ -253,7 +253,7 @@ class TestToDeploymentConfig:
                 "benchmark": {
                     "models": ["mock"],
                     "endpoint": {"urls": ["http://example/v1/chat/completions"]},
-                    "datasets": {"main": {"type": "synthetic"}},
+                    "datasets": [{"name": "main", "type": "synthetic"}],
                     "phases": [
                         {
                             "name": "profiling",
@@ -312,7 +312,7 @@ class TestCalculateWorkers:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": {
                     "type": "concurrency",
                     "requests": 10,
@@ -330,7 +330,7 @@ class TestCalculateWorkers:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": {
                     "type": "concurrency",
                     "requests": 10,
@@ -357,7 +357,7 @@ class TestCalculateWorkers:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "runtime": {"workers": 1250, "workers_per_pod": 25},
                 "phases": {
                     "type": "concurrency",
@@ -375,7 +375,7 @@ class TestCalculateWorkers:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": [
                     {
                         "name": "warmup",
@@ -442,7 +442,7 @@ def _expansion_spec(benchmark_overrides: dict[str, Any]) -> dict[str, Any]:
     base: dict[str, Any] = {
         "models": ["test-model"],
         "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-        "datasets": {"main": {"type": "synthetic", "entries": 10}},
+        "datasets": [{"name": "main", "type": "synthetic", "entries": 10}],
         "phases": [
             {
                 "name": "profiling",
@@ -522,7 +522,7 @@ class TestEnvVarExpansion:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": [
                     {
                         "name": "profiling",
@@ -592,7 +592,7 @@ class TestJinja2Expansion:
                 "variables": {"c": 50},
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": [
                     {
                         "name": "profiling",
@@ -617,7 +617,7 @@ class TestBuildBenchmarkRunSweepWarning:
         return {
             "models": ["test-model"],
             "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-            "datasets": {"main": {"type": "synthetic"}},
+            "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": {
                 "type": "concurrency",
                 "dataset": "main",

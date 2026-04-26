@@ -23,13 +23,9 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
         "path": "/v1/chat/completions",
         "streaming": False,
     },
-    "datasets": {
-        "default": {
-            "type": "synthetic",
+    "datasets": [{"name": "default", "type": "synthetic",
             "entries": 1,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    },
+            "prompts": {"isl": 128, "osl": 64},}],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],
@@ -142,13 +138,9 @@ def user_config() -> AIPerfConfig:
             "timeout": 600,
             "api_key": "test-api-key",
         },
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],

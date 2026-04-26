@@ -65,7 +65,7 @@ def _config(**dataset_overrides) -> AIPerfConfig:
     """Build an AIPerfConfig with a single synthetic dataset, merging overrides."""
     dataset = {"type": "synthetic", "entries": 100, "prompts": {"isl": 128, "osl": 64}}
     dataset.update(dataset_overrides)
-    return AIPerfConfig(**_BASE, datasets={"default": dataset})
+    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
 
 
 # ============================================================================
@@ -170,13 +170,9 @@ def custom_config() -> BenchmarkRun:
     return _make_run(
         AIPerfConfig(
             **_BASE,
-            datasets={
-                "default": {
-                    "type": "file",
+            datasets=[{"name": "default", "type": "file",
                     "path": "test_data.jsonl",
-                    "format": "single_turn",
-                }
-            },
+                    "format": "single_turn",}],
         )
     )
 
@@ -187,12 +183,8 @@ def trace_config() -> BenchmarkRun:
     return _make_run(
         AIPerfConfig(
             **_BASE,
-            datasets={
-                "default": {
-                    "type": "file",
+            datasets=[{"name": "default", "type": "file",
                     "path": "trace_data.jsonl",
-                    "format": "mooncake_trace",
-                }
-            },
+                    "format": "mooncake_trace",}],
         )
     )

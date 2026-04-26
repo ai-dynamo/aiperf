@@ -60,13 +60,9 @@ def base_user_config() -> AIPerfConfig:
     """Create a basic AIPerfConfig for testing."""
     return AIPerfConfig(
         **_BASE_CONFIG,
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
     )
 
 
@@ -228,13 +224,9 @@ class TestDatasetManager:
         try:
             config = AIPerfConfig(
                 **_BASE_CONFIG,
-                datasets={
-                    "default": {
-                        "type": "file",
+                datasets=[{"name": "default", "type": "file",
                         "path": filename,
-                        "format": CustomDatasetType.MOONCAKE_TRACE,
-                    }
-                },
+                        "format": CustomDatasetType.MOONCAKE_TRACE,}],
             )
 
             dataset_manager = DatasetManager(
@@ -290,13 +282,9 @@ class TestDatasetManager:
         try:
             config = AIPerfConfig(
                 **_BASE_CONFIG,
-                datasets={
-                    "default": {
-                        "type": "file",
+                datasets=[{"name": "default", "type": "file",
                         "path": filename,
-                        "format": CustomDatasetType.MOONCAKE_TRACE,
-                    }
-                },
+                        "format": CustomDatasetType.MOONCAKE_TRACE,}],
             )
 
             dataset_manager = DatasetManager(
@@ -358,13 +346,9 @@ class TestDatasetManagerMemoryAndClient:
         """Test that in-memory dataset is freed after dataset client is initialized."""
         config = AIPerfConfig(
             **_BASE_CONFIG,
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 5,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -407,13 +391,9 @@ class TestDatasetManagerFallbackHandlers:
         """Create a configured dataset manager with multiple entries."""
         config = AIPerfConfig(
             **_BASE_CONFIG,
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 3,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -596,13 +576,9 @@ class TestDatasetManagerTokenizerSkip:
                 "urls": ["http://localhost:8000/v1/image_retrieval"],
                 "type": "image_retrieval",
             },
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
             phases=[
                 {
                     "name": "default",
@@ -639,13 +615,9 @@ class TestDatasetManagerTokenizerSkip:
                 "urls": ["http://localhost:8000/v1/chat/completions"],
                 "type": EndpointType.CHAT,
             },
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
             phases=[
                 {
                     "name": "default",

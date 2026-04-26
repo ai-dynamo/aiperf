@@ -57,25 +57,26 @@ from aiperf.plugin.enums import (
 
 
 def _synthetic_dataset(**kwargs) -> SyntheticDataset:
-    defaults = {"type": "synthetic", "entries": 100}
+    defaults = {"name": "main", "type": "synthetic", "entries": 100}
     defaults.update(kwargs)
     return SyntheticDataset(**defaults)
 
 
 def _file_dataset(**kwargs) -> FileDataset:
-    defaults = {"type": "file", "path": "/tmp/data.jsonl"}
+    defaults = {"name": "main", "type": "file", "path": "/tmp/data.jsonl"}
     defaults.update(kwargs)
     return FileDataset(**defaults)
 
 
 def _public_dataset(**kwargs) -> PublicDataset:
-    defaults = {"type": "public", "name": "sharegpt"}
+    defaults = {"name": "main", "type": "public", "dataset": "sharegpt"}
     defaults.update(kwargs)
     return PublicDataset(**defaults)
 
 
 def _composed_dataset(**kwargs) -> ComposedDataset:
     defaults = {
+        "name": "main",
         "source": {"type": "file", "path": "/tmp/src.jsonl", "format": "single_turn"},
         "augment": {"osl": 512},
     }

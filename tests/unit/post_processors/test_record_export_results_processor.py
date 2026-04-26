@@ -62,13 +62,9 @@ def user_config_records_export(tmp_artifact_dir: Path) -> AIPerfConfig:
             "urls": ["http://localhost:8000/v1/chat/completions"],
             "type": EndpointType.CHAT,
         },
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],
@@ -566,13 +562,9 @@ class TestRecordExportResultsProcessorHttpTrace:
                 "urls": ["http://localhost:8000/v1/chat/completions"],
                 "type": EndpointType.CHAT,
             },
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
             phases=[
                 {
                     "name": "default",
@@ -891,13 +883,9 @@ class TestRecordExportResultsProcessorPerChunkData:
                 "urls": ["http://localhost:8000/v1/chat/completions"],
                 "type": EndpointType.CHAT,
             },
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            },
+                    "prompts": {"isl": 128, "osl": 64},}],
             phases=[
                 {
                     "name": "default",

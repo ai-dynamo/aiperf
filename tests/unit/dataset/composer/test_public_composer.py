@@ -18,12 +18,8 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
         "type": "chat",
         "urls": ["http://localhost:8000/v1/chat/completions"],
     },
-    "datasets": {
-        "default": {
-            "type": "public",
-            "name": "sharegpt",
-        }
-    },
+    "datasets": [{"name": "default", "type": "public",
+            "dataset": "sharegpt",}],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],

@@ -980,13 +980,9 @@ class TestConfigMapSpecFromBenchmarkRun:
             {
                 "models": {"items": [{"name": "test-model"}]},
                 "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-                "datasets": {
-                    "main": {
-                        "type": "synthetic",
+                "datasets": [{"name": "main", "type": "synthetic",
                         "entries": 10,
-                        "prompts": {"isl": 128, "osl": 128},
-                    },
-                },
+                        "prompts": {"isl": 128, "osl": 128},}],
                 "phases": [
                     {
                         "name": "profiling",

@@ -125,7 +125,7 @@ def test_build_sweep_cr_dict_default_name_from_config_stem(tmp_path: Path) -> No
         """
 models: [m]
 endpoint: {urls: [http://x], type: chat}
-datasets: {main: {type: synthetic}}
+datasets: [{name: main, type: synthetic}]
 phases:
   - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
 sweep:
@@ -159,7 +159,7 @@ def test_build_sweep_cr_dict_no_axis_raises_validation_error(tmp_path: Path) -> 
         """
 models: [m]
 endpoint: {urls: [http://x], type: chat}
-datasets: {main: {type: synthetic}}
+datasets: [{name: main, type: synthetic}]
 phases:
   - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
 """
@@ -191,7 +191,7 @@ def test_camelcase_multiRun_key_also_hoisted(tmp_path: Path) -> None:
         """
 models: [m]
 endpoint: {urls: [http://x], type: chat}
-datasets: {main: {type: synthetic}}
+datasets: [{name: main, type: synthetic}]
 phases:
   - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
 multiRun:

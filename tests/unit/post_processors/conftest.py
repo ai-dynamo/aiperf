@@ -56,13 +56,9 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
         "type": "chat",
         "urls": ["http://localhost:8000/v1/test"],
     },
-    "datasets": {
-        "default": {
-            "type": "synthetic",
+    "datasets": [{"name": "default", "type": "synthetic",
             "entries": 1,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    },
+            "prompts": {"isl": 128, "osl": 64},}],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],
@@ -131,13 +127,9 @@ def mock_user_config() -> AIPerfConfig:
             "type": EndpointType.COMPLETIONS,
             "streaming": False,
         },
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],
@@ -154,13 +146,9 @@ def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
             "type": EndpointType.CHAT,
             "streaming": False,
         },
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
         ],

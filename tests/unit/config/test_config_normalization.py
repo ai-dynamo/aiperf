@@ -23,6 +23,7 @@ _SYNTHETIC_DATASET = {
     "entries": 100,
     "prompts": {"isl": 128, "osl": 64},
 }
+_DEFAULT_NAMED_DATASET = {"name": "default", **_SYNTHETIC_DATASET}
 _CONCURRENCY_PHASE = {"type": "concurrency", "requests": 10, "concurrency": 1}
 
 
@@ -31,7 +32,7 @@ def _minimal(**overrides: object) -> dict:
     base: dict = {
         "models": ["m"],
         "endpoint": _ENDPOINT,
-        "datasets": {"default": _SYNTHETIC_DATASET},
+        "datasets": [_DEFAULT_NAMED_DATASET],
         "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
     }
     base.update(overrides)
@@ -109,8 +110,8 @@ class TestDatasetNormalization:
 
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert "default" in cfg.datasets
-        assert isinstance(cfg.datasets["default"], SyntheticDataset)
+        assert "default" in [d.name for d in cfg.datasets]
+        assert isinstance(cfg.datasets[0], SyntheticDataset)
 
     def test_composed_dataset_with_explicit_type(self) -> None:
         composed_dict = {
@@ -124,10 +125,10 @@ class TestDatasetNormalization:
             },
         }
         cfg = BenchmarkConfig.model_validate(
-            _minimal(datasets={"mixed": composed_dict})
+            _minimal(datasets=[{"name": "mixed", **composed_dict}])
         )
 
-        assert isinstance(cfg.datasets["mixed"], ComposedDataset)
+        assert isinstance(cfg.datasets[0], ComposedDataset)
 
     def test_composed_without_explicit_type_needs_type_field(self) -> None:
         """source+augment without type field fails: discriminated union requires tag."""
@@ -141,28 +142,28 @@ class TestDatasetNormalization:
             },
         }
         with pytest.raises(Exception, match="Unable to extract tag"):
-            BenchmarkConfig.model_validate(_minimal(datasets={"mixed": composed_dict}))
+            BenchmarkConfig.model_validate(
+                _minimal(datasets=[{"name": "mixed", **composed_dict}])
+            )
 
     def test_default_type_synthetic(self) -> None:
         no_type = {"entries": 50, "prompts": {"isl": 64}}
-        cfg = BenchmarkConfig.model_validate(_minimal(datasets={"gen": no_type}))
+        cfg = BenchmarkConfig.model_validate(
+            _minimal(datasets=[{"name": "gen", **no_type}])
+        )
 
-        assert isinstance(cfg.datasets["gen"], SyntheticDataset)
+        assert isinstance(cfg.datasets[0], SyntheticDataset)
 
     def test_explicit_type_preserved(self) -> None:
         cfg = BenchmarkConfig.model_validate(
             _minimal(
-                datasets={
-                    "trace": {
-                        "type": "file",
+                datasets=[{"name": "trace", "type": "file",
                         "path": "/tmp/trace.jsonl",
-                        "format": "mooncake_trace",
-                    }
-                }
+                        "format": "mooncake_trace",}]
             )
         )
 
-        assert cfg.datasets["trace"].type == "file"
+        assert cfg.datasets[0].type == "file"
 
 
 # ============================================================
@@ -268,7 +269,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "profiling": _CONCURRENCY_PHASE,
         }
         cfg = BenchmarkConfig.model_validate(data)
@@ -282,7 +283,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "warmup": {**_CONCURRENCY_PHASE, "requests": 5},
             "profiling": _CONCURRENCY_PHASE,
         }
@@ -298,7 +299,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "warmup": _CONCURRENCY_PHASE,
             "profiling": _CONCURRENCY_PHASE,
         }
@@ -313,7 +314,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "warmup": _CONCURRENCY_PHASE,
         }
         with pytest.raises(ValueError, match="'warmup' requires 'profiling'"):
@@ -323,7 +324,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "warmup": _CONCURRENCY_PHASE,
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
@@ -334,7 +335,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "profiling": _CONCURRENCY_PHASE,
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
@@ -351,7 +352,7 @@ class TestPhaseFlattening:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {"default": _SYNTHETIC_DATASET},
+            "datasets": [_DEFAULT_NAMED_DATASET],
             "profiling": _CONCURRENCY_PHASE,
             "warmup": _CONCURRENCY_PHASE,
         }
@@ -368,7 +369,7 @@ class TestDatasetMutualExclusivity:
             "models": ["m"],
             "endpoint": _ENDPOINT,
             "dataset": _SYNTHETIC_DATASET,
-            "datasets": {"other": _SYNTHETIC_DATASET},
+            "datasets": [{"name": "other", **_SYNTHETIC_DATASET}],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="'dataset' cannot be used with 'datasets'"):
@@ -392,7 +393,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.datasets["default"]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None
@@ -402,21 +403,16 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {
-                "a": {"type": "synthetic", "entries": 50, "isl": 256, "osl": 64},
-                "b": {
-                    "type": "synthetic",
+            "datasets": [{"name": "a", "type": "synthetic", "entries": 50, "isl": 256, "osl": 64}, {"name": "b", "type": "synthetic",
                     "entries": 50,
                     "isl": {"mean": 512, "stddev": 50},
-                    "osl": 128,
-                },
-            },
+                    "osl": 128,}],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert cfg.datasets["a"].prompts is not None
-        assert cfg.datasets["b"].prompts is not None
+        assert cfg.datasets[0].prompts is not None
+        assert cfg.datasets[1].prompts is not None
 
     def test_isl_only_hoisted(self) -> None:
         data = {
@@ -427,7 +423,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.datasets["default"]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None
@@ -437,7 +433,7 @@ class TestIslOslHoisting:
         data = _minimal()
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.datasets["default"]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
 
@@ -445,9 +441,7 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {
-                "default": {"type": "file", "path": "/tmp/data.jsonl", "isl": 512},
-            },
+            "datasets": [{"name": "default", "type": "file", "path": "/tmp/data.jsonl", "isl": 512}],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):
@@ -457,9 +451,7 @@ class TestIslOslHoisting:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
-            "datasets": {
-                "default": {"type": "public", "name": "sharegpt", "isl": 512},
-            },
+            "datasets": [{"name": "default", "type": "public", "dataset": "sharegpt", "isl": 512}],
             "phases": [{"name": "default", **_CONCURRENCY_PHASE}],
         }
         with pytest.raises(Exception, match="Extra inputs are not permitted"):
@@ -475,7 +467,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.datasets["default"]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
 
@@ -494,7 +486,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.datasets["default"]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None  # hoisted from top-level

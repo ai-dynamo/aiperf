@@ -177,7 +177,7 @@ class TestDatasetInference:
 
     def test_synthetic_by_default(self, base_kwargs: dict) -> None:
         config = _build(base_kwargs, request_count=100)
-        dataset = config.datasets["main"]
+        dataset = config.get_dataset("main")
         assert dataset.type == "synthetic"
 
     def test_public_dataset(self, base_kwargs: dict) -> None:
@@ -186,7 +186,7 @@ class TestDatasetInference:
             public_dataset=PublicDatasetType.SHAREGPT,
             request_count=100,
         )
-        dataset = config.datasets["main"]
+        dataset = config.get_dataset("main")
         assert dataset.type == "public"
 
     def test_file_dataset(self, base_kwargs: dict, tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ class TestDatasetInference:
             input_file=str(input_file),
             request_count=100,
         )
-        dataset = config.datasets["main"]
+        dataset = config.get_dataset("main")
         assert dataset.type == "file"
 
 

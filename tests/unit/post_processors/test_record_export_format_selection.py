@@ -18,13 +18,14 @@ from aiperf.post_processors.record_export_results_processor import (
 )
 from tests.unit.post_processors.conftest import _make_run
 
-_MINIMAL_DATASETS = {
-    "default": {
+_MINIMAL_DATASETS = [
+    {
+        "name": "default",
         "type": "synthetic",
         "entries": 100,
         "prompts": {"isl": 128, "osl": 64},
     }
-}
+]
 _MINIMAL_PHASES = [
     {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
 ]

@@ -21,7 +21,7 @@ spec:
         - http://agg-8xtp2-frontend:8000
       streaming: true
     datasets:
-      main:
+      - name: main
         type: file
         path: /perf-cache/traces/conversation_trace.jsonl
         format: mooncake_trace

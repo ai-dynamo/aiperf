@@ -25,7 +25,7 @@ def _sweep_cr() -> dict:
                     "benchmark": {
                         "models": ["m"],
                         "endpoint": {"urls": ["http://x"], "type": "chat"},
-                        "datasets": {"main": {"type": "synthetic"}},
+                        "datasets": [{"name": "main", "type": "synthetic"}],
                         "phases": [
                             {
                                 "name": "profiling",
@@ -46,7 +46,7 @@ def _benchmark_run(var_idx: int = 7, trial: int = 2) -> BenchmarkRun:
         {
             "models": ["m"],
             "endpoint": {"urls": ["http://x"], "type": "chat"},
-            "datasets": {"main": {"type": "synthetic"}},
+            "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": [
                 {
                     "name": "profiling",

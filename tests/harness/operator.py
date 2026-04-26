@@ -34,7 +34,7 @@ def build_sample_body() -> dict[str, Any]:
             "benchmark": {
                 "models": ["test-model"],
                 "endpoint": {"url": "http://localhost:8000"},
-                "datasets": {"main": {"type": "synthetic"}},
+                "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": {
                     "type": "concurrency",
                     "dataset": "main",
@@ -59,7 +59,7 @@ def build_minimal_aiperfjob_spec() -> dict[str, Any]:
             "endpoint": {
                 "urls": ["http://localhost:8000/v1/chat/completions"],
             },
-            "datasets": {"main": {"type": "synthetic"}},
+            "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": {
                 "type": "concurrency",
                 "dataset": "main",
@@ -81,7 +81,7 @@ def build_full_aiperfjob_spec() -> dict[str, Any]:
             "endpoint": {
                 "urls": ["http://api.example.com/v1/chat/completions"],
             },
-            "datasets": {"main": {"type": "synthetic"}},
+            "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": [
                 {
                     "name": "warmup",
@@ -137,7 +137,7 @@ def build_high_concurrency_spec() -> dict[str, Any]:
             "endpoint": {
                 "urls": ["http://localhost:8000/v1/chat/completions"],
             },
-            "datasets": {"main": {"type": "synthetic"}},
+            "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": {
                 "type": "concurrency",
                 "dataset": "main",

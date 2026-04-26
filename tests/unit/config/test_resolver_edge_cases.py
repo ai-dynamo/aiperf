@@ -51,9 +51,7 @@ def _make_config(**overrides):
     defaults = {
         "models": ["test-model"],
         "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-        "datasets": {
-            "main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
-        },
+        "datasets": [{"name": "main", "type": "synthetic", "entries": 10, "prompts": {"isl": 32}}],
         "phases": [
             {"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}
         ],
@@ -271,11 +269,7 @@ class TestDatasetResolverEdgeCases:
             files[name] = str(f)
 
         config = _make_config(
-            datasets={
-                "train": {"type": "file", "path": files["train"]},
-                "val": {"type": "file", "path": files["val"]},
-                "test": {"type": "file", "path": files["test"]},
-            },
+            datasets=[{"name": "train", "type": "file", "path": files["train"]}, {"name": "val", "type": "file", "path": files["val"]}, {"name": "test", "type": "file", "path": files["test"]}],
             phases=[
                 {
                     "name": "default",
@@ -302,7 +296,7 @@ class TestDatasetResolverEdgeCases:
         link.symlink_to(real_file)
 
         config = _make_config(
-            datasets={"main": {"type": "file", "path": str(link)}},
+            datasets=[{"name": "main", "type": "file", "path": str(link)}],
             phases=[
                 {
                     "name": "default",
@@ -322,9 +316,7 @@ class TestDatasetResolverEdgeCases:
     def test_error_message_includes_dataset_name(self, tmp_path) -> None:
         """FileNotFoundError for missing file includes the dataset key name."""
         config = _make_config(
-            datasets={
-                "my_special_ds": {"type": "file", "path": "/nonexistent/data.jsonl"}
-            },
+            datasets=[{"name": "my_special_ds", "type": "file", "path": "/nonexistent/data.jsonl"}],
             phases=[
                 {
                     "name": "default",
@@ -342,10 +334,7 @@ class TestDatasetResolverEdgeCases:
     def test_all_synthetic_datasets_noop(self, tmp_path) -> None:
         """Config with only synthetic datasets leaves dataset_file_paths as None."""
         config = _make_config(
-            datasets={
-                "synth_a": {"type": "synthetic", "entries": 5, "prompts": {"isl": 32}},
-                "synth_b": {"type": "synthetic", "entries": 10, "prompts": {"isl": 64}},
-            },
+            datasets=[{"name": "synth_a", "type": "synthetic", "entries": 5, "prompts": {"isl": 32}}, {"name": "synth_b", "type": "synthetic", "entries": 10, "prompts": {"isl": 64}}],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -499,7 +488,7 @@ class TestResolverChainIntegration:
         dataset_file.write_text('{"prompt": "hello"}\n')
 
         config = _make_config(
-            datasets={"main": {"type": "file", "path": str(dataset_file)}},
+            datasets=[{"name": "main", "type": "file", "path": str(dataset_file)}],
             phases=[
                 {
                     "name": "default",
@@ -526,7 +515,7 @@ class TestResolverChainIntegration:
 
         config = _make_config(
             tokenizer=TokenizerConfig(name="test-tok"),
-            datasets={"main": {"type": "file", "path": str(dataset_file)}},
+            datasets=[{"name": "main", "type": "file", "path": str(dataset_file)}],
             phases=[
                 {
                     "name": "default",

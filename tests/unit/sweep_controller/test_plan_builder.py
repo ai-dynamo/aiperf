@@ -15,7 +15,7 @@ def _benchmark() -> dict:
     return {
         "models": "mock",
         "endpoint": {"urls": ["http://x:8000/v1/chat/completions"]},
-        "datasets": {"main": {"type": "synthetic"}},
+        "datasets": [{"name": "main", "type": "synthetic"}],
         "phases": [
             {
                 "name": "profiling",

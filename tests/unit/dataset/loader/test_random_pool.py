@@ -406,7 +406,7 @@ class TestRandomPoolBatchSize:
         return AIPerfConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={"default": dataset_config},
+            datasets=[{"name": "default", **dataset_config}],
             phases=[
                 {
                     "name": "default",

@@ -59,7 +59,7 @@ artifacts:
         isl={{{{ isl }}}} osl={{{{ osl }}}}
 {extra_user_files_yaml}
 datasets:
-  default:
+  - name: default
     type: synthetic
     entries: 5
     prompts:
@@ -196,7 +196,7 @@ artifacts:
         nested:
           model: "{{{{ model }}}}"
 datasets:
-  default:
+  - name: default
     type: synthetic
     entries: 5
     prompts:

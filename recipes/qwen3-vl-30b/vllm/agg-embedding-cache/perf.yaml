@@ -24,7 +24,7 @@ spec:
         min_tokens: 150
         ignore_eos: true
     datasets:
-      main:
+      - name: main
         type: file
         path: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
         format: single_turn

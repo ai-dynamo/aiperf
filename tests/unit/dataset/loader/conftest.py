@@ -39,13 +39,9 @@ def create_user_config_and_composer(mock_tokenizer_cls):
         config = AIPerfConfig(
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
-                    "type": "file",
+            datasets=[{"name": "default", "type": "file",
                     "path": "test_data.jsonl",
-                    "format": "single_turn",
-                }
-            },
+                    "format": "single_turn",}],
             phases=[
                 {
                     "name": "default",
@@ -73,13 +69,9 @@ def default_user_config() -> AIPerfConfig:
     return AIPerfConfig(
         models=["test-model"],
         endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {
                 "name": "default",

@@ -289,7 +289,7 @@ def _needs_augment(s: set[str]) -> bool:
 
 _FLAT_DATASET_FIELDS = {
     "input_file": "path",
-    "public_dataset": "name",
+    "public_dataset": "dataset",
     "hf_subset": "hf_subset",
     "custom_dataset_type": "format",
     "dataset_sampling_strategy": "sampling",

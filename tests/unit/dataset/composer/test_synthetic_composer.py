@@ -32,7 +32,7 @@ def _make_config(**dataset_overrides) -> AIPerfConfig:
         "prompts": {"isl": 128, "osl": 64},
     }
     dataset.update(dataset_overrides)
-    return AIPerfConfig(**_BASE, datasets={"default": dataset})
+    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
 
 
 class TestSyntheticDatasetComposer:
@@ -85,18 +85,14 @@ class TestSyntheticDatasetComposer:
         config = AIPerfConfig(
             models=["test_model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 5,
                     "prompts": {"isl": {"mean": 0}},
                     "images": {
                         "width": {"mean": 0},
                         "height": {"mean": 0},
                     },
-                    "audio": {"length": {"mean": 0}},
-                }
-            },
+                    "audio": {"length": {"mean": 0}},}],
             phases=[
                 {
                     "name": "default",
@@ -691,16 +687,12 @@ class TestSyntheticDatasetComposer:
                 "strategy": "random",
             },
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 5,
                     "prompts": {
                         "isl": {"mean": 10, "stddev": 2},
                         "osl": 64,
-                    },
-                }
-            },
+                    },}],
             phases=[
                 {
                     "name": "default",
@@ -727,16 +719,12 @@ class TestSyntheticDatasetComposer:
                 "strategy": "round_robin",
             },
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 5,
                     "prompts": {
                         "isl": {"mean": 10, "stddev": 2},
                         "osl": 64,
-                    },
-                }
-            },
+                    },}],
             phases=[
                 {
                     "name": "default",

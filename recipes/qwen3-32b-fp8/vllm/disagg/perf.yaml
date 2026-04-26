@@ -40,7 +40,7 @@ spec:
         repetition_penalty: 1.0
         temperature: 0.0
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 12800
         prompts:

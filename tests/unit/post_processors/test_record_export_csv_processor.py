@@ -25,13 +25,14 @@ from tests.unit.post_processors.conftest import (
     create_metric_records_message,
 )
 
-_MINIMAL_DATASETS = {
-    "default": {
+_MINIMAL_DATASETS = [
+    {
+        "name": "default",
         "type": "synthetic",
         "entries": 100,
         "prompts": {"isl": 128, "osl": 64},
     }
-}
+]
 _MINIMAL_PHASES = [
     {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
 ]

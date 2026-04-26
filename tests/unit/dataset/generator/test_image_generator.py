@@ -39,14 +39,10 @@ def _make_config(**image_overrides) -> AIPerfConfig:
     images.update(image_overrides)
     return AIPerfConfig(
         **_BASE,
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 100,
                 "prompts": {"isl": 128, "osl": 64},
-                "images": images,
-            }
-        },
+                "images": images,}],
     )
 
 

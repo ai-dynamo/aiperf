@@ -12,7 +12,7 @@ from aiperf.config.config import BenchmarkConfig
 _BASE: dict = {
     "models": "mock",
     "endpoint": {"urls": ["http://x:8000/v1/chat/completions"], "streaming": True},
-    "datasets": {"main": {"type": "synthetic"}},
+    "datasets": [{"name": "main", "type": "synthetic"}],
 }
 
 

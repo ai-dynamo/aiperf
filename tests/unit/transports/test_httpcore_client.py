@@ -1006,13 +1006,9 @@ def _make_transport_run(
             "streaming": False,
             "connection_reuse": reuse_strategy,
         },
-        datasets={
-            "default": {
-                "type": "synthetic",
+        datasets=[{"name": "default", "type": "synthetic",
                 "entries": 1,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        },
+                "prompts": {"isl": 128, "osl": 64},}],
         phases=[
             {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
         ],

@@ -47,7 +47,7 @@ _SNAKE_CASE_YAML = textwrap.dedent("""\
       download_video_content: false
 
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 100
         prompts:
@@ -106,7 +106,7 @@ _CAMEL_CASE_YAML = textwrap.dedent("""\
       downloadVideoContent: false
 
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 100
         prompts:
@@ -161,7 +161,7 @@ _MIXED_CASE_YAML = textwrap.dedent("""\
       readyCheckTimeout: 30.0
 
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 100
         prompts:
@@ -200,8 +200,8 @@ def _assert_configs_equivalent(a: AIPerfConfig, b: AIPerfConfig) -> None:
     assert a.endpoint.download_video_content == b.endpoint.download_video_content
 
     # Datasets
-    ds_a = a.datasets["main"]
-    ds_b = b.datasets["main"]
+    ds_a = a.get_dataset("main")
+    ds_b = b.get_dataset("main")
     assert ds_a.prompts.batch_size == ds_b.prompts.batch_size
     assert ds_a.prefix_prompts.pool_size == ds_b.prefix_prompts.pool_size
     assert ds_a.turn_delay.expected_value == ds_b.turn_delay.expected_value
@@ -427,7 +427,7 @@ class TestCamelCasePerSection:
               urls: [http://localhost:8000/v1/chat/completions]
               {yaml_snippet}
             datasets:
-              d: {{type: synthetic}}
+              - {{name: d, type: synthetic}}
             phases:
               - {{name: p, type: concurrency, requests: 1}}
         """)
@@ -440,7 +440,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              main:
+              - name: main
                 type: synthetic
                 entries: 50
                 prompts:
@@ -456,7 +456,7 @@ class TestCamelCasePerSection:
               - {name: p, type: concurrency, requests: 1}
         """)
         config = load_config_from_string(yaml_str)
-        ds = config.datasets["main"]
+        ds = config.get_dataset("main")
         assert ds.prompts.batch_size == 4
         assert ds.prompts.block_size == 128
         assert ds.prefix_prompts.shared_system_length == 100
@@ -471,7 +471,7 @@ class TestCamelCasePerSection:
               urls: [http://localhost:8000/v1/chat/completions]
               streaming: true
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - name: warm
                 type: concurrency
@@ -505,7 +505,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - name: replay
                 type: fixed_schedule
@@ -526,7 +526,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             artifacts:
@@ -545,7 +545,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             runtime:
@@ -568,7 +568,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             multiRun:
@@ -591,7 +591,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             accuracy:
@@ -611,7 +611,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             runtime:
@@ -646,7 +646,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             runtime:
@@ -668,7 +668,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             tokenizer:
@@ -684,7 +684,7 @@ class TestCamelCasePerSection:
             endpoint:
               urls: [http://localhost:8000/v1/chat/completions]
             datasets:
-              d: {type: synthetic}
+              - {name: d, type: synthetic}
             phases:
               - {name: p, type: concurrency, requests: 1}
             serverMetrics:

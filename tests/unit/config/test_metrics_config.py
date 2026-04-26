@@ -14,7 +14,7 @@ def _minimal_config(**overrides: object) -> dict[str, object]:
     config: dict[str, object] = {
         "models": ["test-model"],
         "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-        "datasets": {"main": {"type": "synthetic"}},
+        "datasets": [{"name": "main", "type": "synthetic"}],
         "phases": [{"name": "default", "type": "concurrency", "requests": 1}],
     }
     config.update(overrides)

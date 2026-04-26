@@ -25,7 +25,7 @@ def _valid_body() -> dict:
                     "benchmark": {
                         "models": ["m"],
                         "endpoint": {"urls": ["http://x"], "type": "chat"},
-                        "datasets": {"main": {"type": "synthetic"}},
+                        "datasets": [{"name": "main", "type": "synthetic"}],
                         "phases": [
                             {
                                 "name": "profiling",

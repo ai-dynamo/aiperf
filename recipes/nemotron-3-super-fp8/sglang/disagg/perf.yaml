@@ -43,7 +43,7 @@ spec:
         chat_template_kwargs:
           enable_thinking: false
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 12800
         prompts:

@@ -15,13 +15,9 @@ from aiperf.timing.config import (
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"], "streaming": True},
-    datasets={
-        "default": {
-            "type": "synthetic",
+    datasets=[{"name": "default", "type": "synthetic",
             "entries": 100,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    },
+            "prompts": {"isl": 128, "osl": 64},}],
 )
 
 

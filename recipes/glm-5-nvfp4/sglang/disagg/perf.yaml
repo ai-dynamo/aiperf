@@ -34,7 +34,7 @@ spec:
         min_tokens: "{{ osl }}"
         ignore_eos: true
     datasets:
-      main:
+      - name: main
         type: synthetic
         entries: 12800
         prompts:

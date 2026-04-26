@@ -14,7 +14,7 @@ endpoint:
   type: chat
   urls: ["http://localhost:8000"]
 datasets:
-  default:
+  - name: default
     type: synthetic
     entries: 100
     prompts:
@@ -31,13 +31,9 @@ phases:
 _BASE_DICT: dict = {
     "models": ["test/model"],
     "endpoint": {"type": "chat", "urls": ["http://localhost:8000"]},
-    "datasets": {
-        "default": {
-            "type": "synthetic",
+    "datasets": [{"name": "default", "type": "synthetic",
             "entries": 100,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    },
+            "prompts": {"isl": 128, "osl": 64},}],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],

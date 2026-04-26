@@ -20,7 +20,7 @@ spec:
         - http://disagg-router-6p-2d-frontend:8000
       streaming: true
     datasets:
-      main:
+      - name: main
         type: file
         path: /perf-cache/traces/conversation_trace.jsonl
         format: mooncake_trace

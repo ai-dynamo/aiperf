@@ -45,7 +45,7 @@ _MINIMAL_YAML = textwrap.dedent("""\
       urls:
         - http://localhost:8000/v1/chat/completions
     datasets:
-      default:
+      - name: default
         type: synthetic
         entries: 100
         prompts:
@@ -61,13 +61,9 @@ _MINIMAL_YAML = textwrap.dedent("""\
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
     "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-    "datasets": {
-        "default": {
-            "type": "synthetic",
+    "datasets": [{"name": "default", "type": "synthetic",
             "entries": 100,
-            "prompts": {"isl": 128, "osl": 64},
-        }
-    },
+            "prompts": {"isl": 128, "osl": 64},}],
     "phases": [
         {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],
@@ -209,7 +205,7 @@ class TestYamlToBenchmarkPlan:
               urls:
                 - http://localhost:8000/v1/chat/completions
             datasets:
-              default:
+              - name: default
                 type: synthetic
                 entries: 100
                 prompts:
@@ -276,7 +272,7 @@ class TestYamlToBenchmarkPlan:
               urls:
                 - ${TEST_URL}
             datasets:
-              default:
+              - name: default
                 type: synthetic
                 entries: 100
                 prompts:
@@ -304,7 +300,7 @@ class TestYamlToBenchmarkPlan:
               urls:
                 - ${MISSING_VAR:http://fallback:8000/v1/chat/completions}
             datasets:
-              default:
+              - name: default
                 type: synthetic
                 entries: 100
                 prompts:
@@ -334,7 +330,7 @@ class TestYamlToBenchmarkPlan:
               urls:
                 - ${REQUIRED_VAR}
             datasets:
-              default:
+              - name: default
                 type: synthetic
                 entries: 100
                 prompts:
@@ -493,12 +489,8 @@ class TestBenchmarkRunSerialization:
 
         cfg_kwargs = {
             **_MINIMAL_CONFIG_KWARGS,
-            "datasets": {
-                "from_file": {
-                    "type": "file",
-                    "path": str(dataset_file),
-                },
-            },
+            "datasets": [{"name": "from_file", "type": "file",
+                    "path": str(dataset_file),}],
             "phases": [
                 {
                     "name": "default",
@@ -513,7 +505,7 @@ class TestBenchmarkRunSerialization:
         original = self._make_run(cfg=config)
         restored = self._round_trip(original)
 
-        ds = restored.cfg.datasets["from_file"]
+        ds = restored.cfg.get_dataset("from_file")
         assert isinstance(ds, FileDataset)
         assert str(ds.path) == str(dataset_file)
 
@@ -536,18 +528,11 @@ class TestBenchmarkRunSerialization:
     def test_json_round_trip_with_nested_config(self) -> None:
         cfg_kwargs = {
             **_MINIMAL_CONFIG_KWARGS,
-            "datasets": {
-                "default": {
-                    "type": "synthetic",
+            "datasets": [{"name": "default", "type": "synthetic",
                     "entries": 500,
-                    "prompts": {"isl": 256, "osl": 128},
-                },
-                "secondary": {
-                    "type": "synthetic",
+                    "prompts": {"isl": 256, "osl": 128},}, {"name": "secondary", "type": "synthetic",
                     "entries": 200,
-                    "prompts": {"isl": 64, "osl": 32},
-                },
-            },
+                    "prompts": {"isl": 64, "osl": 32},}],
             "phases": [
                 {
                     "name": "warmup",
@@ -569,7 +554,7 @@ class TestBenchmarkRunSerialization:
         original = self._make_run(cfg=config)
         restored = self._round_trip(original)
 
-        assert set(restored.cfg.datasets.keys()) == {"default", "secondary"}
+        assert {d.name for d in restored.cfg.datasets} == {"default", "secondary"}
         assert (
             next(p for p in restored.cfg.phases if p.name == "profiling").dataset
             == "secondary"
@@ -628,7 +613,7 @@ class TestFlatConfigYaml:
               concurrency: 1
         """)
         config = load_config_from_string(yaml_str)
-        assert "default" in config.datasets
+        assert "default" in [d.name for d in config.datasets]
         assert any(p.name == "profiling" for p in config.phases)
 
     def test_warmup_profiling_flat_config(self) -> None:
@@ -637,11 +622,11 @@ class TestFlatConfigYaml:
             endpoint:
               url: http://localhost:8000/v1/chat/completions
             datasets:
-              warmup:
+              - name: warmup
                 isl: 256
                 osl: 64
                 entries: 100
-              profiling:
+              - name: profiling
                 isl: {mean: 550, stddev: 50}
                 osl: {mean: 150, stddev: 25}
                 entries: 500

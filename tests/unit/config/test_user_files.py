@@ -107,7 +107,7 @@ endpoint:
   type: chat
   urls: ["{url}"]
 datasets:
-  default:
+  - name: default
     type: synthetic
     entries: 100
     prompts:

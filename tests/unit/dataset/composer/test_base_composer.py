@@ -46,16 +46,12 @@ class TestBaseDatasetComposer:
                     "strategy": ModelSelectionStrategy.ROUND_ROBIN,
                 },
                 **_BASE,
-                datasets={
-                    "default": {
-                        "type": "synthetic",
+                datasets=[{"name": "default", "type": "synthetic",
                         "entries": 1,
                         "prompts": {
                             "isl": {"mean": 100, "stddev": 10},
                             "osl": {"mean": 50, "stddev": 5},
-                        },
-                    }
-                },
+                        },}],
             )
         )
 
@@ -66,9 +62,7 @@ class TestBaseDatasetComposer:
             AIPerfConfig(
                 models=["test-model"],
                 **_BASE,
-                datasets={
-                    "default": {
-                        "type": "synthetic",
+                datasets=[{"name": "default", "type": "synthetic",
                         "entries": 1,
                         "prompts": {
                             "isl": {"mean": 100, "stddev": 10},
@@ -77,9 +71,7 @@ class TestBaseDatasetComposer:
                                 {"isl": 100, "osl": 25, "probability": 50},
                                 {"isl": 200, "osl": 50, "probability": 50},
                             ],
-                        },
-                    }
-                },
+                        },}],
             )
         )
 
@@ -205,13 +197,9 @@ class TestBaseDatasetComposer:
         config = AIPerfConfig(
             models=["test-model"],
             **_BASE,
-            datasets={
-                "default": {
-                    "type": "synthetic",
+            datasets=[{"name": "default", "type": "synthetic",
                     "entries": 1,
-                    "prompts": {"isl": 128},
-                }
-            },
+                    "prompts": {"isl": 128},}],
         )
         composer = ConcreteBaseComposer(_make_run(config), mock_tokenizer)
         turn = Turn()
@@ -281,7 +269,7 @@ class TestBaseDatasetComposer:
 def _prompts_config(**prompts_overrides):
     dataset = {"type": "synthetic", "entries": 1, "prompts": prompts_overrides}
     return _make_run(
-        AIPerfConfig(**_BASE, models=["test-model"], datasets={"default": dataset})
+        AIPerfConfig(**_BASE, models=["test-model"], datasets=[{"name": "default", **dataset}])
     )
 
 

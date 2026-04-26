@@ -43,7 +43,7 @@ def _make_config(prompts=None, prefix_prompts=None) -> AIPerfConfig:
         dataset["prompts"] = prompts
     if prefix_prompts is not None:
         dataset["prefix_prompts"] = prefix_prompts
-    return AIPerfConfig(**_BASE, datasets={"default": dataset})
+    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
 
 
 @patch("builtins.open", mock_open(read_data=MOCK_CORPUS_CONTENT))

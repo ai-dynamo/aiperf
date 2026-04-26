@@ -14,7 +14,7 @@ endpoint:
   type: chat
   urls: ["http://localhost:8000"]
 datasets:
-  default:
+  - name: default
     type: synthetic
     entries: 100
     prompts:
