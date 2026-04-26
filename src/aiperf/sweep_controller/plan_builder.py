@@ -34,7 +34,9 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
     spec_dict = sweep_cr["spec"]
     spec = AIPerfSweepSpec.model_validate(spec_dict)
 
-    base_benchmark = spec.template.spec.get("benchmark") or {}
+    base_benchmark = spec.template.spec.benchmark.model_dump(
+        by_alias=True, exclude_none=True, exclude_defaults=True
+    )
     if spec.sweep is not None:
         sweep_input = {
             **base_benchmark,

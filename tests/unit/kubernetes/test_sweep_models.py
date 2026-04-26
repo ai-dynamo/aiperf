@@ -6,17 +6,37 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.kubernetes.sweep_models import (
+    AIPerfJobTemplate,
     AIPerfSweepSpec,
     ConvergenceConfig,
     FailurePolicy,
     MultiRunConfig,
 )
 
-# Minimal benchmark dict accepted by AIPerfJobSpec.from_crd_spec (the
-# template validator added in fix-pass 2). Tests that focus on
-# axis-combination rules don't need a real endpoint, but the validator
-# does — so we provide the smallest one that round-trips.
-_VALID_BENCHMARK = {"endpoint": {"urls": ["http://x"], "type": "chat"}}
+# Minimal benchmark dict accepted by AIPerfConfig (the type of
+# AIPerfJobSpec.benchmark). Tests that focus on axis-combination rules
+# don't need a real endpoint, but the typed validator does — so we
+# provide the smallest one that round-trips.
+_VALID_BENCHMARK = {
+    "models": ["test-model"],
+    "endpoint": {"url": "http://x"},
+    "datasets": [
+        {
+            "name": "default",
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 8, "osl": 8},
+        }
+    ],
+    "phases": [
+        {
+            "name": "default",
+            "type": "concurrency",
+            "requests": 1,
+            "concurrency": 1,
+        }
+    ],
+}
 
 
 def test_multirun_config_defaults_apply():
@@ -100,7 +120,17 @@ def test_aiperfsweep_rejects_sweep_in_template_benchmark():
         AIPerfSweepSpec.model_validate(
             {
                 "multiRun": {"trials": 3},
-                "template": {"spec": {"benchmark": {"sweep": {"type": "grid"}}}},
+                "template": {
+                    "spec": {
+                        "benchmark": {
+                            **_VALID_BENCHMARK,
+                            "sweep": {
+                                "type": "grid",
+                                "variables": {"x": [1, 2]},
+                            },
+                        }
+                    }
+                },
             }
         )
 
@@ -229,17 +259,16 @@ def test_aiperfsweep_rejects_multirun_camel_under_template_spec_benchmark() -> N
 
 
 # ---------------------------------------------------------------------------
-# Rule 5 — template.spec must round-trip through AIPerfJobSpec.from_crd_spec.
-# Adversarial regression-locks for the second-pass fix (commit 793260d7b):
-# missing/invalid endpoint and wrong-typed deployment fields must surface at
-# CLI/operator boundary, not at child-create time.
+# template.spec is now typed as AIPerfJobSpec — invalid benchmarks and
+# wrong-typed deployment fields surface at submit time via Pydantic field
+# validation rather than the previous lazy from_crd_spec round-trip.
 # ---------------------------------------------------------------------------
 
 
-def test_aiperfsweep_rule5_empty_benchmark_rejected_for_missing_endpoint() -> None:
-    """Empty benchmark (no endpoint) must fail rule 5 with an endpoint-pointer
-    error message — the user needs to know what's wrong."""
-    with pytest.raises(ValidationError, match=r"endpoint\.url"):
+def test_aiperfsweep_empty_benchmark_rejected_for_missing_endpoint() -> None:
+    """Empty benchmark (no endpoint) must fail AIPerfConfig validation with
+    the missing-field surfaced — the user needs to know what's wrong."""
+    with pytest.raises(ValidationError, match=r"endpoint"):
         AIPerfSweepSpec.model_validate(
             {
                 "multiRun": {"trials": 3},
@@ -248,8 +277,8 @@ def test_aiperfsweep_rule5_empty_benchmark_rejected_for_missing_endpoint() -> No
         )
 
 
-def test_aiperfsweep_rule5_wrong_type_image_rejected() -> None:
-    """``image`` typed as int instead of str must fail rule-5 with a message
+def test_aiperfsweep_wrong_type_image_rejected() -> None:
+    """``image`` typed as int instead of str must fail with a message
     naming the field."""
     with pytest.raises(ValidationError, match=r"(?i)image"):
         AIPerfSweepSpec.model_validate(
@@ -265,9 +294,10 @@ def test_aiperfsweep_rule5_wrong_type_image_rejected() -> None:
         )
 
 
-def test_aiperfsweep_rule5_valid_endpoint_passes() -> None:
-    """Regression-lock so future refactors don't accidentally make rule-5 a
-    no-op: a valid template.spec must still validate successfully."""
+def test_aiperfsweep_valid_endpoint_passes() -> None:
+    """Regression-lock so future refactors don't accidentally make
+    template.spec validation a no-op: a valid template.spec must still
+    validate successfully."""
     spec = AIPerfSweepSpec.model_validate(
         {
             "multiRun": {"trials": 2},
@@ -281,3 +311,50 @@ def test_aiperfsweep_rule5_valid_endpoint_passes() -> None:
     )
     assert spec.multi_run is not None
     assert spec.multi_run.trials == 2
+
+
+# ---------------------------------------------------------------------------
+# AIPerfJobTemplate — typed metadata (ObjectMetaPartial) and typed
+# spec (AIPerfJobSpec). Adversarial regression-locks for the Task-2 refactor.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def valid_template_spec() -> dict:
+    """Minimal template.spec dict that validates as AIPerfJobSpec."""
+    return {"benchmark": _VALID_BENCHMARK}
+
+
+def test_aiperf_job_template_metadata_rejects_unknown_keys(valid_template_spec):
+    """ObjectMetaPartial rejects fields outside labels/annotations."""
+    with pytest.raises(ValidationError, match=r"extra|name"):
+        AIPerfJobTemplate.model_validate(
+            {
+                "metadata": {"name": "should-not-be-here"},
+                "spec": valid_template_spec,
+            }
+        )
+
+
+def test_aiperf_job_template_metadata_typed_labels_and_annotations(valid_template_spec):
+    """Labels and annotations both validate as dict[str, str]."""
+    template = AIPerfJobTemplate.model_validate(
+        {
+            "metadata": {
+                "labels": {"team": "perf"},
+                "annotations": {"note": "rampA"},
+            },
+            "spec": valid_template_spec,
+        }
+    )
+    assert template.metadata.labels == {"team": "perf"}
+    assert template.metadata.annotations == {"note": "rampA"}
+
+
+def test_aiperf_job_template_spec_is_typed_aiperf_job_spec(valid_template_spec):
+    """template.spec is parsed as AIPerfJobSpec, not a raw dict."""
+    template = AIPerfJobTemplate.model_validate({"spec": valid_template_spec})
+    from aiperf.operator.models import AIPerfJobSpec
+
+    assert isinstance(template.spec, AIPerfJobSpec)
+    assert template.spec.skip_endpoint_check is False

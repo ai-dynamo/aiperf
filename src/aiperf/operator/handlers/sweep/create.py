@@ -17,7 +17,6 @@ import kopf
 from pydantic import ValidationError
 
 from aiperf.config.sweep import expand_sweep
-from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +31,19 @@ async def handle(
     **_: Any,
 ) -> None:
     """Validate spec, set status, provision RBAC, create sweep-controller JobSet."""
+    # Lazy-imported because aiperf.kubernetes.sweep_models eagerly imports
+    # aiperf.operator.models — the top-level import would cycle through
+    # aiperf.operator.__init__ -> main -> handlers.sweep.create.
+    from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
+
     try:
         validated = AIPerfSweepSpec.model_validate(spec)
     except ValidationError as e:
         raise kopf.PermanentError(f"AIPerfSweep spec invalid: {e}") from e
 
-    base_benchmark = validated.template.spec.get("benchmark") or {}
+    base_benchmark = validated.template.spec.benchmark.model_dump(
+        by_alias=True, exclude_none=True, exclude_defaults=True
+    )
     if validated.sweep is not None:
         sweep_input = {
             **base_benchmark,
@@ -72,7 +78,9 @@ async def handle(
         namespace=namespace,
         sweep_uid=sweep_uid,
         epoch=epoch,
-        template_spec=validated.template.spec,
+        template_spec=validated.template.spec.model_dump(
+            by_alias=True, exclude_none=True, exclude_defaults=True
+        ),
     )
 
     jobset_name = f"aiperf-{name}"

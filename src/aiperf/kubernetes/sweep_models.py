@@ -10,12 +10,13 @@ docs/superpowers/specs/2026-04-25-k8s-sweeps-design.md.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.config._base import BaseConfig
 from aiperf.config.sweep import SweepConfig
+from aiperf.operator.models import AIPerfJobSpec
 
 __all__ = [
     "AIPerfJobTemplate",
@@ -23,7 +24,28 @@ __all__ = [
     "ConvergenceConfig",
     "FailurePolicy",
     "MultiRunConfig",
+    "ObjectMetaPartial",
 ]
+
+
+class ObjectMetaPartial(BaseConfig):
+    """Subset of Kubernetes ObjectMeta safe to stamp onto child CRs.
+
+    Only labels and annotations are merged into children; name/namespace/uid
+    are managed by the controller, so accepting them here would silently lose
+    user intent. extra='forbid' surfaces typos like `lables:` at submit time.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Labels merged into every child AIPerfJob.",
+    )
+    annotations: dict[str, str] = Field(
+        default_factory=dict,
+        description="Annotations merged into every child AIPerfJob.",
+    )
 
 
 class MultiRunConfig(BaseConfig):
@@ -117,11 +139,11 @@ class AIPerfJobTemplate(BaseConfig):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="ObjectMeta merged into every child (labels, annotations).",
+    metadata: ObjectMetaPartial = Field(
+        default_factory=ObjectMetaPartial,
+        description="ObjectMeta partial merged into every child (labels, annotations).",
     )
-    spec: dict[str, Any] = Field(
+    spec: AIPerfJobSpec = Field(
         ...,
         description="AIPerfJobSpec used as the child stamp. Must not contain sweep:/multi_run:.",
     )
@@ -164,7 +186,7 @@ class AIPerfSweepSpec(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_axis_combination(self) -> AIPerfSweepSpec:
-        # Rule 1: at least one of sweep, multiRun, convergence must be set.
+        # Rule 1: at least one of sweep, multi_run, convergence must be set.
         if self.sweep is None and self.multi_run is None and self.convergence is None:
             raise ValueError(
                 "AIPerfSweep requires at least one of `sweep`, `multiRun`, or `convergence`. "
@@ -182,38 +204,22 @@ class AIPerfSweepSpec(BaseConfig):
                     "`multiRun.trials` must be unset when `convergence` is set; "
                     "convergence.maxRuns governs the per-cell trial cap."
                 )
-        # Rule 4: template.spec must not contain sweep-axis keys at any
-        # level the user can mistakenly nest them at: template.spec.{sweep,
-        # multi_run, multiRun, convergence} OR template.spec.benchmark.{...}.
-        # Sweep-axis keys belong at AIPerfSweep.spec, not stamped onto every
-        # child.
-        forbidden_keys = ("sweep", "multi_run", "multiRun", "convergence")
-        template_spec = self.template.spec or {}
-        for forbidden in forbidden_keys:
-            if forbidden in template_spec:
+        # Rule 4: sweep-axis keys must not appear inside template.spec.benchmark
+        # — they belong at AIPerfSweep.spec. Top-level template.spec is already
+        # guarded by AIPerfJobSpec's extra="forbid". AIPerfConfig itself owns
+        # `sweep`/`multi_run` fields (for non-k8s sweep CLI) with non-None
+        # defaults, so we use model_fields_set to flag only user-supplied keys.
+        # `convergence` and camelCase `multiRun` aren't AIPerfConfig fields and
+        # would already have been rejected by AIPerfConfig's extra="forbid",
+        # but we keep them in the list for a clearer error message in the rare
+        # case alias-resolution lets one through.
+        forbidden_attrs = ("sweep", "multi_run")
+        benchmark = self.template.spec.benchmark
+        explicit = benchmark.model_fields_set
+        for attr in forbidden_attrs:
+            if attr in explicit:
                 raise ValueError(
-                    f"`template.spec.{forbidden}` is not permitted on AIPerfSweep. "
-                    f"Set `spec.{forbidden}` at the top level instead."
+                    f"`template.spec.benchmark.{attr}` is not permitted on AIPerfSweep. "
+                    f"Set `spec.{attr}` at the top level instead."
                 )
-        benchmark = template_spec.get("benchmark") or {}
-        for forbidden in forbidden_keys:
-            if forbidden in benchmark:
-                raise ValueError(
-                    f"`template.spec.benchmark.{forbidden}` is not permitted on AIPerfSweep. "
-                    f"Set `spec.{forbidden}` at the top level instead."
-                )
-        # Rule 5: template.spec must round-trip through AIPerfJobSpec.from_crd_spec
-        # so a missing/invalid endpoint or wrong-typed deployment field is
-        # caught at submit time rather than at child-create time. Imported
-        # lazily because aiperf.operator.models pulls in operator-only deps.
-        from aiperf.operator.models import AIPerfJobSpec
-
-        try:
-            AIPerfJobSpec.from_crd_spec(template_spec)
-        except Exception as e:
-            raise ValueError(
-                f"`template.spec` is not a valid AIPerfJobSpec: {e}. "
-                f"This is the spec that will be stamped onto every child "
-                f"AIPerfJob; fix it before submitting."
-            ) from e
         return self

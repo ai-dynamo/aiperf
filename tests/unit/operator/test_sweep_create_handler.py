@@ -70,7 +70,25 @@ async def test_handle_validates_spec_and_creates_jobset(monkeypatch):
 async def test_handle_rejects_invalid_spec(monkeypatch):
     body = {
         "metadata": {"name": "s", "namespace": "ns", "uid": "u"},
-        "spec": {"template": {"spec": {"benchmark": {}}}},  # no axes
+        "spec": {
+            "template": {
+                "spec": {
+                    "benchmark": {
+                        "models": ["m"],
+                        "endpoint": {"urls": ["http://x"], "type": "chat"},
+                        "datasets": [{"name": "main", "type": "synthetic"}],
+                        "phases": [
+                            {
+                                "name": "profiling",
+                                "type": "concurrency",
+                                "duration": 1,
+                                "concurrency": 1,
+                            }
+                        ],
+                    }
+                }
+            },
+        },  # no axes (no sweep / multiRun / convergence)
     }
     patch = kopf.Patch()
     monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
