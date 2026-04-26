@@ -50,6 +50,7 @@ __all__ = [
     "_NO_PROGRESS_STAGNATION_LIMIT",
     "_fetch_with_progress_aware_retry",
     "_parse_metrics_from_files",
+    "_record_results_on_status",
     "fetch_results_with_retry",
     "get_or_create_progress_client",
     "handle_completion",
@@ -245,6 +246,15 @@ def _record_results_on_status(
         )
         if file_metrics:
             sb.set_results(file_metrics)
+            # Also derive ``status.summary`` from file_metrics so kube-list /
+            # operator UI show throughput / latency on jobs that finished
+            # before the controller progress poll could land. Without this,
+            # ``status.summary`` stays empty even when ``status.results`` is
+            # fully populated, and kube-list shows '-' for THROUGHPUT/LATENCY.
+            file_summary = MetricsSummary.from_metrics(file_metrics)
+            file_summary_dict = file_summary.to_status_dict()
+            if file_summary_dict:
+                sb.set_summary(file_summary_dict)
             logger.info(f"Parsed metrics from result files for {job_id}")
 
     if has_files:
