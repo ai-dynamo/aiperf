@@ -41,10 +41,10 @@ class DatasetResolver:
         acc = _DatasetResolution()
         format_map = self._build_format_map()
 
-        for name, ds in run.cfg.datasets.items():
+        for ds in run.cfg.datasets:
             if not isinstance(ds, FileDataset):
                 continue
-            self._resolve_one(name=name, ds=ds, format_map=format_map, acc=acc)
+            self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
 
         self._publish(run, acc)
 

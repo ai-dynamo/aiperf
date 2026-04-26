@@ -110,7 +110,11 @@ async def sweep(
         if dry_run:
             import orjson
 
-            print(orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode())
+            from aiperf.kubernetes import console as kube_console
+
+            kube_console.console.print(
+                orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode()
+            )
             return
         await _submit_sweep(
             cr_dict=cr_dict,
@@ -153,7 +157,9 @@ def _build_sweep_cr_dict(
     multirun_cfg_from_yaml = raw.pop("multi_run", None) or raw.pop("multiRun", None)
 
     deployment = kube_options.to_deployment_config()
-    deployment_dict = deployment.model_dump(by_alias=True, exclude_defaults=True)
+    deployment_dict = deployment.model_dump(
+        mode="json", by_alias=True, exclude_defaults=True
+    )
     template_spec: dict[str, Any] = {
         **deployment_dict,
         "image": kube_options.image,
@@ -185,12 +191,18 @@ def _build_sweep_cr_dict(
         }
 
     name = kube_options.name or _name_from_config_file(config_file)
-    return {
-        "apiVersion": "aiperf.nvidia.com/v1",
+    cr_dict: dict[str, Any] = {
+        "apiVersion": "aiperf.nvidia.com/v1alpha1",
         "kind": "AIPerfSweep",
         "metadata": {"name": name},
         "spec": spec,
     }
+    # Validate before submission so users see the curated AIPerfSweepSpec
+    # error messages, not a raw apiserver CRD validation 422.
+    from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
+
+    AIPerfSweepSpec.model_validate(spec)
+    return cr_dict
 
 
 def _name_from_config_file(config_file: Path) -> str:
@@ -227,13 +239,22 @@ async def _submit_sweep(
         context=getattr(kube_options, "kube_context", None),
     ) as api:
         custom = k8s.CustomObjectsApi(api)
-        await custom.create_namespaced_custom_object(
-            group="aiperf.nvidia.com",
-            version="v1",
-            namespace=namespace,
-            plural="aiperfsweeps",
-            body=cr_dict,
-        )
+        try:
+            await custom.create_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="aiperfsweeps",
+                body=cr_dict,
+            )
+        except k8s.ApiException as e:
+            if getattr(e, "status", None) == 409:
+                raise RuntimeError(
+                    f"AIPerfSweep {namespace}/{cr_dict['metadata']['name']} "
+                    "already exists. Pass --name to choose a different name, "
+                    "or delete the existing CR first."
+                ) from e
+            raise
         kube_console.console.print(
             f"AIPerfSweep {namespace}/{cr_dict['metadata']['name']} created."
         )
