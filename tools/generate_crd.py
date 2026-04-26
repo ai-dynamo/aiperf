@@ -107,6 +107,12 @@ def _convert_schema(
         merged = _convert_schema(resolved, defs, depth)
         if "description" in schema and schema["description"]:
             merged["description"] = schema["description"]
+        # Preserve sibling x-kubernetes-preserve-unknown-fields markers
+        # (Pydantic emits these alongside $ref via json_schema_extra to mark
+        # narrow shorthand-accepting boundaries — see Task 4 of plan
+        # 2026-04-26-aiperfconfig-strict-crd-schema.md).
+        if schema.get("x-kubernetes-preserve-unknown-fields"):
+            merged["x-kubernetes-preserve-unknown-fields"] = True
         return merged
 
     if depth > _MAX_DEPTH:
@@ -119,7 +125,7 @@ def _convert_schema(
         return result
 
     is_nullable, real_type = _is_nullable_anyof(schema)
-    if is_nullable and real_type:
+    if is_nullable and real_type is not None:
         result = _convert_schema(real_type, defs, depth)
         if "description" in schema and "description" not in result:
             result["description"] = schema["description"]
@@ -129,6 +135,14 @@ def _convert_schema(
             and "default" not in result
         ):
             result["default"] = schema["default"]
+        # Preserve sibling x-kubernetes-preserve-unknown-fields marker
+        # (Task 5 hoisted shortcuts like model/dataset/warmup/profiling use
+        # anyOf:[{},{type:null}] with this marker to opt the field out of
+        # strict apiserver validation while keeping it visible in the CRD).
+        if schema.get("x-kubernetes-preserve-unknown-fields"):
+            result["x-kubernetes-preserve-unknown-fields"] = True
+            # The marker requires type=object on the K8s side.
+            result.setdefault("type", "object")
         return result
 
     if "anyOf" in schema and not is_nullable:
@@ -262,6 +276,13 @@ def _convert_schema(
 
     for key in _STRIP_KEYS:
         result.pop(key, None)
+
+    # Preserve x-kubernetes-preserve-unknown-fields if explicitly set on the
+    # source schema. Used by Pydantic fields with json_schema_extra to mark
+    # narrow shorthand boundaries (e.g. EndpointConfig.urls is an array but
+    # the before-validator also accepts a single string).
+    if schema.get("x-kubernetes-preserve-unknown-fields"):
+        result["x-kubernetes-preserve-unknown-fields"] = True
 
     return result
 
@@ -518,24 +539,27 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     }
 
     # AIPerfConfig fields nested under benchmark key.
-    # No properties are listed because Pydantic's before-validators accept shorthand
-    # forms (e.g. models: ["name"], phases: {type: concurrency, ...}) that don't match
-    # the object types K8s structural schema validation would derive from the Pydantic
-    # model.  x-kubernetes-preserve-unknown-fields: true tells K8s to pass the raw YAML
-    # through without type checking; AIPerfConfig.model_validate does the real validation
-    # on the controller side.  Use the IDE JSON schema (aiperf-config.schema.json) for
-    # editor autocompletion — it correctly documents all shorthand forms.
-    spec_properties["benchmark"] = {
-        "type": "object",
-        "x-kubernetes-preserve-unknown-fields": True,
-        "description": (
-            "Benchmark configuration (AIPerfConfig). Contains models, endpoint,\n"
-            "datasets, phases, and all other benchmark parameters. Uses snake_case\n"
-            "field names, identical to AIPerf CLI YAML config files.\n"
-            "Shorthand forms (e.g. models: ['name'], single-phase dict) are accepted\n"
-            "and normalized by the operator before validation."
-        ),
-    }
+    # The schema is fully walked so the apiserver enforces structural validation
+    # on every field. Narrow shorthand boundaries (models, distributions,
+    # endpoint.urls, top-level shortcuts like model/dataset/warmup/profiling,
+    # SyntheticDataset.isl/osl) carry x-kubernetes-preserve-unknown-fields:true
+    # via json_schema_extra so before-validators on AIPerfConfig can normalize
+    # shorthand forms (e.g. ``models: ["name"]``) on the controller side.
+    from aiperf.config.config import AIPerfConfig
+
+    aiperf_config_raw = AIPerfConfig.model_json_schema(mode="validation")
+    aiperf_defs = aiperf_config_raw.get("$defs", {})
+    benchmark_walked = _convert_schema(aiperf_config_raw, aiperf_defs, depth=0)
+    benchmark_walked["description"] = (
+        "Benchmark configuration (AIPerfConfig). Strictly typed via the\n"
+        "AIPerfConfig schema, with x-kubernetes-preserve-unknown-fields: true\n"
+        "at narrow shorthand boundaries (models, distributions, endpoint urls,\n"
+        "top-level shortcut fields, telemetry urls). Snake_case field names —\n"
+        "identical to AIPerf CLI YAML config files. Shorthand forms (e.g.\n"
+        "models: ['name'], single-phase dict) are accepted at marked boundaries\n"
+        "and normalized by the operator before validation."
+    )
+    spec_properties["benchmark"] = benchmark_walked
 
     # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.).
     # skipEndpointCheck lives on AIPerfJobSpec (not DeploymentConfig) and is

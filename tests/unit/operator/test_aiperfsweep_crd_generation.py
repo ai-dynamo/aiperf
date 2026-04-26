@@ -69,3 +69,82 @@ def test_helm_chart_emits_aiperfsweep_crd_template():
     text = "\n---\n".join(c.read_text() for c in candidates)
     assert "AIPerfSweep" in text, "AIPerfSweep CRD not emitted in chart templates"
     assert "aiperfsweeps" in text
+
+
+def test_aiperfsweep_template_benchmark_has_strict_walked_schema():
+    """spec.template.spec.benchmark walks AIPerfConfig (Task 6 of plan).
+
+    The previous blanket ``x-kubernetes-preserve-unknown-fields: true`` is
+    replaced with a real walk; only narrow shorthand boundaries (models,
+    endpoint.urls, top-level shortcuts) keep the marker.
+    """
+    from tools.generate_crd import build_aiperfsweep_crd
+
+    crd = build_aiperfsweep_crd()
+    schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+    template_spec = schema["properties"]["spec"]["properties"]["template"][
+        "properties"
+    ]["spec"]
+    benchmark = template_spec["properties"]["benchmark"]
+
+    # Top-level benchmark must NOT carry a blanket preserve-unknown marker —
+    # individual fields are walked and validated by the apiserver.
+    assert "properties" in benchmark, "benchmark should be a strictly walked object"
+    assert benchmark.get("x-kubernetes-preserve-unknown-fields") is not True, (
+        "benchmark must not be a blanket preserve-unknown — Task 6 walks it"
+    )
+
+    # Narrow markers at known shorthand boundaries.
+    bp = benchmark["properties"]
+    assert bp["models"].get("x-kubernetes-preserve-unknown-fields") is True, (
+        "models accepts shorthand and must keep the marker"
+    )
+    assert (
+        bp["endpoint"]["properties"]["urls"].get("x-kubernetes-preserve-unknown-fields")
+        is True
+    ), "endpoint.urls accepts shorthand and must keep the marker"
+
+    # Strict fields: runtime should be fully typed (no top-level marker).
+    runtime = bp["runtime"]
+    assert runtime.get("x-kubernetes-preserve-unknown-fields") is not True, (
+        "runtime should be strictly validated, no preserve-unknown blanket"
+    )
+    assert "properties" in runtime, "runtime should expose its real properties"
+
+    # Top-level shortcut siblings (Task 5) are present and marked.
+    for shortcut in ("model", "dataset", "warmup", "profiling"):
+        assert shortcut in bp, f"{shortcut} shortcut sibling missing"
+        assert bp[shortcut].get("x-kubernetes-preserve-unknown-fields") is True, (
+            f"{shortcut} shortcut must carry preserve-unknown marker"
+        )
+
+
+def test_aiperfjob_benchmark_has_strict_walked_schema():
+    """AIPerfJob spec.benchmark walks AIPerfConfig (Task 6 of plan).
+
+    Mirrors :func:`test_aiperfsweep_template_benchmark_has_strict_walked_schema`
+    but on the AIPerfJob CRD where the benchmark blanket previously lived.
+    """
+    from tools.generate_crd import _build_crd
+
+    crd = _build_crd({})
+    schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+    benchmark = schema["properties"]["spec"]["properties"]["benchmark"]
+
+    assert "properties" in benchmark, "benchmark should be a strictly walked object"
+    assert benchmark.get("x-kubernetes-preserve-unknown-fields") is not True, (
+        "benchmark must not be a blanket preserve-unknown — Task 6 walks it"
+    )
+
+    bp = benchmark["properties"]
+    assert bp["models"].get("x-kubernetes-preserve-unknown-fields") is True
+    assert (
+        bp["endpoint"]["properties"]["urls"].get("x-kubernetes-preserve-unknown-fields")
+        is True
+    )
+    assert bp["runtime"].get("x-kubernetes-preserve-unknown-fields") is not True
+    assert "properties" in bp["runtime"]
+
+    for shortcut in ("model", "dataset", "warmup", "profiling"):
+        assert shortcut in bp, f"{shortcut} shortcut sibling missing"
+        assert bp[shortcut].get("x-kubernetes-preserve-unknown-fields") is True
