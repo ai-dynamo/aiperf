@@ -25,11 +25,11 @@ async def test_archive_page_lists_archived_job(
     fake_k8s_client,
     page,
 ):
-    """Archived PVC-only job appears as an ``arch-row-*`` on ``/archive``."""
+    """Archived PVC-only job appears as an ``arch-row-*`` on ``/ns/<ns>/archive``."""
     write_archived_job(live_operator_app.results_dir, "ml-lab", "ghost-run")
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="ml-lab")
     await archive.goto()
-    row = archive.row("ml-lab", "ghost-run")
+    row = archive.row("ghost-run")
     await expect(row).to_be_visible()
 
 

@@ -11,7 +11,7 @@ substantially from the prior Flight-Deck incarnation. This module
 targets the current contract:
 
 - ``/``           → Home view, root ``page-home``
-- ``/archive``    → Archive view, root ``page-archive``
+- ``/ns/:ns/archive`` → Namespace-scoped Archive view, root ``page-archive``
 - ``/run/:ns/:name`` → single-run workbench, root ``page-job-detail``
 - ``/compare`` / ``/analysis`` → Analysis view, root ``page-leaderboard``
 - ``/log`` / ``/history`` → Log view, root ``page-history``
@@ -69,25 +69,29 @@ class HomePage(BasePage):
         return self.page.locator("[data-testid^='hm-row-']")
 
 
+@dataclass
 class ArchivePage(BasePage):
-    """The ``/archive`` view — past-runs browser with filter + sort controls."""
+    """The ``/ns/:ns/archive`` namespace-scoped past-runs browser."""
+
+    namespace: str = "aiperf-bench"
 
     async def goto(self) -> None:
-        await self._goto("/archive")
+        await self._goto(f"/ns/{self.namespace}/archive")
         await expect(self.page.get_by_test_id("page-archive")).to_be_visible()
 
-    def row(self, namespace: str, name: str) -> Locator:
-        return self.page.get_by_test_id(f"arch-row-{namespace}-{name}")
+    def row(self, name: str) -> Locator:
+        return self.page.get_by_test_id(f"arch-row-{self.namespace}-{name}")
+
+    def search(self) -> Locator:
+        return self.page.get_by_test_id("arch-search")
 
     def rows(self) -> Locator:
-        return self.page.locator("[data-testid^='arch-row-']")
-
-    async def search(self, query: str) -> None:
-        await self.page.get_by_test_id("archive-search").fill(query)
+        """All rows currently rendered in the namespace-scoped archive."""
+        return self.page.locator(f"[data-testid^='arch-row-{self.namespace}-']")
 
     async def set_sort(self, value: str) -> None:
-        """Set the sort dropdown (``archive-sort``) to one of its options."""
-        await self.page.get_by_test_id("archive-sort").select_option(value)
+        """Set the ``arch-sort`` dropdown to one of its option keys."""
+        await self.page.get_by_test_id("arch-sort").select_option(value)
 
 
 class JobDetailPage(BasePage):

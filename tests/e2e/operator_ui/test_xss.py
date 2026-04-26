@@ -61,7 +61,7 @@ async def _assert_escaped(page, payload: str = _XSS_PAYLOAD) -> None:
 async def test_archive_escapes_html_in_job_name(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """A job name containing HTML is rendered as text on ``/archive``.
+    """A job name containing HTML is rendered as text on ``/ns/<ns>/archive``.
 
     Kubernetes names can't actually contain these characters (DNS label
     rules), but the operator's job-id-label path is the only thing that
@@ -69,8 +69,9 @@ async def test_archive_escapes_html_in_job_name(
     could still put arbitrary text in the API payload. The UI must not
     become the weakest link.
     """
+    # jobs_raw[0] is in the ``aiperf-bench`` namespace.
     fake_k8s_client.jobs_raw[0]["metadata"]["name"] = _XSS_PAYLOAD
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
     await expect(archive.rows().first).to_be_visible()
     await _assert_escaped(page)

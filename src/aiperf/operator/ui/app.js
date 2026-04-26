@@ -54,11 +54,10 @@ function resolveView(currentRoute) {
   if (compareDiffMatch)                                return { kind: 'compare', params: compareDiffMatch };
   const launchMatch = matchRoute('/ns/:ns/launch', currentRoute);
   if (launchMatch)                                     return { kind: 'launch', params: launchMatch };
+  const archiveMatch = matchRoute('/ns/:ns/archive', currentRoute);
+  if (archiveMatch)                                    return { kind: 'archive', params: archiveMatch };
   const nsOverviewMatch = matchRoute('/ns/:ns', currentRoute);
   if (nsOverviewMatch)                                 return { kind: 'namespace-overview', params: nsOverviewMatch };
-  if (currentRoute === '/archive'
-    || currentRoute === '/fleet'
-    || currentRoute === '/jobs')                       return { kind: 'archive' };
   if (currentRoute === '/compare'
     || currentRoute === '/leaderboard'
     || currentRoute === '/analysis')                   return { kind: 'analysis' };
@@ -121,7 +120,7 @@ function App() {
   } else if (resolved.kind === 'launch') {
     mainView = html`<${Launch} ns=${resolved.params.ns} />`;
   } else if (resolved.kind === 'archive') {
-    mainView = html`<${Archive} />`;
+    mainView = html`<${Archive} ns=${resolved.params.ns} />`;
   } else if (resolved.kind === 'compare') {
     mainView = html`<${Compare}
       ns=${resolved.params.ns}

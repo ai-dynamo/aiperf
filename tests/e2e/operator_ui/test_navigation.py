@@ -25,16 +25,17 @@ pytestmark = [pytest.mark.e2e]
 async def test_nav_click_archive_from_home(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Clicking the Archive rail button navigates the SPA to ``/archive``.
+    """Clicking the Archive rail button navigates the SPA to ``/ns/<ns>/archive``.
 
-    Starts on Home, clicks ``rail-archive``, waits for the hash URL to
-    reflect ``#/archive``, and asserts the archive page root is visible.
+    The rail-archive button now scopes to the current namespace —
+    starting from ``/ns/aiperf-bench`` it must navigate to
+    ``/ns/aiperf-bench/archive`` and mount the archive view.
     """
     home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.get_by_test_id("rail-archive").click()
-    await page.wait_for_url("**/#/archive")
+    await page.wait_for_url("**/#/ns/aiperf-bench/archive")
     await expect(page.get_by_test_id("page-archive")).to_be_visible()
 
 
@@ -112,14 +113,15 @@ async def test_top_rail_buttons_present(
 ) -> None:
     """The top-rail's namespace-aware actions render correctly.
 
-    Cross-namespace tier (``/``): Archive + Compare visible, Launch hidden
-    (no namespace selected → nowhere to launch into). Inside a namespace
-    (``/ns/<ns>``): Launch visible alongside Archive + Compare.
+    Cross-namespace tier (``/``): Compare visible; Launch + Archive hidden
+    (no namespace selected → nowhere to launch into and nowhere to scope
+    Archive to). Inside a namespace (``/ns/<ns>``): Launch, Archive,
+    Compare all visible.
     """
     await page.goto(live_operator_app.base_url + "/")
     await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
-    await expect(page.get_by_test_id("rail-archive")).to_be_visible()
     await expect(page.get_by_test_id("rail-compare")).to_be_visible()
+    await expect(page.get_by_test_id("rail-archive")).to_have_count(0)
     await expect(page.get_by_test_id("rail-launch")).to_have_count(0)
 
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")

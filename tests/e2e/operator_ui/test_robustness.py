@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """E2E robustness tests: every route loads without server errors or JS crashes.
 
-Visits every SPA route (``/``, ``/archive``, ``/compare``, ``/log``,
-``/launch``) and then rapidly cycles through them without waiting, as a
-smoke check that nothing throws on mount/unmount. The ``page`` fixture's
-console-error gate fails the test if any ``pageerror`` or ``console.error``
-fires during the run.
+Visits every SPA route (``/``, ``/ns/aiperf-bench/archive``, ``/compare``,
+``/log``, ``/ns/aiperf-bench/launch``) and then rapidly cycles through
+them without waiting, as a smoke check that nothing throws on
+mount/unmount. The ``page`` fixture's console-error gate fails the test
+if any ``pageerror`` or ``console.error`` fires during the run.
 """
 
 from __future__ import annotations
@@ -16,7 +16,13 @@ from playwright.async_api import Response, expect
 
 pytestmark = [pytest.mark.e2e]
 
-ROUTES = ["/", "/archive", "/compare", "/log", "/launch"]
+ROUTES = [
+    "/",
+    "/ns/aiperf-bench/archive",
+    "/compare",
+    "/log",
+    "/ns/aiperf-bench/launch",
+]
 
 
 def _hash_url(base_url: str, route: str) -> str:
@@ -75,7 +81,7 @@ async def test_rapid_route_changes_do_not_crash(
     """
     # Start from a settled page so the first cycle isn't racing initial load.
     await page.goto(live_operator_app.base_url + "/")
-    await expect(page.get_by_test_id("page-home")).to_be_visible()
+    await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
 
     for _ in range(3):
         for route in ROUTES:

@@ -1,17 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""E2E tests for the Archive view (``/archive``).
+"""E2E tests for the namespace-scoped Archive view (``/ns/:ns/archive``).
 
-Covers the row list sourced from ``api.listJobs()``, the running-phase
-label on the live CR, the shared search input's substring match on
-name / namespace / model, the sort dropdown, and row-click navigation
-into the single-run workbench. Per ``src/aiperf/operator/ui/views/archive.js``,
-Archive is bucketed by namespace with one row per AIPerfJob (no mergewith on-disk results — the merge happens only on the run detail page).
+Covers the row list sourced from ``api.listJobs()`` filtered to the
+current namespace, the running-phase label on the live CR, the search
+input's substring match on name / model within the namespace, the
+sort dropdown, and row-click navigation into the single-run workbench.
 
 The ``fake_k8s_client`` golden ``jobs.json`` seeds five AIPerfJobs:
 ``aiperf-bench/{aiperf-llama3-c128, aiperf-llama3-c256, live-run}`` and
-``ml-lab/{mistral-7b-run1, failed-run}``. All five surface on
-``/archive`` regardless of phase because the default bucket is "ALL".
+``ml-lab/{mistral-7b-run1, failed-run}``. Three rows surface on
+``/ns/aiperf-bench/archive``; two on ``/ns/ml-lab/archive``.
 """
 
 from __future__ import annotations
@@ -26,79 +25,67 @@ pytestmark = [pytest.mark.e2e]
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_archive_lists_all_rows(
+async def test_archive_lists_namespace_rows(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``/archive`` renders one ``arch-row-*`` per AIPerfJob in the golden data.
-
-    Archive sources rows from ``api.listJobs()`` only — no merge with
-    on-disk results — so all five golden CRs (including the Running
-    ``live-run`` and the Failed ``failed-run``) appear.
-    """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    """``/ns/aiperf-bench/archive`` renders one row per AIPerfJob in that namespace."""
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await expect(archive.rows()).to_have_count(5)
+    await expect(archive.rows()).to_have_count(3)
+
+    archive_ml = ArchivePage(page, live_operator_app.base_url, namespace="ml-lab")
+    await archive_ml.goto()
+    await expect(archive_ml.rows()).to_have_count(2)
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_archive_row_shows_running_phase_for_live_run(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """The row for ``aiperf-bench/live-run`` shows the ``RUNNING`` phase text.
-
-    Each row renders ``job.phase.toUpperCase()`` in the phase cell, and
-    the golden CR has ``status.phase: Running``.
-    """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    """The row for ``aiperf-bench/live-run`` shows the ``Running`` phase chip."""
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    row = archive.row("aiperf-bench", "live-run")
+    row = archive.row("live-run")
     await expect(row).to_be_visible()
-    await expect(row).to_contain_text("RUNNING")
+    await expect(row).to_contain_text("Running")
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_archive_search_by_namespace(
+async def test_archive_search_filters_within_namespace(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Typing a namespace into the search input narrows to matching rows only.
+    """Search narrows rows within the current namespace by name/model substring.
 
-    The search input substring-matches name, namespace, or model. No
-    golden job name contains ``ml-lab`` as a substring, so typing it
-    leaves exactly the two ``ml-lab`` rows (``mistral-7b-run1`` and
-    ``failed-run``).
+    ``aiperf-bench`` has three jobs; searching ``c128`` matches only one.
     """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await expect(archive.rows()).to_have_count(5)
-    await archive.search("ml-lab")
-    ml_lab_rows = page.locator("[data-testid^='arch-row-ml-lab-']")
-    await expect(ml_lab_rows).to_have_count(2)
-    await expect(archive.rows()).to_have_count(2)
+    await expect(archive.rows()).to_have_count(3)
+    await archive.search().fill("c128")
+    await expect(archive.rows()).to_have_count(1)
+    await expect(archive.row("aiperf-llama3-c128")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_archive_sort_selector_applies(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Choosing a different sort option updates the ``archive-sort`` value.
+    """Choosing a different sort option updates the ``arch-sort`` value.
 
-    The sort dropdown (``archive-sort``) carries five options: ``newest``,
-    ``oldest``, ``rps``, ``p99``, ``dur``. The UI's controlled-select
-    writes the chosen ``key`` back into the ``value=${sort}`` binding, so
-    asserting the new value is visible is the deterministic signal that
-    the dropdown is functional. Row ordering after the change depends on
-    per-job start / throughput / latency data that's not uniformly
-    populated on the golden CRs, so we deliberately don't pin an order.
+    The sort dropdown carries five options: ``newest``, ``oldest``,
+    ``rps``, ``p99``, ``dur``. The controlled-select writes the chosen
+    ``key`` back into the ``value=${sort}`` binding, so asserting the new
+    value is visible is the deterministic signal that the dropdown is
+    functional.
     """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await expect(archive.rows()).to_have_count(5)
-    sort_select = page.get_by_test_id("archive-sort")
+    await expect(archive.rows()).to_have_count(3)
+    sort_select = page.get_by_test_id("arch-sort")
     await expect(sort_select).to_have_value("newest")
     await archive.set_sort("oldest")
     await expect(sort_select).to_have_value("oldest")
-    # Rows should still be rendered — only the ordering changed.
-    await expect(archive.rows()).to_have_count(5)
+    await expect(archive.rows()).to_have_count(3)
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -106,9 +93,9 @@ async def test_archive_row_click_navigates_to_run_detail(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
     """Clicking a row navigates to ``/run/<ns>/<name>`` and renders the detail page."""
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await archive.row("aiperf-bench", "aiperf-llama3-c128").click()
+    await archive.row("aiperf-llama3-c128").click()
     await page.wait_for_url("**/run/aiperf-bench/aiperf-llama3-c128")
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
 
@@ -117,32 +104,33 @@ async def test_archive_row_click_navigates_to_run_detail(
 async def test_archive_bucket_tabs_filter_rows(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """LIVE / PASSED / FAULT tabs narrow the row list to matching phases.
+    """Live / Passed / Failed tabs narrow the row list to matching phases.
 
-    Golden fixture has 5 CRs: 3 Succeeded (PASSED), 1 Failed (FAULT),
-    1 Running (LIVE). ALL is the default and shows all 5. Scope the tab
-    lookup to ``.v-archive-tabs`` so it doesn't collide with the
-    same-labelled LIVE/PASSED/FAULT tabs in the bottom ``log-strip``
-    component.
+    The ``aiperf-bench`` namespace has 3 jobs: 2 Succeeded (Passed),
+    1 Running (Live). Scope the tab lookup to ``.arch-tabs`` so it
+    doesn't collide with same-labelled tabs in the log-strip.
     """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await expect(archive.rows()).to_have_count(5)
-    tablist = page.locator(".v-archive-tabs")
+    await expect(archive.rows()).to_have_count(3)
+    tablist = page.locator(".arch-tabs")
 
-    await tablist.get_by_role("tab", name="LIVE").click()
+    await tablist.get_by_role("tab", name="Live").click()
     await expect(archive.rows()).to_have_count(1)
-    await expect(archive.row("aiperf-bench", "live-run")).to_be_visible()
+    await expect(archive.row("live-run")).to_be_visible()
 
-    await tablist.get_by_role("tab", name="PASSED").click()
+    await tablist.get_by_role("tab", name="Passed").click()
+    await expect(archive.rows()).to_have_count(2)
+
+    await tablist.get_by_role("tab", name="All").click()
     await expect(archive.rows()).to_have_count(3)
 
-    await tablist.get_by_role("tab", name="FAULT").click()
-    await expect(archive.rows()).to_have_count(1)
-    await expect(archive.row("ml-lab", "failed-run")).to_be_visible()
-
-    await tablist.get_by_role("tab", name="ALL").click()
-    await expect(archive.rows()).to_have_count(5)
+    archive_ml = ArchivePage(page, live_operator_app.base_url, namespace="ml-lab")
+    await archive_ml.goto()
+    tablist_ml = page.locator(".arch-tabs")
+    await tablist_ml.get_by_role("tab", name="Failed").click()
+    await expect(archive_ml.rows()).to_have_count(1)
+    await expect(archive_ml.row("failed-run")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -151,17 +139,16 @@ async def test_archive_search_regex_chars_are_literal(
 ) -> None:
     """Regex-like search strings are treated as literal substrings.
 
-    The search input in ``archive.js`` uses ``String.includes``, not a
-    regex — so ``.*`` should match zero rows (no golden job name
-    contains those two characters). A regression that accidentally
-    passed the input to ``new RegExp`` would match everything. Zero
-    matches is the specific observable that disambiguates the two
-    behaviours.
+    The search input uses ``String.includes``, not a regex — so ``.*``
+    should match zero rows (no golden job name contains those two
+    characters). A regression that passed the input to ``new RegExp``
+    would match everything. Zero matches is the specific observable
+    that disambiguates the two behaviours.
     """
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    await expect(archive.rows()).to_have_count(5)
-    await archive.search(".*")
+    await expect(archive.rows()).to_have_count(3)
+    await archive.search().fill(".*")
     await expect(archive.rows()).to_have_count(0)
 
 
@@ -169,21 +156,15 @@ async def test_archive_search_regex_chars_are_literal(
 async def test_archive_empty_bucket_shows_empty_state(
     live_operator_app, fake_k8s_client, page
 ) -> None:
-    """A bucket with zero matches renders the ``arch-empty`` section.
-
-    Archive's row list is the union of live CRs AND on-disk archived
-    runs from the results tree — wipe both sources down to one Running
-    CR, switch to the PASSED tab, and assert the empty-state section
-    surfaces. If either source leaked rows in, the assertion catches it.
-    """
+    """A bucket with zero matches in the namespace renders ``arch-empty``."""
     fake_k8s_client.jobs_raw = [
         j for j in fake_k8s_client.jobs_raw if j["metadata"]["name"] == "live-run"
     ]
     build_empty(live_operator_app.results_dir)
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
-    tablist = page.locator(".v-archive-tabs")
-    await tablist.get_by_role("tab", name="PASSED").click()
+    tablist = page.locator(".arch-tabs")
+    await tablist.get_by_role("tab", name="Passed").click()
     await expect(archive.rows()).to_have_count(0)
     await expect(page.get_by_test_id("arch-empty")).to_be_visible()
 
@@ -192,15 +173,10 @@ async def test_archive_empty_bucket_shows_empty_state(
 async def test_archive_entirely_empty_shows_empty_state(
     live_operator_app, fake_k8s_client, page
 ) -> None:
-    """Archive with zero CRs and zero on-disk runs renders ``arch-empty``.
-
-    Archive sources the union of live CRs + on-disk PVC directories.
-    Zero rows requires clearing both — the ``jobs_raw`` list on the
-    fake and the results-dir tree via ``build_empty``.
-    """
+    """Archive with zero CRs in the namespace renders ``arch-empty``."""
     fake_k8s_client.jobs_raw = []
     build_empty(live_operator_app.results_dir)
-    archive = ArchivePage(page, live_operator_app.base_url)
+    archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
     await expect(archive.rows()).to_have_count(0)
     await expect(page.get_by_test_id("arch-empty")).to_be_visible()

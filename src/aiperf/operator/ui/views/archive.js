@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ARCHIVE — namespace-grouped history of every run the operator has tracked.
+ * ARCHIVE — namespace-scoped past-runs browser.
  *
- * Same organizing principle as Home (namespace-first, no drill-down) but:
- *   - Denser row layout
- *   - Includes a global phase-filter strip at the top (Live / Passed / Failed)
- *   - Text search narrows across every namespace at once
- *   - A namespace whose runs are all filtered out disappears (no empty blocks)
- *
- * Home is for "what's happening right now per namespace"; Archive is for
- * "show me the full history sliced by namespace".
+ * Mounted at ``/ns/:ns/archive``. The route segment is the namespace
+ * filter; there is no cross-namespace grouping or "All namespaces"
+ * toggle. The view renders a flat list of every run whose
+ * ``j.namespace === ns``, plus a phase-bucket strip and a text search
+ * that narrows within the current namespace.
  */
 
 import { html } from 'htm/preact';
@@ -58,16 +55,6 @@ function statusLabel(phase) {
   return phase ? String(phase) : '—';
 }
 
-function groupByNamespace(list) {
-  const map = new Map();
-  for (const j of list) {
-    const ns = j.namespace || 'default';
-    if (!map.has(ns)) map.set(ns, []);
-    map.get(ns).push(j);
-  }
-  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-}
-
 function relAge(ts) {
   if (!ts) return '—';
   const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
@@ -92,7 +79,6 @@ function jobDurationSec(j) {
 }
 
 function compareJobs(sort) {
-  // Stable comparators; unknown numeric fields sort last.
   const num = v => (v == null ? -Infinity : Number(v));
   switch (sort) {
     case 'oldest': return (a, b) => jobStartMs(a) - jobStartMs(b);
@@ -104,11 +90,11 @@ function compareJobs(sort) {
   }
 }
 
-export function Archive() {
+export function Archive({ ns }) {
   const [bucket, setBucket] = useState('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState('newest');
-  const list = jobs.value ?? [];
+  const list = (jobs.value ?? []).filter(j => j.namespace === ns);
   const cur = BUCKETS.find(b => b.key === bucket) ?? BUCKETS[0];
 
   const filtered = useMemo(() => {
@@ -116,13 +102,11 @@ export function Archive() {
     if (q) {
       const needle = q.toLowerCase();
       r = r.filter(j => (j.name ?? '').toLowerCase().includes(needle)
-                    || (j.namespace ?? '').toLowerCase().includes(needle)
                     || (j.model ?? '').toLowerCase().includes(needle));
     }
     return [...r].sort(compareJobs(sort));
   }, [list, bucket, q, sort]);
 
-  const byNs = groupByNamespace(filtered);
   const bucketCount = key => list.filter(BUCKETS.find(b => b.key === key).match).length;
 
   const shownCount = filtered.length;
@@ -139,7 +123,6 @@ export function Archive() {
         <div class="hm-summary-item"><span>Running</span><b>${liveShown}</b></div>
         <div class="hm-summary-item"><span>Passed</span><b>${passedShown}</b></div>
         <div class="hm-summary-item"><span>Failed</span><b>${faultShown}</b></div>
-        <div class="hm-summary-item"><span>Namespaces</span><b>${byNs.length}</b></div>
       </section>
 
       <div class="arch-tabs" role="tablist">
@@ -160,62 +143,43 @@ export function Archive() {
           type="text"
           value=${q}
           oninput=${e => setQ(e.target.value)}
-          placeholder="filter name / namespace / model…"
-          data-testid="archive-search"
+          placeholder="filter name / model…"
+          data-testid="arch-search"
         />
         <select
           value=${sort}
           onchange=${e => setSort(e.target.value)}
-          data-testid="archive-sort"
+          data-testid="arch-sort"
           aria-label="Sort runs"
         >
           ${SORTS.map(s => html`<option key=${s.key} value=${s.key}>${s.label}</option>`)}
         </select>
       </div>
 
-      ${byNs.length === 0
+      ${filtered.length === 0
         ? html`
           <div class="empty" data-testid="arch-empty">
             No matches — try changing the filter${q ? ' or clearing the search' : ''}.
           </div>`
-        : byNs.map(([ns, runs]) => {
-          const live = runs.filter(j => phaseBucket(j.phase) === 'live').length;
-          const passed = runs.filter(j => phaseBucket(j.phase) === 'passed').length;
-          const fault = runs.filter(j => phaseBucket(j.phase) === 'fault').length;
+        : filtered.map(j => {
+          const tone = statusTone(j.phase);
+          const label = statusLabel(j.phase);
+          const modelShort = j.model ? String(j.model).split('/').pop() : '—';
           return html`
-            <section key=${ns} class="arch-ns" data-testid=${'arch-ns-' + ns}>
-              <div class="arch-ns-head">
-                <div class="arch-ns-name">${ns}</div>
-                <div class="arch-ns-counts">
-                  ${live > 0   && html`<span class="chip chip--info">${live} Running</span>`}
-                  ${passed > 0 && html`<span class="chip chip--good">${passed} Passed</span>`}
-                  ${fault > 0  && html`<span class="chip chip--bad">${fault} Failed</span>`}
-                  <span class="chip chip--neutral">${runs.length} total</span>
-                </div>
+            <div
+              key=${j.namespace + '/' + j.name}
+              class="arch-row"
+              data-testid=${'arch-row-' + j.namespace + '-' + j.name}
+              onclick=${() => navigate(`/run/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)}
+            >
+              <div>
+                <div class="arch-row-name">${j.name}</div>
+                <div class="arch-row-ns">${j.namespace}</div>
               </div>
-
-              ${runs.map(j => {
-                const tone = statusTone(j.phase);
-                const label = statusLabel(j.phase);
-                const modelShort = j.model ? String(j.model).split('/').pop() : '—';
-                return html`
-                  <div
-                    key=${j.namespace + '/' + j.name}
-                    class="arch-row"
-                    data-testid=${'arch-row-' + j.namespace + '-' + j.name}
-                    onclick=${() => navigate(`/run/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)}
-                  >
-                    <div>
-                      <div class="arch-row-name">${j.name}</div>
-                      <div class="arch-row-ns">${j.namespace}</div>
-                    </div>
-                    <div class="arch-row-meta">${modelShort}</div>
-                    <div class="arch-row-meta">${relAge(j.completionTime ?? j.created)}</div>
-                    <div class="arch-row-status"><span class=${'chip chip--' + tone}>${label}</span></div>
-                  </div>
-                `;
-              })}
-            </section>
+              <div class="arch-row-meta">${modelShort}</div>
+              <div class="arch-row-meta">${relAge(j.completionTime ?? j.created)}</div>
+              <div class="arch-row-status"><span class=${'chip chip--' + tone}>${label}</span></div>
+            </div>
           `;
         })
       }

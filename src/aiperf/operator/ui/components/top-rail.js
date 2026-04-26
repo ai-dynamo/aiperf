@@ -99,6 +99,7 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
   const crumbs = trailingCrumbs(viewKind, runParams, ns);
   const netLabel = net === 'ok' ? 'UP' : net === 'warn' ? 'RETRY' : 'DOWN';
   const launchTarget = ns ? `/ns/${encodeURIComponent(ns)}/launch` : null;
+  const archiveTarget = ns ? `/ns/${encodeURIComponent(ns)}/archive` : null;
   // Reading the signal in render subscribes the component, so the pill
   // re-renders automatically when the launch view writes/clears divergence.
   const pillClass = 'ns-switcher-pill' + (launchDivergence.value ? ' ns-switcher-pill--bad' : '');
@@ -144,16 +145,18 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
       <div class="topbar-right">
         <button
           class="btn btn--ghost"
-          onclick=${() => navigate('/archive')}
-          data-testid="rail-archive"
-          title="Archive"
-        >Archive</button>
-        <button
-          class="btn btn--ghost"
           onclick=${() => navigate('/compare')}
           data-testid="rail-compare"
           title="Compare"
         >Compare</button>
+        ${archiveTarget && html`
+          <button
+            class="btn btn--ghost"
+            onclick=${() => navigate(archiveTarget)}
+            data-testid="rail-archive"
+            title="Archive"
+          >Archive</button>
+        `}
         <button
           class="btn btn--ghost"
           onclick=${onSearchClick}
