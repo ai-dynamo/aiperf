@@ -41,7 +41,7 @@ import aiohttp
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.wsgi import WSGIMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -219,6 +219,15 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         return {"status": "ok"}
 
     _mount_dashboard(app, base_dir)
+
+    ui_v1_dir = Path(__file__).parent / "ui-v1"
+    if ui_v1_dir.is_dir():
+
+        @app.get("/v1", include_in_schema=False)
+        async def _v1_redirect() -> RedirectResponse:
+            return RedirectResponse(url="/v1/", status_code=307)
+
+        app.mount("/v1", StaticFiles(directory=str(ui_v1_dir), html=True), name="ui-v1")
 
     ui_dir = Path(__file__).parent / "ui"
     if ui_dir.is_dir():
