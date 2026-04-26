@@ -140,6 +140,59 @@ def _print_memory_estimate(config: Any, kube_options: KubeOptions, spec: dict) -
     print_memory_estimate(config, kube_options, spec)
 
 
+def _check_no_sweep_keys(config_dict: dict, *, source: str) -> None:
+    """Fail fast with a hand-off message if `config_dict` has sweep/multi_run keys.
+
+    `aiperf kube profile` runs a single benchmark; sweep/multi_run configs
+    must go through `aiperf kube sweep` instead. Detected on any of:
+    ``sweep``, ``multi_run``, or ``multiRun``.
+
+    Args:
+        config_dict: Parsed YAML dict from the user's config file.
+        source: Path-or-label used in the error message to identify the file.
+
+    Raises:
+        SystemExit: when any forbidden key is present (via
+            `cli_utils.raise_startup_error_and_exit`).
+    """
+    forbidden = [k for k in ("sweep", "multi_run", "multiRun") if k in config_dict]
+    if not forbidden:
+        return
+    from aiperf import cli_utils
+
+    cli_utils.raise_startup_error_and_exit(
+        f"This config ({source}) has '{forbidden[0]}:' set, but "
+        f"`aiperf kube profile` runs a single benchmark.\n"
+        f"Use `aiperf kube sweep -f <config>` to run it as a parameter sweep, "
+        f"or remove the '{forbidden[0]}:' key to run a single benchmark.",
+        title="Sweep config detected",
+    )
+
+
+def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
+    """If `config_file` is a plain YAML config (not an AIPerfJob CR), enforce no-sweep.
+
+    Skips when no config file was given, when the file is unparseable, or
+    when the file is itself an AIPerfJob CR (which is handled by the CR path).
+    """
+    if config_file is None:
+        return
+    import yaml
+
+    try:
+        raw = yaml.safe_load(config_file.read_text())
+    except Exception:  # noqa: BLE001 - unparseable YAML surfaces later via load_config
+        return
+    if not isinstance(raw, dict):
+        return
+    if (
+        raw.get("apiVersion", "").startswith("aiperf.nvidia.com")
+        and raw.get("kind") == AIPERF_KIND
+    ):
+        return
+    _check_no_sweep_keys(raw, source=str(config_file))
+
+
 @app.default
 async def profile(
     *,
@@ -183,6 +236,7 @@ async def profile(
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
+        _check_config_file_for_sweep_keys(getattr(cli_model, "config_file", None))
         spec, config, name = _resolve_spec_and_name(cli_model, kube_options)
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
         _print_memory_estimate(config, kube_options, spec)
