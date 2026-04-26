@@ -76,6 +76,31 @@ async def test_command_palette_search_navigates_to_job(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_palette_groups_current_namespace_first(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """On a namespace-scoped route, palette job rows surface current-ns first.
+
+    The fuzzy query "run" matches at least ``mistral-7b-run1``, ``failed-run``
+    (both ``ml-lab``), and ``live-run`` (``aiperf-bench``). With the route at
+    ``/ns/aiperf-bench``, the current-namespace partition must precede the
+    other-namespace partition, so the first ``cmdp-job-*`` row's ``data-testid``
+    must start with ``cmdp-job-aiperf-bench-``.
+    """
+    await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
+    await page.keyboard.press("Control+k")
+    await expect(page.get_by_test_id("command-palette")).to_be_visible()
+    await page.get_by_test_id("command-palette-input").fill("run")
+    items = page.locator("[data-testid^='cmdp-job-']")
+    await expect(items.first).to_be_visible()
+    first_id = await items.first.get_attribute("data-testid")
+    assert first_id.startswith("cmdp-job-aiperf-bench-"), (
+        f"first palette job {first_id!r} should be in current namespace 'aiperf-bench'"
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_deep_link_loads_run_detail_directly(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:

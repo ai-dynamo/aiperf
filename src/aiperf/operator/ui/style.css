@@ -404,6 +404,19 @@ h1, h2, h3, h4 {
 .cmdp-row-label { color: var(--text); font-size: var(--font-sm); }
 .cmdp-row-kind  { color: var(--sub);  font-size: var(--font-xs); }
 .cmdp-empty { padding: 16px; color: var(--muted); font-style: italic; text-align: center; }
+.cmdp-list { list-style: none; margin: 0; padding: 0; }
+.cmdp-row { list-style: none; }
+.cmdp-divider {
+  padding: var(--space-2) var(--space-4);
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+  background: var(--bg-tile);
+}
 
 /* ───── Durable log view ───── */
 .v-log {
