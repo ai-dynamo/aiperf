@@ -38,6 +38,11 @@ from aiperf.kubernetes.cr_refs import (
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
+from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
+from aiperf.operator.handlers.sweep import create as sweep_create
+from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
+
+AIPERF_SWEEPS_PLURAL = "aiperfsweeps"
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +111,50 @@ async def on_benchmark_complete(
     """Handle benchmark completion signal from controller pod."""
     await lifecycle.on_benchmark_complete(
         body=body, status=status, name=name, namespace=namespace, patch=patch
+    )
+
+
+@kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+async def on_aiperfsweep_create(
+    body: dict[str, Any],
+    spec: dict[str, Any],
+    name: str,
+    namespace: str,
+    patch: kopf.Patch,
+    **_: Any,
+) -> None:
+    """Validate, provision RBAC, and create the sweep-controller JobSet."""
+    await sweep_create.handle(
+        body=body, spec=spec, name=name, namespace=namespace, patch=patch
+    )
+
+
+@kopf.on.update(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, field="spec.cancel")
+async def on_aiperfsweep_cancel(
+    body: dict[str, Any],
+    spec: dict[str, Any],
+    name: str,
+    namespace: str,
+    patch: kopf.Patch,
+    **_: Any,
+) -> None:
+    """Mirror spec.cancel into status.conditions[Cancelling]."""
+    await sweep_lifecycle.cancel(
+        body=body, spec=spec, name=name, namespace=namespace, patch=patch
+    )
+
+
+@kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")
+async def on_aiperfjob_phase_transition(
+    body: dict[str, Any],
+    status: dict[str, Any],
+    name: str,
+    namespace: str,
+    **_: Any,
+) -> None:
+    """Bubble AIPerfJob phase transitions up to owning AIPerfSweep, if any."""
+    await sweep_rollup.on_child_phase_transition(
+        body=body, status=status, name=name, namespace=namespace
     )
 
 
