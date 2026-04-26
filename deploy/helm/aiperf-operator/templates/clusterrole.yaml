@@ -18,6 +18,11 @@ rules:
   resources: ["aiperfjobs", "aiperfjobs/status", "aiperfjobs/finalizers"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
+# AIPerfSweep CRD - full access for operator
+- apiGroups: ["aiperf.nvidia.com"]
+  resources: ["aiperfsweeps", "aiperfsweeps/status", "aiperfsweeps/finalizers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
 # JobSets - create and manage benchmark job sets
 - apiGroups: ["jobset.x-k8s.io"]
   resources: ["jobsets"]
