@@ -59,3 +59,52 @@ def test_failure_policy_default_continues():
 )  # fmt: skip
 def test_aiperfsweep_spec_validates(data):
     AIPerfSweepSpec.model_validate(data)
+
+
+def test_aiperfsweep_rejects_empty_axes():
+    with pytest.raises(ValidationError, match="at least one of"):
+        AIPerfSweepSpec.model_validate({"template": {"spec": {"benchmark": {}}}})
+
+
+def test_aiperfsweep_rejects_convergence_without_multirun():
+    with pytest.raises(ValidationError, match="requires `multiRun`"):
+        AIPerfSweepSpec.model_validate(
+            {
+                "convergence": {"metric": "ttft_p99"},
+                "template": {"spec": {"benchmark": {}}},
+            }
+        )
+
+
+def test_aiperfsweep_rejects_convergence_with_explicit_trials():
+    with pytest.raises(ValidationError, match="`multiRun.trials` must be unset"):
+        AIPerfSweepSpec.model_validate(
+            {
+                "multiRun": {"trials": 5},
+                "convergence": {"metric": "ttft_p99"},
+                "template": {"spec": {"benchmark": {}}},
+            }
+        )
+
+
+def test_aiperfsweep_rejects_sweep_in_template_benchmark():
+    with pytest.raises(ValidationError, match="not permitted"):
+        AIPerfSweepSpec.model_validate(
+            {
+                "multiRun": {"trials": 3},
+                "template": {"spec": {"benchmark": {"sweep": {"type": "grid"}}}},
+            }
+        )
+
+
+def test_aiperfsweep_accepts_sweep_and_convergence_composing():
+    spec = AIPerfSweepSpec.model_validate(
+        {
+            "sweep": {"type": "grid", "variables": {"phases.x.concurrency": [8, 32]}},
+            "multiRun": {"cooldownSeconds": 10},
+            "convergence": {"metric": "ttft_p99"},
+            "template": {"spec": {"benchmark": {}}},
+        }
+    )
+    assert spec.sweep is not None
+    assert spec.convergence is not None
