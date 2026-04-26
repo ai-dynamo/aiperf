@@ -80,13 +80,12 @@ def _matches(actual: Any, expected: Any) -> bool:
                 "loadgen": {
                     "request_rate": 50.0,
                     "benchmark_duration": 30.0,
-                    "request_count": 1000,
                 },
             },
             {
                 "phases[0].type": "poisson",
+                "phases[0].duration": 30.0,
                 "phases[0].rate": 50.0,
-                "phases[0].requests": 1000,
             },
             id="request-rate-poisson",
         ),

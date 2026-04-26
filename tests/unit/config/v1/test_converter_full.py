@@ -77,3 +77,18 @@ def test_public_dataset_uses_dataset_field():
     ds = cfg.datasets[0]
     assert ds.name == "main"
     assert ds.dataset == "sharegpt"
+
+
+def test_full_conversion_request_rate_only_uses_synthetic_default():
+    """Top-level converter must produce a valid AIPerfConfig for the minimal
+    request-rate invocation. Mirrors the Phase 6 case that previously needed
+    the request_count: 1000 workaround."""
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"request_rate": 50.0, "benchmark_duration": 30.0},
+        }
+    )
+    cfg = convert_user_to_aiperf(user, ServiceConfig())
+    # SyntheticDataset Pydantic default takes effect (no user-set count source)
+    assert cfg.datasets[0].entries == 100

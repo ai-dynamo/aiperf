@@ -152,3 +152,41 @@ def test_build_dataset_synthetic_carries_turns_and_delay() -> None:
     assert out["type"] == "synthetic"
     assert out["turns"] == {"mean": 3, "stddev": 1}
     assert out["turn_delay"]["mean"] == 100.0
+
+
+def test_synthetic_dataset_omits_entries_when_no_count_source_set():
+    """entries must be omitted from the dict when neither loadgen.request_count
+    nor conversation.num/num_dataset_entries is user-set. SyntheticDataset's
+    Pydantic default (entries=100) then takes effect downstream — emitting
+    entries=None would crash AIPerfConfig validation (int_type, got NoneType)."""
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"request_rate": 50.0, "benchmark_duration": 30.0},
+        }
+    )
+    out = build_dataset(user)
+    assert "entries" not in out, f"entries leaked into dict: {out.get('entries')!r}"
+
+
+def test_synthetic_dataset_emits_entries_when_request_count_set():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"concurrency": 1, "request_count": 250},
+        }
+    )
+    out = build_dataset(user)
+    assert out["entries"] == 250
+
+
+def test_synthetic_dataset_emits_entries_when_conversation_num_set():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": {"concurrency": 1},
+            "input": {"conversation": {"num": 42}},
+        }
+    )
+    out = build_dataset(user)
+    assert out["entries"] == 42

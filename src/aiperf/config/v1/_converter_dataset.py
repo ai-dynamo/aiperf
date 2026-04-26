@@ -247,19 +247,30 @@ def _attach_subtables(d: dict[str, Any], user: UserConfig) -> None:
 
 
 def _resolve_entries(user: UserConfig) -> int | None:
-    """request_count (loadgen) > conversation.num > conversation.num_dataset_entries.
+    """Return user-set entry count, or None if no source field was user-set.
 
-    Mirrors ``cli.request_count or cli.num_sessions`` from the flat model.
+    Resolution order (mirrors origin/main's ``_count_dataset_entries`` priority):
+      1. ``loadgen.request_count`` (explicitly set)
+      2. ``input.conversation.num`` (explicitly set)
+      3. ``input.conversation.num_dataset_entries`` (explicitly set)
+
+    Returns None when none was explicitly set. The caller MUST omit the
+    ``entries`` key from the output dict in that case so the dataset class's
+    own Pydantic default applies (``SyntheticDataset.entries=100``;
+    ``File/Public/Composed.entries=None``). Emitting ``entries=None`` into the
+    dict would crash AIPerfConfig validation on synthetic
+    (``int_type, got NoneType``).
     """
-    if user.loadgen is not None and user.loadgen.request_count is not None:
-        return user.loadgen.request_count
+    loadgen = user.loadgen
+    if loadgen is not None and "request_count" in loadgen.model_fields_set:
+        return loadgen.request_count
     inp = _input(user)
-    if (
-        inp is not None
-        and inp.conversation is not None
-        and inp.conversation.num is not None
-    ):
-        return inp.conversation.num
+    conv = inp.conversation if inp is not None else None
+    if conv is not None:
+        if "num" in conv.model_fields_set:
+            return conv.num
+        if "num_dataset_entries" in conv.model_fields_set:
+            return conv.num_dataset_entries
     return None
 
 
@@ -275,12 +286,13 @@ def _apply_dataset_type(d: dict[str, Any], user: UserConfig, needs_text: bool) -
         return
     if inp is not None and inp.file:
         d["type"] = DatasetType.FILE
+        if entries is not None:
+            d["entries"] = entries
         return
     d["type"] = DatasetType.SYNTHETIC
-    fallback_entries = entries
-    if fallback_entries is None and inp is not None and inp.conversation is not None:
-        fallback_entries = inp.conversation.num_dataset_entries
-    d.setdefault("entries", fallback_entries)
+    if entries is not None:
+        d.setdefault("entries", entries)
+    # else: omit; SyntheticDataset.entries=100 default applies
     if needs_text:
         d.setdefault("prompts", {}).setdefault("isl", {}).setdefault("mean", 550)
 
@@ -507,14 +519,16 @@ def _build_composed_dataset(user: UserConfig) -> dict[str, Any]:
     from aiperf.common.enums import DatasetType
 
     inp = _input(user)
-    random_seed = inp.random_seed if inp is not None else None
-    return {
+    out: dict[str, Any] = {
         "type": DatasetType.COMPOSED,
         "source": _composed_source(user),
         "augment": _composed_augment(user),
-        "entries": _resolve_entries(user),
-        "random_seed": random_seed,
     }
+    if (entries := _resolve_entries(user)) is not None:
+        out["entries"] = entries
+    if inp is not None and "random_seed" in inp.model_fields_set:
+        out["random_seed"] = inp.random_seed
+    return out
 
 
 # --- text-endpoint validation -------------------------------------------
