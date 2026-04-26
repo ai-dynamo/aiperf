@@ -173,9 +173,11 @@ class CRJobStatus(K8sCamelModel):
     Phase progress dicts (status.phases) are written by the operator via
     PhaseProgress.to_k8s_dict() (camelCase keys including
     ``requestsProgressPercent``). Summary dicts are written via
-    MetricsSummary.to_status_dict() (snake_case keys including
-    ``throughput_rps``, ``latency_p99_ms``). Both are kept as raw dicts
-    to avoid a circular import with the operator package.
+    MetricsSummary.to_status_dict() — a curated nested
+    ``{metric_tag: {avg, p50, p99, ...}}`` projection of the AIPerf metrics
+    payload, e.g. ``summary["request_throughput"]["avg"]``,
+    ``summary["request_latency"]["p99"]``. Both are kept as raw dicts to
+    avoid a circular import with the operator package.
     """
 
     phase: str = Field(default="Pending", description="Current lifecycle phase.")
@@ -261,10 +263,13 @@ class AIPerfJobCR(K8sCamelModel):
             if pct is not None:
                 progress = float(pct)
 
-        # Summary: operator writes snake_case via MetricsSummary.to_status_dict()
+        # Summary: operator writes nested metric tags via MetricsSummary.from_metrics(),
+        # so request_throughput.avg / request_latency.p99 are the canonical reads.
         s = self.status.live_summary or self.status.summary or {}
-        throughput = s.get("throughput_rps")
-        latency = s.get("latency_p99_ms")
+        rt = s.get("request_throughput") if isinstance(s, dict) else None
+        rl = s.get("request_latency") if isinstance(s, dict) else None
+        throughput = rt.get("avg") if isinstance(rt, dict) else None
+        latency = rl.get("p99") if isinstance(rl, dict) else None
 
         return AIPerfJobInfo(
             name=self.metadata.name,
@@ -341,6 +346,18 @@ class AIPerfJobInfo(K8sCamelModel):
             "Provenance: 'live' = CR on cluster only; 'archived' = PVC results "
             "only (CR no longer exists); 'both' = CR + PVC results."
         ),
+    )
+    sweep_name: str | None = Field(
+        default=None,
+        description="Parent AIPerfSweep name when this job is a sweep child.",
+    )
+    variation_index: int | None = Field(
+        default=None,
+        description="Variation index from expand_sweep() for sweep children.",
+    )
+    variation_label: str | None = Field(
+        default=None,
+        description="Human-readable variation label for sweep children.",
     )
 
     @property

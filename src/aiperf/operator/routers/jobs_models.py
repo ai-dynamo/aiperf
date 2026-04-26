@@ -9,6 +9,14 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.kubernetes.models import AIPerfJobInfo
+
+# ``ActiveJobSummary`` is the API-layer name for the per-job summary returned
+# by GET /api/v1/jobs and friends. The underlying flat display model
+# (``AIPerfJobInfo``) is shared with the CLI; re-exporting under a
+# response-shaped alias keeps router code grep-friendly without duplicating
+# the schema.
+ActiveJobSummary = AIPerfJobInfo
 
 
 class JobPodSummary(AIPerfBaseModel):
