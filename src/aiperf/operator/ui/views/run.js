@@ -1369,7 +1369,10 @@ export function Run({ ns, name, epoch }) {
   const phaseEntries = Object.entries(phases);
   const active = pickActive(phases);
   const bucket = phaseBucket(job?.phase);
-  const elapsed = job?.startTime ? (Date.now() - new Date(job.startTime).getTime()) / 1000 : null;
+  const isTerminal = bucket === 'passed' || bucket === 'fault';
+  const startMs = job?.startTime ? new Date(job.startTime).getTime() : null;
+  const endMs = isTerminal && job?.completionTime ? new Date(job.completionTime).getTime() : Date.now();
+  const elapsed = startMs != null ? (endMs - startMs) / 1000 : null;
   const eta = phaseEta(active);
   const rps = summary.throughput_rps;
   const ttft = summary.ttft_p99_ms ?? summary.ttft_avg_ms;
@@ -1400,10 +1403,10 @@ export function Run({ ns, name, epoch }) {
     job?.model && `model: ${job.model}`,
     pods.length > 0 && `${pods.filter(p => (p.phase || '').toLowerCase() === 'running').length}/${pods.length} pods running`,
   ].filter(Boolean).join(' · ');
-  const phasePctNum = phasePct(active);
+  const phasePctNum = isTerminal ? 100 : phasePct(active);
   const phaseFillClass =
-    active?.complete ? 'run-hero-phase-fill run-hero-phase-fill--done' :
-                       'run-hero-phase-fill';
+    isTerminal || active?.complete ? 'run-hero-phase-fill run-hero-phase-fill--done' :
+                                     'run-hero-phase-fill';
   const phaseTotal = active?.total_expected_requests ?? active?.expected_requests ?? active?.requests_total ?? null;
   const phaseDone  = active?.final_requests_completed ?? active?.requestsCompleted ?? active?.requests_completed ?? active?.completed ?? 0;
 
@@ -1426,12 +1429,14 @@ export function Run({ ns, name, epoch }) {
               ${elapsed != null ? fmtDuration(elapsed) : '—'}
             </span>
           </div>
-          <div class="run-hero-clock-line">
-            <span class="run-hero-clock-label">Phase ETA</span>
-            <span class=${'run-hero-clock-val' + (eta != null ? '' : ' run-hero-clock-val--dim')}>
-              ${eta != null ? fmtDuration(eta) : '—'}
-            </span>
-          </div>
+          ${!isTerminal && html`
+            <div class="run-hero-clock-line">
+              <span class="run-hero-clock-label">Phase ETA</span>
+              <span class=${'run-hero-clock-val' + (eta != null ? '' : ' run-hero-clock-val--dim')}>
+                ${eta != null ? fmtDuration(eta) : '—'}
+              </span>
+            </div>
+          `}
         </div>
         <div class="run-hero-phase">
           <div class="run-hero-phase-head">
