@@ -107,3 +107,278 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
     assert body_patch["status"]["completedRuns"] == 5
     assert body_patch["status"]["failedRuns"] == 1
     assert body_patch["status"]["phase"] == "Aggregating"
+
+
+# ===========================================================================
+# Adversarial regression-locks for second-pass fixes (commit 793260d7b).
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# child_rollup — apiserver errors wrap in kopf.TemporaryError(delay=15)
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_k8s_for_rollup(
+    monkeypatch,
+    *,
+    list_side_effect=None,
+    list_return=None,
+    patch_status_side_effect=None,
+):
+    """Install fake k8s_client + CustomObjectsApi for child_rollup helpers."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    list_mock = AsyncMock()
+    if list_side_effect is not None:
+        list_mock.side_effect = list_side_effect
+    else:
+        list_mock.return_value = list_return or {"items": []}
+    patch_mock = AsyncMock()
+    if patch_status_side_effect is not None:
+        patch_mock.side_effect = patch_status_side_effect
+
+    custom = MagicMock()
+    custom.list_namespaced_custom_object = list_mock
+    custom.patch_namespaced_custom_object_status = patch_mock
+
+    fake_k8s_module = SimpleNamespace(CustomObjectsApi=lambda _api: custom)
+
+    @asynccontextmanager
+    async def fake_k8s_client():
+        yield MagicMock(name="ApiClient")
+
+    import kubernetes_asyncio
+
+    monkeypatch.setattr(kubernetes_asyncio, "client", fake_k8s_module, raising=False)
+    import aiperf.kubernetes.client as kclient
+
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+
+    return list_mock, patch_mock
+
+
+@pytest.mark.asyncio
+async def test_count_owned_children_apiexception_500_wraps_temporary_error(monkeypatch):
+    """`_count_owned_children` apiserver 500 must surface as kopf.TemporaryError."""
+    from kubernetes_asyncio.client import ApiException
+
+    _install_fake_k8s_for_rollup(
+        monkeypatch,
+        list_side_effect=ApiException(status=500, reason="Internal"),
+    )
+    with pytest.raises(kopf.TemporaryError):
+        await child_rollup._count_owned_children("ns", "u-sweep", "s")
+
+
+@pytest.mark.asyncio
+async def test_patch_parent_status_404_returns_silently(monkeypatch):
+    """Parent CR deleted between rollup and patch (404): handler returns None,
+    no exception (the rollup is dead-letter and not retryable)."""
+    from kubernetes_asyncio.client import ApiException
+
+    _install_fake_k8s_for_rollup(
+        monkeypatch,
+        patch_status_side_effect=ApiException(status=404, reason="NotFound"),
+    )
+    # Must not raise.
+    result = await child_rollup._patch_parent_status(
+        group="aiperf.nvidia.com",
+        version="v1alpha1",
+        plural="aiperfsweeps",
+        name="missing",
+        namespace="ns",
+        body={"status": {"phase": "Aggregating"}},
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_patch_parent_status_503_wraps_temporary_error(monkeypatch):
+    """Patch on apiserver 503 must surface as kopf.TemporaryError."""
+    from kubernetes_asyncio.client import ApiException
+
+    _install_fake_k8s_for_rollup(
+        monkeypatch,
+        patch_status_side_effect=ApiException(status=503, reason="Unavailable"),
+    )
+    with pytest.raises(kopf.TemporaryError):
+        await child_rollup._patch_parent_status(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            plural="aiperfsweeps",
+            name="s",
+            namespace="ns",
+            body={"status": {"phase": "Aggregating"}},
+        )
+
+
+# ---------------------------------------------------------------------------
+# lifecycle.on_delete — best-effort cooperative cancel
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_k8s_for_lifecycle(
+    monkeypatch,
+    *,
+    list_return=None,
+    list_side_effect=None,
+    patch_side_effect=None,
+    delete_side_effect=None,
+):
+    """Install fake k8s_client + CustomObjectsApi for lifecycle handlers."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    list_mock = AsyncMock()
+    if list_side_effect is not None:
+        list_mock.side_effect = list_side_effect
+    else:
+        list_mock.return_value = list_return or {"items": []}
+
+    patch_mock = AsyncMock()
+    if patch_side_effect is not None:
+        patch_mock.side_effect = patch_side_effect
+
+    delete_mock = AsyncMock()
+    if delete_side_effect is not None:
+        delete_mock.side_effect = delete_side_effect
+
+    custom = MagicMock()
+    custom.list_namespaced_custom_object = list_mock
+    custom.patch_namespaced_custom_object = patch_mock
+    custom.delete_namespaced_custom_object = delete_mock
+
+    fake_k8s_module = SimpleNamespace(CustomObjectsApi=lambda _api: custom)
+
+    @asynccontextmanager
+    async def fake_k8s_client():
+        yield MagicMock(name="ApiClient")
+
+    import kubernetes_asyncio
+
+    monkeypatch.setattr(kubernetes_asyncio, "client", fake_k8s_module, raising=False)
+    import aiperf.kubernetes.client as kclient
+
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+
+    return list_mock, patch_mock, delete_mock
+
+
+@pytest.mark.asyncio
+async def test_on_delete_patches_each_child_with_cancel_true(monkeypatch):
+    """`on_delete` lists children with the sweep label and patches each with
+    spec.cancel=True for cooperative shutdown."""
+    children = [
+        {"metadata": {"name": "s-v0000-t00"}},
+        {"metadata": {"name": "s-v0001-t00"}},
+        {"metadata": {"name": "s-v0002-t00"}},
+    ]
+    list_mock, patch_mock, _ = _install_fake_k8s_for_lifecycle(
+        monkeypatch, list_return={"items": children}
+    )
+    await lifecycle.on_delete(name="s", namespace="ns")
+    list_mock.assert_awaited_once()
+    assert patch_mock.await_count == 3, (
+        f"expected 3 patch calls, got {patch_mock.await_count}"
+    )
+    # Verify each call patches spec.cancel=True with the right name.
+    patched_names = []
+    for call in patch_mock.await_args_list:
+        kwargs = call.kwargs
+        assert kwargs["body"] == {"spec": {"cancel": True}}
+        assert kwargs["plural"] == "aiperfjobs"
+        patched_names.append(kwargs["name"])
+    assert sorted(patched_names) == ["s-v0000-t00", "s-v0001-t00", "s-v0002-t00"]
+
+
+@pytest.mark.asyncio
+async def test_on_delete_swallows_apiexception_during_list(monkeypatch):
+    """List fails with 503: on_delete must NOT raise (best-effort)."""
+    from kubernetes_asyncio.client import ApiException
+
+    _install_fake_k8s_for_lifecycle(
+        monkeypatch,
+        list_side_effect=ApiException(status=503, reason="Unavailable"),
+    )
+    # Must not raise.
+    await lifecycle.on_delete(name="s", namespace="ns")
+
+
+# ---------------------------------------------------------------------------
+# lifecycle.maybe_reap_finished — TTL-based parent CR cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch):
+    """Succeeded sweep, completedAt 1h ago, ttl=1800: delete is invoked."""
+    from datetime import datetime, timedelta, timezone
+
+    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {"name": "s", "namespace": "ns"},
+        "spec": {"ttlSecondsAfterFinished": 1800},
+    }
+    status = {"phase": "Succeeded", "completedAt": one_hour_ago}
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_awaited_once()
+    kwargs = delete_mock.await_args.kwargs
+    assert kwargs["plural"] == "aiperfsweeps"
+    assert kwargs["name"] == "s"
+    assert kwargs["namespace"] == "ns"
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_terminal_age_below_ttl_does_not_delete(monkeypatch):
+    """Succeeded sweep, completedAt 1h ago, ttl=7200: NOT yet eligible."""
+    from datetime import datetime, timedelta, timezone
+
+    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {"name": "s", "namespace": "ns"},
+        "spec": {"ttlSecondsAfterFinished": 7200},
+    }
+    status = {"phase": "Succeeded", "completedAt": one_hour_ago}
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_non_terminal_phase_never_deletes(monkeypatch):
+    """Pending phase + ttl=1: never reap, regardless of TTL."""
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {"name": "s", "namespace": "ns"},
+        "spec": {"ttlSecondsAfterFinished": 1},
+    }
+    status = {"phase": "Pending", "completedAt": "2020-01-01T00:00:00Z"}
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_ttl_none_never_deletes(monkeypatch):
+    """ttlSecondsAfterFinished unset: handler is a no-op."""
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {"metadata": {"name": "s", "namespace": "ns"}, "spec": {}}
+    status = {"phase": "Succeeded", "completedAt": "2020-01-01T00:00:00Z"}
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_not_awaited()

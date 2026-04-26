@@ -69,7 +69,9 @@ def test_aiperfsweep_spec_validates(data):
 
 def test_aiperfsweep_rejects_empty_axes():
     with pytest.raises(ValidationError, match="at least one of"):
-        AIPerfSweepSpec.model_validate({"template": {"spec": {"benchmark": _VALID_BENCHMARK}}})
+        AIPerfSweepSpec.model_validate(
+            {"template": {"spec": {"benchmark": _VALID_BENCHMARK}}}
+        )
 
 
 def test_aiperfsweep_rejects_convergence_without_multirun():
@@ -224,3 +226,58 @@ def test_aiperfsweep_rejects_multirun_camel_under_template_spec_benchmark() -> N
                 },
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5 — template.spec must round-trip through AIPerfJobSpec.from_crd_spec.
+# Adversarial regression-locks for the second-pass fix (commit 793260d7b):
+# missing/invalid endpoint and wrong-typed deployment fields must surface at
+# CLI/operator boundary, not at child-create time.
+# ---------------------------------------------------------------------------
+
+
+def test_aiperfsweep_rule5_empty_benchmark_rejected_for_missing_endpoint() -> None:
+    """Empty benchmark (no endpoint) must fail rule 5 with an endpoint-pointer
+    error message — the user needs to know what's wrong."""
+    with pytest.raises(ValidationError, match=r"endpoint\.url"):
+        AIPerfSweepSpec.model_validate(
+            {
+                "multiRun": {"trials": 3},
+                "template": {"spec": {"benchmark": {}}},
+            }
+        )
+
+
+def test_aiperfsweep_rule5_wrong_type_image_rejected() -> None:
+    """``image`` typed as int instead of str must fail rule-5 with a message
+    naming the field."""
+    with pytest.raises(ValidationError, match=r"(?i)image"):
+        AIPerfSweepSpec.model_validate(
+            {
+                "multiRun": {"trials": 3},
+                "template": {
+                    "spec": {
+                        "image": 12345,
+                        "benchmark": _VALID_BENCHMARK,
+                    }
+                },
+            }
+        )
+
+
+def test_aiperfsweep_rule5_valid_endpoint_passes() -> None:
+    """Regression-lock so future refactors don't accidentally make rule-5 a
+    no-op: a valid template.spec must still validate successfully."""
+    spec = AIPerfSweepSpec.model_validate(
+        {
+            "multiRun": {"trials": 2},
+            "template": {
+                "spec": {
+                    "image": "x:latest",
+                    "benchmark": _VALID_BENCHMARK,
+                }
+            },
+        }
+    )
+    assert spec.multi_run is not None
+    assert spec.multi_run.trials == 2

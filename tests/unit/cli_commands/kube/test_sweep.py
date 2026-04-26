@@ -579,3 +579,122 @@ def test_name_from_config_file_produces_valid_dns1123_label(stem: str) -> None:
         f"name {out!r} from stem {stem!r} is not a valid DNS-1123 label"
     )
     assert len(out) <= 63
+
+
+# =============================================================================
+# Adversarial regression-locks for second-pass fixes (commit 793260d7b).
+# `--trials` must OVERRIDE YAML multi_run.trials (was setdefault, so YAML won),
+# and `_submit_sweep` must call `kube_console.save_last_benchmark` exactly once.
+# =============================================================================
+
+
+def test_build_sweep_cr_dict_trials_cli_overrides_yaml_trials(tmp_path: Path) -> None:
+    """YAML has multi_run.trials=3; CLI passes --trials 10 → CLI wins (10).
+
+    Previously used setdefault, so YAML silently won. The fix flips to direct
+    assignment, matching the documented help text.
+    """
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(
+        """
+models: [m]
+endpoint: {urls: [http://x], type: chat}
+datasets:
+  - {name: main, type: synthetic}
+phases:
+  - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
+multi_run:
+  trials: 3
+sweep:
+  type: grid
+  variables: {random_seed: [1, 2]}
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        multi_run_trials=10,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    assert cr["spec"]["multiRun"]["trials"] == 10, (
+        "CLI --trials must override YAML multi_run.trials (was 3, --trials 10)"
+    )
+
+
+def test_build_sweep_cr_dict_trials_cli_when_yaml_has_no_multirun(
+    tmp_path: Path,
+) -> None:
+    """No multi_run in YAML; --trials 5 → multiRun.trials=5 in CR."""
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(
+        """
+models: [m]
+endpoint: {urls: [http://x], type: chat}
+datasets:
+  - {name: main, type: synthetic}
+phases:
+  - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
+sweep:
+  type: grid
+  variables: {random_seed: [1, 2]}
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        multi_run_trials=5,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    assert cr["spec"]["multiRun"]["trials"] == 5
+
+
+async def test_submit_sweep_calls_save_last_benchmark_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_submit_sweep` must call `kube_console.save_last_benchmark` once with
+    (cr_name, namespace) for parity with `aiperf kube profile`."""
+    from contextlib import asynccontextmanager
+
+    api_client = MagicMock()
+
+    @asynccontextmanager
+    async def fake_k8s_client(**_kwargs):
+        yield api_client
+
+    monkeypatch.setattr(
+        "aiperf.kubernetes.client.k8s_client", fake_k8s_client, raising=True
+    )
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi",
+        lambda _api: MagicMock(create_namespaced_custom_object=AsyncMock()),
+    )
+
+    save_mock = MagicMock()
+    monkeypatch.setattr(
+        "aiperf.kubernetes.console.save_last_benchmark", save_mock, raising=True
+    )
+
+    cr_dict = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=_kube_options_mock(),
+        **_build_kwargs(),
+    )
+    cr_name = cr_dict["metadata"]["name"]
+
+    await sweep_cmd._submit_sweep(
+        cr_dict=cr_dict, kube_options=_kube_options_mock(), namespace="ns"
+    )
+
+    save_mock.assert_called_once()
+    pos = save_mock.call_args.args
+    # First two positional args are (cr_name, namespace).
+    assert pos[0] == cr_name
+    assert pos[1] == "ns"

@@ -211,3 +211,43 @@ async def test_collect_run_result_from_failed_child():
     result = await executor._collect_run_result(failed_child, _benchmark_run())
     assert result.success is False
     assert "endpoint timeout" in result.error
+
+
+# ===========================================================================
+# Adversarial regression-lock for second-pass fix (commit 793260d7b):
+# `_collect_run_result` no longer classifies a Succeeded child with empty
+# `status.summary` as a failure. The summary write may race the phase
+# transition; the operator wrote terminal-success, that's what matters.
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_collect_run_result_succeeded_empty_summary_is_success():
+    """Succeeded child + empty status.summary → RunResult(success=True, metrics={}).
+
+    Previously this was misclassified as failure, which tripped failure_policy
+    on a write race between status.phase and status.summary.
+    """
+    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
+    succeeded_empty_summary = {
+        "metadata": {"name": "s-v0007-t02"},
+        "status": {"phase": "Succeeded", "summary": {}},
+    }
+    result = await executor._collect_run_result(
+        succeeded_empty_summary, _benchmark_run()
+    )
+    assert result.success is True
+    assert result.summary_metrics == {}
+
+
+@pytest.mark.asyncio
+async def test_collect_run_result_completed_empty_summary_is_success():
+    """Completed (alias for Succeeded) + empty summary is also success."""
+    executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
+    completed_empty = {
+        "metadata": {"name": "s-v0007-t02"},
+        "status": {"phase": "Completed"},  # no summary key at all
+    }
+    result = await executor._collect_run_result(completed_empty, _benchmark_run())
+    assert result.success is True
+    assert result.summary_metrics == {}

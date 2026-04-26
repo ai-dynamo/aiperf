@@ -302,3 +302,86 @@ class TestHelpers:
         }
         fields = detect_sweep_fields(data)
         assert len(fields) == 0
+
+
+# ===========================================================================
+# Adversarial regression-locks for second-pass fix (commit 793260d7b):
+# `_set_nested_value` now raises ValueError on unknown named-list segments
+# (typo trap) instead of silently auto-creating phantom entries. Scenario-
+# sweep `_deep_merge` retains the auto-create semantics intentionally.
+# ===========================================================================
+
+
+class TestSetNestedValueStrictNamedList:
+    """Lock in the strict-mode behaviour for grid/magic sweep paths."""
+
+    def test_set_nested_value_unknown_named_segment_raises_value_error(self):
+        """A typo in a phase name (`profilling` vs `profiling`) must error
+        loudly rather than silently appending a phantom phase entry."""
+        data = {
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 1,
+                    "concurrency": 1,
+                }
+            ]
+        }
+        with pytest.raises(ValueError, match=r"no entry named 'profilling'"):
+            _set_nested_value(data, "phases.profilling.rate", 1)
+        # The phantom phase MUST NOT have been added.
+        names = [p["name"] for p in data["phases"]]
+        assert names == ["profiling"], (
+            "strict-mode must not auto-append on unknown name"
+        )
+
+    def test_set_nested_value_known_named_segment_succeeds(self):
+        """Existing named entry: assignment proceeds normally."""
+        data = {
+            "phases": [
+                {"name": "profiling", "concurrency": 1},
+                {"name": "warmup", "concurrency": 2},
+            ]
+        }
+        _set_nested_value(data, "phases.profiling.concurrency", 64)
+        # Find profiling entry and verify update.
+        prof = next(p for p in data["phases"] if p["name"] == "profiling")
+        assert prof["concurrency"] == 64
+        # Other entry untouched.
+        warm = next(p for p in data["phases"] if p["name"] == "warmup")
+        assert warm["concurrency"] == 2
+
+    def test_expand_sweep_grid_typo_named_path_errors_at_expand_time(self):
+        """A grid-sweep typo'd named-list path errors at `expand_sweep` time
+        (not silently in a downstream stage)."""
+        data = {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://x"], "type": "chat"},
+            "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1}],
+            "sweep": {
+                "type": "grid",
+                "variables": {"phases.profilling.concurrency": [1, 2]},
+            },
+        }
+        with pytest.raises(ValueError, match=r"no entry named 'profilling'"):
+            expand_sweep(data)
+
+    def test_deep_merge_appends_new_named_phase_entry(self):
+        """Scenario-sweep deep-merge auto-appends new named entries
+        (regression-lock for the intentional behaviour); only grid/magic
+        paths got strict-mode."""
+        base = {
+            "phases": [
+                {"name": "profiling", "concurrency": 1},
+            ]
+        }
+        override = {
+            "phases": [
+                {"name": "warmup", "concurrency": 99},
+            ]
+        }
+        _deep_merge(base, override)
+        names = [p["name"] for p in base["phases"]]
+        assert "warmup" in names, "deep_merge must auto-append the new name"
+        assert "profiling" in names, "deep_merge must keep the existing name"

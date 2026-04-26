@@ -161,3 +161,107 @@ def test_aiperfjobspec_skip_endpoint_check_defaults_false() -> None:
     }
     validated = AIPerfJobSpec.from_crd_spec(crd_spec)
     assert validated.skip_endpoint_check is False
+
+
+# =============================================================================
+# Adversarial regression-locks for the second-pass fixes (commit 793260d7b).
+# `_check_config_file_for_sweep_keys` must redirect AIPerfSweep CRs to
+# `aiperf kube sweep` and still enforce `_check_no_sweep_keys` for plain
+# YAMLs that contain a top-level `sweep:`.
+# =============================================================================
+
+
+def test_check_config_file_for_sweep_keys_aiperfsweep_yaml_exits(tmp_path) -> None:
+    """A YAML with `kind: AIPerfSweep` must redirect via raise_startup_error_and_exit."""
+    from aiperf import cli_utils
+    from aiperf.cli_commands.kube import profile as profile_mod
+
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(
+        "apiVersion: aiperf.nvidia.com/v1alpha1\n"
+        "kind: AIPerfSweep\n"
+        "metadata: {name: x}\n"
+        "spec:\n"
+        "  multiRun: {trials: 2}\n"
+        "  template:\n"
+        "    spec:\n"
+        "      benchmark: {endpoint: {urls: [http://x], type: chat}}\n"
+    )
+
+    captured: dict = {}
+
+    def _fake_exit(message, **kwargs):
+        captured["message"] = message
+        captured["kwargs"] = kwargs
+        raise SystemExit(1)
+
+    with (
+        patch.object(cli_utils, "raise_startup_error_and_exit", _fake_exit),
+        pytest.raises(SystemExit),
+    ):
+        profile_mod._check_config_file_for_sweep_keys(config_file)
+
+    assert "AIPerfSweep" in str(captured["message"])
+    assert "aiperf kube sweep" in str(captured["message"])
+
+
+def test_check_config_file_for_sweep_keys_aiperfjob_yaml_does_not_exit(
+    tmp_path,
+) -> None:
+    """A YAML with `kind: AIPerfJob` is the CR path — no redirect, no exit."""
+    from aiperf import cli_utils
+    from aiperf.cli_commands.kube import profile as profile_mod
+
+    config_file = tmp_path / "job.yaml"
+    config_file.write_text(
+        "apiVersion: aiperf.nvidia.com/v1alpha1\n"
+        "kind: AIPerfJob\n"
+        "metadata: {name: x}\n"
+        "spec:\n"
+        "  benchmark: {endpoint: {urls: [http://x], type: chat}}\n"
+    )
+
+    def _exploding_exit(*args, **kwargs):
+        raise AssertionError("must not redirect for AIPerfJob CR YAML")
+
+    with patch.object(cli_utils, "raise_startup_error_and_exit", _exploding_exit):
+        # Must return cleanly.
+        profile_mod._check_config_file_for_sweep_keys(config_file)
+
+
+def test_check_config_file_for_sweep_keys_plain_yaml_with_sweep_key_exits(
+    tmp_path,
+) -> None:
+    """Plain config (not a CR) with a top-level `sweep:` triggers the original
+    `_check_no_sweep_keys` redirect — compat lock for that pre-existing path."""
+    from aiperf import cli_utils
+    from aiperf.cli_commands.kube import profile as profile_mod
+
+    config_file = tmp_path / "plain.yaml"
+    config_file.write_text(
+        "models: [m]\n"
+        "endpoint: {urls: [http://x], type: chat}\n"
+        "datasets: [{name: main, type: synthetic}]\n"
+        "phases: [{name: profiling, type: concurrency, duration: 1, concurrency: 1}]\n"
+        "sweep:\n"
+        "  type: grid\n"
+        "  variables: {random_seed: [1, 2]}\n"
+    )
+
+    captured: dict = {}
+
+    def _fake_exit(message, **kwargs):
+        captured["message"] = message
+        captured["kwargs"] = kwargs
+        raise SystemExit(1)
+
+    with (
+        patch.object(cli_utils, "raise_startup_error_and_exit", _fake_exit),
+        pytest.raises(SystemExit),
+    ):
+        profile_mod._check_config_file_for_sweep_keys(config_file)
+
+    # Original check messages mention 'sweep' and direct user to `aiperf kube sweep`.
+    msg = str(captured["message"])
+    assert "sweep" in msg
+    assert "aiperf kube sweep" in msg

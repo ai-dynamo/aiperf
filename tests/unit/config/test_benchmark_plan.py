@@ -417,3 +417,61 @@ class TestLoadBenchmarkPlanYAMLRoundTrip:
         plan = load_benchmark_plan(path, substitute_env=False)
 
         assert plan.trials == 1
+
+
+# ============================================================
+# Adversarial regression-locks for second-pass fixes (commit 793260d7b).
+# BenchmarkPlan gained Optional[Any] fields `failure_policy` and
+# `convergence_config` so plan_builder no longer needs try/except around
+# attaching them. These tests lock that contract in place.
+# ============================================================
+
+
+class TestBenchmarkPlanSweepAttachments:
+    """Verify BenchmarkPlan accepts failure_policy and convergence_config cleanly."""
+
+    def test_construct_with_failure_policy_and_convergence_config_round_trips(
+        self,
+    ) -> None:
+        """Constructor accepts both new fields; values round-trip via model_dump."""
+        from aiperf.kubernetes.sweep_models import ConvergenceConfig, FailurePolicy
+
+        config = _make_benchmark_config()
+        fp = FailurePolicy(on_child_failure="abort", max_failures=2)
+        cc = ConvergenceConfig(
+            metric="ttft_p99", min_runs=3, max_runs=5, threshold=0.05
+        )
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[
+                SweepVariation(index=0, label="base", values={}),
+            ],
+            failure_policy=fp,
+            convergence_config=cc,
+        )
+        assert plan.failure_policy is fp
+        assert plan.convergence_config is cc
+
+    def test_assigning_failure_policy_after_construction_does_not_raise(self) -> None:
+        """Plain assignment must not raise — plan_builder removed its try/except
+        wrapper around this assignment as part of the second-pass cleanup."""
+        from aiperf.kubernetes.sweep_models import FailurePolicy
+
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[SweepVariation(index=0, label="base", values={})],
+        )
+        # Must not raise — pydantic models with Any fields accept assignment.
+        plan.failure_policy = FailurePolicy(on_child_failure="abort", max_failures=1)
+        assert plan.failure_policy.max_failures == 1
+
+    def test_defaults_to_none_for_non_sweep_plans(self) -> None:
+        """For plans not driven by an AIPerfSweep CR, both fields default to None."""
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[SweepVariation(index=0, label="base", values={})],
+        )
+        assert plan.failure_policy is None
+        assert plan.convergence_config is None
