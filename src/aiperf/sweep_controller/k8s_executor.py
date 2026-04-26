@@ -36,7 +36,7 @@ VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
 VARIATION_LABEL_LABEL = "aiperf.nvidia.com/variation-label"
 TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
 
-TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+TERMINAL_PHASES = frozenset({"Completed", "Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
 RESULTS_SERVER_PORT = 19090
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 
@@ -146,9 +146,14 @@ class K8sChildJobExecutor(RunExecutor):
         # itself on the child side. Strip these fields so the child re-resolves them.
         runtime = benchmark_dump.get("runtime") or {}
         for k8s_resolved in (
-            "serviceRunType", "service_run_type",
-            "apiHost", "api_host", "apiPort", "api_port",
-            "datasetApiBaseUrl", "dataset_api_base_url",
+            "serviceRunType",
+            "service_run_type",
+            "apiHost",
+            "api_host",
+            "apiPort",
+            "api_port",
+            "datasetApiBaseUrl",
+            "dataset_api_base_url",
             "communication",
         ):
             runtime.pop(k8s_resolved, None)
@@ -291,7 +296,7 @@ class K8sChildJobExecutor(RunExecutor):
         """Translate a terminal child + summary metrics into a RunResult."""
         status = child.get("status") or {}
         phase = status.get("phase")
-        if phase != "Succeeded":
+        if phase not in {"Completed", "Succeeded"}:
             return RunResult(
                 label=run.label,
                 success=False,
