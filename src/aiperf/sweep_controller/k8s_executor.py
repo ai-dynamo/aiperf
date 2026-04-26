@@ -319,47 +319,16 @@ class K8sChildJobExecutor(RunExecutor):
         )
 
     async def _pull_summary_metrics(self, child: dict[str, Any]) -> dict[str, Any]:
-        """Pull profile_export_aiperf.json from the child's results-server.
+        """Read per-cell summary metrics directly from AIPerfJob.status.summary.
 
-        Uses the explicit `/runs/<child-epoch>/` URL so retention pruning on
-        the operator side does not race the fetch.
+        The AIPerfJob operator writes the summary dict (latency_avg_ms,
+        throughput_rps, ttft_p99_ms, etc.) into status.summary at completion
+        time — no HTTP fetch needed.
         """
-        import aiohttp
-        import orjson
-
-        from aiperf.common.models.export_models import JsonMetricResult
-
         status = child.get("status") or {}
-        epoch = status.get("runEpoch")
-        runtime_ref = status.get("runtimeRef") or {}
-        host = runtime_ref.get("controllerHost")
+        summary = status.get("summary") or {}
         name = child["metadata"]["name"]
-        if not host or not epoch:
-            logger.warning(
-                f"child {name}: missing host/epoch in status; cannot fetch metrics"
-            )
+        if not summary:
+            logger.warning(f"child {name}: status.summary is empty")
             return {}
-        url = (
-            f"http://{host}:{RESULTS_SERVER_PORT}"
-            f"/api/v1/results/{self.sweep_namespace}/{name}/runs/{epoch}"
-            f"/profile_export_aiperf.json"
-        )
-        try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp,
-            ):
-                resp.raise_for_status()
-                data = orjson.loads(await resp.read())
-        except Exception:  # noqa: BLE001
-            logger.exception(f"failed to pull metrics from {url}")
-            return {}
-
-        metrics: dict[str, Any] = {}
-        for field_name, field_value in data.items():
-            if isinstance(field_value, dict) and "unit" in field_value:
-                try:
-                    metrics[field_name] = JsonMetricResult(**field_value)
-                except TypeError:
-                    continue
-        return metrics
+        return dict(summary)

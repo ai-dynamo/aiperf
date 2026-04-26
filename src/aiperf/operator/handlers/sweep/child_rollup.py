@@ -122,6 +122,9 @@ async def _patch_parent_status(
 
     async with k8s_client() as api:
         custom = k8s.CustomObjectsApi(api)
+        # Force merge-patch content-type — kubernetes_asyncio defaults to
+        # application/json-patch+json which expects a list of ops, not the dict
+        # body we send here. The api_client kwarg name is `_content_type`.
         await custom.patch_namespaced_custom_object_status(
             group=group,
             version=version,
@@ -129,4 +132,5 @@ async def _patch_parent_status(
             namespace=namespace,
             name=name,
             body=body,
+            _content_type="application/merge-patch+json",
         )
