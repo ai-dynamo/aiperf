@@ -82,6 +82,7 @@ class EndpointConfig(BaseConfig):
             description="List of server URLs to benchmark. "
             "Requests distributed according to url_strategy. "
             "Example: ['http://localhost:8000/v1/chat/completions']",
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
     ]
 

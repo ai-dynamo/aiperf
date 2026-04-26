@@ -133,6 +133,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             description="Model configuration. Accepts a single model name string, "
             "a list of model names, or an advanced configuration with strategy "
             "and weighted items. All forms are normalized to ModelsAdvanced.",
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
     ]
 

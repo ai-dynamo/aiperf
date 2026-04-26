@@ -44,7 +44,15 @@ if TYPE_CHECKING:
 class Distribution(BaseConfig):
     """Base class for sampling distributions."""
 
-    model_config = ConfigDict(extra="forbid")
+    # x-kubernetes-preserve-unknown-fields lets the apiserver accept the int|float
+    # scalar shorthand (FixedDistribution.coerce_scalar) and the no-`type`-key
+    # discriminated union — neither expressible in a Kubernetes structural schema.
+    # The marker is set at the base-class level so every concrete subclass
+    # (Fixed/Normal/LogNormal/Multimodal/Empirical) inherits it.
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+    )
 
     def __getattr__(self, name: str) -> Any:
         if name == "mean":
@@ -207,6 +215,12 @@ class PeakEntry(BaseConfig):
     @model_validator(mode="before")
     @classmethod
     def inline_weight(cls, data: Any) -> Any:
+        # Note: this validator is an internal canonicalization between
+        # `{distribution: ..., weight: N}` (canonical) and inline form
+        # `{mean: ..., stddev: ..., weight: N}` (user-facing). The polymorphism
+        # lives entirely on the inner `distribution: SamplingDistribution` field
+        # — Distribution's class-level x-kubernetes-preserve-unknown-fields
+        # already covers that subtree, so no marker is needed here.
         if isinstance(data, dict):
             data = dict(data)
             weight = data.pop("weight", 1.0)

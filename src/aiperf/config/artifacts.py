@@ -355,7 +355,15 @@ class ServerMetricsConfig(BaseConfig):
           → ServerMetricsConfig(urls=["..."])
     """
 
-    model_config = ConfigDict(extra="forbid", validate_default=True)
+    # x-kubernetes-preserve-unknown-fields lets apiserver accept the
+    # string-URL shorthand (collapsed to the full object form by
+    # normalize_before_validation) which a Kubernetes structural schema
+    # cannot express as a string|object union.
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_default=True,
+        json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+    )
 
     enabled: Annotated[
         bool,
@@ -435,7 +443,15 @@ class GpuTelemetryConfig(BaseConfig):
           → GpuTelemetryConfig(urls=["..."])
     """
 
-    model_config = ConfigDict(extra="forbid", validate_default=True)
+    # x-kubernetes-preserve-unknown-fields lets apiserver accept the
+    # string-URL shorthand (collapsed to the full object form by
+    # normalize_before_validation) which a Kubernetes structural schema
+    # cannot express as a string|object union.
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_default=True,
+        json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+    )
 
     enabled: Annotated[
         bool,
