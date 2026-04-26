@@ -31,7 +31,7 @@ endpoint:
   timeout: 180.0
 
 datasets:
-  short_audio:
+  - name: short_audio
     type: synthetic
     entries: 500
     prompts:
@@ -45,7 +45,7 @@ datasets:
       depths: [16]          # 16-bit PCM
       channels: 1
 
-  long_audio:
+  - name: long_audio
     type: synthetic
     entries: 200
     prompts:

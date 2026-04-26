@@ -30,7 +30,7 @@ endpoint:
 
 datasets:
   # 32K context length test
-  long_32k:
+  - name: long_32k
     type: synthetic
     entries: 100
     prompts:
@@ -38,7 +38,7 @@ datasets:
       osl: {mean: 512, stddev: 100}
 
   # 64K context length test
-  long_64k:
+  - name: long_64k
     type: synthetic
     entries: 50
     prompts:
@@ -46,7 +46,7 @@ datasets:
       osl: {mean: 256, stddev: 50}
 
   # Mixed context lengths (realistic RAG distribution)
-  mixed_context:
+  - name: mixed_context
     type: synthetic
     entries: 500
     prompts:

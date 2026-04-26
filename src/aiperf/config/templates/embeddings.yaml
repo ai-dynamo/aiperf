@@ -29,7 +29,7 @@ endpoint:
 
 datasets:
   # Single text per request — baseline latency
-  single:
+  - name: single
     type: synthetic
     entries: 1000
     prompts:
@@ -37,7 +37,7 @@ datasets:
       batchSize: 1
 
   # 10 texts per request — typical batch for real-time search
-  batch_10:
+  - name: batch_10
     type: synthetic
     entries: 500
     prompts:
@@ -45,7 +45,7 @@ datasets:
       batchSize: 10
 
   # 50 texts per request — bulk indexing workload
-  batch_50:
+  - name: batch_50
     type: synthetic
     entries: 200
     prompts:

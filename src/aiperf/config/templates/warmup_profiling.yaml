@@ -31,13 +31,13 @@ endpoint:
   timeout: 600.0
 
 datasets:
-  warmup:
+  - name: warmup
     type: synthetic
     entries: 100
     isl: 256
     osl: 64
 
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 5000
     isl: {mean: 550, stddev: 50}

@@ -44,7 +44,7 @@ endpoint:
 
 datasets:
   # Approach 1: Random selection from a small prefix pool
-  prefix_pool:
+  - name: prefix_pool
     type: synthetic
     entries: 1000
     prompts:
@@ -55,7 +55,7 @@ datasets:
       length: 512    # Each prefix is 512 tokens
 
   # Approach 2: Shared system prompt + per-user context
-  system_context:
+  - name: system_context
     type: synthetic
     entries: 1000
     prompts:

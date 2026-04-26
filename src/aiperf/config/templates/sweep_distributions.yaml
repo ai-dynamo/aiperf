@@ -37,7 +37,7 @@ endpoint:
 # Result: 3 ISL values x 3 rates = 9 benchmark runs.
 
 datasets:
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 500
     prompts:

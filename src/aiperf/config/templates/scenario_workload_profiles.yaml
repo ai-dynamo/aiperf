@@ -28,7 +28,7 @@ endpoint:
   timeout: ${TIMEOUT:600.0}
 
 datasets:
-  workload:
+  - name: workload
     type: synthetic
     entries: 1000
     prompts:
@@ -56,7 +56,7 @@ sweep:
     # Chatbot: short Q&A, high rate, low variance
     - name: chatbot
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {mean: 128, stddev: 20}
             osl: {mean: 64, stddev: 10}
@@ -68,7 +68,7 @@ sweep:
     # RAG: medium input with retrieval context, moderate rate
     - name: rag_pipeline
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {mean: 1024, median: 904}
             osl: {mean: 256, stddev: 50}
@@ -80,7 +80,7 @@ sweep:
     # Summarization: long input, short output, low rate
     - name: summarization
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {mean: 4096, median: 3421}
             osl: {mean: 128, stddev: 30}
@@ -92,7 +92,7 @@ sweep:
     # Bimodal production: mix of short and long requests
     - name: production_mix
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl:
               peaks:
@@ -110,7 +110,7 @@ sweep:
     # Power-law: Zipf-distributed ISL (realistic request popularity)
     - name: power_law
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {mean: 512, median: 192}
             osl: {mean: 144, stddev: 64}

@@ -32,7 +32,7 @@ endpoint:
   timeout: 120.0
 
 datasets:
-  vision_test:
+  - name: vision_test
     type: synthetic
     entries: 500
     prompts:
@@ -44,7 +44,7 @@ datasets:
       height: 512
       format: jpeg              # JPEG is smaller on the wire than PNG
 
-  multi_image_test:
+  - name: multi_image_test
     type: synthetic
     entries: 200
     prompts:

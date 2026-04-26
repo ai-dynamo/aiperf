@@ -43,14 +43,14 @@ endpoint:
   timeout: 600.0
 
 datasets:
-  warmup:
+  - name: warmup
     type: synthetic
     entries: "{{ base_concurrency * 5 }}"
     prompts:
       isl: "{{ isl_target // 2 }}"
       osl: "{{ osl_target // 2 }}"
 
-  profiling:
+  - name: profiling
     type: synthetic
     entries: "{{ base_concurrency * dataset_multiplier }}"
     prompts:
