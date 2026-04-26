@@ -1,201 +1,218 @@
-/* ════════════════════════════════════════════════════════════════════════════
-   AIPERF // FLIGHT DECK
-   Ground-up redesign · 2026
-   Three-pane persistent operator console. Editorial serif × industrial mono.
-   Phosphor palette on a near-black warm substrate. Sharp rectangles, hairline
-   borders, corner-bracket reticles, pilot-light animations.
-   ──────────────────────────────────────────────────────────────────────────── */
+/* SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 */
 
-/* ───────────────────────── Reset ───────────────────────── */
-*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+/* AIPerf Operator — design tokens lifted from src/aiperf/api/static-v2/style.css
+   so both dashboards share a single visual language. */
+:root {
+  --bg: #0c0c0c;
+  --bg-card: #161616;
+  --bg-raised: #222222;
+  --bg-tile: #0f0f0f;
+  --bg-mid: #1a1a1a;
+  --border: #313131;
+  --border-hover: #4b4b4b;
+  --border-subtle: #1a1a1a;
+
+  --dim: #4b4b4b;
+  --muted: #757575;
+  --sub: #a7a7a7;
+  --text: #eeeeee;
+  --white: #ffffff;
+
+  --accent: #76b900;
+  --accent-hot: #8ce200;
+  --accent-deep: #5a8e00;
+  --accent-dim: rgba(118, 185, 0, 0.15);
+
+  --blue:  #3b82f6;  --blue-dim:  rgba(59, 130, 246, 0.15);
+  --cyan:  #26c6da;  --cyan-dim:  rgba(38, 198, 218, 0.15);
+  --green: #76b900;  --green-dim: rgba(118, 185, 0, 0.15);
+  --amber: #ffc107;  --amber-dim: rgba(255, 193, 7, 0.15);
+  --red:   #ef5350;  --red-dim:   rgba(239, 83, 80, 0.15);
+  --pink:  #ab47bc;  --pink-dim:  rgba(171, 71, 188, 0.15);
+
+  --font-sans: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --font-xs:   0.75rem;
+  --font-sm:   0.8125rem;
+  --font-base: 0.875rem;
+  --font-md:   1rem;
+  --font-lg:   1.125rem;
+  --font-xl:   1.25rem;
+  --font-2xl:  1.5rem;
+
+  --top-bar-height: 48px;
+  --log-strip-height: 180px;
+
+  --radius:    6px;
+  --radius-sm: 4px;
+  --radius-lg: 8px;
+
+  --space-1: 0.25rem;  --space-2: 0.5rem;
+  --space-3: 0.75rem;  --space-4: 1rem;
+  --space-5: 1.25rem;  --space-6: 1.5rem;
+  --space-7: 1.75rem;  --space-8: 2rem;
+
+  --transition-fast: 120ms ease;
+  --transition:      200ms ease;
+  --transition-slow: 320ms ease;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.65);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
 img, svg { display: block; max-width: 100%; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; text-align: left; }
 a { color: inherit; text-decoration: none; }
+a:hover { text-decoration: underline; }
 input, select, textarea { font: inherit; color: inherit; }
 ol, ul { list-style: none; }
 
-/* ────────────────────── Design tokens ──────────────────── */
-:root {
-  /* Typography */
-  --f-serif:   var(--f-mono);  /* retired editorial serif; mapped to mono for back-compat */
-  --f-display: var(--f-mono);  /* retired; same story */
-  --f-mono:    'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
-  --f-sans:    'IBM Plex Sans', 'Host Grotesk', -apple-system, 'Helvetica Neue', sans-serif;
-  --font-sans: var(--f-sans);
-  --font-mono: var(--f-mono);
-
-  /* Ink / surfaces */
-  --ink-0: #07070a;
-  --ink-1: #0c0c11;
-  --ink-2: #111117;
-  --ink-3: #181821;
-  --ink-4: #24242f;
-
-  /* Hairlines */
-  --edge-1: rgba(244, 238, 222, 0.06);
-  --edge-2: rgba(244, 238, 222, 0.11);
-  --edge-3: rgba(244, 238, 222, 0.18);
-  --edge-amber: rgba(118, 185, 0, 0.32);
-  --edge-amber-hot: rgba(118, 185, 0, 0.55);
-
-  /* Paper */
-  --paper:       #f4eede;
-  --paper-dim:   rgba(244, 238, 222, 0.68);
-  --paper-faint: rgba(244, 238, 222, 0.38);
-  --paper-ghost: rgba(244, 238, 222, 0.18);
-
-  /* Accent — NVIDIA green, the single strongest "this is NVIDIA software"
-     signal. Every Nsight / NGC / Omniverse / CUDA surface uses it. Variable
-     names still read ``--amber*`` for back-compat with older markup; the
-     hex values are all NV green now. */
-  --amber:      #76b900;
-  --amber-hot:  #8ce200;
-  --amber-deep: #5a8e00;
-  --amber-bed:  rgba(118, 185, 0, 0.14);
-  --amber-ink:  rgba(118, 185, 0, 0.06);
-  --amber-glow: 0 0 14px rgba(118, 185, 0, 0.40);
-
-  /* "Pass" green — brighter, slightly yellowish, used for SLO-pass /
-     Completed only; distinct from the primary accent to keep the two
-     semantically separable. */
-  --green:      #9fe870;
-  --green-bed:  rgba(159, 232, 112, 0.14);
-  --green-ink:  rgba(159, 232, 112, 0.06);
-
-  --cyan:       #7eeaff;
-  --cyan-bed:   rgba(126, 234, 255, 0.14);
-  --cyan-ink:   rgba(126, 234, 255, 0.06);
-
-  --red:        #ff5964;
-  --red-bed:    rgba(255, 89, 100, 0.14);
-  --red-ink:    rgba(255, 89, 100, 0.06);
-
-  --purple:     #c4a5ff;
-
-  /* Layout metrics */
-  --rail-top-h:    48px;
-  --rail-left-w:   268px;
-  --rail-left-collapsed-w: 40px;
-  --rail-right-w:  340px;
-  --rail-right-collapsed-w: 36px;
-  --log-h:         180px;
-
-  /* Legacy aliases (preserve inline-style compat with lib/theme.js) */
-  --surface-0: var(--ink-0);
-  --surface-1: var(--ink-1);
-  --surface-2: var(--ink-2);
-  --surface-3: var(--ink-3);
-  --border-subtle: var(--edge-1);
-  --border-muted:  var(--edge-2);
-  --border-strong: var(--edge-3);
-  --text-primary:   var(--paper);
-  --text-secondary: var(--paper-dim);
-  --text-tertiary:  var(--paper-faint);
-  --text-disabled:  var(--paper-ghost);
-  --bg: var(--ink-0);
-  --bg-card: var(--ink-1);
-  --bg-raised: var(--ink-2);
-  --bg-alt: var(--ink-1);
-  --bg-elevated: var(--ink-2);
-  --base: var(--ink-0);
-  --mantle: var(--ink-1);
-  --crust: #000000;
-  --border: var(--edge-2);
-  --border-hover: var(--edge-3);
-  --dim: var(--paper-ghost);
-  --muted: var(--paper-faint);
-  --sub: var(--paper-dim);
-  --text: var(--paper);
-  --white: #ffffff;
-  --accent: var(--amber);
-  --accent-dim: var(--amber-bed);
-  --accent-alt: var(--cyan);
-  --accent-green: var(--amber);
-  --accent-green-dim: var(--amber-bed);
-  --accent-blue: var(--cyan);
-  --accent-blue-dim: var(--cyan-bed);
-  --accent-amber: var(--amber);
-  --accent-amber-dim: var(--amber-bed);
-  --accent-red: var(--red);
-  --accent-red-dim: var(--red-bed);
-  --blue: var(--amber); --yellow: var(--amber); --pink: var(--amber);
-  --peach: var(--amber); --orange: var(--amber); --flamingo: var(--amber);
-  --rosewater: var(--amber); --teal: var(--cyan); --sapphire: var(--cyan);
-  --sky: var(--cyan); --lavender: var(--cyan); --mauve: var(--cyan);
-  --maroon: var(--red);
-  --success: var(--green); --warning: var(--amber);
-  --error: var(--red); --info: var(--amber);
-
-  /* Spacing */
-  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
-  --s-5: 24px; --s-6: 32px; --s-7: 40px; --s-8: 48px;
-  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
-  --space-5: 24px; --space-6: 32px; --space-7: 40px; --space-8: 48px;
-
-  /* Type scale */
-  --fs-2xs: 10px; --fs-xs: 11px; --fs-sm: 12px;
-  --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px;
-  --fs-2xl: 28px; --fs-3xl: 40px; --fs-4xl: 56px; --fs-5xl: 80px;
-  --font-size-xs: 11px; --font-size-sm: 12px; --font-size-base: 14px;
-  --font-size-md: 14px; --font-size-lg: 16px; --font-size-xl: 20px;
-  --font-size-2xl: 28px; --font-size-3xl: 40px;
-
-  /* Sharp corners */
-  --radius-sm: 0; --radius-md: 0; --radius-lg: 0; --radius: 0;
-
-  /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.55);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.7);
-
-  /* Motion */
-  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 140ms;
-  --dur-med:  260ms;
-  --dur-slow: 480ms;
-  --transition-fast: var(--dur-fast) var(--ease-out);
-  --transition: var(--dur-med) var(--ease-out);
-  --transition-slow: var(--dur-slow) var(--ease-out);
-}
-
-/* ─────────────────────── Base ─────────────────────── */
 body {
-  font-family: var(--f-sans);
-  font-size: var(--fs-md);
-  color: var(--paper);
-  background: var(--ink-0);
+  font-family: var(--font-sans);
+  font-size: var(--font-base);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  font-feature-settings: "ss01", "cv11", "tnum";
 }
+
 #app {
-  height: 100vh;
+  min-height: 100vh;
   isolation: isolate;
   position: relative;
 }
-#app::before {
-  /* Grid paper substrate */
-  content: '';
-  position: fixed; inset: 0; z-index: -2;
-  background-color: var(--ink-0);
-  background-image:
-    linear-gradient(to right, rgba(118,185,0,0.028) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(118,185,0,0.028) 1px, transparent 1px),
-    linear-gradient(to right, rgba(118,185,0,0.050) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(118,185,0,0.050) 1px, transparent 1px),
-    radial-gradient(ellipse 1600px 700px at 25% -5%, rgba(118,185,0,0.035), transparent 60%),
-    radial-gradient(ellipse 1200px 800px at 100% 100%, rgba(126,234,255,0.022), transparent 60%);
-  background-size: 8px 8px, 8px 8px, 64px 64px, 64px 64px, 100% 100%, 100% 100%;
-  pointer-events: none;
+
+h1, h2, h3, h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--white);
 }
-#app::after {
-  content: '';
-  position: fixed; inset: 0; z-index: -1;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.6) 120%);
-  pointer-events: none;
+
+.text-dim    { color: var(--dim); }
+.text-muted  { color: var(--muted); }
+.text-sub    { color: var(--sub); }
+.text-accent { color: var(--accent); }
+
+/* ───── App frame (bench-* shell) ───── */
+.bench {
+  display: grid;
+  grid-template-rows: var(--top-bar-height) 1fr var(--log-strip-height);
+  grid-template-areas:
+    "rail"
+    "main"
+    "log";
+  min-height: 100vh;
+}
+.bench[data-route] .bench-main { grid-area: main; min-height: 0; overflow: auto; padding: 16px; }
+.bench-error-flash {
+  background: rgba(239, 83, 80, 0.08);
+  border: 1px solid rgba(239, 83, 80, 0.45);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: var(--text);
+  font-size: var(--font-sm);
+}
+.bench-error-flash strong { color: var(--red); margin-right: 8px; text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--font-xs); }
+
+/* ───── Generic primitives — reused everywhere ───── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+.card-title {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-bottom: var(--space-3);
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--sub);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.btn:hover { border-color: var(--border-hover); color: var(--text); }
+.btn--primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.btn--primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
+.btn--ghost { background: transparent; border-color: var(--border); }
+.btn--danger { color: var(--red); border-color: var(--red); }
+
+.kbd {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  color: var(--muted);
+  background: rgba(75, 75, 75, 0.2);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
+.chip--good { background: var(--green-dim); color: var(--green); }
+.chip--warn { background: var(--amber-dim); color: var(--amber); }
+.chip--bad  { background: var(--red-dim);   color: var(--red); }
+.chip--info { background: var(--blue-dim);  color: var(--blue); }
+.chip--neutral { background: rgba(75, 75, 75, 0.18); color: var(--muted); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot--ok    { background: var(--green); box-shadow: 0 0 8px rgba(118, 185, 0, 0.5); animation: pulse 2s infinite; }
+.status-dot--warn  { background: var(--amber); }
+.status-dot--bad   { background: var(--red); }
+.status-dot--idle  { background: var(--muted); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* ───── Scrollbar (replaces the legacy edge-amber one) ───── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+/* ───── Empty state ───── */
+.empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
 }
 
 /* Scrollbars */

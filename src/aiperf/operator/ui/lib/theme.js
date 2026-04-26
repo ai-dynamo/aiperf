@@ -1,66 +1,40 @@
-// AIPerf dark theme — MCC (Mission Control Console) palette.
-// Phosphor amber primary, phosphor cyan secondary, phosphor green for SLO-pass,
-// CRT red for failures. Legacy color keys (blue/peach/teal/mauve/...) collapse
-// onto this four-color palette so pages that haven't been re-keyed still render
-// amber/cyan rather than the pre-MCC blue/orange/teal fan-out.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// AIPerf Operator — JS-side palette aligned to the dashboard-v2 token system
+// in style.css. Used by Chart.js callsites (see lib/chart-theme.js) and any
+// inline-style consumer that needs a JS literal for a CSS var.
+
 export const palette = {
-  // Base layers — near-black with a warm undertone (no blue tint)
-  bg: '#07070a',
-  bgCard: '#0c0c11',
-  bgRaised: '#111117',
+  bg: '#0c0c0c',
+  bgCard: '#161616',
+  bgRaised: '#222222',
+  bgTile: '#0f0f0f',
+  bgMid: '#1a1a1a',
 
-  // Borders
-  border: 'rgba(244, 238, 222, 0.11)',
-  borderHover: 'rgba(244, 238, 222, 0.18)',
-  borderSubtle: 'rgba(244, 238, 222, 0.06)',
+  border: '#313131',
+  borderHover: '#4b4b4b',
+  borderSubtle: '#1a1a1a',
 
-  // Text (paper off-white scale)
-  dim: 'rgba(244, 238, 222, 0.18)',
-  muted: 'rgba(244, 238, 222, 0.38)',
-  sub: 'rgba(244, 238, 222, 0.68)',
-  text: '#f4eede',
+  dim: '#4b4b4b',
+  muted: '#757575',
+  sub: '#a7a7a7',
+  text: '#eeeeee',
   white: '#ffffff',
 
-  // Accent — phosphor amber is the primary meter-needle color.
   accent: '#76b900',
-  accentDim: 'rgba(118, 185, 0, 0.14)',
+  accentHot: '#8ce200',
+  accentDeep: '#5a8e00',
+  accentDim: 'rgba(118, 185, 0, 0.15)',
 
-  // Semantic — primary = amber, secondary = cyan. All other named colors
-  // collapse onto the phosphor palette.
-  blue: '#76b900',     // legacy key re-pointed to amber (MCC primary)
-  cyan: '#7eeaff',
-  green: '#9fe870',    // SLO pass only
-  amber: '#76b900',
-  red: '#ff5964',
-  pink: '#76b900',
-  orange: '#76b900',
-  teal: '#7eeaff',
-  indigo: '#7eeaff',
-  mauve: '#7eeaff',
-
-  // Compatibility aliases (used by other pages not being rewritten)
-  base: '#07070a',
-  mantle: '#0c0c11',
-  crust: '#000000',
-  surface0: 'rgba(244, 238, 222, 0.11)',
-  surface1: 'rgba(244, 238, 222, 0.18)',
-  surface2: 'rgba(244, 238, 222, 0.18)',
-  overlay0: 'rgba(244, 238, 222, 0.38)',
-  overlay1: 'rgba(244, 238, 222, 0.68)',
-  overlay2: 'rgba(244, 238, 222, 0.68)',
-  subtext0: 'rgba(244, 238, 222, 0.68)',
-  subtext1: '#f4eede',
-  yellow: '#76b900',
-  peach: '#76b900',
-  maroon: '#ff5964',
-  sapphire: '#7eeaff',
-  sky: '#7eeaff',
-  lavender: '#7eeaff',
-  flamingo: '#76b900',
-  rosewater: '#76b900',
+  blue:  '#3b82f6',
+  cyan:  '#26c6da',
+  green: '#76b900',
+  amber: '#ffc107',
+  red:   '#ef5350',
+  pink:  '#ab47bc',
 };
 
-// Semantic mappings
 export const colors = {
   bg: palette.bg,
   bgAlt: palette.bgCard,
@@ -79,40 +53,30 @@ export const colors = {
 
   success: palette.green,
   warning: palette.amber,
-  error: palette.red,
-  info: palette.blue,
+  error:   palette.red,
+  info:    palette.blue,
 
-  // Job phase colors — MCC: live = amber (peak/attention), completed = green
-  // (pass), failed = red, pending/initializing = paper-faint.
-  phaseRunning: palette.amber,
+  phaseRunning:   palette.blue,
   phaseCompleted: palette.green,
-  phaseFailed: palette.red,
-  phasePending: 'rgba(244, 238, 222, 0.38)',
-  phaseUnknown: palette.muted,
+  phaseFailed:    palette.red,
+  phasePending:   palette.muted,
+  phaseUnknown:   palette.dim,
 };
 
-// Status to color mapping
 export function phaseColor(phase) {
   const p = (phase || '').toLowerCase();
-  if (p === 'running') return colors.phaseRunning;
-  if (p === 'completed' || p === 'succeeded') return colors.phaseCompleted;
-  if (p === 'failed' || p === 'error') return colors.phaseFailed;
-  if (p === 'pending' || p === 'initializing') return colors.phasePending;
+  if (p === 'running')                            return colors.phaseRunning;
+  if (p === 'completed' || p === 'succeeded')     return colors.phaseCompleted;
+  if (p === 'failed' || p === 'error')            return colors.phaseFailed;
+  if (p === 'pending' || p === 'initializing')    return colors.phasePending;
   return colors.phaseUnknown;
 }
 
-// Stable model-color assignment — MCC: amber-first, then cyan. Downstream tints
-// cycle through the phosphor palette plus red/green for outlier signals.
 const MODEL_COLORS = [
-  '#76b900', '#7eeaff', '#9fe870', '#ff5964',
-  '#8ce200', '#c4a5ff',
+  '#76b900', '#3b82f6', '#26c6da', '#9fe870',
+  '#ffc107', '#ef5350', '#ab47bc', '#a0d8ff',
 ];
 
-/**
- * Get a stable color for a model name (hashed).
- * @param {string} model
- * @returns {string}
- */
 export function modelColor(model) {
   if (!model) return palette.muted;
   let hash = 0;
