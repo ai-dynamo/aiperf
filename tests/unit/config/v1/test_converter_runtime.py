@@ -65,3 +65,108 @@ def test_logging_runtime_api_host_without_port_raises():
     service = ServiceConfig.model_validate({"api_host": "0.0.0.0"})
     with pytest.raises(ValueError, match="api_host requires"):
         build_logging_runtime(user, service)
+
+
+# ---------------------------------------------------------------------------
+# Anti-pattern audit: verify converter only emits user-set fields so the
+# v2 schema's Pydantic defaults are not silently overridden.
+# ---------------------------------------------------------------------------
+
+
+def test_artifacts_omits_unset_output_fields():
+    """When user provides no OutputConfig, only cli_command flows through."""
+    user = UserConfig()
+    out = build_artifacts(user)
+    assert "dir" not in out
+    assert "trace" not in out
+    assert "per_chunk_data" not in out
+    assert "show_trace_timing" not in out
+    assert "raw" not in out
+    assert "records" not in out
+    assert "prefix" not in out
+    assert "cli_command" in out
+
+
+def test_artifacts_omits_unset_fields_when_output_partially_set():
+    """User sets only artifact_directory -> trace/raw/per-chunk omitted."""
+    user = UserConfig.model_validate({"output": {"artifact_directory": "/tmp/a"}})
+    out = build_artifacts(user)
+    assert "dir" in out
+    assert "trace" not in out
+    assert "per_chunk_data" not in out
+    assert "show_trace_timing" not in out
+    assert "raw" not in out
+
+
+def test_artifacts_emits_user_set_trace():
+    user = UserConfig.model_validate({"output": {"export_http_trace": True}})
+    out = build_artifacts(user)
+    assert out["trace"] is True
+
+
+def test_artifacts_emits_user_set_per_chunk_data():
+    user = UserConfig.model_validate({"output": {"export_per_chunk_data": True}})
+    out = build_artifacts(user)
+    assert out["per_chunk_data"] is True
+
+
+def test_artifacts_emits_user_set_show_trace_timing():
+    user = UserConfig.model_validate({"output": {"show_trace_timing": True}})
+    out = build_artifacts(user)
+    assert out["show_trace_timing"] is True
+
+
+def test_artifacts_emits_user_set_export_level_raw():
+    user = UserConfig.model_validate({"output": {"export_level": "raw"}})
+    out = build_artifacts(user)
+    assert out["raw"] is True
+    assert "records" in out
+
+
+def test_logging_runtime_omits_log_level_when_unset():
+    """When user did not pass --log-level, logging dict is empty."""
+    user = UserConfig()
+    service = ServiceConfig()
+    log, _runtime = build_logging_runtime(user, service)
+    assert "level" not in log
+
+
+def test_logging_runtime_emits_log_level_when_user_set():
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"log_level": "DEBUG"})
+    log, _runtime = build_logging_runtime(user, service)
+    assert log["level"] in ("DEBUG", "debug")
+
+
+def test_logging_runtime_omits_ui_when_unset_in_tty(monkeypatch):
+    """User-unset ui_type -> not propagated as a default override.
+
+    (TTY-detection branch may still set ui=NONE when not a TTY; force is_tty
+    True so the natural-default branch holds.)
+    """
+    monkeypatch.setattr("aiperf.common.utils.is_tty", lambda: True)
+    user = UserConfig()
+    service = ServiceConfig()
+    _log, runtime = build_logging_runtime(user, service)
+    assert "ui" not in runtime
+
+
+def test_logging_runtime_emits_ui_when_user_set():
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"ui_type": "simple"})
+    _log, runtime = build_logging_runtime(user, service)
+    assert runtime["ui"] in ("simple", "SIMPLE")
+
+
+def test_logging_runtime_omits_record_processors_when_unset():
+    user = UserConfig()
+    service = ServiceConfig()
+    _log, runtime = build_logging_runtime(user, service)
+    assert "record_processors" not in runtime
+
+
+def test_logging_runtime_emits_record_processors_when_user_set():
+    user = UserConfig()
+    service = ServiceConfig.model_validate({"record_processor_service_count": 4})
+    _log, runtime = build_logging_runtime(user, service)
+    assert runtime["record_processors"] == 4

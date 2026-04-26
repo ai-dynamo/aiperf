@@ -71,37 +71,54 @@ def build_artifacts(user: UserConfig) -> dict[str, Any]:
     """Build the artifacts dict for AIPerfConfig from a v1 UserConfig.
 
     Reads `user.output` (OutputConfig) and the synthesized cli_command from
-    sys.argv. Mirrors the pre-v1 `_cli_sections.build_artifacts` behavior.
+    sys.argv. Only emits fields the user explicitly set on OutputConfig — v2's
+    ArtifactsConfig (Pydantic) supplies defaults for any field omitted here, so
+    a stray ``trace=False`` from v1 doesn't override a downstream layered
+    default. ``cli_command`` is always synthesized (not user input).
     """
     from aiperf.common.enums import ExportFormat, ExportLevel
 
     artifacts: dict[str, Any] = {"cli_command": _build_cli_command()}
 
     output = user.output
-    if output is not None:
+    if output is None:
+        return artifacts
+
+    out_set = output.model_fields_set
+    if "artifact_directory" in out_set:
         artifacts["dir"] = output.artifact_directory
-        if output.slice_duration is not None:
-            artifacts["slice_duration"] = output.slice_duration
+    if "slice_duration" in out_set and output.slice_duration is not None:
+        artifacts["slice_duration"] = output.slice_duration
+    if "export_http_trace" in out_set:
         artifacts["trace"] = output.export_http_trace
+    if "export_per_chunk_data" in out_set:
         artifacts["per_chunk_data"] = output.export_per_chunk_data
+    if "show_trace_timing" in out_set:
         artifacts["show_trace_timing"] = output.show_trace_timing
+    if "export_level" in out_set:
         if output.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
             artifacts["records"] = [ExportFormat.JSONL, "csv"]
         artifacts["raw"] = output.export_level == ExportLevel.RAW
-        if output.profile_export_prefix:
-            artifacts["prefix"] = Path(output.profile_export_prefix).stem
-    else:
-        artifacts["raw"] = False
+    if "profile_export_prefix" in out_set and output.profile_export_prefix:
+        artifacts["prefix"] = Path(output.profile_export_prefix).stem
 
     return artifacts
 
 
 def _apply_runtime_basics(runtime_dict: dict[str, Any], service: ServiceConfig) -> None:
-    if service.ui_type is not None:
+    svc_set = service.model_fields_set
+    if "ui_type" in svc_set:
         runtime_dict["ui"] = service.ui_type
-    if service.workers is not None and service.workers.max is not None:
+    if (
+        service.workers is not None
+        and "max" in service.workers.model_fields_set
+        and service.workers.max is not None
+    ):
         runtime_dict["workers"] = service.workers.max
-    if service.record_processor_service_count is not None:
+    if (
+        "record_processor_service_count" in svc_set
+        and service.record_processor_service_count is not None
+    ):
         runtime_dict["record_processors"] = service.record_processor_service_count
 
 
@@ -148,6 +165,11 @@ def build_logging_runtime(
     Folds in the four ServiceConfig validators that v1 strips: verbose/
     extra_verbose log-level promotion, TTY-based ui defaulting, zmq_* ->
     communication discriminator, and the api_host-requires-api_port check.
+
+    Only emits fields the user explicitly set on ``service`` (per
+    ``model_fields_set``); fields the user didn't pass fall through to v2's
+    Pydantic defaults on ``RuntimeConfig`` / ``LoggingConfig``. Verbose-driven
+    log-level/UI promotion still writes (it's a derived effect, not a default).
     """
     # Fold validate_api_host_requires_port from origin/main ServiceConfig.
     if service.api_host is not None and service.api_port is None:
@@ -155,7 +177,9 @@ def build_logging_runtime(
             "api_host requires api_port (or AIPERF_API_SERVER_PORT) to be set"
         )
 
-    logging_dict: dict[str, Any] = {"level": service.log_level}
+    logging_dict: dict[str, Any] = {}
+    if "log_level" in service.model_fields_set:
+        logging_dict["level"] = service.log_level
     runtime_dict: dict[str, Any] = {}
 
     _apply_runtime_basics(runtime_dict, service)

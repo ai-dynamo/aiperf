@@ -59,6 +59,9 @@ def _warmup_pattern_type(
                 w["type"] = PhaseType.POISSON
     else:
         w["type"] = PhaseType.CONCURRENCY
+    # Why: warmup phase always emits concurrency; ConcurrencyPhase defaults
+    # this to 1 anyway, but rate phases (POISSON/GAMMA/CONSTANT) need it as
+    # a cap and origin/main's behavior derives it from main concurrency or 1.
     w["concurrency"] = warmup_concurrency
 
 

@@ -111,6 +111,10 @@ def _validate_profiling(prof: dict[str, Any], user: UserConfig) -> None:
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
     ):
+        # Why: mirrors origin/main's user-friendlier convention — when no
+        # bound was given for an unbounded run, default to 10 requests so
+        # the run terminates in a reasonable time. Deliberate override of
+        # the v2 PhaseConfig default (which would leave it unbounded).
         prof.setdefault("requests", 10)
     loadgen = user.loadgen
     if loadgen is not None and loadgen.request_cancellation_rate:
