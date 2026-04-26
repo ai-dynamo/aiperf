@@ -209,16 +209,7 @@ class LocalSubprocessExecutor(RunExecutor):
 
                 raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(raw)).read()
             data = orjson.loads(raw)
-
-            metrics: dict[str, JsonMetricResult] = {}
-            for field_name, field_value in data.items():
-                if isinstance(field_value, dict) and "unit" in field_value:
-                    try:
-                        metrics[field_name] = JsonMetricResult(**field_value)
-                    except TypeError as e:
-                        logger.debug(f"Skipping field {field_name}: {e}")
-                        continue
-            return metrics
+            return JsonMetricResult.project_summary_dict(data)
 
         except (OSError, ValueError, orjson.JSONDecodeError) as e:
             logger.warning(f"Error extracting metrics from {json_file}: {e}")

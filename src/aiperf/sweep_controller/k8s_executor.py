@@ -358,11 +358,20 @@ class K8sChildJobExecutor(RunExecutor):
         The AIPerfJob operator writes the summary dict (latency_avg_ms,
         throughput_rps, ttft_p99_ms, etc.) into status.summary at completion
         time — no HTTP fetch needed.
+
+        ``status.summary`` mixes JsonMetricResult-shaped per-tag dicts with
+        bolted-on top-level scalars (``total_requests``, ``error_rate``); the
+        scalars and any per-tag extras (``count``, ``header``, ``sum``) are
+        filtered out by ``JsonMetricResult.project_summary_dict`` so the
+        downstream ``RunResult.summary_metrics: dict[str, JsonMetricResult]``
+        Pydantic validation accepts the result.
         """
+        from aiperf.common.models.export_models import JsonMetricResult
+
         status = child.get("status") or {}
         summary = status.get("summary") or {}
         name = child["metadata"]["name"]
         if not summary:
             logger.warning(f"child {name}: status.summary is empty")
             return {}
-        return dict(summary)
+        return JsonMetricResult.project_summary_dict(summary)

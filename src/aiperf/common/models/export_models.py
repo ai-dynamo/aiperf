@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import ConfigDict, Field
 
@@ -47,6 +47,45 @@ class JsonMetricResult:
     min: int | float | None = None
     max: int | float | None = None
     std: float | None = None
+
+    @classmethod
+    def project_summary_dict(
+        cls, summary: dict[str, Any] | None
+    ) -> dict[str, JsonMetricResult]:
+        """Filter a raw status.summary / profile-export dict into JsonMetricResults.
+
+        ``status.summary`` (written by ``MetricsSummary.to_status_dict``) and
+        ``profile_export_aiperf.json`` mix two shapes: per-tag stat dicts
+        (``{"unit": "ms", "avg": 123, "p99": ..., "count": 200, "header": "..."}``)
+        and bolted-on top-level scalars (``{"total_requests": 200,
+        "error_rate": 0.0}``). JsonMetricResult uses ``extra="forbid"`` and
+        only knows the percentile fields, so naive ``dict[str, JsonMetricResult]``
+        coercion fails on both shapes.
+
+        This helper:
+        - drops scalar / list / non-dict values (the bolted-on scalars).
+        - projects each per-tag dict to JsonMetricResult-known fields only,
+          ignoring extras like ``count``, ``header``, ``sum``.
+        - drops entries that lack ``unit`` (the JsonMetricResult required field).
+
+        Returns an empty dict for ``None`` / empty input. Never raises.
+        """
+        if not summary:
+            return {}
+        known = set(cls.__dataclass_fields__.keys())
+        out: dict[str, JsonMetricResult] = {}
+        for tag, value in summary.items():
+            if not isinstance(value, dict):
+                continue
+            if "unit" not in value:
+                continue
+            projected = {k: v for k, v in value.items() if k in known}
+            try:
+                out[tag] = cls(**projected)
+            except TypeError:
+                # Defensive: a JsonMetricResult field type changed under us.
+                continue
+        return out
 
 
 # =============================================================================
