@@ -11,6 +11,8 @@ import { JobDetail } from './pages/job-detail.js';
 import { Leaderboard } from './pages/leaderboard.js';
 import { Compare } from './pages/compare.js';
 import { History } from './pages/history.js';
+import { Sweeps } from './pages/sweeps.js';
+import { SweepDetail } from './pages/sweep-detail.js';
 
 function App() {
   const [showPalette, setShowPalette] = useState(false);
@@ -32,6 +34,7 @@ function App() {
   // Route matching
   let page;
   const jobDetailMatch = matchRoute('/jobs/:ns/:name', currentRoute);
+  const sweepDetailMatch = matchRoute('/sweeps/:ns/:name', currentRoute);
 
   if (currentRoute === '/' || currentRoute === '') {
     page = html`<${Dashboard} />`;
@@ -39,6 +42,10 @@ function App() {
     page = html`<${Jobs} />`;
   } else if (jobDetailMatch) {
     page = html`<${JobDetail} namespace=${jobDetailMatch.ns} name=${jobDetailMatch.name} />`;
+  } else if (currentRoute === '/sweeps') {
+    page = html`<${Sweeps} />`;
+  } else if (sweepDetailMatch) {
+    page = html`<${SweepDetail} namespace=${sweepDetailMatch.ns} name=${sweepDetailMatch.name} />`;
   } else if (currentRoute === '/leaderboard') {
     page = html`<${Leaderboard} />`;
   } else if (currentRoute === '/compare') {
