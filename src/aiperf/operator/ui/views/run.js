@@ -921,13 +921,14 @@ function GpuTelemetry({ metrics }) {
  *  `goodput_count` is on the summary, reports *SLO violations* (total − goodput).
  *  Otherwise falls back to total requests + error rate, which the old
  *  `ReliabilityTile` on the legacy Job Detail page showed. */
-function ReliabilityMeter({ summary, slosDeclared }) {
+function ReliabilityMeter({ summary, slosDeclared, fallbackTotal, fallbackErrors }) {
   if (!summary || typeof summary !== 'object') {
-    return html`<${RunKpi} label="REQUESTS" value="—" unit="" tone="" />`;
+    summary = {};
   }
-  const total = summary.total_requests;
+  const total = summary.total_requests ?? (fallbackTotal && fallbackTotal > 0 ? fallbackTotal : null);
   const goodput = summary.goodput_count;
   const errorCount = summary.error_count
+    ?? (fallbackErrors != null ? fallbackErrors : null)
     ?? (total != null && summary.error_rate != null
         ? Math.round((summary.error_rate / 100) * total)
         : null);
@@ -1367,6 +1368,10 @@ export function Run({ ns, name, epoch }) {
   const summary = status?.liveSummary ?? status?.summary ?? {};
   const phases = status?.phases ?? {};
   const phaseEntries = Object.entries(phases);
+  const phaseRequestsCompleted = phaseEntries.reduce((acc, [, p]) =>
+    acc + Number(p.final_requests_completed ?? p.requestsCompleted ?? p.requests_completed ?? p.completed ?? 0), 0);
+  const phaseRequestsErrors = phaseEntries.reduce((acc, [, p]) =>
+    acc + Number(p.errors ?? p.error_count ?? p.requestsErrors ?? 0), 0);
   const active = pickActive(phases);
   const bucket = phaseBucket(job?.phase);
   const isTerminal = bucket === 'passed' || bucket === 'fault';
@@ -1377,7 +1382,7 @@ export function Run({ ns, name, epoch }) {
   const rps = summary.throughput_rps;
   const ttft = summary.ttft_p99_ms ?? summary.ttft_avg_ms;
   const p99 = summary.latency_p99_ms ?? summary.latency_avg_ms;
-  const tokps = summary.output_token_throughput ?? job?.tokenThroughput;
+  const tokps = summary.output_token_throughput ?? summary.throughput_tps ?? job?.tokenThroughput;
 
   if (!job && !detail) {
     return html`
@@ -1477,7 +1482,7 @@ export function Run({ ns, name, epoch }) {
         <${RunKpi} label="TTFT p99"    primary="first token" value=${ttft != null ? fmtInt(ttft)     : '—'} unit="ms"    tone="" />
         <${RunKpi} label="Latency p99" primary="end-to-end"  value=${p99  != null ? fmtInt(p99)      : '—'} unit="ms"    tone=${p99 != null && p99 > 500 ? 'warn' : ''} />
         <${RunKpi} label="Token/s"     primary="output"      value=${tokps != null ? fmtInt(tokps)   : '—'} unit="tok/s" tone=${tokps != null ? 'good' : ''} />
-        <${ReliabilityMeter} summary=${summary} slosDeclared=${slosDeclared} />
+        <${ReliabilityMeter} summary=${summary} slosDeclared=${slosDeclared} fallbackTotal=${phaseRequestsCompleted} fallbackErrors=${phaseRequestsErrors} />
       </section>
 
       <!-- 3b. LIVE SPARKLINES -->
@@ -1500,17 +1505,19 @@ export function Run({ ns, name, epoch }) {
           <div class="run-phases-head">
             <div class="run-phases-title">Phases</div>
             <div class="run-phases-meta">
-              ${phaseEntries.filter(([, p]) => p.complete).length} / ${phaseEntries.length} complete
+              ${isTerminal ? phaseEntries.length : phaseEntries.filter(([, p]) => p.complete).length} / ${phaseEntries.length} complete
             </div>
           </div>
           <div class="run-phases-grid">
             ${phaseEntries.map(([pname, p]) => {
-              const pct = phasePct(p);
-              const status = p.complete ? 'complete' : p.active ? 'running' : p.grace ? 'grace' : 'pending';
-              const total = p.total_expected_requests ?? p.expected_requests ?? p.requests_total ?? null;
+              const pct = isTerminal ? 100 : phasePct(p);
+              const status = isTerminal ? 'complete' :
+                             p.complete ? 'complete' : p.active ? 'running' : p.grace ? 'grace' : 'pending';
+              const total = p.total_expected_requests ?? p.expected_requests ?? p.requests_total ?? p.requestsTotal ?? null;
               const done  = p.final_requests_completed ?? p.requestsCompleted ?? p.requests_completed ?? p.completed ?? 0;
-              const errors = p.errors ?? p.error_count ?? 0;
-              const dur = p.elapsed_seconds ?? (p.start_ns && p.end_ns ? (Number(p.end_ns) - Number(p.start_ns)) / 1e9 : null);
+              const errors = p.errors ?? p.error_count ?? p.requestsErrors ?? 0;
+              const phaseFromCr = p.elapsed_seconds ?? p.elapsedTimeSeconds ?? (p.start_ns && p.end_ns ? (Number(p.end_ns) - Number(p.start_ns)) / 1e9 : null);
+              const dur = phaseFromCr ?? (isTerminal && phaseEntries.length === 1 && elapsed != null ? elapsed : null);
               return html`
                 <div key=${pname} class=${'run-phase run-phase--' + status}>
                   <div class="run-phase-head">
