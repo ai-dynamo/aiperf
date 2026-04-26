@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * LOG — historical run log, grouped by day.
+ * Log — historical run log, grouped by day.
  *
  * Lives in the main viewport. The bottom strip (LogStrip) carries live-diff
  * events since page load; this view shows the durable archive: every run's
- * final outcome, its duration, and a clickable link to the RUN view.
+ * final outcome, its duration, and a clickable link to the Run view.
  */
 
 import { html } from 'htm/preact';
@@ -45,55 +45,55 @@ export function Log() {
     <div class="v-log" data-testid="page-history">
       <header class="v-head">
         <div class="v-head-title">
-          <span class="v-head-caret">▸</span>
-          <h1>RUN LOG</h1>
+          <h1>Run log</h1>
         </div>
-        <div class="v-head-meta">${list.length} RUNS TRACKED</div>
+        <div class="v-head-meta">${list.length} runs tracked</div>
       </header>
 
-      ${grouped.length === 0
-        ? html`<div class="v-log-empty">NO HISTORY YET</div>`
-        : grouped.map(([day, runs]) => html`
-            <section key=${day} class="v-log-day">
-              <header class="v-log-day-head">
-                <span class="v-log-day-caret">▸</span>
-                ${day.replace(/-/g, '.')}
-                <span class="v-log-day-count">${runs.length}</span>
-              </header>
-              <ol class="v-log-list">
-                ${runs.map(j => {
-                  const kind = phaseKind(j.phase);
-                  const dur = j.startTime && j.completionTime
-                    ? (new Date(j.completionTime) - new Date(j.startTime)) / 1000
-                    : null;
-                  const ts = new Date(j.completionTime ?? j.created);
-                  return html`
-                    <li key=${j.namespace + '/' + j.name}>
-                      <button
-                        class=${'v-log-row v-log-row--' + kind}
-                        onclick=${() => navigate('/run/' + encodeURIComponent(j.namespace) + '/' + encodeURIComponent(j.name))}
-                      >
-                        <span class="v-log-time">${String(ts.getUTCHours()).padStart(2,'0')}:${String(ts.getUTCMinutes()).padStart(2,'0')}</span>
-                        <span class=${'v-log-dot v-log-dot--' + kind}></span>
-                        <span class="v-log-phase">${(j.phase ?? '—').toUpperCase()}</span>
-                        <span class="v-log-name">${j.name}</span>
-                        <span class="v-log-ns">${j.namespace}</span>
-                        <span class="v-log-dur">${dur != null ? fmtDuration(dur) : '—'}</span>
-                        <span class="v-log-rps">
-                          ${j.throughputRps != null ? html`${fmtNumber(j.throughputRps, 0)}<small> r/s</small>` : '—'}
-                        </span>
-                        <span class="v-log-p99">
-                          ${j.latencyP99Ms != null ? html`${fmtInt(j.latencyP99Ms)}<small> ms</small>` : '—'}
-                        </span>
-                        <i class="ph ph-arrow-right"></i>
-                      </button>
-                    </li>
-                  `;
-                })}
-              </ol>
-            </section>
-          `)
-      }
+      <div class="v-log-pane">
+        ${grouped.length === 0
+          ? html`<div class="v-log-empty">No history yet</div>`
+          : grouped.map(([day, runs]) => html`
+              <section key=${day} class="v-log-day">
+                <header class="v-log-day-head">
+                  ${day.replace(/-/g, '.')}
+                  <span class="v-log-day-count">${runs.length}</span>
+                </header>
+                <ol class="v-log-list">
+                  ${runs.map(j => {
+                    const kind = phaseKind(j.phase);
+                    const dur = j.startTime && j.completionTime
+                      ? (new Date(j.completionTime) - new Date(j.startTime)) / 1000
+                      : null;
+                    const ts = new Date(j.completionTime ?? j.created);
+                    return html`
+                      <li key=${j.namespace + '/' + j.name}>
+                        <button
+                          class=${'v-log-row v-log-row--' + kind}
+                          onclick=${() => navigate('/run/' + encodeURIComponent(j.namespace) + '/' + encodeURIComponent(j.name))}
+                        >
+                          <span class="v-log-time">${String(ts.getUTCHours()).padStart(2,'0')}:${String(ts.getUTCMinutes()).padStart(2,'0')}</span>
+                          <span class=${'v-log-dot v-log-dot--' + kind}></span>
+                          <span class="v-log-phase">${j.phase ?? '—'}</span>
+                          <span class="v-log-name">${j.name}</span>
+                          <span class="v-log-ns">${j.namespace}</span>
+                          <span class="v-log-dur">${dur != null ? fmtDuration(dur) : '—'}</span>
+                          <span class="v-log-rps">
+                            ${j.throughputRps != null ? html`${fmtNumber(j.throughputRps, 0)}<small> r/s</small>` : '—'}
+                          </span>
+                          <span class="v-log-p99">
+                            ${j.latencyP99Ms != null ? html`${fmtInt(j.latencyP99Ms)}<small> ms</small>` : '—'}
+                          </span>
+                          <i class="ph ph-arrow-right"></i>
+                        </button>
+                      </li>
+                    `;
+                  })}
+                </ol>
+              </section>
+            `)
+        }
+      </div>
     </div>
   `;
 }

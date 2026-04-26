@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * LAUNCH — create a new AIPerfJob from the UI.
+ * Launch — create a new AIPerfJob from the UI.
  *
  * Left column: template picker. Pick a starting point, see it populate the
  * editor. Right column: raw YAML editor (monospace textarea — nothing fancier
@@ -280,7 +280,7 @@ export function Launch() {
   const [state, setState] = useState({ kind: 'idle' });
   const [prefillFrom, setPrefillFrom] = useState(null);
 
-  // Consume a sessionStorage handoff from Run's RE-LAUNCH button. One-shot:
+  // Consume a sessionStorage handoff from Run's Re-launch button. One-shot:
   // we clear it immediately so refreshing /launch doesn't keep re-prefilling.
   useEffect(() => {
     let raw;
@@ -354,135 +354,85 @@ export function Launch() {
     <div class="v-launch" data-testid="page-launch">
       <header class="v-head">
         <div class="v-head-title">
-          <span class="v-head-caret">▸</span>
           <h1>Launch a new run</h1>
         </div>
         <div class="v-head-meta">POST /api/v1/jobs</div>
       </header>
 
-      <div class="launch-grid">
-        <aside class="launch-templates" aria-label="Templates">
-          <div class="launch-section-head">TEMPLATES</div>
-          ${TEMPLATES.map(t => html`
-            <button
-              key=${t.id}
-              class=${'launch-template' + (t.id === templateId ? ' is-active' : '')}
-              onclick=${() => pickTemplate(t.id)}
-              data-testid=${'launch-template-' + t.id}
-              aria-pressed=${t.id === templateId}
-            >
-              <div class="launch-template-name">${t.name}</div>
-              <div class="launch-template-desc">${t.desc}</div>
-            </button>
-          `)}
-        </aside>
+      <div class="launch-templates" aria-label="Templates">
+        ${TEMPLATES.map(t => html`
+          <button
+            key=${t.id}
+            class=${'launch-template' + (t.id === templateId ? ' launch-template--active' : '')}
+            onclick=${() => pickTemplate(t.id)}
+            data-testid=${'launch-template-' + t.id}
+            aria-pressed=${t.id === templateId}
+            title=${t.desc}
+          >${t.name}</button>
+        `)}
+      </div>
 
-        <section class="launch-editor">
-          ${prefillFrom && html`
-            <div class="launch-prefill-notice" data-testid="launch-prefill-notice">
-              <i class="ph ph-arrow-counter-clockwise"></i>
-              Pre-filled from run:
-              <span class="launch-prefill-ref">${prefillFrom.ns}/${prefillFrom.name}</span>
-            </div>
-          `}
-          <header class="launch-editor-head">
-            <div class="launch-editor-title">
-              <span class="launch-editor-caret">▸</span>
-              MANIFEST · ${activeTemplate?.name ?? 'custom'}
-            </div>
-            <button class="launch-copy" onclick=${copyYaml} title="Copy YAML to clipboard">
-              <i class="ph ph-copy"></i>
-              Copy
-            </button>
-          </header>
+      ${prefillFrom && html`
+        <div class="launch-prefill-notice" data-testid="launch-prefill-notice">
+          <i class="ph ph-arrow-counter-clockwise"></i>
+          Pre-filled from run: <strong>${prefillFrom.ns}/${prefillFrom.name}</strong>
+        </div>
+      `}
 
-          <div
-            class="launch-editor-head"
-            style="border-top: 1px solid var(--edge-2); border-bottom: 1px solid var(--edge-2); gap: var(--s-3);"
-            data-testid="launch-target"
-          >
-            <div class="launch-editor-title" style="gap: 10px; font-size: 10px; letter-spacing: 0.22em;">
-              <span style="color: var(--paper-faint);">TARGET</span>
-              ${peek.namespace
-                ? html`<span class="run-header-ns-name" style="cursor: default;">${peek.namespace}</span>`
-                : html`<span style="color: var(--red); font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.18em;">NO NAMESPACE</span>`}
-              <span class="run-header-ns-sep">/</span>
-              ${peek.name
-                ? html`<span style="font-family: var(--f-mono); font-size: 11px; color: var(--paper); letter-spacing: 0.04em; text-transform: none;">${peek.name}</span>`
-                : html`<span style="color: var(--red); font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.18em;">NO NAME</span>`}
-            </div>
-            <div class="launch-hint" style="padding: 0;">
-              ${peek.kind ? `kind: ${peek.kind}` : 'kind: —'}
-            </div>
-          </div>
+      <input
+        class="launch-target"
+        data-testid="launch-target"
+        readonly
+        value=${`${peek.namespace ?? '—'} / ${peek.name ?? '—'}  ·  kind: ${peek.kind ?? '—'}${activeTemplate ? `  ·  template: ${activeTemplate.name}` : ''}`}
+      />
 
-          <textarea
-            class="launch-yaml"
-            value=${yaml}
-            oninput=${e => { setYaml(e.target.value); if (state.kind !== 'submitting') setState({ kind: 'idle' }); }}
-            onkeydown=${onYamlKeydown}
-            spellcheck="false"
-            wrap="off"
-            data-testid="launch-yaml"
-          ></textarea>
+      <textarea
+        class="launch-yaml"
+        value=${yaml}
+        oninput=${e => { setYaml(e.target.value); if (state.kind !== 'submitting') setState({ kind: 'idle' }); }}
+        onkeydown=${onYamlKeydown}
+        spellcheck="false"
+        wrap="off"
+        data-testid="launch-yaml"
+      ></textarea>
 
-          ${state.kind === 'ok' && html`
-            <div
-              class="run-header-phase run-header-phase--passed"
-              style="display: flex; gap: var(--s-3); align-items: center; justify-content: space-between;
-                     padding: var(--s-3) var(--s-4); font-size: 11px; letter-spacing: 0.2em;"
-              data-testid="launch-success"
-            >
-              <div style="display: inline-flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;">
-                <strong style="letter-spacing: 0.28em;">CR CREATED</strong>
-                <span class="run-header-ns-sep">·</span>
-                <span class="run-header-ns-name" style="cursor: default;">${state.namespace}</span>
-                <span class="run-header-ns-sep">/</span>
-                <span style="font-family: var(--f-mono); font-size: 11px; color: var(--paper); letter-spacing: 0.04em; text-transform: none;">${state.name}</span>
-              </div>
-              <button
-                class="launch-submit"
-                onclick=${viewRun}
-                data-testid="launch-view-run"
-                style="padding: 6px 14px; font-size: 11px;"
-              >
-                <i class="ph ph-arrow-right"></i>
-                VIEW RUN
-              </button>
-            </div>
-          `}
+      ${state.kind === 'ok' && html`
+        <div class="launch-success" data-testid="launch-success">
+          Created <strong>${state.namespace}/${state.name}</strong>
+          <a
+            class="btn btn--ghost"
+            data-testid="launch-view-run"
+            href=${`/run/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`}
+            onclick=${(e) => { e.preventDefault(); viewRun(); }}
+          >View run</a>
+        </div>
+      `}
 
-          ${state.kind !== 'ok' && peek.parseError && html`
-            <div class="v-analysis-err" style="margin: 0;" data-testid="launch-parse-err">
-              YAML · ${peek.parseError}
-            </div>
-          `}
+      ${state.kind !== 'ok' && peek.parseError && html`
+        <div class="v-analysis-err" data-testid="launch-parse-err">
+          YAML · ${peek.parseError}
+        </div>
+      `}
 
-          ${state.kind === 'err' && html`
-            <div class="run-results-err run-results--err" data-testid="launch-err"
-                 style="display: flex; gap: var(--s-3); align-items: flex-start; border-top: 1px solid rgba(255, 89, 100, 0.3); padding: var(--s-3) var(--s-4);">
-              <strong style="color: var(--red); font-weight: 700; letter-spacing: 0.24em; text-transform: uppercase; flex-shrink: 0; font-size: 11px;">
-                ${state.stage === 'parse' ? 'YAML ERROR' : (state.status ? `HTTP ${state.status}` : 'LAUNCH FAILED')}
-              </strong>
-              <span style="color: var(--paper); letter-spacing: 0; text-transform: none; white-space: pre-wrap; word-break: break-word;">${state.msg}</span>
-            </div>
-          `}
+      ${state.kind === 'err' && html`
+        <div class="bench-error-flash" data-testid="launch-err">
+          <strong>Error</strong>
+          ${state.stage === 'parse' ? `YAML: ${state.msg}` : (state.status ? `HTTP ${state.status}: ${state.msg}` : state.msg)}
+        </div>
+      `}
 
-          <footer class="launch-actions">
-            <div class="launch-hint">
-              <kbd>⌘Enter</kbd> submit · the operator creates the CR; kopf schedules workers.
-            </div>
-            <button
-              class="launch-submit"
-              disabled=${!canSubmit}
-              onclick=${launch}
-              data-testid="launch-submit"
-            >
-              <i class="ph ph-rocket-launch"></i>
-              ${state.kind === 'submitting' ? 'LAUNCHING…' : state.kind === 'ok' ? 'LAUNCHED' : 'LAUNCH'}
-            </button>
-          </footer>
-        </section>
+      <div class="launch-actions">
+        <button
+          class="btn btn--ghost"
+          onclick=${copyYaml}
+          title="Copy YAML to clipboard"
+        >Copy</button>
+        <button
+          class="btn btn--primary"
+          disabled=${!canSubmit}
+          onclick=${launch}
+          data-testid="launch-submit"
+        >${state.kind === 'submitting' ? 'Launching…' : state.kind === 'ok' ? 'Launched' : 'Launch'}</button>
       </div>
     </div>
   `;
