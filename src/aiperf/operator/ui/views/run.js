@@ -107,13 +107,17 @@ function ResultsPane({ ns, name, epoch }) {
     return () => { cancel = true; };
   }, [ns, name, epoch]);
 
+  const renderHead = (meta) => html`
+    <div class="run-results-head">
+      <div class="run-results-title">Results</div>
+      <div class="run-results-meta">${meta}</div>
+    </div>
+  `;
+
   if (state.kind === 'loading') {
     return html`
       <section class="run-results" data-testid="run-results">
-        <header class="slab-head slab-head--flush">
-          <div class="slab-head-title"><span class="slab-head-caret">▸</span> RESULTS</div>
-          <div class="slab-head-meta">SCANNING PVC…</div>
-        </header>
+        ${renderHead('scanning…')}
       </section>
     `;
   }
@@ -121,11 +125,8 @@ function ResultsPane({ ns, name, epoch }) {
   if (state.kind === 'err') {
     return html`
       <section class="run-results run-results--err" data-testid="run-results">
-        <header class="slab-head slab-head--flush">
-          <div class="slab-head-title"><span class="slab-head-caret">▸</span> RESULTS</div>
-          <div class="slab-head-meta is-red">FETCH FAILED</div>
-        </header>
-        <div class="run-results-err">${state.msg}</div>
+        ${renderHead('fetch failed')}
+        <div class="empty">${state.msg}</div>
       </section>
     `;
   }
@@ -133,11 +134,8 @@ function ResultsPane({ ns, name, epoch }) {
   if (state.kind === 'none') {
     return html`
       <section class="run-results run-results--empty" data-testid="run-results">
-        <header class="slab-head slab-head--flush">
-          <div class="slab-head-title"><span class="slab-head-caret">▸</span> RESULTS</div>
-          <div class="slab-head-meta">NO ARTIFACTS YET</div>
-        </header>
-        <div class="run-results-empty">
+        ${renderHead('no artifacts yet')}
+        <div class="empty">
           Files will appear here once the run completes and its output is
           archived to the operator PVC.
         </div>
@@ -150,54 +148,42 @@ function ResultsPane({ ns, name, epoch }) {
 
   return html`
     <section class="run-results" data-testid="run-results">
-      <header class="slab-head slab-head--flush">
-        <div class="slab-head-title">
-          <span class="slab-head-caret">▸</span> RESULTS
+      <div class="run-results-head">
+        <div class="run-results-title">Results</div>
+        <div class="run-results-meta">
+          ${files.length} file${files.length === 1 ? '' : 's'} · ${fmtBytes(totalBytes)}
         </div>
-        <div class="slab-head-meta">
-          ${files.length} FILE${files.length === 1 ? '' : 'S'} · ${fmtBytes(totalBytes)}
-        </div>
-      </header>
+      </div>
 
       ${files.length === 0
-        ? html`<div class="run-results-empty">Archive directory exists but contains no files yet.</div>`
+        ? html`<div class="empty">Archive directory exists but contains no files yet.</div>`
         : html`
-          <div class="run-results-actions">
+          <div>
             <a
-              class="run-results-bundle"
+              class="btn btn--primary"
               href=${api.resultBundleUrl(ns, name, epoch)}
               download
               data-testid="run-results-bundle"
             >
-              <i class="ph ph-file-zip"></i>
-              Download bundle
-              <small>${fmtBytes(totalBytes)}</small>
+              Download bundle (${fmtBytes(totalBytes)})
             </a>
           </div>
-          <ol class="run-results-list">
+          <div class="run-results-list">
             ${files.map(f => html`
-              <li
+              <a
                 key=${f.name}
                 class="run-results-row"
                 data-testid=${'run-results-row-' + f.name}
+                href=${api.resultFileUrl(ns, name, f.name, epoch)}
+                download
               >
-                <span class=${'run-results-kind run-results-kind--' + fileKind(f.name)}>
-                  ${fileKind(f.name).toUpperCase()}
-                </span>
-                <span class="run-results-name">${f.name}</span>
-                <span class="run-results-size">${fmtBytes(f.size_bytes)}</span>
-                ${f.compressed && html`<span class="run-results-zst" title="Stored zstd-compressed; decompressed on download">zst</span>`}
-                <a
-                  class="run-results-get"
-                  href=${api.resultFileUrl(ns, name, f.name, epoch)}
-                  download
-                  aria-label=${'Download ' + f.name}
-                >
-                  <i class="ph ph-download-simple"></i>
-                </a>
-              </li>
+                <span class=${'run-results-kind run-results-kind--' + fileKind(f.name)}>${fileKind(f.name)}</span>
+                <span style="color:var(--text); font-family:var(--font-mono); font-size:var(--font-xs)">${f.name}</span>
+                <span style="color:var(--muted); font-family:var(--font-mono); font-size:var(--font-xs); font-variant-numeric:tabular-nums">${fmtBytes(f.size_bytes)}</span>
+                <span style="color:var(--sub); font-size:var(--font-xs)">↓</span>
+              </a>
             `)}
-          </ol>
+          </div>
         `}
     </section>
   `;
@@ -253,9 +239,8 @@ function RunHistoryDropdown({ ns, name, selectedEpoch }) {
   const value = selectedEpoch ?? 'latest';
   return html`
     <label class="run-history" data-testid="run-history">
-      <span class="run-history-label">RUN</span>
+      <span>Run</span>
       <select
-        class="run-history-select"
         value=${value}
         onchange=${(e) => {
           const v = e.target.value;
@@ -313,9 +298,8 @@ function CompareWithDropdown({ ns, name, selectedEpoch }) {
 
   return html`
     <label class="run-compare" data-testid="run-compare">
-      <span class="run-compare-label">COMPARE</span>
+      <span>Compare</span>
       <select
-        class="run-compare-select"
         value=""
         onchange=${(e) => {
           const v = e.target.value;
@@ -345,7 +329,7 @@ function CancelButton({ ns, name, bucket, onCancel }) {
   if (bucket !== 'live') return null;
   return html`
     <button
-      class="run-cancel"
+      class="btn btn--danger"
       disabled=${busy}
       onclick=${async () => {
         if (!confirm(`Cancel run "${name}"?`)) return;
@@ -356,8 +340,7 @@ function CancelButton({ ns, name, bucket, onCancel }) {
       }}
       data-testid="run-cancel"
     >
-      <i class="ph ph-x-circle"></i>
-      ${busy ? 'CANCELLING…' : err ? 'RETRY' : 'CANCEL'}
+      ${busy ? 'Cancelling…' : err ? 'Retry' : 'Cancel'}
     </button>
   `;
 }
@@ -424,7 +407,7 @@ function RelaunchButton({ ns, name, config }) {
   if (!spec || Object.keys(spec).length === 0) return null;
   return html`
     <button
-      class="run-relaunch"
+      class="btn btn--primary"
       onclick=${() => {
         const manifest = {
           apiVersion: config.apiVersion ?? 'aiperf.nvidia.com/v1alpha1',
@@ -449,8 +432,7 @@ function RelaunchButton({ ns, name, config }) {
       data-testid="run-relaunch"
       title="Copy this run's config into the Launch editor"
     >
-      <i class="ph ph-arrow-counter-clockwise"></i>
-      RE-LAUNCH
+      Re-launch
     </button>
   `;
 }
@@ -570,68 +552,67 @@ function LogsPane({ ns, name, pods }) {
     setAutoScroll(true);
   };
 
-  const header = (meta) => html`
-    <header class="slab-head slab-head--flush">
-      <div class="slab-head-title"><span class="slab-head-caret">▸</span> LOGS</div>
-      <div class="slab-head-meta">${meta}</div>
-    </header>
-  `;
-
   if (podList.length === 0) {
     return html`
       <section class="run-logs" id="run-logs" data-testid="run-logs">
-        ${header('NO PODS YET')}
-        <div class="run-logs-empty">No pods yet — logs will appear here once workers are scheduled.</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+          <div class="run-logs-title">Logs</div>
+          <div style="font-size:var(--font-xs); color:var(--muted); font-family:var(--font-mono)">no pods yet</div>
+        </div>
+        <div class="empty">No pods yet — logs will appear here once workers are scheduled.</div>
       </section>
     `;
   }
 
   return html`
     <section class="run-logs" id="run-logs" data-testid="run-logs">
-      ${header(`${tail.length} LINE${tail.length === 1 ? '' : 'S'}${follow ? ' · LIVE' : ''}`)}
-      <div class="run-logs-controls">
-        <select
-          class="run-logs-pod"
-          value=${selectedPod ?? ''}
-          onchange=${e => setSelectedPod(e.target.value)}
-          data-testid="run-logs-pod"
-        >
-          ${podList.map(p => html`
-            <option key=${p.name} value=${p.name}>
-              ${truncPodName(p.name, 40)} · ${(p.phase ?? 'unknown').toLowerCase()}
-            </option>
-          `)}
-        </select>
-        <button
-          class=${'run-logs-follow' + (follow ? ' is-active' : '')}
-          onclick=${() => setFollow(f => !f)}
-          data-testid="run-logs-follow"
-          title=${follow ? 'Pause streaming (static tail)' : 'Resume live follow'}
-        >
-          <i class=${'ph ' + (follow ? 'ph-pause' : 'ph-play')}></i>
-          ${follow ? 'FOLLOW' : 'PAUSED'}
-        </button>
-        <label class="run-logs-tail-lbl">
-          TAIL
-          <input
-            class="run-logs-tail"
-            type="number"
-            min="1"
-            max="5000"
-            value=${tailLines}
-            onchange=${e => {
-              const v = Math.max(1, Math.min(5000, parseInt(e.target.value, 10) || 200));
-              setTailLines(v);
-            }}
-            data-testid="run-logs-tail"
-          />
-        </label>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+        <div class="run-logs-title">Logs</div>
+        <div class="run-logs-controls">
+          <select
+            value=${selectedPod ?? ''}
+            onchange=${e => setSelectedPod(e.target.value)}
+            data-testid="run-logs-pod"
+          >
+            ${podList.map(p => html`
+              <option key=${p.name} value=${p.name}>
+                ${truncPodName(p.name, 40)} · ${(p.phase ?? 'unknown').toLowerCase()}
+              </option>
+            `)}
+          </select>
+          <button
+            class=${'btn' + (follow ? ' btn--primary' : ' btn--ghost')}
+            onclick=${() => setFollow(f => !f)}
+            data-testid="run-logs-follow"
+            title=${follow ? 'Pause streaming' : 'Resume live follow'}
+          >
+            ${follow ? 'Following' : 'Paused'}
+          </button>
+          <label style="display:inline-flex; align-items:center; gap:4px; font-size:var(--font-xs); color:var(--muted)">
+            Tail
+            <input
+              type="number"
+              min="1"
+              max="5000"
+              value=${tailLines}
+              onchange=${e => {
+                const v = Math.max(1, Math.min(5000, parseInt(e.target.value, 10) || 200));
+                setTailLines(v);
+              }}
+              data-testid="run-logs-tail"
+              style="width:64px"
+            />
+          </label>
+          <span style="font-size:var(--font-xs); color:var(--muted); font-family:var(--font-mono)">
+            ${tail.length} line${tail.length === 1 ? '' : 's'}${follow ? ' · live' : ''}
+          </span>
+        </div>
       </div>
-      <pre class="run-logs-body" ref=${bodyRef} onscroll=${onScroll} data-testid="run-logs-body">${tail.join('\n')}${err && html`<div class="run-logs-error">${err}</div>`}</pre>
+      <pre class="run-logs-body" ref=${bodyRef} onscroll=${onScroll} data-testid="run-logs-body">${tail.join('\n')}</pre>
+      ${err && html`<div class="run-logs-error">${err}</div>`}
       ${!autoScroll && html`
-        <button class="run-logs-jump" onclick=${jumpToLatest} data-testid="run-logs-jump">
-          <i class="ph ph-arrow-down"></i>
-          JUMP TO LATEST
+        <button class="btn btn--ghost run-logs-jump" onclick=${jumpToLatest} data-testid="run-logs-jump">
+          Jump to latest
         </button>
       `}
     </section>
@@ -770,15 +751,6 @@ const CONDITION_FALSE_LABELS = {
   Ready:              'Not ready',
 };
 
-function conditionKind(c) {
-  const status = (c.status ?? '').toLowerCase();
-  const reason = (c.reason ?? '').toLowerCase();
-  if (status === 'true') return 'pass';
-  if (reason.includes('progress') || reason.includes('waiting') || reason.includes('starting')) return 'progress';
-  if (status === 'false') return 'fail';
-  return 'idle';
-}
-
 function conditionLabel(c) {
   const status = (c.status ?? '').toLowerCase();
   if (status === 'false') {
@@ -793,17 +765,17 @@ function ConditionsStrip({ conditions }) {
   return html`
     <section class="run-conditions" data-testid="run-conditions" aria-label="Conditions">
       ${conditions.map(c => {
+        const tone = c.status === 'True' ? 'true' : c.status === 'False' ? 'false' : 'unknown';
         const label = conditionLabel(c);
-        const kind = conditionKind(c);
         const title = c.message ? `${c.type}: ${c.message}` : c.type;
+        const mark = c.status === 'True' ? '✓' : c.status === 'False' ? '✕' : '?';
         return html`
           <span
             key=${c.type}
-            class=${'cond cond--' + kind}
+            class=${'run-condition-chip run-condition-chip--' + tone}
             title=${title}
           >
-            <span class="cond-dot"></span>
-            ${label}
+            ${label} <span style="opacity:0.6">${mark}</span>
           </span>
         `;
       })}
@@ -813,14 +785,6 @@ function ConditionsStrip({ conditions }) {
 
 /* ─────────────────────────── pods bar ───────────────────────── */
 
-function podKind(pod) {
-  const phase = (pod.phase ?? '').toLowerCase();
-  if (phase === 'failed' || phase === 'error') return 'fault';
-  if (pod.ready) return 'ready';
-  if (phase === 'running') return 'starting';
-  return 'pending';
-}
-
 function truncPodName(name, max = 24) {
   if (!name) return '—';
   if (name.length <= max) return name;
@@ -829,37 +793,19 @@ function truncPodName(name, max = 24) {
 
 function PodsBar({ pods }) {
   if (!pods || pods.length === 0) return null;
-  const ready = pods.filter(p => p.ready).length;
-  const restarts = pods.reduce((s, p) => s + (p.restarts ?? 0), 0);
   return html`
     <section class="run-pods" data-testid="run-pods">
-      <header class="slab-head slab-head--flush">
-        <div class="slab-head-title">
-          <span class="slab-head-caret">▸</span>
-          WORKERS
-        </div>
-        <div class="slab-head-meta">
-          <span class=${ready === pods.length ? 'is-green' : 'is-amber'}>${ready}/${pods.length} READY</span>
-          ${restarts > 0 && html`<span class="is-amber"> · ${restarts} RESTART${restarts === 1 ? '' : 'S'}</span>`}
-        </div>
-      </header>
-      <div class="run-pods-body">
-        <div class="run-pods-dots" aria-label="Pod status dots">
-          ${pods.map(p => html`
-            <span
-              key=${p.name}
-              class=${'pod pod--' + podKind(p)}
-              title=${`${p.name} (${p.phase ?? 'unknown'}${p.ready ? ', ready' : ''}${p.restarts ? `, ${p.restarts} restarts` : ''})`}
-            ></span>
-          `)}
-        </div>
-        <div class="run-pods-names">
-          ${pods.map(p => html`
-            <span key=${p.name} class=${'pod-name pod-name--' + podKind(p)} title=${p.name}>
-              ${truncPodName(p.name)}
+      <div class="run-pods-title">Pods</div>
+      <div class="run-pods-list">
+        ${pods.map(p => {
+          const ph = (p.phase || 'unknown').toLowerCase();
+          return html`
+            <span key=${p.name} class="run-pod" title=${`${p.name} (${p.phase ?? 'unknown'}${p.ready ? ', ready' : ''}${p.restarts ? `, ${p.restarts} restarts` : ''})`}>
+              <span class=${'run-pod-dot run-pod-dot--' + ph}></span>
+              ${truncPodName(p.name, 32)}
             </span>
-          `)}
-        </div>
+          `;
+        })}
       </div>
     </section>
   `;
@@ -868,10 +814,10 @@ function PodsBar({ pods }) {
 /* ───────────────────────── GPU telemetry ────────────────────── */
 
 const GPU_PRIMARY_TAGS = [
-  { match: 'gpu_power_usage',  label: 'POWER' },
-  { match: 'gpu_utilization',  label: 'UTIL' },
-  { match: 'gpu_temperature',  label: 'TEMP' },
-  { match: 'gpu_memory_used',  label: 'MEM' },
+  { match: 'gpu_power_usage',  label: 'Power' },
+  { match: 'gpu_utilization',  label: 'Util' },
+  { match: 'gpu_temperature',  label: 'Temp' },
+  { match: 'gpu_memory_used',  label: 'Memory' },
 ];
 
 function parseGpuHeader(header) {
@@ -921,13 +867,7 @@ function GpuTelemetry({ metrics }) {
   if (gpus.length === 0) return null;
   return html`
     <section class="run-gpu" data-testid="run-gpu">
-      <header class="slab-head slab-head--flush">
-        <div class="slab-head-title">
-          <span class="slab-head-caret">▸</span>
-          GPU TELEMETRY
-        </div>
-        <div class="slab-head-meta">${gpus.length} GPU${gpus.length === 1 ? '' : 'S'}</div>
-      </header>
+      <div class="run-gpu-title">GPU Telemetry · ${gpus.length} GPU${gpus.length === 1 ? '' : 's'}</div>
       <div class="run-gpu-grid">
         ${gpus.map(gpu => {
           const primary = GPU_PRIMARY_TAGS.map(p => ({
@@ -937,19 +877,17 @@ function GpuTelemetry({ metrics }) {
             !GPU_PRIMARY_TAGS.some(p => m.baseName === p.match || m.tag?.startsWith(p.match + '_'))
           );
           return html`
-            <article key=${gpu.endpoint + '::' + gpu.gpuIndex} class="run-gpu-card">
-              <div class="run-gpu-head">
-                <span class="run-gpu-idx">GPU ${gpu.gpuIndex}</span>
-                <span class="run-gpu-endpoint">${gpu.endpoint}</span>
-                ${gpu.model && html`<span class="run-gpu-model">${gpu.model}</span>`}
+            <div key=${gpu.endpoint + '::' + gpu.gpuIndex} class="run-gpu-card">
+              <div class="run-gpu-header">
+                ${gpu.endpoint} · GPU ${gpu.gpuIndex}${gpu.model ? ' · ' + gpu.model : ''}
               </div>
               <div class="run-gpu-primary">
                 ${primary.map(({ p, m }) => {
                   const [body, unit] = fmtGpuValue(m);
                   return html`
                     <div key=${p.match} class="run-gpu-tile">
-                      <span class="run-gpu-tile-label">${p.label}</span>
-                      <span class="run-gpu-tile-val">${body}${unit && html`<small> ${unit}</small>`}</span>
+                      <div class="run-gpu-tile-label">${p.label}</div>
+                      <div class="run-gpu-tile-val">${body}<span class="run-gpu-tile-unit">${unit ? ' ' + unit : ''}</span></div>
                     </div>
                   `;
                 })}
@@ -962,14 +900,14 @@ function GpuTelemetry({ metrics }) {
                       return html`
                         <tr key=${m.tag}>
                           <td>${m.shortHeader ?? m.baseName}</td>
-                          <td>${body}${unit ? ' ' + unit : ''}</td>
+                          <td style="text-align:right">${body}${unit ? ' ' + unit : ''}</td>
                         </tr>
                       `;
                     })}
                   </tbody>
                 </table>
               `}
-            </article>
+            </div>
           `;
         })}
       </div>
@@ -1029,7 +967,7 @@ const MAX_SAMPLES = 60;  // ~4 min at 4 s/sample
 const SPARK_SPECS = [
   { key: 'rps',   label: 'THROUGHPUT', unit: 'r/s',  color: 'var(--amber)',  digits: 1 },
   { key: 'p99',   label: 'LATENCY P99', unit: 'ms',  color: 'var(--cyan)',   digits: 0 },
-  { key: 'ttft',  label: 'TTFT P99',    unit: 'ms',  color: 'var(--paper)',  digits: 0 },
+  { key: 'ttft',  label: 'TTFT P99',    unit: 'ms',  color: 'var(--text)',   digits: 0 },
   { key: 'tokps', label: 'TOKEN/S',     unit: 'tok/s', color: 'var(--green)', digits: 0 },
 ];
 
@@ -1198,39 +1136,39 @@ function LatencyTimelineChart({ ns, name, epoch }) {
   }, [state]);
 
   const header = (meta) => html`
-    <header class="slab-head slab-head--flush">
-      <div class="slab-head-title"><span class="slab-head-caret">▸</span> LATENCY TIMELINE</div>
-      <div class="slab-head-meta">${meta}</div>
-    </header>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+      <div style="font-size:var(--font-xs); text-transform:uppercase; letter-spacing:0.08em; color:var(--dim); font-weight:600">Latency Timeline</div>
+      <div style="font-size:var(--font-xs); color:var(--muted); font-family:var(--font-mono)">${meta}</div>
+    </div>
   `;
 
   if (state.kind === 'loading') {
-    return html`<section class="run-latency-chart" data-testid="run-latency-chart">${header('LOADING…')}</section>`;
+    return html`<section class="run-latency-chart" data-testid="run-latency-chart">${header('loading…')}</section>`;
   }
   if (state.kind === 'skip') {
     return html`
       <section class="run-latency-chart" data-testid="run-latency-chart">
-        ${header(state.msg.toUpperCase())}
+        ${header(state.msg)}
       </section>
     `;
   }
   if (state.kind === 'err') {
     return html`
       <section class="run-latency-chart" data-testid="run-latency-chart">
-        ${header('CHART UNAVAILABLE')}
-        <div class="run-latency-chart-err">${state.msg}</div>
+        ${header('chart unavailable')}
+        <div class="empty">${state.msg}</div>
       </section>
     `;
   }
 
   const { sampled, total } = state;
   const metaText = total > sampled.length
-    ? `${fmtInt(sampled.length)} / ${fmtInt(total)} REQUESTS · SAMPLED`
-    : `${fmtInt(total)} REQUESTS`;
+    ? `${fmtInt(sampled.length)} / ${fmtInt(total)} requests · sampled`
+    : `${fmtInt(total)} requests`;
   return html`
     <section class="run-latency-chart" data-testid="run-latency-chart">
       ${header(metaText)}
-      <div class="card chart-box" style="height: 300px;">
+      <div class="chart-box" style="height: 300px;">
         <canvas ref=${canvasRef}></canvas>
       </div>
     </section>
@@ -1244,43 +1182,22 @@ function LatencyTimelineChart({ ns, name, epoch }) {
  *  doesn't have to scroll to Conditions + Pods to form a mental model. */
 function FaultCallout({ bucket, conditions, pods }) {
   if (bucket !== 'fault') return null;
-  const falseCond = (conditions ?? []).find(c => c.status === 'False');
-  const failedPod = (pods ?? []).find(p => {
-    const ph = (p.phase ?? '').toLowerCase();
-    return ph === 'failed' || ph === 'error';
-  });
-  if (!falseCond && !failedPod) return null;
-
-  const condLabel = falseCond ? conditionLabel(falseCond).toUpperCase() : null;
-  const term = failedPod?.lastState?.terminated;
-
+  const reasons = [
+    ...(conditions ?? []).filter(c => c.status === 'False').map(c => `${c.type}: ${c.message ?? c.reason ?? '—'}`),
+    ...(pods ?? []).filter(p => (p.phase || '').toLowerCase() === 'failed').map(p => `pod ${p.name} failed`),
+  ];
   return html`
     <section class="run-fault-callout" data-testid="run-fault-callout" aria-label="Run fault details">
-      ${falseCond && html`
-        <div class="run-fault-headline">
-          <i class="ph ph-warning-octagon"></i>
-          <div class="run-fault-headline-body">
-            <span class="run-fault-headline-type">${condLabel}</span>
-            ${falseCond.message && html`<span class="run-fault-headline-msg">${falseCond.message}</span>`}
-          </div>
+      <div class="run-fault-head">
+        <span class="run-fault-head-tag">Run failed</span>
+        ${reasons[0] ?? 'See conditions below for details.'}
+      </div>
+      ${reasons.length > 1 && html`
+        <div class="run-fault-reasons">
+          Likely causes:
+          <ul>${reasons.slice(1).map(r => html`<li>${r}</li>`)}</ul>
         </div>
       `}
-      ${failedPod && html`
-        <div class="run-fault-pod">
-          <span class="run-fault-pod-label">FAILING POD</span>
-          <span class="run-fault-pod-name">${failedPod.name}</span>
-          ${term?.reason && html`<span class="run-fault-pod-reason">${term.reason}</span>`}
-          ${term?.message && html`<span class="run-fault-pod-msg">${term.message}</span>`}
-        </div>
-      `}
-      <a
-        class="run-fault-footer"
-        href="#run-events"
-        onclick=${(e) => {
-          const el = document.getElementById('run-events');
-          if (el) { e.preventDefault(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-        }}
-      >See EVENTS below for more</a>
     </section>
   `;
 }
@@ -1325,84 +1242,79 @@ function EventsPane({ ns, name }) {
     return () => { cancel = true; ac.abort(); };
   }, [ns, name]);
 
-  const header = (meta) => html`
-    <header class="slab-head slab-head--flush">
-      <div class="slab-head-title"><span class="slab-head-caret">▸</span> EVENTS</div>
-      <div class="slab-head-meta">${meta}</div>
-    </header>
+  const headerRow = (meta, extras) => html`
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+      <div class="run-events-title">Events</div>
+      <div style="display:flex; gap:8px; align-items:center; font-size:var(--font-xs); color:var(--muted); font-family:var(--font-mono)">
+        ${extras}
+        <span>${meta}</span>
+      </div>
+    </div>
   `;
 
   if (state.kind === 'loading') {
-    return html`<section class="run-events" id="run-events" data-testid="run-events">${header('LOADING…')}</section>`;
+    return html`<section class="run-events" id="run-events" data-testid="run-events">${headerRow('loading…', null)}</section>`;
   }
   if (state.kind === 'none') {
     return html`
       <section class="run-events" id="run-events" data-testid="run-events">
-        ${header('NO EVENTS')}
-        <div class="run-events-empty">No events recorded for this run.</div>
+        ${headerRow('no events', null)}
+        <div class="empty">No events recorded for this run.</div>
       </section>
     `;
   }
   if (state.kind === 'err') {
     return html`
       <section class="run-events run-events--err" id="run-events" data-testid="run-events">
-        ${header('FETCH FAILED')}
-        <ol class="run-events-list">
-          <li class="run-events-row run-events-row--err">
-            <span class="run-events-type run-events-type--warn">ERR</span>
-            <span class="run-events-msg">${state.msg}</span>
-          </li>
-        </ol>
+        ${headerRow('fetch failed', null)}
+        <div class="run-events-list">
+          <div class="run-event run-event--error">${state.msg}</div>
+        </div>
       </section>
     `;
   }
 
   const events = state.events ?? [];
   const shown = filter === 'warn' ? events.filter(e => e.type === 'Warning') : events;
-  const metaText = `${events.length} TOTAL${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
+  const metaText = `${events.length} total${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
+  const filterControls = html`
+    <span style="display:inline-flex; gap:4px">
+      <button
+        class=${'btn btn--ghost' + (filter === 'all' ? ' btn--primary' : '')}
+        style="font-size:10px; padding:2px 8px"
+        onclick=${() => setFilter('all')}
+      >All</button>
+      <button
+        class=${'btn btn--ghost' + (filter === 'warn' ? ' btn--primary' : '')}
+        style="font-size:10px; padding:2px 8px"
+        onclick=${() => setFilter('warn')}
+      >Warn</button>
+    </span>
+  `;
 
   return html`
     <section class="run-events" id="run-events" data-testid="run-events">
-      <header class="slab-head slab-head--flush">
-        <div class="slab-head-title"><span class="slab-head-caret">▸</span> EVENTS</div>
-        <div class="slab-head-meta">
-          <span class="run-events-filter-group">
-            <button
-              class=${'run-events-filter' + (filter === 'all' ? ' is-active' : '')}
-              onclick=${() => setFilter('all')}
-            >ALL</button>
-            <button
-              class=${'run-events-filter' + (filter === 'warn' ? ' is-active' : '')}
-              onclick=${() => setFilter('warn')}
-            >WARN</button>
-          </span>
-          <span class="run-events-meta-count">${metaText}</span>
-        </div>
-      </header>
+      ${headerRow(metaText, filterControls)}
       ${shown.length === 0
-        ? html`<div class="run-events-empty">No ${filter === 'warn' ? 'warning ' : ''}events.</div>`
+        ? html`<div class="empty">No ${filter === 'warn' ? 'warning ' : ''}events.</div>`
         : html`
-          <ol class="run-events-list">
+          <div class="run-events-list">
             ${shown.map((e, i) => {
               const isWarn = e.type === 'Warning';
+              const tone = isWarn ? 'warn' : '';
               const ts = e.lastTimestamp ?? e.firstTimestamp;
               const obj = e.involvedObject ?? {};
               return html`
-                <li key=${(e.reason ?? '') + '-' + (ts ?? i)} class="run-events-row">
-                  <span class=${'run-events-type ' + (isWarn ? 'run-events-type--warn' : 'run-events-type--dim')}>
-                    ${(e.type ?? 'Normal').toUpperCase()}
-                  </span>
-                  <span class="run-events-reason">${e.reason ?? ''}</span>
-                  <span class="run-events-msg">${e.message ?? ''}</span>
-                  <span class="run-events-meta">
-                    ${obj.kind ?? ''}${obj.name ? '/' + obj.name : ''}
-                    ${e.count > 1 ? ' · ×' + e.count : ''}
-                    ${ts ? ' · ' + relTime(ts) : ''}
-                  </span>
-                </li>
+                <div key=${(e.reason ?? '') + '-' + (ts ?? i)} class=${'run-event' + (tone ? ' run-event--' + tone : '')}>
+                  <span class="run-event-ts">${ts ? relTime(ts) : '—'}</span>
+                  <strong>${e.reason ?? ''}</strong>
+                  ${e.message ? ' · ' + e.message : ''}
+                  ${obj.kind ? html` <span style="color:var(--dim)">· ${obj.kind}${obj.name ? '/' + obj.name : ''}</span>` : ''}
+                  ${e.count > 1 ? html` <span style="color:var(--dim)">· ×${e.count}</span>` : ''}
+                </div>
               `;
             })}
-          </ol>
+          </div>
         `}
     </section>
   `;
@@ -1467,11 +1379,7 @@ export function Run({ ns, name, epoch }) {
   if (!job && !detail) {
     return html`
       <div class="v-run v-run--loading" data-testid="page-job-detail">
-        <div class="run-404">
-          <div class="run-404-glyph"><span class="ph ph-magnifying-glass"></span></div>
-          <div class="run-404-title">LOCATING ${name.toUpperCase()}</div>
-          <div class="run-404-meta">namespace ${ns}</div>
-        </div>
+        <div class="empty">Locating ${name}<br/><span class="text-muted">namespace ${ns}</span></div>
       </div>
     `;
   }
@@ -1581,36 +1489,34 @@ export function Run({ ns, name, epoch }) {
         <${LatencyTimelineChart} ns=${ns} name=${name} epoch=${epoch} />
       `}
 
-      <!-- 3. PHASES SWIMLANE -->
+      <!-- 3. PHASES -->
       ${phaseEntries.length > 0 && html`
         <section class="run-phases">
-          <header class="slab-head slab-head--flush">
-            <div class="slab-head-title">
-              <span class="slab-head-caret">▸</span>
-              PHASE TIMELINE
+          <div class="run-phases-head">
+            <div class="run-phases-title">Phases</div>
+            <div class="run-phases-meta">
+              ${phaseEntries.filter(([, p]) => p.complete).length} / ${phaseEntries.length} complete
             </div>
-            <div class="slab-head-meta">
-              ${phaseEntries.filter(([, p]) => p.complete).length} / ${phaseEntries.length} COMPLETE
-            </div>
-          </header>
-          <div class="run-phase-lanes">
+          </div>
+          <div class="run-phases-grid">
             ${phaseEntries.map(([pname, p]) => {
               const pct = phasePct(p);
-              const kind = p.complete ? 'done' : p.active ? 'active' : p.grace ? 'grace' : 'pending';
+              const status = p.complete ? 'complete' : p.active ? 'running' : p.grace ? 'grace' : 'pending';
               const total = p.total_expected_requests ?? p.expected_requests ?? p.requests_total ?? null;
-              const done = p.final_requests_completed ?? p.requestsCompleted ?? p.requests_completed ?? p.completed ?? 0;
+              const done  = p.final_requests_completed ?? p.requestsCompleted ?? p.requests_completed ?? p.completed ?? 0;
+              const errors = p.errors ?? p.error_count ?? 0;
+              const dur = p.elapsed_seconds ?? (p.start_ns && p.end_ns ? (Number(p.end_ns) - Number(p.start_ns)) / 1e9 : null);
               return html`
-                <div key=${pname} class=${'run-lane run-lane--' + kind}>
-                  <div class="run-lane-label">
-                    <span class="run-lane-status"></span>
-                    ${pname.toUpperCase()}
+                <div key=${pname} class=${'run-phase run-phase--' + status}>
+                  <div class="run-phase-head">
+                    <span class="run-phase-name">${pname}</span>
+                    <span class=${'run-phase-badge run-phase-badge--' + status}>${status}</span>
                   </div>
-                  <div class="run-lane-track">
-                    <div class="run-lane-fill" style=${'width: ' + pct + '%'}></div>
-                    <div class="run-lane-meta">
-                      <span>${fmtInt(done)}${total ? ' / ' + fmtInt(total) : ''}</span>
-                      <span>${fmtPercent(pct, 0)}</span>
-                    </div>
+                  <div class="run-phase-track"><div class="run-phase-fill" style=${'width: ' + pct + '%'}></div></div>
+                  <div class="run-phase-stats">
+                    <div class="run-phase-stat"><span class="run-phase-stat-label">Duration</span><span class="run-phase-stat-val">${dur != null ? fmtDuration(dur) : '—'}</span></div>
+                    <div class="run-phase-stat"><span class="run-phase-stat-label">Issued</span><span class="run-phase-stat-val">${fmtInt(done)}${total ? ' / ' + fmtInt(total) : ''}</span></div>
+                    <div class="run-phase-stat"><span class="run-phase-stat-label">Errors</span><span class="run-phase-stat-val">${fmtInt(errors)}</span></div>
                   </div>
                 </div>
               `;
@@ -1638,8 +1544,8 @@ export function Run({ ns, name, epoch }) {
       ${config && html`
         <details class="run-config">
           <summary>
-            <span class="slab-head-caret">▸</span>
-            CONFIG · ${config.source ?? 'spec'}
+            <span style="display:inline-block; transform:rotate(-90deg); margin-right:6px">▸</span>
+            Config · ${config.source ?? 'spec'}
             <span class="run-config-hint">expand</span>
           </summary>
           <pre class="run-config-body">${JSON.stringify(config.spec ?? config, null, 2)}</pre>
