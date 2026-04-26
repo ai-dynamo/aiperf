@@ -3,8 +3,9 @@
 """Shared helpers used by `aiperf kube profile` and `aiperf kube sweep`.
 
 These helpers do not depend on AIPerfJob CR shape; they are concerned with
-turning a `CLIModel` / config-file pair into an `AIPerfConfig`, generating a
-DNS-safe benchmark name, and printing the memory estimate panel.
+turning a `UserConfig` + `ServiceConfig` / config-file pair into an
+`AIPerfConfig`, generating a DNS-safe benchmark name, and printing the memory
+estimate panel.
 """
 
 from __future__ import annotations
@@ -15,17 +16,24 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.config import AIPerfConfig
-    from aiperf.config.cli_model import CLIModel
     from aiperf.config.kube import KubeOptions
+    from aiperf.config.v1 import ServiceConfig, UserConfig
 
 
-def resolve_config(cli_model: CLIModel, config_file: Path | None) -> AIPerfConfig:
+def resolve_config(
+    user_config: UserConfig,
+    service_config: ServiceConfig,
+    config_file: Path | None,
+) -> AIPerfConfig:
     """Return an `AIPerfConfig` from a plain YAML config file or CLI flags.
 
     Args:
-        cli_model: Parsed CLI model carrying flag-form benchmark options.
+        user_config: Parsed v1 ``UserConfig`` carrying flag-form benchmark options.
+        service_config: Parsed v1 ``ServiceConfig`` carrying service-level
+            options (UI, log level, ZMQ, etc.).
         config_file: Optional path to a YAML config file; when provided, takes
-            precedence over `cli_model` flags.
+            precedence over CLI flags. The YAML config is always interpreted as
+            the v2 ``AIPerfConfig`` shape (no v1 round-trip).
 
     Returns:
         Fully resolved `AIPerfConfig` ready for downstream use.
@@ -34,9 +42,9 @@ def resolve_config(cli_model: CLIModel, config_file: Path | None) -> AIPerfConfi
         from aiperf.config.loader import load_config
 
         return load_config(config_file)
-    from aiperf.config.cli_converter import build_aiperf_config
+    from aiperf.config.v1.converter import convert_user_to_aiperf
 
-    return build_aiperf_config(cli_model)
+    return convert_user_to_aiperf(user_config, service_config)
 
 
 def generate_benchmark_name(config: AIPerfConfig, *, suffix: str = "") -> str:

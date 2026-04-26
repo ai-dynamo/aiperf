@@ -9,8 +9,8 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
+from aiperf.config.v1 import ServiceConfig, UserConfig
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 
 app = App(name="generate")
@@ -18,7 +18,11 @@ app = App(name="generate")
 AIPERF_KIND = "AIPerfJob"
 
 
-def _resolve_spec_and_name(cli_model: CLIModel, kube_options: KubeOptions):
+def _resolve_spec_and_name(
+    user_config: UserConfig,
+    service_config: ServiceConfig,
+    kube_options: KubeOptions,
+):
     """Return (spec, config, name) from either an AIPerfJob CR file or CLI flags."""
     from aiperf.cli_commands.kube.profile import (
         _build_cr_spec_and_config,
@@ -27,7 +31,7 @@ def _resolve_spec_and_name(cli_model: CLIModel, kube_options: KubeOptions):
         generate_benchmark_name,
     )
 
-    config_file = getattr(cli_model, "config_file", None)
+    config_file = getattr(user_config, "config_file", None)
     cr_raw = _try_load_aiperfjob_cr(config_file) if config_file is not None else None
     if cr_raw is not None:
         # CR format: use spec as primary benchmark config; CLI K8s flags overlay
@@ -35,7 +39,7 @@ def _resolve_spec_and_name(cli_model: CLIModel, kube_options: KubeOptions):
         cr_name = cr_raw.get("metadata", {}).get("name")
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
-        config = _resolve_config(cli_model, config_file)
+        config = _resolve_config(user_config, service_config, config_file)
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
     return spec, config, name
@@ -105,7 +109,8 @@ def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
 @app.default
 async def generate(
     *,
-    cli_model: CLIModel,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
     kube_options: KubeOptions,
     operator: Annotated[
         bool,
@@ -150,10 +155,15 @@ async def generate(
 
     from aiperf import cli_utils
 
+    if service_config is None:
+        service_config = ServiceConfig()
+
     with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
-        spec, config, name = _resolve_spec_and_name(cli_model, kube_options)
+        spec, config, name = _resolve_spec_and_name(
+            user_config, service_config, kube_options
+        )
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
 
         yaml = ruamel.yaml.YAML()

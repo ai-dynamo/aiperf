@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 
-from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
+from aiperf.config.v1 import ServiceConfig, UserConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -66,7 +66,8 @@ _CONV_THRESH_PARAM = Parameter(
 @app.default
 async def sweep(
     *,
-    cli_model: CLIModel,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
     kube_options: KubeOptions,
     multi_run_trials: Annotated[int | None, _TRIALS_PARAM] = None,
     cooldown_seconds: Annotated[float, _COOLDOWN_PARAM] = 0.0,
@@ -95,7 +96,14 @@ async def sweep(
     from aiperf import cli_utils
     from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
-    config_file = getattr(cli_model, "config_file", None)
+    if service_config is None:
+        service_config = ServiceConfig()
+    # service_config is currently only consumed when we eventually load+validate
+    # the YAML through the v1->v2 path; v1 sweep submits the raw YAML directly,
+    # so service_config is reserved here for parity with profile/generate.
+    _ = service_config
+
+    config_file = getattr(user_config, "config_file", None)
     with cli_utils.exit_on_error(title="Error Running Kubernetes Sweep"):
         cr_dict = _build_sweep_cr_dict(
             config_file=config_file,

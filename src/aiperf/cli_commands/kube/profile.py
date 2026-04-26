@@ -13,8 +13,8 @@ from aiperf.cli_commands.kube._kube_common import (
     print_memory_estimate,
     resolve_config,
 )
-from aiperf.config.cli_model import CLIModel
 from aiperf.config.kube import KubeOptions
+from aiperf.config.v1 import ServiceConfig, UserConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -109,27 +109,33 @@ def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     return spec, config
 
 
-def _resolve_config(cli_model: CLIModel, config_file: Path | None) -> AIPerfConfig:
+def _resolve_config(
+    user_config: UserConfig,
+    service_config: ServiceConfig,
+    config_file: Path | None,
+) -> AIPerfConfig:
     """Backwards-compatible alias for `_kube_common.resolve_config`."""
-    return resolve_config(cli_model, config_file)
+    return resolve_config(user_config, service_config, config_file)
 
 
 def _resolve_spec_and_name(
-    cli_model: CLIModel, kube_options: KubeOptions
+    user_config: UserConfig,
+    service_config: ServiceConfig,
+    kube_options: KubeOptions,
 ) -> tuple[dict, Any, str]:
     """Resolve the AIPerfJob spec, AIPerfConfig, and benchmark name.
 
     Handles both paths: a raw AIPerfJob CR YAML file (CR-format) and
     plain CLI flags / benchmark config (flag-format).
     """
-    config_file = getattr(cli_model, "config_file", None)
+    config_file = getattr(user_config, "config_file", None)
     cr_raw = _try_load_aiperfjob_cr(config_file) if config_file is not None else None
     if cr_raw is not None:
         spec, config = _build_cr_spec_and_config(cr_raw, kube_options)
         cr_name = cr_raw.get("metadata", {}).get("name")
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
-        config = resolve_config(cli_model, config_file)
+        config = resolve_config(user_config, service_config, config_file)
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
     return spec, config, name
@@ -210,7 +216,8 @@ def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
 @app.default
 async def profile(
     *,
-    cli_model: CLIModel,
+    user_config: UserConfig,
+    service_config: ServiceConfig | None = None,
     kube_options: KubeOptions,
     detach: Annotated[bool, _DETACH_PARAM] = False,
     no_wait: Annotated[bool, _NO_WAIT_PARAM] = False,
@@ -247,11 +254,16 @@ async def profile(
     )
     from aiperf.cli_commands.kube.profile_deploy_direct import deploy_direct
 
+    if service_config is None:
+        service_config = ServiceConfig()
+
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
-        _check_config_file_for_sweep_keys(getattr(cli_model, "config_file", None))
-        spec, config, name = _resolve_spec_and_name(cli_model, kube_options)
+        _check_config_file_for_sweep_keys(getattr(user_config, "config_file", None))
+        spec, config, name = _resolve_spec_and_name(
+            user_config, service_config, kube_options
+        )
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
         _print_memory_estimate(config, kube_options, spec)
 
