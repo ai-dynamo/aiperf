@@ -151,11 +151,22 @@ max-complexity = 10
 "json.loads".msg = "Use orjson.loads instead."
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."
+# Fence Config v1 (CLI input layer) — see CLAUDE.md "Config v1 (CLI input layer)".
+"aiperf.config.v1".msg = "Config v1 is the CLI input layer only. Downstream code must use AIPerfConfig / BenchmarkPlan / BenchmarkRun. Allowed only in cli_commands/** and config/v1/**."
+"aiperf.config.v1.user_config".msg = "Config v1 is the CLI input layer only — see CLAUDE.md 'Config v1 (CLI input layer)' section."
+"aiperf.config.v1.service_config".msg = "Config v1 is the CLI input layer only — see CLAUDE.md 'Config v1 (CLI input layer)' section."
+"aiperf.config.v1.converter".msg = "convert_user_to_aiperf is the v1->v2 boundary; downstream code must use AIPerfConfig directly."
 
 [tool.ruff.lint.per-file-ignores]
 # sys.path manipulation before imports is required for direct script execution
 "dev/kube.py" = ["E402"]
 "dev/benchmarks/record_processing_benchmark.py" = ["E402"]
+# Config v1 fence allowlist — these paths legitimately import the v1 CLI input layer.
+"src/aiperf/cli_commands/**" = ["TID251"]
+"src/aiperf/config/v1/**" = ["TID251"]
+"src/aiperf/config/__init__.py" = ["TID251"]
+"tests/unit/config/v1/**" = ["TID251"]
+"tests/unit/cli_commands/**" = ["TID251"]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration

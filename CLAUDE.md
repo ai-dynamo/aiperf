@@ -163,6 +163,24 @@ Baselines (`tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`) grandfa
 
 Run `/aiperf-llm-ergonomics-review` before shipping a PR that touches public API, exceptions, or a reference file.
 
+## Config v1 (CLI input layer)
+
+`UserConfig` / `ServiceConfig` (`src/aiperf/config/v1/`) are the cyclopts-facing
+CLI input DTOs. They carry CLI flag annotations and Pydantic field metadata,
+but **NO validators** — `AIPerfConfig` is the single validation gate.
+
+The converter (`src/aiperf/config/v1/converter.py`) is the only allowed v1→v2
+boundary. Downstream of `cli_commands/`, only `AIPerfConfig` / `BenchmarkPlan`
+/ `BenchmarkRun` flow. Enforced by ruff TID251 in `pyproject.toml`.
+
+Hard rules for adding new CLI flags:
+1. Fits an existing v1 nested class (Endpoint/Input/LoadGen/Output/Tokenizer/
+   Accuracy)? Add the field there.
+2. Doesn't fit? Add as a top-level field on `UserConfig`. NEVER add new nested
+   classes to v1.
+3. NO validators on v1 classes — ever. New validation goes on `AIPerfConfig`
+   (cross-field validators) or in the v1→v2 converter (input-shape coercion).
+
 ## Pre-Commit Checklist
 
 1. Review diff: all lines required?
