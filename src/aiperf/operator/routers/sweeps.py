@@ -19,6 +19,9 @@ from kubernetes_asyncio.client import ApiClient
 
 from aiperf.operator.job_union import list_all_jobs
 from aiperf.operator.routers.sweeps_models import (
+    CellAggregatesResponse,
+    CellEntry,
+    ChildJobRef,
     DimensionInfo,
     SpecSummary,
     SweepDetailResponse,
@@ -148,6 +151,136 @@ async def _get_sweep_impl(
     )
 
 
+def _cells_from_aggregate(doc: dict[str, Any]) -> list[CellEntry]:
+    raw_cells = doc.get("per_cell_aggregates") or []
+    out: list[CellEntry] = []
+    for c in raw_cells:
+        if not isinstance(c, dict):
+            continue
+        children_raw = c.get("children") or []
+        children = [
+            ChildJobRef(
+                namespace=child.get("namespace") or "",
+                name=child.get("name") or "",
+                trial_index=child.get("trial_index"),
+                phase=child.get("phase"),
+            )
+            for child in children_raw
+            if isinstance(child, dict)
+        ]
+        out.append(
+            CellEntry(
+                variation_index=int(c.get("variation_index") or 0),
+                variation_label=str(c.get("variation_label") or ""),
+                values=dict(c.get("values") or {}),
+                trials_completed=int(c.get("trials_completed") or 0),
+                trials_failed=int(c.get("trials_failed") or 0),
+                metrics=dict(c.get("metrics") or {}),
+                children=children,
+            )
+        )
+    return sorted(out, key=lambda x: x.variation_index)
+
+
+async def _cells_from_live_children(
+    api: ApiClient,
+    base_dir: Path,
+    namespace: str,
+    sweep_name: str,
+) -> list[CellEntry]:
+    """Compute per-cell aggregates by grouping children by variation_index.
+
+    Used when the sweep is live and has no aggregate.json yet (mid-run).
+    Reads each child's profile_export_aiperf.json from the PVC if present.
+    Returns an empty list if no terminal children are persisted yet.
+    """
+    children_records = await list_all_jobs(api, base_dir, all_namespaces=False)
+    matched = [
+        j
+        for j in children_records
+        if getattr(j, "sweep_name", None) == sweep_name and j.namespace == namespace
+    ]
+    by_cell: dict[int, dict[str, Any]] = {}
+    for j in matched:
+        idx = getattr(j, "variation_index", None)
+        if idx is None:
+            continue
+        bucket = by_cell.setdefault(
+            int(idx),
+            {
+                "variation_label": getattr(j, "variation_label", "") or "",
+                "trials_completed": 0,
+                "trials_failed": 0,
+                "throughputs": [],
+                "p99_latencies": [],
+                "children": [],
+            },
+        )
+        # Status mapping: only count terminal children towards aggregates.
+        phase = (j.phase or "").lower()
+        if phase in {"succeeded", "completed"}:
+            bucket["trials_completed"] += 1
+            if j.throughput_rps is not None:
+                bucket["throughputs"].append(float(j.throughput_rps))
+            if j.latency_p99_ms is not None:
+                bucket["p99_latencies"].append(float(j.latency_p99_ms))
+        elif phase in {"failed", "cancelled", "partiallyfailed"}:
+            bucket["trials_failed"] += 1
+        bucket["children"].append(
+            ChildJobRef(
+                namespace=j.namespace,
+                name=j.name,
+                trial_index=None,
+                phase=j.phase,
+            )
+        )
+
+    def _avg(xs: list[float]) -> float | None:
+        return (sum(xs) / len(xs)) if xs else None
+
+    out: list[CellEntry] = []
+    for idx, b in sorted(by_cell.items()):
+        metrics: dict[str, dict[str, float]] = {}
+        thr_avg = _avg(b["throughputs"])
+        if thr_avg is not None:
+            metrics["request_throughput"] = {"avg": thr_avg}
+        lat_avg = _avg(b["p99_latencies"])
+        if lat_avg is not None:
+            metrics["request_latency_p99"] = {"avg": lat_avg}
+        out.append(
+            CellEntry(
+                variation_index=idx,
+                variation_label=b["variation_label"],
+                values={},  # structured values come from spec; live path leaves empty
+                trials_completed=b["trials_completed"],
+                trials_failed=b["trials_failed"],
+                metrics=metrics,
+                children=b["children"],
+            )
+        )
+    return out
+
+
+async def _get_cells_impl(
+    api: ApiClient, base_dir: Path, namespace: str, name: str
+) -> CellAggregatesResponse:
+    rec = await find_any_sweep(api, base_dir, namespace, name)
+    if rec is None:
+        raise HTTPException(404, f"Sweep {namespace}/{name} not found")
+    spec_summary = _spec_summary_from_record(rec)
+    if rec.aggregate_doc is not None:
+        cells = _cells_from_aggregate(rec.aggregate_doc)
+        source = rec.source
+    else:
+        cells = await _cells_from_live_children(api, base_dir, namespace, name)
+        source = "live"
+    return CellAggregatesResponse(
+        dimensions=spec_summary.dimensions,
+        cells=cells,
+        source=source,  # type: ignore[arg-type]
+    )
+
+
 def create_sweeps_router(
     api_holder: list[ApiClient | None] | None = None,
     results_dir: Path | None = None,
@@ -174,5 +307,12 @@ def create_sweeps_router(
     @router.get("/sweeps/{namespace}/{name}", response_model=SweepDetailResponse)
     async def get_sweep(namespace: str, name: str) -> SweepDetailResponse:
         return await _get_sweep_impl(_require_api(), _base_dir, namespace, name)
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/cells",
+        response_model=CellAggregatesResponse,
+    )
+    async def get_sweep_cells(namespace: str, name: str) -> CellAggregatesResponse:
+        return await _get_cells_impl(_require_api(), _base_dir, namespace, name)
 
     return router
