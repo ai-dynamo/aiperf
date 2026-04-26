@@ -25,7 +25,7 @@ import pytest
 from playwright.async_api import expect
 
 from ._pages import AnalysisPage
-from .test_job_detail import _seed_two_epoch_runs
+from .test_run_detail import _seed_two_epoch_runs
 
 pytestmark = [pytest.mark.e2e]
 

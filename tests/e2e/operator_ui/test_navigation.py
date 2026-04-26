@@ -5,17 +5,15 @@
 Covers top-rail button clicks, Ctrl+K command-palette keybinding, fuzzy-filtered
 job navigation via the palette, and direct hash-URL deep links into the single-run
 workbench. The SPA uses hash routing (``window.location.hash``); ``app.js``
-routes ``/``, ``/ns/:ns/archive``, ``/compare``, ``/log``, ``/ns/:ns/launch``,
-and ``/ns/:ns/run/:name``. Unknown routes fall through to the Home view rather
-than rendering a dedicated Not-Found page.
+routes ``/`` (namespace picker), ``/ns/:ns`` (namespace overview),
+``/ns/:ns/archive``, ``/ns/:ns/launch``, ``/ns/:ns/run/:name``, ``/compare``,
+and ``/log``. Unknown routes fall through to the namespace picker.
 """
 
 from __future__ import annotations
 
 import pytest
 from playwright.async_api import expect
-
-from ._pages import HomePage
 
 pytestmark = [pytest.mark.e2e]
 
@@ -30,7 +28,6 @@ async def test_nav_click_archive_from_home(
     starting from ``/ns/aiperf-bench`` it must navigate to
     ``/ns/aiperf-bench/archive`` and mount the archive view.
     """
-    home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.get_by_test_id("rail-archive").click()
@@ -47,7 +44,6 @@ async def test_command_palette_opens_on_ctrl_k(
     ``app.js`` binds both ``ctrlKey`` and ``metaKey`` + ``k`` to toggle the
     palette; headless Chromium on Linux dispatches ``Control+k``.
     """
-    home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.keyboard.press("Control+k")
@@ -64,7 +60,6 @@ async def test_command_palette_search_navigates_to_job(
     fuzzy-matches on ``label`` or ``sub``. Typing the full job name narrows
     to one row; Enter fires ``navigate(/run/<ns>/<name>)``.
     """
-    home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.keyboard.press("Control+k")
@@ -117,17 +112,16 @@ async def test_deep_link_loads_run_detail_directly(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_unknown_route_falls_back_to_home(
+async def test_unknown_route_falls_back_to_picker(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Unknown hash routes resolve to Home (legacy fallback, retired in Task 11).
+    """Unknown hash routes resolve to the namespace picker.
 
-    ``resolveView`` in ``app.js`` currently falls through to ``home`` for
-    unmatched routes. Task 11 changes that fall-through to the namespace
-    picker; this test will be updated to match at that point.
+    ``resolveView`` in ``app.js`` falls through to ``namespace-picker``
+    for any route that doesn't match a known pattern.
     """
     await page.goto(f"{live_operator_app.base_url}/#/does-not-exist")
-    await expect(page.get_by_test_id("page-home")).to_be_visible()
+    await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -166,7 +160,6 @@ async def test_command_palette_shows_empty_state_for_no_matches(
     ``filtered.length === 0``. Typing a string that matches neither the
     PAGES list nor any job name/namespace drives the list to zero.
     """
-    home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.keyboard.press("Control+k")
@@ -191,7 +184,6 @@ async def test_command_palette_dismisses_on_escape(
     focus drifts out of the input (e.g. a mouse hover onto a list item
     mutates cursor state) would strand the modal.
     """
-    home = HomePage(page, live_operator_app.base_url)
     await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
     await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     await page.keyboard.press("Control+k")
@@ -254,7 +246,9 @@ async def test_switcher_view_all_returns_to_picker(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_root_redirects_to_last_namespace_when_known(live_operator_app, seeded_results_dir, fake_k8s_client, page):
+async def test_root_redirects_to_last_namespace_when_known(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
     # First visit: pick 'aiperf-bench' to set lastNamespace.
     await page.goto(live_operator_app.base_url + "/")
     await page.get_by_test_id("np-tile-aiperf-bench").click()
@@ -268,10 +262,14 @@ async def test_root_redirects_to_last_namespace_when_known(live_operator_app, se
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_root_renders_picker_when_last_namespace_absent_from_jobs(live_operator_app, seeded_results_dir, fake_k8s_client, page):
+async def test_root_renders_picker_when_last_namespace_absent_from_jobs(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
     # Set lastNamespace to a value the fixture doesn't have, then reload root.
     await page.goto(live_operator_app.base_url + "/")
-    await page.evaluate("window.localStorage.setItem('aiperf.ui.lastNamespace', 'ghost-ns')")
+    await page.evaluate(
+        "window.localStorage.setItem('aiperf.ui.lastNamespace', 'ghost-ns')"
+    )
     await page.goto(live_operator_app.base_url + "/")
     await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
     # Clean up so subsequent tests don't see the stale key.

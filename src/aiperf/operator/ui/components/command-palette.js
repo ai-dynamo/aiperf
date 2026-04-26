@@ -34,7 +34,7 @@ function currentRouteNamespace() {
 }
 
 const PAGES = [
-  { label: 'Home', path: '/', hint: 'All runs' },
+  { label: 'Namespaces', path: '/', hint: 'Pick a namespace' },
   { label: 'Launch', pathFn: () => {
       const ns = paletteNamespace();
       return ns ? `/ns/${encodeURIComponent(ns)}/launch` : '/';

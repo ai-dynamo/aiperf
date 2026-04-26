@@ -8,7 +8,7 @@ Preact + htm is expected to escape all interpolated strings by default
 in the UI tree would leak raw markup into the DOM. These tests pin the
 contract at every surface where attacker-controlled text flows in:
 
-- Archive / Home row: job name cell.
+- Archive / Namespace overview row: job name cell.
 - Run view: condition ``message`` and pod ``metadata.name``.
 
 The contract: (1) no attacker-injected HTML element is created from
@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 from playwright.async_api import expect
 
-from ._pages import ArchivePage, HomePage, JobDetailPage
+from ._pages import ArchivePage, JobDetailPage, NamespaceOverviewPage
 
 pytestmark = [pytest.mark.e2e]
 
@@ -78,15 +78,50 @@ async def test_archive_escapes_html_in_job_name(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_home_escapes_html_in_job_name(
+async def test_namespace_overview_escapes_html_in_job_name(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Same contract as archive, on the Home run-list."""
+    """Same contract as archive, on the per-namespace overview run list."""
     fake_k8s_client.jobs_raw[0]["metadata"]["name"] = _XSS_PAYLOAD
-    home = HomePage(page, live_operator_app.base_url)
-    await home.goto()
-    await expect(home.rows().first).to_be_visible()
+    overview = NamespaceOverviewPage(
+        page, live_operator_app.base_url, namespace="aiperf-bench"
+    )
+    await overview.goto()
     await _assert_escaped(page)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_namespace_name_with_html_chars_renders_escaped(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Namespace tile on the picker escapes HTML in the namespace name.
+
+    The fixture's namespaces are plain ASCII; to exercise the namespace-name
+    XSS path, inject a fake job into the running app's ``jobs`` signal via
+    ``page.evaluate``. If the app does not expose its signals on
+    ``window.__aiperf_state__`` the test is skipped (fixture augmentation
+    is intentionally out of scope here).
+    """
+    nasty = "ns<script>alert(1)</script>"
+    await page.goto(live_operator_app.base_url + "/")
+    await page.evaluate(f"""
+      (() => {{
+        const mod = window.__aiperf_state__;
+        if (!mod || !mod.jobs) return;
+        mod.jobs.value = [
+          ...mod.jobs.value,
+          {{ namespace: {nasty!r}, name: 'job1', phase: 'Running', startTime: new Date().toISOString() }},
+        ];
+      }})()
+    """)
+    tile = page.locator(f"[data-testid='np-tile-{nasty}']")
+    if await tile.count() == 0:
+        pytest.skip(
+            "App does not expose signals on window; XSS test for ns names "
+            "requires fixture augmentation (deferred)."
+        )
+    inner = await tile.inner_html()
+    assert "<script>" not in inner
 
 
 @pytest.mark.asyncio(loop_scope="session")

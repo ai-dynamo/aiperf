@@ -111,7 +111,7 @@ async def test_launch_view_run_deep_links_to_new_run(
     """Clicking ``launch-view-run`` navigates to the new run's workbench.
 
     After success, ``viewRun`` in ``launch.js`` calls
-    ``navigate(/run/<ns>/<name>)``. The target page mounts even though
+    ``navigate(/ns/<ns>/run/<name>)``. The target page mounts even though
     the CR doesn't actually exist in the fake — ``_get_job_impl`` falls
     back to the archived branch when it can't find a CR or PVC dir, but
     for a fresh non-existent run it simply 404s. The URL change itself
@@ -125,7 +125,7 @@ async def test_launch_view_run_deep_links_to_new_run(
     await launch.submit().click()
     await expect(page.get_by_test_id("launch-success")).to_be_visible()
     await page.get_by_test_id("launch-view-run").click()
-    await page.wait_for_url("**/run/e2e-bench/e2e-launch-smoke")
+    await page.wait_for_url("**/ns/e2e-bench/run/e2e-launch-smoke")
 
 
 @pytest.mark.asyncio(loop_scope="session")

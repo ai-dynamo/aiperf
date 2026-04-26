@@ -549,9 +549,11 @@ async def test_run_gpu_section_renders_with_seeded_metrics(
     gpu = page.get_by_test_id("run-gpu")
     await expect(gpu).to_be_visible()
     await expect(gpu.locator(".run-gpu-card")).to_have_count(1)
-    await expect(gpu.locator(".run-gpu-idx")).to_contain_text("GPU 0")
-    await expect(gpu.locator(".run-gpu-endpoint")).to_contain_text("h100-0.svc:9400")
-    await expect(gpu.locator(".run-gpu-model")).to_contain_text("NVIDIA H100")
+    # The card header concatenates endpoint, GPU index, and model.
+    header = gpu.locator(".run-gpu-header")
+    await expect(header).to_contain_text("h100-0.svc:9400")
+    await expect(header).to_contain_text("GPU 0")
+    await expect(header).to_contain_text("NVIDIA H100")
     # Primary tile labels are fixed; values come from ``current``.
     power = gpu.locator(".run-gpu-tile").filter(has_text="POWER")
     util = gpu.locator(".run-gpu-tile").filter(has_text="UTIL")
@@ -601,28 +603,27 @@ async def test_reliability_meter_goodput_when_slos_declared(
         page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
     )
     await detail.goto()
-    meters = page.locator(".run-meters .run-meter")
-    reliability = meters.filter(has_text="GOODPUT")
+    kpis = page.locator(".run-kpis .run-kpi")
+    reliability = kpis.filter(has_text="GOODPUT")
     await expect(reliability).to_be_visible()
     # failed = total - goodput = 100 - 85 = 15
-    await expect(reliability.locator(".run-meter-value")).to_contain_text("15")
+    await expect(reliability.locator(".run-kpi-big-val")).to_contain_text("15")
     # Pass rate is formatted as "<n>% pass"
     await expect(reliability).to_contain_text("85.0% pass")
-    # Non-zero failure → amber tone.
-    await expect(reliability).to_have_class(re.compile(r"run-meter--amber"))
+    # Non-zero failure → warn tone.
+    await expect(reliability).to_have_class(re.compile(r"run-kpi--warn"))
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_run_latency_p99_tile_red_tone_over_threshold(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """LATENCY P99 tile gets the ``run-meter--red`` modifier when p99 > 500 ms.
+    """``Latency p99`` KPI gets the ``run-kpi--warn`` modifier when p99 > 500 ms.
 
     Threshold is hard-coded in ``run.js``:
-    ``tone=${p99 != null && p99 > 500 ? 'red' : 'paper'}``. Seed a
-    summary with ``latency_p99_ms = 1000`` and confirm the meter class
-    includes ``run-meter--red``; flip to 100 ms and confirm the fallback
-    ``run-meter--paper`` tone applies instead.
+    ``tone=${p99 != null && p99 > 500 ? 'warn' : ''}``. Seed a summary
+    with ``latency_p99_ms = 1000`` and confirm the kpi class includes
+    ``run-kpi--warn``.
     """
     _set_job_summary(
         fake_k8s_client,
@@ -634,16 +635,16 @@ async def test_run_latency_p99_tile_red_tone_over_threshold(
         page, live_operator_app.base_url, "aiperf-bench", "aiperf-llama3-c128"
     )
     await detail.goto()
-    p99 = page.locator(".run-meters .run-meter").filter(has_text="LATENCY P99")
-    await expect(p99).to_have_class(re.compile(r"run-meter--red"))
-    await expect(p99.locator(".run-meter-value")).to_contain_text("1,000")
+    p99 = page.locator(".run-kpis .run-kpi").filter(has_text="Latency p99")
+    await expect(p99).to_have_class(re.compile(r"run-kpi--warn"))
+    await expect(p99.locator(".run-kpi-big-val")).to_contain_text("1,000")
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_run_sparks_section_renders_one_tile_per_spec(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``run-sparks`` mounts four ``.run-spark`` tiles — one per ``SPARK_SPECS`` entry.
+    """``run-sparks`` mounts four ``.run-spark-tile`` tiles — one per ``SPARK_SPECS`` entry.
 
     The spec list in ``run.js`` is ``[rps, p99, ttft, tokps]``; the view
     maps over it inside the live-only ``bucket === 'live'`` guard. Target
@@ -655,8 +656,8 @@ async def test_run_sparks_section_renders_one_tile_per_spec(
     await detail.goto()
     sparks = page.get_by_test_id("run-sparks")
     await expect(sparks).to_be_visible()
-    await expect(sparks.locator(".run-spark")).to_have_count(4)
+    await expect(sparks.locator(".run-spark-tile")).to_have_count(4)
     for label in ("THROUGHPUT", "LATENCY P99", "TTFT P99", "TOKEN/S"):
-        await expect(sparks.locator(".run-spark-label", has_text=label)).to_have_count(
-            1
-        )
+        await expect(
+            sparks.locator(".run-spark-tile-label", has_text=label)
+        ).to_have_count(1)

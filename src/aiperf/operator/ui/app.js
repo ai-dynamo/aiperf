@@ -12,18 +12,19 @@
  * watch that run finish, grab its results, compare two runs) and the UI gets
  * out of the way of that intent.
  *
- * Routes:
- *   /                → smart Home (active run / pick-one cards / launch CTA)
- *   /ns/:ns/launch   → YAML editor + templates, POST to the operator
- *   /ns/:ns/run/:name → the rich workbench for a single run
- *   /ns/:ns/archive  → past-runs browser
- *   /compare         → side-by-side chart overlay
- *   /log             → durable run log (kept but de-emphasized)
+ * Routes (canonical, post Task 11):
+ *   /                  → namespace picker (cross-namespace landing)
+ *   /ns/:ns            → namespace overview (per-ns landing)
+ *   /ns/:ns/launch     → YAML editor + templates, POST to the operator
+ *   /ns/:ns/archive    → namespace-scoped past-runs browser
+ *   /ns/:ns/run/:name  → single-run workbench
+ *   /ns/:ns/run/:name/runs/:epoch → workbench pinned to a historical epoch
+ *   /analysis          → cross-run analysis (alias: /compare)
+ *   /log               → durable run log
  *
- * Legacy paths (`/jobs`, `/leaderboard`, `/compare`, `/history`) still
- * resolve to the new views so deep links keep working. The bare
- * ``/run/:ns/:name`` and ``/jobs/:ns/:name`` aliases were retired in
- * Task 8 in favour of the namespace-prefixed form.
+ * Legacy unprefixed paths (`/jobs`, `/leaderboard`, `/history`, `/fleet`,
+ * `/run/:ns/:name`, `/jobs/:ns/:name`, bare `/launch`, bare `/archive`)
+ * have been retired. Unknown routes fall through to the namespace picker.
  */
 
 import { html, render } from 'htm/preact';
@@ -34,7 +35,6 @@ import { jobs, clusterInfo, globalError } from './lib/state.js';
 import { TopRail } from './components/top-rail.js';
 import { LogStrip } from './components/log-strip.js';
 import { CommandPalette } from './components/command-palette.js';
-import { Home } from './views/home.js';
 import { Launch } from './views/launch.js';
 import { Run } from './views/run.js';
 import { Archive } from './views/archive.js';
@@ -46,6 +46,7 @@ import { NamespaceOverview } from './views/namespace-overview.js';
 import { getLastNamespace } from './lib/ns-prefs.js';
 
 function resolveView(currentRoute) {
+  if (currentRoute === '/')                            return { kind: 'namespace-picker' };
   const runEpochMatch = matchRoute('/ns/:ns/run/:name/runs/:epoch', currentRoute);
   if (runEpochMatch)                                   return { kind: 'run', params: runEpochMatch };
   const runMatch = matchRoute('/ns/:ns/run/:name', currentRoute);
@@ -59,12 +60,9 @@ function resolveView(currentRoute) {
   const nsOverviewMatch = matchRoute('/ns/:ns', currentRoute);
   if (nsOverviewMatch)                                 return { kind: 'namespace-overview', params: nsOverviewMatch };
   if (currentRoute === '/compare'
-    || currentRoute === '/leaderboard'
     || currentRoute === '/analysis')                   return { kind: 'analysis' };
-  if (currentRoute === '/log'
-    || currentRoute === '/history')                    return { kind: 'log' };
-  if (currentRoute === '/')                            return { kind: 'namespace-picker' };
-  return { kind: 'home' };
+  if (currentRoute === '/log')                         return { kind: 'log' };
+  return { kind: 'namespace-picker' };
 }
 
 function App() {
@@ -153,7 +151,7 @@ function App() {
   } else if (resolved.kind === 'namespace-overview') {
     mainView = html`<${NamespaceOverview} ns=${resolved.params.ns} />`;
   } else {
-    mainView = html`<${Home} />`;
+    mainView = html`<${NamespacePicker} />`;
   }
 
   return html`

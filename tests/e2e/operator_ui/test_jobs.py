@@ -92,11 +92,11 @@ async def test_archive_sort_selector_applies(
 async def test_archive_row_click_navigates_to_run_detail(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Clicking a row navigates to ``/run/<ns>/<name>`` and renders the detail page."""
+    """Clicking a row navigates to ``/ns/<ns>/run/<name>`` and renders the detail page."""
     archive = ArchivePage(page, live_operator_app.base_url, namespace="aiperf-bench")
     await archive.goto()
     await archive.row("aiperf-llama3-c128").click()
-    await page.wait_for_url("**/run/aiperf-bench/aiperf-llama3-c128")
+    await page.wait_for_url("**/ns/aiperf-bench/run/aiperf-llama3-c128")
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
 
 

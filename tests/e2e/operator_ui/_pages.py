@@ -7,19 +7,17 @@ handful of interactions the per-page test files actually exercise.
 
 The operator UI was rewritten to the WORKBENCH shell (see
 ``src/aiperf/operator/ui/app.js``); routes and test-ids changed
-substantially from the prior Flight-Deck incarnation. This module
-targets the current contract:
+substantially from the prior Flight-Deck incarnation. After Task 11
+the legacy Home view and unprefixed routes have been retired; this
+module targets the current canonical contract:
 
-- ``/``           → Home view, root ``page-home``
-- ``/ns/:ns/archive`` → Namespace-scoped Archive view, root ``page-archive``
-- ``/ns/:ns/run/:name`` → single-run workbench, root ``page-job-detail``
+- ``/``                  → Namespace picker, root ``page-namespace-picker``
+- ``/ns/:ns``            → Namespace overview, root ``page-namespace-overview``
+- ``/ns/:ns/launch``     → Launch view, root ``page-launch``
+- ``/ns/:ns/archive``    → Archive view, root ``page-archive``
+- ``/ns/:ns/run/:name``  → Single-run workbench, root ``page-job-detail``
 - ``/compare`` / ``/analysis`` → Analysis view, root ``page-leaderboard``
-- ``/log`` / ``/history`` → Log view, root ``page-history``
-- ``/launch``     → Launch view, root ``page-launch``
-
-Legacy URLs (``/jobs``, ``/jobs/:ns/:name``, ``/leaderboard``,
-``/history``) still resolve so deep links keep working; tests use the
-new canonical paths.
+- ``/log``               → Log view, root ``page-history``
 """
 
 from __future__ import annotations
@@ -41,32 +39,6 @@ class BasePage:
         # ``/#<route>``, with ``/`` short-circuited to the bare index.
         suffix = "" if route in ("", "/") else f"#{route}"
         await self.page.goto(self.base_url + "/" + suffix)
-
-
-class HomePage(BasePage):
-    """The ``/`` Home view — dense list of all runs grouped by namespace."""
-
-    async def goto(self) -> None:
-        await self._goto("/")
-        await expect(self.page.get_by_test_id("page-home")).to_be_visible()
-
-    def summary(self) -> Locator:
-        """The five-cell summary strip (Running / Passed / Fault / NS / GPUs)."""
-        return self.page.get_by_test_id("hm-summary")
-
-    def summary_cell(self, label: str) -> Locator:
-        """A single cell in the summary strip, matched by its uppercase label.
-
-        Args:
-            label: One of ``Running``, ``Passed``, ``Fault``, ``NS``, ``GPUs``.
-        """
-        return self.summary().locator(".hm-cell", has_text=label)
-
-    def row(self, namespace: str, name: str) -> Locator:
-        return self.page.get_by_test_id(f"hm-row-{namespace}-{name}")
-
-    def rows(self) -> Locator:
-        return self.page.locator("[data-testid^='hm-row-']")
 
 
 @dataclass

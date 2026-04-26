@@ -3,14 +3,11 @@
 """E2E tests for the Analysis (former Leaderboard) view.
 
 The WORKBENCH rewrite replaced the dedicated leaderboard page with a
-combined Analysis view at ``/compare`` / ``/analysis`` / ``/leaderboard``
-(all three aliases resolve to the same view). The Pareto chart + cluster
-grouping display all jobs that have ``profile_export_aiperf.json``
-artifacts; the former ranked-table and metric-selector widgets are gone.
-
-These tests exercise what survived: the page mounts at
-``/leaderboard`` (via alias), renders a chart canvas, and the legacy
-alias continues to serve the Analysis view.
+combined Analysis view at ``/compare`` / ``/analysis``. The Pareto
+chart + cluster grouping display all jobs that have
+``profile_export_aiperf.json`` artifacts; the former ranked-table and
+metric-selector widgets are gone. The legacy ``/leaderboard`` alias was
+retired in Task 11.
 """
 
 from __future__ import annotations
@@ -21,20 +18,6 @@ from playwright.async_api import expect
 from ._pages import AnalysisPage
 
 pytestmark = [pytest.mark.e2e]
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_leaderboard_alias_resolves_to_analysis(
-    live_operator_app, seeded_results_dir, fake_k8s_client, page
-) -> None:
-    """The legacy ``/leaderboard`` URL renders the Analysis view.
-
-    ``resolveView`` in ``app.js`` maps ``/leaderboard`` → kind ``analysis``
-    so older bookmarks keep working. We cold-load the legacy URL and
-    assert the new root ``page-leaderboard`` (Analysis view) is visible.
-    """
-    await page.goto(f"{live_operator_app.base_url}/#/leaderboard")
-    await expect(page.get_by_test_id("page-leaderboard")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")
