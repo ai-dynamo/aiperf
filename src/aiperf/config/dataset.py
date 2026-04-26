@@ -77,6 +77,16 @@ class SyntheticDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Dataset identifier — unique within the benchmark's datasets list. "
+            "Used in `phase.dataset = '<name>'` references and in result file paths. "
+            "Common names: 'main', 'eval', 'warmup_data'.",
+        ),
+    ]
+
     type: Annotated[
         Literal[DatasetType.SYNTHETIC],
         Field(description="Dataset type discriminator. Must be 'synthetic'."),
@@ -216,6 +226,16 @@ class FileDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Dataset identifier — unique within the benchmark's datasets list. "
+            "Used in `phase.dataset = '<name>'` references and in result file paths. "
+            "Common names: 'main', 'eval', 'warmup_data'.",
+        ),
+    ]
+
     type: Annotated[
         Literal[DatasetType.FILE],
         Field(description="Dataset type discriminator. Must be 'file'."),
@@ -295,16 +315,27 @@ class PublicDataset(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Dataset identifier — unique within the benchmark's datasets list. "
+            "Used in `phase.dataset = '<name>'` references and in result file paths. "
+            "Common names: 'main', 'eval', 'warmup_data'.",
+        ),
+    ]
+
     type: Annotated[
         Literal[DatasetType.PUBLIC],
         Field(description="Dataset type discriminator. Must be 'public'."),
     ]
 
-    name: Annotated[
+    dataset: Annotated[
         PublicDatasetType,
         Field(
             description="Pre-configured public dataset to download and use for benchmarking. "
-            "AIPerf automatically downloads and parses these datasets. "
+            "Name of the HuggingFace public dataset enum (e.g. 'sharegpt', 'alpaca'). "
+            "AIPerf automatically downloads and parses these datasets.",
         ),
     ]
 
@@ -405,6 +436,16 @@ class ComposedDataset(BaseConfig):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Dataset identifier — unique within the benchmark's datasets list. "
+            "Used in `phase.dataset = '<name>'` references and in result file paths. "
+            "Common names: 'main', 'eval', 'warmup_data'.",
+        ),
+    ]
 
     type: Annotated[
         Literal[DatasetType.COMPOSED],

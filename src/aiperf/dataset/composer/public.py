@@ -34,7 +34,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
         Returns:
             list[Conversation]: Finalized conversations ready for benchmarking.
         """
-        dataset_type = self.dataset_config.name
+        dataset_type = self.dataset_config.dataset
 
         LoaderClass = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, dataset_type)
 
