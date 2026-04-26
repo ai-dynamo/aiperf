@@ -24,6 +24,11 @@ app.command(
     help="Run a benchmark in Kubernetes",
 )
 app.command(
+    "aiperf.cli_commands.kube.sweep:app",
+    name="sweep",
+    help="Run a parameter sweep or multi-run benchmark in Kubernetes",
+)
+app.command(
     "aiperf.cli_commands.kube.generate:app",
     name="generate",
     help="Generate Kubernetes YAML manifests",
