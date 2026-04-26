@@ -371,8 +371,10 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
     if len(successful_runs) >= 2:
         logger.info("Computing aggregate statistics...")
-        aggregate_and_export(
-            results, plan, strategy=strategy, base_dir=base_dir, logger=logger
+        _asyncio.run(
+            aggregate_and_export(
+                results, plan, strategy=strategy, base_dir=base_dir, logger=logger
+            )
         )
     elif len(successful_runs) == 1:
         logger.warning(

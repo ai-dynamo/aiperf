@@ -132,7 +132,7 @@ def _build_convergence_criterion(plan: BenchmarkPlan):  # noqa: ANN202
     )
 
 
-def aggregate_and_export(
+async def aggregate_and_export(
     results: list,
     plan: BenchmarkPlan,
     *,
@@ -140,7 +140,12 @@ def aggregate_and_export(
     base_dir: Path,
     logger: AIPerfLogger,
 ) -> None:
-    """Aggregate ``results`` and write JSON/CSV/detailed artifacts."""
+    """Aggregate ``results`` and write JSON/CSV/detailed artifacts.
+
+    Async because the sweep-controller calls this from inside a running
+    asyncio loop (``sweep_controller.main`` is async); the CLI ``aiperf
+    profile`` path wraps it in ``asyncio.run``.
+    """
     import asyncio
 
     from aiperf.exporters.aggregate import (
@@ -164,24 +169,21 @@ def aggregate_and_export(
 
     detailed_result = _maybe_compute_detailed(plan, results)
 
-    async def export_artifacts():
-        await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
-        json_exporter = AggregateConfidenceJsonExporter(exporter_config)
-        csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
+    await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
+    json_exporter = AggregateConfidenceJsonExporter(exporter_config)
+    csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
 
-        tasks = [json_exporter.export(), csv_exporter.export()]
+    tasks = [json_exporter.export(), csv_exporter.export()]
 
-        if detailed_result is not None:
-            detailed_config = AggregateExporterConfig(
-                result=detailed_result,
-                output_dir=aggregate_dir,
-            )
-            detailed_exporter = AggregateDetailedJsonExporter(detailed_config)
-            tasks.append(detailed_exporter.export())
+    if detailed_result is not None:
+        detailed_config = AggregateExporterConfig(
+            result=detailed_result,
+            output_dir=aggregate_dir,
+        )
+        detailed_exporter = AggregateDetailedJsonExporter(detailed_config)
+        tasks.append(detailed_exporter.export())
 
-        return await asyncio.gather(*tasks)
-
-    export_paths = asyncio.run(export_artifacts())
+    export_paths = await asyncio.gather(*tasks)
 
     logger.info(f"Aggregate JSON written to: {export_paths[0]}")
     logger.info(f"Aggregate CSV written to: {export_paths[1]}")

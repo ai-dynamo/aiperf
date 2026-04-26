@@ -197,7 +197,7 @@ async def main() -> int:
                 strategy = build_strategy(plan, aiperf_logger)
                 aggregate_dir = strategy.get_aggregate_path(RESULTS_DIR)
                 aggregate_dir.mkdir(parents=True, exist_ok=True)
-                aggregate_and_export(
+                await aggregate_and_export(
                     all_results,
                     plan,
                     strategy=strategy,
