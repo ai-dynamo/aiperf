@@ -218,7 +218,11 @@ def _name_from_config_file(config_file: Path) -> str:
     """
     stem = config_file.stem.lower()
     sanitized = re.sub(r"[^a-z0-9-]", "-", stem).strip("-")
-    return f"{sanitized[:30]}-sweep"
+    # Fall back to a fixed prefix when sanitization eats everything (e.g.,
+    # stems that are all underscores, dots, or empty) so we don't emit a name
+    # starting with "-" — DNS-1123 labels must start with [a-z0-9].
+    safe_stem = sanitized[:30] or "aiperf"
+    return f"{safe_stem}-sweep"
 
 
 async def _submit_sweep(

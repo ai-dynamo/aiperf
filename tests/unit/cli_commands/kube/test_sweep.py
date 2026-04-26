@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.cli_commands.kube import sweep as sweep_cmd
 
@@ -37,7 +39,7 @@ endpoint:
   type: chat
   streaming: true
 datasets:
-  main: {type: synthetic}
+  - {name: main, type: synthetic}
 phases:
   - name: profiling
     type: concurrency
@@ -60,7 +62,7 @@ sweep:
         convergence_threshold=0.05,
     )
     assert cr["kind"] == "AIPerfSweep"
-    assert cr["apiVersion"] == "aiperf.nvidia.com/v1"
+    assert cr["apiVersion"] == "aiperf.nvidia.com/v1alpha1"
     assert "sweep" in cr["spec"]
     assert cr["spec"]["multiRun"]["trials"] == 2
     assert cr["spec"]["multiRun"]["cooldownSeconds"] == 10
@@ -78,7 +80,7 @@ endpoint:
   urls: [http://x]
   type: chat
 datasets:
-  main: {type: synthetic}
+  - {name: main, type: synthetic}
 phases:
   - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
 multi_run:
@@ -144,8 +146,14 @@ sweep:
     assert cr["metadata"]["name"] == "concurrency-grid-sweep"
 
 
-def test_build_sweep_cr_dict_no_sweep_or_multirun(tmp_path: Path) -> None:
-    """Plain config (no sweep:/multi_run:) still builds a valid CR (sweep-only)."""
+def test_build_sweep_cr_dict_no_axis_raises_validation_error(tmp_path: Path) -> None:
+    """Plain config (no sweep:/multi_run:/convergence:) is rejected by AIPerfSweepSpec.
+
+    AIPerfSweep requires at least one axis; for a single benchmark, the user
+    should use `aiperf kube profile` via AIPerfJob instead.
+    """
+    from pydantic import ValidationError
+
     config_file = tmp_path / "plain.yaml"
     config_file.write_text(
         """
@@ -156,20 +164,17 @@ phases:
   - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
 """
     )
-    cr = sweep_cmd._build_sweep_cr_dict(
-        config_file=config_file,
-        kube_options=_kube_options_mock(),
-        multi_run_trials=None,
-        cooldown_seconds=0,
-        convergence_metric=None,
-        convergence_min_runs=3,
-        convergence_max_runs=10,
-        convergence_threshold=0.05,
-    )
-    assert cr["kind"] == "AIPerfSweep"
-    assert "sweep" not in cr["spec"]
-    assert "multiRun" not in cr["spec"]
-    assert "convergence" not in cr["spec"]
+    with pytest.raises(ValidationError, match="at least one of"):
+        sweep_cmd._build_sweep_cr_dict(
+            config_file=config_file,
+            kube_options=_kube_options_mock(),
+            multi_run_trials=None,
+            cooldown_seconds=0,
+            convergence_metric=None,
+            convergence_min_runs=3,
+            convergence_max_runs=10,
+            convergence_threshold=0.05,
+        )
 
 
 def test_name_from_config_file_sanitizes_and_truncates() -> None:
@@ -205,3 +210,372 @@ multiRun:
     )
     assert cr["spec"]["multiRun"]["trials"] == 4
     assert "multiRun" not in cr["spec"]["template"]["spec"]["benchmark"]
+
+
+# =============================================================================
+# Adversarial regression-locks for the just-landed bug-fixes.
+# =============================================================================
+
+
+_VALID_SWEEP_YAML = """
+models: [m]
+endpoint: {urls: [http://x], type: chat}
+datasets:
+  - {name: main, type: synthetic}
+phases:
+  - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
+sweep:
+  type: grid
+  variables: {random_seed: [1, 2]}
+"""
+
+
+def _write_valid_sweep(tmp_path: Path, name: str = "sweep.yaml") -> Path:
+    p = tmp_path / name
+    p.write_text(_VALID_SWEEP_YAML)
+    return p
+
+
+def _build_kwargs() -> dict:
+    """Default kwargs for ``_build_sweep_cr_dict`` so callers only override what matters."""
+    return {
+        "multi_run_trials": None,
+        "cooldown_seconds": 0,
+        "convergence_metric": None,
+        "convergence_min_runs": 3,
+        "convergence_max_runs": 10,
+        "convergence_threshold": 0.05,
+    }
+
+
+# -----------------------------------------------------------------------------
+# A) apiVersion regression-lock (commit 9f85d9eaf)
+# -----------------------------------------------------------------------------
+
+
+def test_build_sweep_cr_dict_apiversion_is_v1alpha1(tmp_path: Path) -> None:
+    """Regression lock: apiVersion must be ``aiperf.nvidia.com/v1alpha1``, not ``v1``.
+
+    A prior bug emitted ``apiVersion: aiperf.nvidia.com/v1`` which the apiserver
+    rejected because the CRD is registered at v1alpha1 only.
+    """
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=_kube_options_mock(),
+        **_build_kwargs(),
+    )
+    assert cr["apiVersion"] == "aiperf.nvidia.com/v1alpha1"
+    assert cr["apiVersion"] != "aiperf.nvidia.com/v1"
+
+
+async def test_submit_sweep_creates_with_v1alpha1_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression lock: the create-call must pass ``version="v1alpha1"``."""
+    from contextlib import asynccontextmanager
+
+    create_mock = AsyncMock()
+    api_client = MagicMock()
+
+    @asynccontextmanager
+    async def fake_k8s_client(**_kwargs):
+        yield api_client
+
+    monkeypatch.setattr(
+        "aiperf.kubernetes.client.k8s_client", fake_k8s_client, raising=True
+    )
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi",
+        lambda _api: MagicMock(create_namespaced_custom_object=create_mock),
+    )
+
+    cr_dict = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=_kube_options_mock(),
+        **_build_kwargs(),
+    )
+    await sweep_cmd._submit_sweep(
+        cr_dict=cr_dict, kube_options=_kube_options_mock(), namespace="ns"
+    )
+
+    create_mock.assert_awaited_once()
+    kwargs = create_mock.await_args.kwargs
+    assert kwargs["version"] == "v1alpha1"
+    assert kwargs["group"] == "aiperf.nvidia.com"
+    assert kwargs["plural"] == "aiperfsweeps"
+    assert kwargs["namespace"] == "ns"
+
+
+# -----------------------------------------------------------------------------
+# B) JSON serialization regression-lock — model_dump must use mode="json"
+# -----------------------------------------------------------------------------
+
+
+def test_build_sweep_cr_dict_uses_model_dump_mode_json(tmp_path: Path) -> None:
+    """Regression lock: deployment.model_dump(mode='json', ...) must be used.
+
+    Without ``mode='json'`` Pydantic returns native Python types (e.g.
+    ``datetime``, ``Path``, ``Enum``) which orjson chokes on at serialization
+    time.
+    """
+
+    class FakeDeployment:
+        def model_dump(self, **kwargs):
+            if kwargs.get("mode") != "json":
+                raise TypeError(
+                    f"model_dump must be called with mode='json' — got {kwargs!r}"
+                )
+            assert kwargs.get("by_alias") is True
+            assert kwargs.get("exclude_defaults") is True
+            return {}
+
+    kube_options = _kube_options_mock()
+    kube_options.to_deployment_config = MagicMock(return_value=FakeDeployment())
+
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=kube_options,
+        **_build_kwargs(),
+    )
+    assert cr["kind"] == "AIPerfSweep"
+
+
+# -----------------------------------------------------------------------------
+# C) Console mandate — dry-run must not use builtins.print
+# -----------------------------------------------------------------------------
+
+
+async def test_sweep_dry_run_uses_kube_console_not_builtin_print(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression lock: dry-run must use ``kube_console.console.print``, not
+    builtin print (the kube CLI forbids builtin print per CLAUDE.md)."""
+    import builtins
+
+    from aiperf.kubernetes import console as kube_console
+
+    config_file = _write_valid_sweep(tmp_path)
+    cli_model = MagicMock()
+    cli_model.config_file = config_file
+
+    def _exploding_print(*_a, **_kw):
+        raise AssertionError("builtins.print must not be used by the sweep CLI")
+
+    monkeypatch.setattr(builtins, "print", _exploding_print)
+
+    captured: list[str] = []
+
+    def _capture(*args, **_kw):
+        captured.append(" ".join(str(a) for a in args))
+
+    monkeypatch.setattr(kube_console.console, "print", _capture)
+
+    await sweep_cmd.sweep(
+        cli_model=cli_model,
+        kube_options=_kube_options_mock(),
+        dry_run=True,
+    )
+
+    assert len(captured) == 1
+    assert "AIPerfSweep" in captured[0]
+    assert "v1alpha1" in captured[0]
+
+
+# -----------------------------------------------------------------------------
+# D) AlreadyExists translation — 409 -> RuntimeError mentioning --name
+# -----------------------------------------------------------------------------
+
+
+async def test_submit_sweep_translates_409_into_user_facing_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ApiException(status=409) must surface a RuntimeError whose message
+    mentions 'already exists' and tells the user to use ``--name``."""
+    from contextlib import asynccontextmanager
+
+    from kubernetes_asyncio.client import ApiException
+
+    api_client = MagicMock()
+
+    @asynccontextmanager
+    async def fake_k8s_client(**_kwargs):
+        yield api_client
+
+    monkeypatch.setattr(
+        "aiperf.kubernetes.client.k8s_client", fake_k8s_client, raising=True
+    )
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi",
+        lambda _api: MagicMock(
+            create_namespaced_custom_object=AsyncMock(
+                side_effect=ApiException(status=409, reason="AlreadyExists")
+            )
+        ),
+    )
+
+    cr_dict = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=_kube_options_mock(),
+        **_build_kwargs(),
+    )
+    with pytest.raises(RuntimeError, match=r"(?s)already exists.*--name"):
+        await sweep_cmd._submit_sweep(
+            cr_dict=cr_dict, kube_options=_kube_options_mock(), namespace="ns"
+        )
+
+
+async def test_submit_sweep_does_not_translate_non_409_api_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-409 ApiException must propagate untouched — only 409 is translated."""
+    from contextlib import asynccontextmanager
+
+    from kubernetes_asyncio.client import ApiException
+
+    api_client = MagicMock()
+
+    @asynccontextmanager
+    async def fake_k8s_client(**_kwargs):
+        yield api_client
+
+    monkeypatch.setattr(
+        "aiperf.kubernetes.client.k8s_client", fake_k8s_client, raising=True
+    )
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi",
+        lambda _api: MagicMock(
+            create_namespaced_custom_object=AsyncMock(
+                side_effect=ApiException(status=500, reason="Internal")
+            )
+        ),
+    )
+
+    cr_dict = sweep_cmd._build_sweep_cr_dict(
+        config_file=_write_valid_sweep(tmp_path),
+        kube_options=_kube_options_mock(),
+        **_build_kwargs(),
+    )
+    with pytest.raises(ApiException):
+        await sweep_cmd._submit_sweep(
+            cr_dict=cr_dict, kube_options=_kube_options_mock(), namespace="ns"
+        )
+
+
+# -----------------------------------------------------------------------------
+# E) Pre-submission validation gates (rule-4 broadening)
+# -----------------------------------------------------------------------------
+
+
+def test_build_sweep_cr_dict_template_spec_sweep_raises_validation_error() -> None:
+    """A sweep block placed under template.spec must be rejected by
+    AIPerfSweepSpec at submit time — rule-4 broadening from commit
+    ``3f772c0de``-era fix."""
+    from pydantic import ValidationError
+
+    from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
+
+    bad_spec = {
+        "multiRun": {"trials": 3},
+        "template": {
+            "spec": {
+                "benchmark": {},
+                "sweep": {"type": "grid", "variables": {"random_seed": [1, 2]}},
+            }
+        },
+    }
+    with pytest.raises(ValidationError, match=r"template\.spec\.sweep"):
+        AIPerfSweepSpec.model_validate(bad_spec)
+
+
+def test_build_sweep_cr_dict_convergence_under_benchmark_raises() -> None:
+    """``convergence`` under template.spec.benchmark must be rejected (rule 4
+    broadened beyond just ``sweep``/``multiRun``)."""
+    from pydantic import ValidationError
+
+    from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
+
+    bad_spec = {
+        "multiRun": {"cooldownSeconds": 5},
+        "template": {
+            "spec": {
+                "benchmark": {
+                    "convergence": {"metric": "ttft_p99"},
+                }
+            }
+        },
+    }
+    with pytest.raises(
+        ValidationError, match=r"template\.spec\.benchmark\.convergence"
+    ):
+        AIPerfSweepSpec.model_validate(bad_spec)
+
+
+# -----------------------------------------------------------------------------
+# F) ConvergenceConfig — min_runs > max_runs
+# -----------------------------------------------------------------------------
+
+
+def test_convergence_config_min_runs_gt_max_runs_raises_validation_error() -> None:
+    """``min_runs`` must be <= ``max_runs``."""
+    from pydantic import ValidationError
+
+    from aiperf.kubernetes.sweep_models import ConvergenceConfig
+
+    with pytest.raises(ValidationError, match=r"must be <="):
+        ConvergenceConfig(metric="ttft_p99", min_runs=10, max_runs=5)
+
+
+def test_build_sweep_cr_dict_min_runs_gt_max_runs_surfaces_validation_error(
+    tmp_path: Path,
+) -> None:
+    """CLI flag combination ``--min-runs 10 --max-runs 5`` must be rejected."""
+    from pydantic import ValidationError
+
+    config_file = _write_valid_sweep(tmp_path)
+    with pytest.raises(ValidationError, match=r"must be <="):
+        sweep_cmd._build_sweep_cr_dict(
+            config_file=config_file,
+            kube_options=_kube_options_mock(),
+            multi_run_trials=None,
+            cooldown_seconds=0,
+            convergence_metric="ttft_p99",
+            convergence_min_runs=10,
+            convergence_max_runs=5,
+            convergence_threshold=0.05,
+        )
+
+
+# -----------------------------------------------------------------------------
+# I) DNS-label safety for _name_from_config_file
+# -----------------------------------------------------------------------------
+
+
+def test_name_from_config_file_underscores_only_does_not_start_with_hyphen() -> None:
+    """``_name_from_config_file(Path('___'))`` must NOT return a name starting
+    with '-' — DNS-1123 labels must start with [a-z0-9]."""
+    out = sweep_cmd._name_from_config_file(Path("___"))
+    assert not out.startswith("-")
+    assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", out)
+    assert out.endswith("-sweep")
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        param("simple", id="lowercase-plain"),
+        param("My.Mixed.Case", id="mixed-case-with-dots"),
+        param("_leading_underscore", id="leading-underscore"),
+        param("a" * 200, id="very-long"),
+        param("___", id="all-underscores-sanitizes-to-empty"),
+        param("...", id="all-dots-sanitizes-to-empty"),
+    ],
+)  # fmt: skip
+def test_name_from_config_file_produces_valid_dns1123_label(stem: str) -> None:
+    """Every output is a valid DNS-1123 label — ``^[a-z0-9][a-z0-9-]*$`` and
+    ends with ``-sweep``."""
+    out = sweep_cmd._name_from_config_file(Path(f"{stem}.yaml"))
+    assert out.endswith("-sweep")
+    assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", out), (
+        f"name {out!r} from stem {stem!r} is not a valid DNS-1123 label"
+    )
+    assert len(out) <= 63
