@@ -188,6 +188,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     from aiperf.operator.routers.results_analytics import (
         create_results_analytics_router,
     )
+    from aiperf.operator.routers.sweeps import create_sweeps_router
 
     base_dir = results_dir or RESULTS_DIR
     api_holder: list[ApiClient | None] = [None]
@@ -203,6 +204,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     _register_k8s_exception_handler(app)
 
     app.include_router(create_jobs_router(api_holder, base_dir))
+    app.include_router(create_sweeps_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
     app.include_router(create_config_router())
 
