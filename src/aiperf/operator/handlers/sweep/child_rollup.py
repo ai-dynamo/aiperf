@@ -13,7 +13,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed", "Completed"})
+# Parent (AIPerfSweep) terminal phases the controller may write; the
+# rollup must not clobber these once set.
+PARENT_TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
 
 __all__ = ["on_child_phase_transition"]
 
@@ -24,6 +27,7 @@ async def on_child_phase_transition(
     status: dict[str, Any],
     name: str,
     namespace: str,
+    **_: Any,
 ) -> None:
     """For each AIPerfJob.status.phase change, if the child has an AIPerfSweep
     ownerReference, recompute the parent's rollup counts."""
@@ -43,7 +47,13 @@ async def on_child_phase_transition(
             },
         }
     }
-    if counts.get("total_terminal_phase"):
+    # Only set phase=Aggregating when all children are terminal AND the parent
+    # has not already reached its own terminal phase (the sweep-controller
+    # owns terminal phase writes; clobbering them is the race documented in
+    # the audit). The list `Aggregating` itself is non-terminal so it is safe
+    # to set repeatedly.
+    parent_phase = (await _read_parent_phase(namespace, sweep_name)) or ""
+    if counts.get("total_terminal_phase") and parent_phase not in PARENT_TERMINAL_PHASES:
         body_patch["status"]["phase"] = counts["total_terminal_phase"]
 
     await _patch_parent_status(
@@ -89,7 +99,7 @@ async def _count_owned_children(
             phase = (child.get("status") or {}).get("phase")
             if phase in {"Succeeded", "Completed"}:
                 completed += 1
-            elif phase in {"Failed", "Cancelled"}:
+            elif phase in {"Failed", "Cancelled", "PartiallyFailed"}:
                 failed += 1
             else:
                 in_flight += 1
@@ -134,3 +144,24 @@ async def _patch_parent_status(
             body=body,
             _content_type="application/merge-patch+json",
         )
+
+
+async def _read_parent_phase(namespace: str, name: str) -> str | None:
+    """Return parent AIPerfSweep status.phase, or None if missing/unreadable."""
+    from kubernetes_asyncio import client as k8s
+
+    from aiperf.kubernetes.client import k8s_client
+
+    try:
+        async with k8s_client() as api:
+            custom = k8s.CustomObjectsApi(api)
+            cr = await custom.get_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="aiperfsweeps",
+                name=name,
+            )
+    except Exception:  # noqa: BLE001 - best-effort read; worst case we re-set Aggregating once
+        return None
+    return ((cr.get("status") or {}).get("phase")) or None

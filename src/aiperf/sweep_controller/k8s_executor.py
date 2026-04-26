@@ -117,6 +117,8 @@ class K8sChildJobExecutor(RunExecutor):
         sweep: dict[str, Any],
         *,
         with_trial_suffix: bool,
+        status_writer: Any | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self._api = api
         self.sweep = sweep
@@ -124,6 +126,8 @@ class K8sChildJobExecutor(RunExecutor):
         self.sweep_namespace: str = sweep["metadata"]["namespace"]
         self.sweep_uid: str = sweep["metadata"]["uid"]
         self.with_trial_suffix = with_trial_suffix
+        self._status_writer = status_writer
+        self._cancel_check = cancel_check
 
     def derive_id(self, plan: BenchmarkPlan | None, var_idx: int, trial: int) -> str:
         return derive_child_name(
@@ -197,8 +201,25 @@ class K8sChildJobExecutor(RunExecutor):
         """Get-or-create the child, await terminal phase, then collect a RunResult."""
         var_idx = run.variation.index if run.variation else 0
         child_name = self.derive_id(plan=None, var_idx=var_idx, trial=run.trial)
+        if self._cancel_check is not None and self._cancel_check():
+            logger.info(f"cancel requested before starting child {child_name}")
+            return RunResult(
+                label=run.label,
+                success=False,
+                error="sweep cancelled before child started",
+                artifacts_path=run.artifact_dir,
+            )
+        if self._status_writer is not None:
+            try:
+                await self._status_writer.current_cell(
+                    variation_index=var_idx,
+                    label=run.label,
+                    trial=run.trial,
+                )
+            except Exception as e:  # noqa: BLE001 - status update is best-effort
+                logger.warning(f"current_cell status write failed: {e}")
         await self._get_or_create(child_name, run)
-        await self._wait_until_terminal(child_name)
+        await self._wait_until_terminal(child_name, cancel_check=self._cancel_check)
         terminal = await self._try_read_child(child_name)
         if terminal is None:
             return RunResult(

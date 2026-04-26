@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from aiperf.orchestrator.models import RunResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiperf.config.benchmark import BenchmarkPlan
     from aiperf.orchestrator.executor import RunExecutor
 
@@ -49,12 +51,18 @@ class MultiRunOrchestrator:
         self,
         plan: BenchmarkPlan,
         executor: RunExecutor,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> list[RunResult]:
         """Execute all (variation, trial) runs in the plan.
 
         Args:
             plan: BenchmarkPlan with configs[], variations[], trials, convergence config.
             executor: Concrete RunExecutor (LocalSubprocessExecutor or K8sChildJobExecutor).
+            cancel_check: Optional callable polled before each variation and each
+                trial inside a variation. When it returns True, the orchestrator
+                returns the partial results gathered so far without starting any
+                further runs.
 
         Returns:
             Flat list of RunResult, ordered by (variation_index, trial_index).
@@ -71,12 +79,21 @@ class MultiRunOrchestrator:
         for var_idx, (cfg, variation) in enumerate(
             zip(plan.configs, plan.variations, strict=False)
         ):
+            if cancel_check is not None and cancel_check():
+                logger.info(f"Sweep cancelled at variation {var_idx}; aborting")
+                return all_results
             strategy = build_strategy(plan, logger)  # fresh per-cell strategy
             strategy.validate_config(cfg)
             cell_results: list[RunResult] = []
             trial = 0
 
             while strategy.should_continue(cell_results):
+                if cancel_check is not None and cancel_check():
+                    logger.info(
+                        f"Sweep cancelled mid-cell at v{var_idx} t{trial}; aborting"
+                    )
+                    all_results.extend(cell_results)
+                    return all_results
                 next_cfg = strategy.get_next_config(cfg, cell_results)
                 label = strategy.get_run_label(trial)
                 cell_dir = self.base_dir / variation.label

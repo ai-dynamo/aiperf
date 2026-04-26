@@ -82,6 +82,16 @@ class ConvergenceConfig(BaseConfig):
         description="Criterion threshold. For cv_threshold, the coefficient-of-variation cap.",
     )
 
+    @model_validator(mode="after")
+    def _validate_run_bounds(self) -> ConvergenceConfig:
+        if self.min_runs > self.max_runs:
+            raise ValueError(
+                f"convergence.min_runs ({self.min_runs}) must be <= "
+                f"convergence.max_runs ({self.max_runs}). Either lower min_runs "
+                f"or raise max_runs to allow the convergence check to run."
+            )
+        return self
+
 
 class FailurePolicy(BaseConfig):
     """Failure handling policy for the sweep."""
@@ -144,6 +154,7 @@ class AIPerfSweepSpec(BaseConfig):
     )
     ttl_seconds_after_finished: int | None = Field(
         default=None,
+        ge=0,
         description="Parent CR retention after terminal phase; children use their own TTL.",
     )
     template: AIPerfJobTemplate = Field(
@@ -171,9 +182,21 @@ class AIPerfSweepSpec(BaseConfig):
                     "`multiRun.trials` must be unset when `convergence` is set; "
                     "convergence.maxRuns governs the per-cell trial cap."
                 )
-        # Rule 4: template.spec.benchmark must not contain sweep/multi_run keys.
-        benchmark = self.template.spec.get("benchmark") or {}
-        for forbidden in ("sweep", "multi_run", "multiRun"):
+        # Rule 4: template.spec must not contain sweep-axis keys at any
+        # level the user can mistakenly nest them at: template.spec.{sweep,
+        # multi_run, multiRun, convergence} OR template.spec.benchmark.{...}.
+        # Sweep-axis keys belong at AIPerfSweep.spec, not stamped onto every
+        # child.
+        forbidden_keys = ("sweep", "multi_run", "multiRun", "convergence")
+        template_spec = self.template.spec or {}
+        for forbidden in forbidden_keys:
+            if forbidden in template_spec:
+                raise ValueError(
+                    f"`template.spec.{forbidden}` is not permitted on AIPerfSweep. "
+                    f"Set `spec.{forbidden}` at the top level instead."
+                )
+        benchmark = template_spec.get("benchmark") or {}
+        for forbidden in forbidden_keys:
             if forbidden in benchmark:
                 raise ValueError(
                     f"`template.spec.benchmark.{forbidden}` is not permitted on AIPerfSweep. "

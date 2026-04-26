@@ -29,6 +29,7 @@ async def handle(
     name: str,
     namespace: str,
     patch: kopf.Patch,
+    **_: Any,
 ) -> None:
     """Validate spec, set status, provision RBAC, create sweep-controller JobSet."""
     try:

@@ -16,6 +16,8 @@ import kopf
 
 __all__ = ["cancel"]
 
+TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
+
 
 async def cancel(
     *,
@@ -24,21 +26,34 @@ async def cancel(
     name: str,
     namespace: str,
     patch: kopf.Patch,
+    **_: Any,
 ) -> None:
-    """Mirror spec.cancel into status.conditions[Cancelling]."""
+    """Mirror spec.cancel into status.conditions[Cancelling].
+
+    On cancel=true: append (or replace) Cancelling=True condition.
+    On cancel=false: clear any existing Cancelling condition (sticky-flag fix).
+    Skips when the sweep has already reached a terminal phase — cancelling a
+    finished sweep is a no-op visually.
+    """
     cancelling = bool(spec.get("cancel"))
-    if not cancelling:
+    status_block = body.get("status") or {}
+    parent_phase = status_block.get("phase") or ""
+    if parent_phase in TERMINAL_PHASES:
         return
-    now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    existing = (body.get("status") or {}).get("conditions") or []
+    existing = status_block.get("conditions") or []
     new_conditions = [c for c in existing if c.get("type") != "Cancelling"]
-    new_conditions.append(
-        {
-            "type": "Cancelling",
-            "status": "True",
-            "reason": "UserRequested",
-            "message": "spec.cancel set to true",
-            "lastTransitionTime": now,
-        }
-    )
+    if cancelling:
+        now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        new_conditions.append(
+            {
+                "type": "Cancelling",
+                "status": "True",
+                "reason": "UserRequested",
+                "message": "spec.cancel set to true",
+                "lastTransitionTime": now,
+            }
+        )
+    elif len(new_conditions) == len(existing):
+        # spec.cancel=false and no prior Cancelling condition: nothing to do.
+        return
     patch.status["conditions"] = new_conditions

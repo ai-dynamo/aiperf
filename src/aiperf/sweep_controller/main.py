@@ -14,6 +14,7 @@ Aggregation re-runs only if the ready marker is missing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ AGGREGATE_READY_MARKER = ".aiperf_results_ready.json"
 RESULTS_DIR = Path("/results")
 AGGREGATE_SUBDIR = "aggregate"
 RESULTS_SERVER_PORT = 19090
+CANCEL_POLL_INTERVAL_SECONDS = 10.0
 
 
 def aggregate_marker_exists(base_dir: Path) -> bool:
@@ -40,6 +42,37 @@ def write_aggregate_marker(base_dir: Path) -> None:
     tmp = marker.with_suffix(".tmp")
     tmp.write_bytes(orjson.dumps({"ready": True}))
     tmp.rename(marker)
+
+
+async def _poll_cancel_flag(
+    custom: Any,
+    *,
+    namespace: str,
+    name: str,
+    flag: dict[str, bool],
+    interval: float = CANCEL_POLL_INTERVAL_SECONDS,
+) -> None:
+    """Background poller: set flag['requested']=True if parent CR's spec.cancel is set.
+
+    Best-effort: apiserver hiccups are swallowed. The flag is monotonic — once set,
+    it stays set, and the orchestrator/executor read it between cells/trials.
+    """
+    while not flag["requested"]:
+        try:
+            cr = await custom.get_namespaced_custom_object(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="aiperfsweeps",
+                name=name,
+            )
+            if bool((cr.get("spec") or {}).get("cancel", False)):
+                logger.info("cancel observed on parent CR; signalling orchestrator")
+                flag["requested"] = True
+                return
+        except Exception as e:  # noqa: BLE001 - best-effort poll, never crash the controller
+            logger.debug(f"cancel-flag poll transient error: {e}")
+        await asyncio.sleep(interval)
 
 
 def _write_aggregate_manifest(
@@ -120,6 +153,18 @@ async def main() -> int:
         spec = AIPerfSweepSpec.model_validate(sweep_cr["spec"])
 
         plan = build_plan_from_sweep(sweep_cr)
+        cancel_flag: dict[str, bool] = {"requested": False}
+        cancel_task = asyncio.create_task(
+            _poll_cancel_flag(
+                custom,
+                namespace=sweep_namespace,
+                name=sweep_name,
+                flag=cancel_flag,
+            )
+        )
+        status_writer = SweepStatusWriter(
+            api, name=sweep_name, namespace=sweep_namespace
+        )
         executor = K8sChildJobExecutor(
             api=api,
             sweep=sweep_cr,
@@ -127,13 +172,21 @@ async def main() -> int:
                 multi_run_trials=(spec.multi_run.trials if spec.multi_run else None),
                 has_convergence=spec.convergence is not None,
             ),
-        )
-        status_writer = SweepStatusWriter(
-            api, name=sweep_name, namespace=sweep_namespace
+            status_writer=status_writer,
+            cancel_check=lambda: cancel_flag["requested"],
         )
 
         orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
-        all_results = await orchestrator.execute(plan, executor)
+        try:
+            all_results = await orchestrator.execute(
+                plan,
+                executor,
+                cancel_check=lambda: cancel_flag["requested"],
+            )
+        finally:
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
 
         if not aggregate_marker_exists(RESULTS_DIR):
             await status_writer.aggregation_running()
