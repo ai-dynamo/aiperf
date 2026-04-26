@@ -145,6 +145,10 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
+  debug:
+    class: aiperf.api.routers.debug:DebugRouter
+    description: Controller-internal state snapshots for diagnosing CR status.workers issues.
+
   dataset:
     class: aiperf.api.routers.dataset:DatasetRouter
     description: Dataset metadata and file streaming with compression support.
