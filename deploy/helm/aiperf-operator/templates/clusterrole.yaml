@@ -46,11 +46,16 @@ rules:
   resources: ["deployments"]
   verbs: ["get", "list", "watch"]
 
-# ServiceAccounts - preflight verifies custom SA existence
+# ServiceAccounts - preflight verifies custom SA existence; sweep handler
+#   creates a per-sweep SA (`aiperf-sweep-controller-<sweep>`) so the
+#   sweep-controller pod has minimal namespace-scoped access.
 # ResourceQuotas - preflight inspects quotas before scheduling
 # Secrets - preflight verifies referenced imagePullSecrets / env secrets
 - apiGroups: [""]
-  resources: ["serviceaccounts", "resourcequotas", "secrets"]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["resourcequotas", "secrets"]
   verbs: ["get", "list", "watch"]
 
 # NetworkPolicies - preflight checks benchmark-namespace network policies
