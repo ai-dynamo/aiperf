@@ -16,6 +16,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { route, matchRoute, navigate } from '../lib/router.js';
+import { launchDivergence } from '../lib/state.js';
 import { NamespaceSwitcher } from './namespace-switcher.js';
 
 const pad = n => String(n).padStart(2, '0');
@@ -98,6 +99,9 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
   const crumbs = trailingCrumbs(viewKind, runParams, ns);
   const netLabel = net === 'ok' ? 'UP' : net === 'warn' ? 'RETRY' : 'DOWN';
   const launchTarget = ns ? `/ns/${encodeURIComponent(ns)}/launch` : null;
+  // Reading the signal in render subscribes the component, so the pill
+  // re-renders automatically when the launch view writes/clears divergence.
+  const pillClass = 'ns-switcher-pill' + (launchDivergence.value ? ' ns-switcher-pill--bad' : '');
 
   return html`
     <header class="topbar" data-testid="top-nav">
@@ -115,7 +119,7 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
           ${ns && html`
             <span class="topbar-crumb topbar-crumb--ns">
               <button
-                class="ns-switcher-pill"
+                class=${pillClass}
                 data-testid="ns-switcher-pill"
                 onclick=${() => setSwitcherOpen(v => !v)}
                 title="Switch namespace"

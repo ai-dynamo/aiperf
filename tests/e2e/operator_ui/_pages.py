@@ -122,21 +122,33 @@ class LogPage(BasePage):
         await expect(self.page.get_by_test_id("page-history")).to_be_visible()
 
 
+@dataclass
 class LaunchPage(BasePage):
-    """The ``/launch`` YAML-editor view (root ``page-launch``)."""
+    """The ``/ns/:ns/launch`` namespace-aware Launch view (root ``page-launch``).
+
+    The launch view auto-fills ``namespace: <ns>`` from the URL, and locks
+    the LAUNCH submit button when the YAML's top-level ``namespace:``
+    diverges from the URL segment. The breadcrumb namespace pill flips
+    to a ``ns-switcher-pill--bad`` class while divergence is active.
+    """
+
+    namespace: str = "aiperf-bench"
 
     async def goto(self) -> None:
-        await self._goto("/launch")
+        await self._goto(f"/ns/{self.namespace}/launch")
         await expect(self.page.get_by_test_id("page-launch")).to_be_visible()
+
+    def editor(self) -> Locator:
+        return self.page.get_by_test_id("launch-editor")
+
+    def submit(self) -> Locator:
+        return self.page.get_by_test_id("launch-submit")
 
     async def pick_template(self, template_id: str) -> None:
         await self.page.get_by_test_id(f"launch-template-{template_id}").click()
 
     async def set_yaml(self, yaml_text: str) -> None:
-        await self.page.get_by_test_id("launch-yaml").fill(yaml_text)
-
-    async def submit(self) -> None:
-        await self.page.get_by_test_id("launch-submit").click()
+        await self.editor().fill(yaml_text)
 
 
 class NamespacePickerPage(BasePage):

@@ -14,9 +14,11 @@
  */
 
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { navigate } from '../lib/router.js';
+import { extractNamespaceField } from '../lib/yaml-namespace.js';
+import { launchDivergence } from '../lib/state.js';
 
 /* ───────────────────────── templates ───────────────────────── */
 
@@ -274,11 +276,27 @@ function peekManifest(text) {
   }
 }
 
-export function Launch() {
+/* ───────────────── namespace auto-fill helper ───────────────── */
+
+/** Replace the first ``namespace:`` line in a YAML body with ``namespace: <ns>``.
+ *  Handles both top-level (``namespace: ...``) and indented
+ *  (``  namespace: ...`` under metadata) shapes — whichever appears first
+ *  is rewritten in place, preserving its leading indent. If no
+ *  ``namespace:`` line is found, the body is returned unchanged.
+ */
+function rewriteNamespace(text, ns) {
+  if (!text) return text;
+  // Match leading-whitespace + 'namespace:' + the rest of the line.
+  return text.replace(/^([ \t]*)namespace:.*$/m, `$1namespace: ${ns}`);
+}
+
+export function Launch({ ns }) {
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
-  const [yaml, setYaml] = useState(TEMPLATES[0].yaml);
+  const [yaml, setYaml] = useState(() => rewriteNamespace(TEMPLATES[0].yaml, ns ?? 'default'));
   const [state, setState] = useState({ kind: 'idle' });
   const [prefillFrom, setPrefillFrom] = useState(null);
+  const [divergence, setDivergence] = useState(null);
+  const debounceRef = useRef(0);
 
   // Consume a sessionStorage handoff from Run's Re-launch button. One-shot:
   // we clear it immediately so refreshing /launch doesn't keep re-prefilling.
@@ -292,20 +310,51 @@ export function Launch() {
     try { payload = JSON.parse(raw); } catch (_e) { return; }
     if (!payload || typeof payload.yaml !== 'string') return;
     if (!payload.at || Date.now() - payload.at > 60000) return;
+    // Honour the prefill body verbatim — the user's "re-launch" intent is
+    // to repeat the previous config; the URL ns is whatever they navigated
+    // through, so we don't second-guess the body's own namespace.
     setYaml(payload.yaml);
     setTemplateId(null);
     setPrefillFrom({ ns: payload.sourceNs ?? '?', name: payload.sourceName ?? '?' });
   }, []);
 
+  // Re-seed the editor when the URL ns prop changes (e.g. cross-namespace
+  // switcher hop while on the launch view). Skips when a prefill is active
+  // so the relaunch handoff isn't clobbered.
+  useEffect(() => {
+    if (!ns) return;
+    if (prefillFrom) return;
+    setYaml((prev) => rewriteNamespace(prev, ns));
+  }, [ns]);
+
+  // Divergence: top-level ``namespace:`` field in the YAML must match the
+  // URL's ``:ns`` segment, otherwise LAUNCH is locked. Debounced 150 ms so
+  // we don't recompute on every keystroke.
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const v = extractNamespaceField(yaml);
+      const d = (v != null && ns != null && v !== ns) ? v : null;
+      setDivergence(d);
+      launchDivergence.value = d;
+    }, 150);
+    return () => clearTimeout(debounceRef.current);
+  }, [yaml, ns]);
+
+  // Clear the global signal on unmount so the breadcrumb pill doesn't stay
+  // red after navigating away from the launch view.
+  useEffect(() => () => { launchDivergence.value = null; }, []);
+
   function pickTemplate(id) {
     const t = TEMPLATES.find(t => t.id === id);
     if (!t) return;
     setTemplateId(id);
-    setYaml(t.yaml);
+    setYaml(rewriteNamespace(t.yaml, ns ?? 'default'));
     setState({ kind: 'idle' });
   }
 
   async function launch() {
+    if (divergence) return;
     let manifest;
     try {
       manifest = parseYaml(yaml);
@@ -348,7 +397,13 @@ export function Launch() {
 
   const activeTemplate = TEMPLATES.find(t => t.id === templateId);
   const peek = peekManifest(yaml);
-  const canSubmit = state.kind !== 'submitting' && state.kind !== 'ok' && !peek.parseError;
+  const canSubmit = state.kind !== 'submitting'
+    && state.kind !== 'ok'
+    && !peek.parseError
+    && divergence == null;
+  const submitTitle = divergence
+    ? `YAML namespace '${divergence}' doesn't match '${ns}'. Switch namespaces or fix the YAML.`
+    : '';
 
   return html`
     <div class="v-launch" data-testid="page-launch">
@@ -393,7 +448,7 @@ export function Launch() {
         onkeydown=${onYamlKeydown}
         spellcheck="false"
         wrap="off"
-        data-testid="launch-yaml"
+        data-testid="launch-editor"
       ></textarea>
 
       ${state.kind === 'ok' && html`
@@ -432,6 +487,7 @@ export function Launch() {
           disabled=${!canSubmit}
           onclick=${launch}
           data-testid="launch-submit"
+          title=${submitTitle}
         >${state.kind === 'submitting' ? 'Launching…' : state.kind === 'ok' ? 'Launched' : 'Launch'}</button>
       </div>
     </div>

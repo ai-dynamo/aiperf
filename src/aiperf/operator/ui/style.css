@@ -1779,6 +1779,10 @@ body {
   font-family: var(--font-sans); font-size: var(--font-sm); cursor: pointer;
 }
 .ns-switcher-pill:hover { background: var(--bg-raised); border-color: var(--border-hover); }
+.ns-switcher-pill--bad {
+  border-color: var(--red);
+  color: var(--red);
+}
 .ns-switcher-dropdown {
   position: absolute; top: calc(100% + var(--space-2)); left: 0;
   width: 280px; max-height: 360px; overflow: auto;

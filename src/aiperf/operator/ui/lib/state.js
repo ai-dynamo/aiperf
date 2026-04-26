@@ -16,3 +16,10 @@ export const loading = signal({
   leaderboard: false,
   history: false,
 });
+
+// Launch view divergence: when the YAML's top-level ``namespace:`` field
+// disagrees with the URL's ``:ns`` segment, this holds the offending YAML
+// value (string); null otherwise. The top rail reads this to mark the
+// namespace pill as bad. The launch view writes it on every keystroke
+// (debounced) and clears it on unmount.
+export const launchDivergence = signal(null);

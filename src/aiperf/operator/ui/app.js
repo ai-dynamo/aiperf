@@ -52,9 +52,10 @@ function resolveView(currentRoute) {
   if (runMatch)                                        return { kind: 'run', params: runMatch };
   const compareDiffMatch = matchRoute('/compare/:ns/:name/:epochA/:epochB', currentRoute);
   if (compareDiffMatch)                                return { kind: 'compare', params: compareDiffMatch };
+  const launchMatch = matchRoute('/ns/:ns/launch', currentRoute);
+  if (launchMatch)                                     return { kind: 'launch', params: launchMatch };
   const nsOverviewMatch = matchRoute('/ns/:ns', currentRoute);
   if (nsOverviewMatch)                                 return { kind: 'namespace-overview', params: nsOverviewMatch };
-  if (currentRoute === '/launch')                      return { kind: 'launch' };
   if (currentRoute === '/archive'
     || currentRoute === '/fleet'
     || currentRoute === '/jobs')                       return { kind: 'archive' };
@@ -95,7 +96,13 @@ function App() {
         setShowPalette(v => !v);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        navigate('/launch');
+        // Ctrl+N is namespace-aware: when the current view carries an ns
+        // (overview / launch / run), open the launch editor for that ns.
+        // Otherwise fall back to the namespace picker so the user picks
+        // a target before launching.
+        const currentNs = resolved.params?.ns;
+        if (currentNs) navigate(`/ns/${encodeURIComponent(currentNs)}/launch`);
+        else navigate('/');
       } else if (e.key === 'Escape' && !showPalette) {
         if (resolved.kind === 'run') navigate('/');
       }
@@ -112,7 +119,7 @@ function App() {
       epoch=${resolved.params.epoch ?? null}
     />`;
   } else if (resolved.kind === 'launch') {
-    mainView = html`<${Launch} />`;
+    mainView = html`<${Launch} ns=${resolved.params.ns} />`;
   } else if (resolved.kind === 'archive') {
     mainView = html`<${Archive} />`;
   } else if (resolved.kind === 'compare') {

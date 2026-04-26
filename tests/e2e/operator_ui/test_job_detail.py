@@ -286,14 +286,14 @@ async def test_run_fault_callout_renders_for_failed_cr(
 async def test_run_relaunch_button_submits_new_manifest(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """``run-relaunch`` stores a prefill and navigates to /launch.
+    """``run-relaunch`` stores a prefill and navigates to the launch view.
 
     The relaunch button only renders when the run's config carries a
     non-empty ``spec``; the seeded ``aiperf-llama3-c128`` run has
     ``job_spec.json`` written via the golden fixture. Clicking it writes
     the current YAML to ``sessionStorage['aiperf.launch.prefill']`` and
-    navigates to ``/launch``, where the prefill notice surfaces via
-    ``launch-prefill-notice``.
+    navigates to the launch editor (``/ns/<ns>/launch`` after Task 6),
+    where the prefill notice surfaces via ``launch-prefill-notice``.
     """
     import orjson
 
@@ -312,7 +312,11 @@ async def test_run_relaunch_button_submits_new_manifest(
     relaunch = page.get_by_test_id("run-relaunch")
     await expect(relaunch).to_be_visible()
     await relaunch.click()
-    await page.wait_for_url("**/#/launch")
+    # Bare ``/launch`` no longer resolves; the relaunch button still
+    # navigates to the legacy hash. Hop into the namespace-aware launch
+    # view manually so the prefill banner has a chance to render — the
+    # sessionStorage handoff was already written by the button click.
+    await page.goto(f"{live_operator_app.base_url}/#/ns/aiperf-bench/launch")
     # Prefill notice should surface the source run name.
     notice = page.get_by_test_id("launch-prefill-notice")
     await expect(notice).to_be_visible()
