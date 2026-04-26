@@ -12,7 +12,7 @@ targets the current contract:
 
 - ``/``           → Home view, root ``page-home``
 - ``/ns/:ns/archive`` → Namespace-scoped Archive view, root ``page-archive``
-- ``/run/:ns/:name`` → single-run workbench, root ``page-job-detail``
+- ``/ns/:ns/run/:name`` → single-run workbench, root ``page-job-detail``
 - ``/compare`` / ``/analysis`` → Analysis view, root ``page-leaderboard``
 - ``/log`` / ``/history`` → Log view, root ``page-history``
 - ``/launch``     → Launch view, root ``page-launch``
@@ -95,7 +95,7 @@ class ArchivePage(BasePage):
 
 
 class JobDetailPage(BasePage):
-    """The ``/run/:ns/:name`` single-run workbench (root ``page-job-detail``)."""
+    """The ``/ns/:ns/run/:name`` single-run workbench (root ``page-job-detail``)."""
 
     def __init__(self, page: Page, base_url: str, namespace: str, name: str) -> None:
         super().__init__(page, base_url)
@@ -103,11 +103,15 @@ class JobDetailPage(BasePage):
         self.name = name
 
     async def goto(self) -> None:
-        await self._goto(f"/run/{self.namespace}/{self.name}")
+        await self._goto(f"/ns/{self.namespace}/run/{self.name}")
         await expect(self.page.get_by_test_id("page-job-detail")).to_be_visible()
 
     async def cancel(self) -> None:
         await self.page.get_by_test_id("run-cancel").click()
+
+
+# Backwards-compat alias for callers transitioning to the new name.
+RunPage = JobDetailPage
 
 
 class AnalysisPage(BasePage):

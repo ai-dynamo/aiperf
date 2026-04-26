@@ -170,7 +170,7 @@ export function Archive({ ns }) {
               key=${j.namespace + '/' + j.name}
               class="arch-row"
               data-testid=${'arch-row-' + j.namespace + '-' + j.name}
-              onclick=${() => navigate(`/run/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)}
+              onclick=${() => navigate(`/ns/${encodeURIComponent(j.namespace)}/run/${encodeURIComponent(j.name)}`)}
             >
               <div>
                 <div class="arch-row-name">${j.name}</div>

@@ -14,15 +14,16 @@
  *
  * Routes:
  *   /                → smart Home (active run / pick-one cards / launch CTA)
- *   /launch          → YAML editor + templates, POST to the operator
- *   /run/:ns/:name   → the rich workbench for a single run
- *   /archive         → past-runs browser
+ *   /ns/:ns/launch   → YAML editor + templates, POST to the operator
+ *   /ns/:ns/run/:name → the rich workbench for a single run
+ *   /ns/:ns/archive  → past-runs browser
  *   /compare         → side-by-side chart overlay
  *   /log             → durable run log (kept but de-emphasized)
  *
- * Legacy paths (`/jobs`, `/leaderboard`, `/compare`, `/history`, and
- * `/jobs/:ns/:name`) still resolve to the new views so deep links keep
- * working.
+ * Legacy paths (`/jobs`, `/leaderboard`, `/compare`, `/history`) still
+ * resolve to the new views so deep links keep working. The bare
+ * ``/run/:ns/:name`` and ``/jobs/:ns/:name`` aliases were retired in
+ * Task 8 in favour of the namespace-prefixed form.
  */
 
 import { html, render } from 'htm/preact';
@@ -44,11 +45,9 @@ import { NamespacePicker } from './views/namespace-picker.js';
 import { NamespaceOverview } from './views/namespace-overview.js';
 
 function resolveView(currentRoute) {
-  const runEpochMatch = matchRoute('/run/:ns/:name/runs/:epoch', currentRoute)
-    ?? matchRoute('/jobs/:ns/:name/runs/:epoch', currentRoute);
+  const runEpochMatch = matchRoute('/ns/:ns/run/:name/runs/:epoch', currentRoute);
   if (runEpochMatch)                                   return { kind: 'run', params: runEpochMatch };
-  const runMatch = matchRoute('/run/:ns/:name', currentRoute)
-    ?? matchRoute('/jobs/:ns/:name', currentRoute);
+  const runMatch = matchRoute('/ns/:ns/run/:name', currentRoute);
   if (runMatch)                                        return { kind: 'run', params: runMatch };
   const compareDiffMatch = matchRoute('/compare/:ns/:name/:epochA/:epochB', currentRoute);
   if (compareDiffMatch)                                return { kind: 'compare', params: compareDiffMatch };
@@ -103,7 +102,10 @@ function App() {
         if (currentNs) navigate(`/ns/${encodeURIComponent(currentNs)}/launch`);
         else navigate('/');
       } else if (e.key === 'Escape' && !showPalette) {
-        if (resolved.kind === 'run') navigate('/');
+        if (resolved.kind === 'run') {
+          const ns = resolved.params?.ns;
+          navigate(ns ? `/ns/${encodeURIComponent(ns)}` : '/');
+        }
       }
     }
     window.addEventListener('keydown', onKey);

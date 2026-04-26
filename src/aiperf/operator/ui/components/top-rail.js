@@ -76,7 +76,7 @@ function trailingCrumbs(viewKind, runParams, ns) {
     return [{ label: runParams.name, path: null, emphasise: true }];
   }
   if (viewKind === 'compare' && runParams) {
-    return [{ label: runParams.name, path: `/run/${runParams.ns}/${runParams.name}`, emphasise: true }];
+    return [{ label: runParams.name, path: `/ns/${runParams.ns}/run/${runParams.name}`, emphasise: true }];
   }
   if (viewKind === 'launch')   return [{ label: 'Launch', path: null, emphasise: true }];
   if (viewKind === 'archive')  return [{ label: 'Archive', path: null, emphasise: true }];

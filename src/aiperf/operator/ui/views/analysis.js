@@ -330,7 +330,7 @@ export function Analysis() {
                   <li key=${e.job_id}>
                     <button
                       class=${'v-analysis-board-row' + (i === 0 ? ' is-top' : '') + (isSel ? ' is-active' : '')}
-                      onclick=${() => navigate('/run/' + encodeURIComponent(e.namespace) + '/' + encodeURIComponent(e.name))}
+                      onclick=${() => navigate('/ns/' + encodeURIComponent(e.namespace) + '/run/' + encodeURIComponent(e.name))}
                     >
                       <span
                         class=${'cond ' + (isSel ? 'cond--pass' : 'cond--idle')}

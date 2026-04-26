@@ -133,7 +133,7 @@ export function Compare({ ns, name, epochA, epochB }) {
       <div class="compare-head-title">
         <button
           class="compare-back"
-          onclick=${() => navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`)}
+          onclick=${() => navigate(`/ns/${encodeURIComponent(ns)}/run/${encodeURIComponent(name)}`)}
           title="Back to run"
           aria-label="Back to run"
         >

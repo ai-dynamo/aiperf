@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""E2E tests for the single-run workbench (``/run/:ns/:name``).
+"""E2E tests for the single-run workbench (``/ns/:ns/run/:name``).
 
 The WORKBENCH rewrite replaced the former Flight-Deck detail page
 (KpiCard + HeroStrip + GpuTelemetryCard + ReliabilityTile + Sparkline
@@ -312,11 +312,9 @@ async def test_run_relaunch_button_submits_new_manifest(
     relaunch = page.get_by_test_id("run-relaunch")
     await expect(relaunch).to_be_visible()
     await relaunch.click()
-    # Bare ``/launch`` no longer resolves; the relaunch button still
-    # navigates to the legacy hash. Hop into the namespace-aware launch
-    # view manually so the prefill banner has a chance to render — the
-    # sessionStorage handoff was already written by the button click.
-    await page.goto(f"{live_operator_app.base_url}/#/ns/aiperf-bench/launch")
+    # After Task 8, the relaunch button navigates directly to
+    # ``/ns/<ns>/launch`` and the prefill banner mounts on its own.
+    await page.wait_for_url("**/#/ns/aiperf-bench/launch")
     # Prefill notice should surface the source run name.
     notice = page.get_by_test_id("launch-prefill-notice")
     await expect(notice).to_be_visible()
@@ -355,7 +353,7 @@ async def test_run_view_for_nonexistent_run_does_not_crash(
     page fixture now tolerates for 4xx (see conftest ``_on_console``).
     We pin both: the shell renders, and no ``pageerror`` fires.
     """
-    await page.goto(f"{live_operator_app.base_url}/#/run/no-such-ns/no-such-name")
+    await page.goto(f"{live_operator_app.base_url}/#/ns/no-such-ns/run/no-such-name")
     # The view mounts even with no backing data — the shell is
     # lifecycle-independent of the data fetch.
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
@@ -431,7 +429,7 @@ async def test_run_history_dropdown_renders_when_two_epoch_runs_exist(
 async def test_run_history_select_routes_to_epoch_pinned_url(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Selecting a historical epoch navigates to ``#/run/<ns>/<name>/runs/<epoch>``.
+    """Selecting a historical epoch navigates to ``#/ns/<ns>/run/<name>/runs/<epoch>``.
 
     Exercises the core behavior of the run-history dropdown: the ``onchange``
     handler calls ``navigate(...)`` with an epoch path segment, the SPA
@@ -450,7 +448,7 @@ async def test_run_history_select_routes_to_epoch_pinned_url(
     select = page.get_by_test_id("run-history-select")
     await expect(select).to_be_visible()
     await select.select_option(older)
-    await page.wait_for_url(f"**/#/run/aiperf-bench/aiperf-llama3-c128/runs/{older}")
+    await page.wait_for_url(f"**/#/ns/aiperf-bench/run/aiperf-llama3-c128/runs/{older}")
     # The results pane rebinds to the epoch dir; golden carries
     # ``profile_export_aiperf.json`` which is now under ``/runs/<older>/``.
     row = page.get_by_test_id("run-results-row-profile_export_aiperf.json")

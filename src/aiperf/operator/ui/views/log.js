@@ -70,7 +70,7 @@ export function Log() {
                       <li key=${j.namespace + '/' + j.name}>
                         <button
                           class=${'v-log-row v-log-row--' + kind}
-                          onclick=${() => navigate('/run/' + encodeURIComponent(j.namespace) + '/' + encodeURIComponent(j.name))}
+                          onclick=${() => navigate('/ns/' + encodeURIComponent(j.namespace) + '/run/' + encodeURIComponent(j.name))}
                         >
                           <span class="v-log-time">${String(ts.getUTCHours()).padStart(2,'0')}:${String(ts.getUTCMinutes()).padStart(2,'0')}</span>
                           <span class=${'v-log-dot v-log-dot--' + kind}></span>

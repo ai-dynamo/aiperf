@@ -244,8 +244,8 @@ function RunHistoryDropdown({ ns, name, selectedEpoch }) {
         value=${value}
         onchange=${(e) => {
           const v = e.target.value;
-          if (v === 'latest') navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
-          else navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(v)}`);
+          if (v === 'latest') navigate(`/ns/${encodeURIComponent(ns)}/run/${encodeURIComponent(name)}`);
+          else navigate(`/ns/${encodeURIComponent(ns)}/run/${encodeURIComponent(name)}/runs/${encodeURIComponent(v)}`);
         }}
         data-testid="run-history-select"
       >
@@ -427,7 +427,7 @@ function RelaunchButton({ ns, name, config }) {
             at: Date.now(),
           }));
         } catch (_e) { /* quota/private-mode — fall through to navigate */ }
-        navigate('/launch');
+        navigate(`/ns/${encodeURIComponent(ns)}/launch`);
       }}
       data-testid="run-relaunch"
       title="Copy this run's config into the Launch editor"

@@ -147,7 +147,7 @@ export function LogStrip() {
             <div
               key=${e.ts + '-' + i}
               class=${'log-strip-entry' + sevClass}
-              onclick=${() => navigate('/run/' + encodeURIComponent(e.ns) + '/' + encodeURIComponent(e.name))}
+              onclick=${() => navigate('/ns/' + encodeURIComponent(e.ns) + '/run/' + encodeURIComponent(e.name))}
             >
               <span class="ts">${fmtTs(e.ts)}</span>
               <span class=${'log-strip-cat log-strip-cat--' + e.cat}>${e.cat}</span>

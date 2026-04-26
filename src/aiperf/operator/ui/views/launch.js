@@ -392,7 +392,7 @@ export function Launch({ ns }) {
 
   function viewRun() {
     if (state.kind !== 'ok') return;
-    navigate(`/run/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`);
+    navigate(`/ns/${encodeURIComponent(state.namespace)}/run/${encodeURIComponent(state.name)}`);
   }
 
   const activeTemplate = TEMPLATES.find(t => t.id === templateId);
@@ -457,7 +457,7 @@ export function Launch({ ns }) {
           <a
             class="btn btn--ghost"
             data-testid="launch-view-run"
-            href=${`/run/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`}
+            href=${`/ns/${encodeURIComponent(state.namespace)}/run/${encodeURIComponent(state.name)}`}
             onclick=${(e) => { e.preventDefault(); viewRun(); }}
           >View run</a>
         </div>

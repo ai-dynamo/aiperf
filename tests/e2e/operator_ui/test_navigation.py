@@ -5,10 +5,9 @@
 Covers top-rail button clicks, Ctrl+K command-palette keybinding, fuzzy-filtered
 job navigation via the palette, and direct hash-URL deep links into the single-run
 workbench. The SPA uses hash routing (``window.location.hash``); ``app.js``
-routes ``/``, ``/archive``, ``/compare``, ``/log``, ``/launch``, and
-``/run/:ns/:name`` (plus legacy aliases like ``/jobs`` → archive and
-``/jobs/:ns/:name`` → run detail). Unknown routes fall through to the Home view
-rather than rendering a dedicated Not-Found page.
+routes ``/``, ``/ns/:ns/archive``, ``/compare``, ``/log``, ``/ns/:ns/launch``,
+and ``/ns/:ns/run/:name``. Unknown routes fall through to the Home view rather
+than rendering a dedicated Not-Found page.
 """
 
 from __future__ import annotations
@@ -77,15 +76,17 @@ async def test_command_palette_search_navigates_to_job(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_deep_link_loads_job_detail_directly(
+async def test_deep_link_loads_run_detail_directly(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Navigating directly to ``/#/jobs/<ns>/<name>`` renders the run workbench.
+    """Navigating directly to ``/#/ns/<ns>/run/<name>`` renders the run workbench.
 
-    Validates the hash router's ``matchRoute('/jobs/:ns/:name', ...)``
-    legacy alias on a cold page load, not via in-app navigation.
+    Validates the hash router's ``matchRoute('/ns/:ns/run/:name', ...)``
+    pattern on a cold page load, not via in-app navigation. The legacy
+    ``/jobs/:ns/:name`` and bare ``/run/:ns/:name`` aliases were retired
+    in Task 8.
     """
-    url = f"{live_operator_app.base_url}/#/jobs/aiperf-bench/aiperf-llama3-c128"
+    url = f"{live_operator_app.base_url}/#/ns/aiperf-bench/run/aiperf-llama3-c128"
     await page.goto(url)
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
 
@@ -177,26 +178,23 @@ async def test_command_palette_dismisses_on_escape(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_escape_on_run_view_returns_to_home(
+async def test_escape_on_run_view_returns_to_namespace_overview(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:
-    """Escape on the run workbench navigates back to the picker.
+    """Escape on the run workbench navigates back to the namespace overview.
 
-    ``app.js`` binds a global Escape handler: when the palette is
-    closed and the current view is ``run``, Escape calls
-    ``navigate('/')``. Verify that path — it's a small UX contract
+    ``app.js`` binds a global Escape handler: when the palette is closed
+    and the current view is ``run``, Escape calls ``navigate('/ns/<ns>')``
+    so the user lands on the namespace they were already inside, not the
+    cross-namespace picker. Verify that path — it's a small UX contract
     that's easy to regress by accident.
     """
-    url = f"{live_operator_app.base_url}/#/run/aiperf-bench/aiperf-llama3-c128"
+    url = f"{live_operator_app.base_url}/#/ns/aiperf-bench/run/aiperf-llama3-c128"
     await page.goto(url)
     await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
     await page.keyboard.press("Escape")
-    await page.wait_for_url(
-        lambda u: u.rstrip("/").endswith(live_operator_app.base_url.split("://", 1)[-1])
-        or u.endswith("/#/")
-        or u.endswith("/")
-    )
-    await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
+    await page.wait_for_url("**/#/ns/aiperf-bench")
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
 
 
 @pytest.mark.asyncio(loop_scope="session")

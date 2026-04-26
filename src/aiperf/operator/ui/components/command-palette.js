@@ -2,11 +2,29 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
+import { getLastNamespace } from '../lib/ns-prefs.js';
+
+/**
+ * Resolve the current namespace for namespace-scoped palette actions.
+ *
+ * Falls back to the sticky last-used namespace from ``ns-prefs``; if that
+ * is empty too (cold first-load), returns null so callers can route to
+ * the picker (``/``).
+ */
+function paletteNamespace() {
+  return getLastNamespace() ?? null;
+}
 
 const PAGES = [
   { label: 'Home', path: '/', hint: 'All runs' },
-  { label: 'Launch', path: '/launch', hint: '⌘N — new run' },
-  { label: 'Archive', path: '/archive', hint: 'Past runs' },
+  { label: 'Launch', pathFn: () => {
+      const ns = paletteNamespace();
+      return ns ? `/ns/${encodeURIComponent(ns)}/launch` : '/';
+    }, hint: '⌘N — new run' },
+  { label: 'Archive', pathFn: () => {
+      const ns = paletteNamespace();
+      return ns ? `/ns/${encodeURIComponent(ns)}/archive` : '/';
+    }, hint: 'Past runs' },
   { label: 'Compare', path: '/compare', hint: 'Analysis lab' },
   { label: 'Log', path: '/log', hint: 'Historical run log' },
 ];
@@ -40,7 +58,11 @@ export function CommandPalette({ onClose }) {
 
   // Build items: pages + job entries
   const allItems = [
-    ...PAGES.map((p) => ({ label: p.label, sub: p.hint ?? 'Page', action: () => navigate(p.path) })),
+    ...PAGES.map((p) => ({
+      label: p.label,
+      sub: p.hint ?? 'Page',
+      action: () => navigate(p.pathFn ? p.pathFn() : p.path),
+    })),
     ...jobs.value.map((j) => {
       // /api/v1/jobs returns flat AIPerfJobInfo records (K8sCamelModel),
       // not raw CR objects — so namespace/name live at the top level.
@@ -49,7 +71,7 @@ export function CommandPalette({ onClose }) {
       return {
         label: name,
         sub: ns,
-        action: () => navigate(`/run/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`),
+        action: () => navigate(`/ns/${encodeURIComponent(ns)}/run/${encodeURIComponent(name)}`),
       };
     }),
   ];
