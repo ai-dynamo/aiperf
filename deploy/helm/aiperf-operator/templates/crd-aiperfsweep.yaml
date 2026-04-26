@@ -54,9 +54,9 @@ spec:
             description: Top-level spec for an AIPerfSweep CR.
             properties:
               sweep:
-                type: object
                 x-kubernetes-preserve-unknown-fields: true
                 description: Variation generator (grid | scenarios). Reuses aiperf.config.sweep.SweepConfig.
+                type: object
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.sweep is immutable after creation
@@ -202,6 +202,7 @@ spec:
                         minimum: 0
                       ttlSecondsAfterFinished:
                         type: integer
+                        minimum: 0
                         description: TTL after finished (seconds)
                         default: 300
                       resultsTtlDays:
@@ -382,29 +383,37 @@ spec:
                                     explicit items, weights, and per-model settings.
                                   properties:
                                     name:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: string
                                       description: Model name or identifier as known to the inference server.
                                     weight:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: number
+                                      minimum: 0.0
+                                      maximum: 1.0
                                       description: 'Selection weight for weighted strategy (0.0-1.0). Weights are normalized
                                         across all models. Example: weight=0.7 means ~70%% of requests to this model.'
                                     lora:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: string
                                       description: LoRA adapter name to load with this model. Server must support dynamic
                                         LoRA adapter loading.
                                     modalities:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: array
+                                      items:
+                                        type: string
                                       description: 'List of input modalities this model supports. Used with modality_aware
                                         selection strategy. Valid values: ''text'', ''image'', ''audio'', ''video''.'
                                     tokenizer:
                                       type: object
-                                      x-kubernetes-preserve-unknown-fields: true
-                                      description: Per-model tokenizer override. Use when this model requires a different
-                                        tokenizer than global config.
+                                      description: |-
+                                        Per-model tokenizer override configuration.
+
+                                        Allows specifying a different tokenizer for a specific model,
+                                        useful when models require specialized tokenization.
+                                      properties:
+                                        name:
+                                          type: string
+                                          description: HuggingFace tokenizer identifier or local filesystem path.
+                                      required:
+                                      - name
                                   required:
                                   - name
                                 minItems: 1
@@ -536,8 +545,8 @@ spec:
                                 properties:
                                   body:
                                     type: string
-                                    description: 'Jinja2 template string for request body. Variables: {{ "{{prompt}}" }}, {{ "{{max_tokens}}" }},
-                                      {{ "{{model}}" }}, {{ "{{messages}}" }}, etc.'
+                                    description: 'Jinja2 template string for request body. Variables: {{ "{{" }}prompt{{ "}}" }}, {{ "{{" }}max_tokens{{ "}}" }},
+                                      {{ "{{" }}model{{ "}}" }}, {{ "{{" }}messages{{ "}}" }}, etc.'
                                   responseField:
                                     type: string
                                     description: 'JSON path to extract response text from API response. Use dot notation for
@@ -625,7 +634,6 @@ spec:
                               records:
                                 x-kubernetes-preserve-unknown-fields: true
                                 description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
-                                default: false
                               raw:
                                 type: boolean
                                 description: Export raw request/response payloads as JSONL.
@@ -672,13 +680,15 @@ spec:
                                     see docs/kubernetes/user-files.md.
                                   properties:
                                     path:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: string
                                       description: Output path relative to the run directory. Subdirectories allowed. Absolute
                                         paths and any segment equal to '..' are rejected.
                                     format:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
+                                      type: string
+                                      enum:
+                                      - json
+                                      - yaml
+                                      - text
                                       description: 'Serialization format. If omitted: ''text'' when content is a string, ''json''
                                         otherwise.'
                                     content:
@@ -941,7 +951,7 @@ spec:
                               uses system entropy.
                           variables:
                             type: object
-                            description: User-defined values exposed to Jinja2 in `{{`"{{"`}} ... {{`"}}"`}}` expressions during config load.
+                            description: User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load.
                               Preserved on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve
                               them again at run time.
                             additionalProperties: true

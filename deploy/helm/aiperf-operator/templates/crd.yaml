@@ -275,8 +275,8 @@ spec:
                         properties:
                           body:
                             type: string
-                            description: 'Jinja2 template string for request body. Variables: {{ "{{prompt}}" }}, {{ "{{max_tokens}}" }},
-                              {{ "{{model}}" }}, {{ "{{messages}}" }}, etc.'
+                            description: 'Jinja2 template string for request body. Variables: {{ "{{" }}prompt{{ "}}" }}, {{ "{{" }}max_tokens{{ "}}" }},
+                              {{ "{{" }}model{{ "}}" }}, {{ "{{" }}messages{{ "}}" }}, etc.'
                           responseField:
                             type: string
                             description: 'JSON path to extract response text from API response. Use dot notation for nested
@@ -361,7 +361,6 @@ spec:
                       records:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
-                        default: false
                       raw:
                         type: boolean
                         description: Export raw request/response payloads as JSONL.
@@ -676,7 +675,7 @@ spec:
                       entropy.
                   variables:
                     type: object
-                    description: User-defined values exposed to Jinja2 in `{{`"{{"`}} ... {{`"}}"`}}` expressions during config load. Preserved
+                    description: User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load. Preserved
                       on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve them again at
                       run time.
                     additionalProperties: true

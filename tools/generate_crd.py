@@ -54,7 +54,10 @@ SPDX_HEADER = (
 _STRIP_KEYS = frozenset({"title", "examples", "$defs", "$schema"})
 
 # Maximum recursion depth before falling back to preserve-unknown-fields.
-_MAX_DEPTH = 6
+# AIPerfSweep wraps an AIPerfJob in spec.template.spec, adding 3 levels;
+# the deepest legitimate path today is spec.template.spec.benchmark.runtime.<field>
+# at depth 6, but ModelItem and other inner classes go several levels deeper.
+_MAX_DEPTH = 16
 
 
 # =============================================================================
@@ -160,11 +163,14 @@ def _convert_schema(
                     result[key] = schema[key]
             return result
 
+        # Mixed-type anyOf: K8s structural schema allows no-type when paired
+        # with x-kubernetes-preserve-unknown-fields: true (apiserver skips
+        # type enforcement). Don't force type=object here — that breaks
+        # leaves like `artifacts.records: list | Literal[False]` whose default
+        # is a non-object scalar.
         result = {"x-kubernetes-preserve-unknown-fields": True}
         if "description" in schema:
             result["description"] = schema["description"]
-        if "default" in schema:
-            result["default"] = schema["default"]
         return result
 
     if "oneOf" in schema:
@@ -184,6 +190,12 @@ def _convert_schema(
 
     if "type" in schema:
         result["type"] = schema["type"]
+    else:
+        # Pydantic emits an empty/no-type schema for ``Any``-typed fields and
+        # for some discriminated-union leaves. K8s structural schemas reject
+        # objects without `type`, so fall back to a permissive object shape.
+        result["type"] = "object"
+        result["x-kubernetes-preserve-unknown-fields"] = True
 
     if "description" in schema:
         result["description"] = schema["description"]
@@ -761,8 +773,11 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
     # Attach CEL immutability rules to top-level orchestration fields.
     # Re-running a sweep with mutated axes would corrupt the run-epoch ledger
     # and produce non-comparable cells, so the apiserver must reject mutation.
+    # CEL rule construction needs a declared `type` for type inference; the
+    # fields are object-shaped so this is sound.
     for field in ("sweep", "multiRun", "convergence"):
         if field in properties:
+            properties[field].setdefault("type", "object")
             properties[field].setdefault("x-kubernetes-validations", []).append(
                 {
                     "rule": "oldSelf == self",
@@ -879,6 +894,14 @@ def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
         allow_unicode=True,
     )
 
+    # Escape any literal `{{` / `}}` in description text (e.g. AIPerfConfig.variables
+    # mentions Jinja2 `{{ ... }}` syntax) BEFORE adding our own Helm directives so
+    # they don't get interpreted as Go template directives at chart render time.
+    yaml_str = yaml_str.replace("{{", "\x00OPEN\x00").replace("}}", "\x00CLOSE\x00")
+    yaml_str = yaml_str.replace("\x00OPEN\x00", '{{ "{{" }}').replace(
+        "\x00CLOSE\x00", '{{ "}}" }}'
+    )
+
     # Helm template substitutions
     yaml_str = yaml_str.replace(
         "default: nvcr.io/nvidia/aiperf:latest",
@@ -923,6 +946,12 @@ def render_helm_sweep_crd_yaml(crd: dict[str, Any]) -> str:
         sort_keys=False,
         width=120,
         allow_unicode=True,
+    )
+
+    # Escape any literal `{{` / `}}` in description text — see render_helm_crd_yaml.
+    yaml_str = yaml_str.replace("{{", "\x00OPEN\x00").replace("}}", "\x00CLOSE\x00")
+    yaml_str = yaml_str.replace("\x00OPEN\x00", '{{ "{{" }}').replace(
+        "\x00CLOSE\x00", '{{ "}}" }}'
     )
 
     yaml_str = yaml_str.replace(
