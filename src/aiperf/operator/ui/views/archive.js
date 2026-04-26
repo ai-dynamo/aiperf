@@ -172,10 +172,7 @@ export function Archive({ ns }) {
               data-testid=${'arch-row-' + j.namespace + '-' + j.name}
               onclick=${() => navigate(`/ns/${encodeURIComponent(j.namespace)}/run/${encodeURIComponent(j.name)}`)}
             >
-              <div>
-                <div class="arch-row-name">${j.name}</div>
-                <div class="arch-row-ns">${j.namespace}</div>
-              </div>
+              <div class="arch-row-name">${j.name}</div>
               <div class="arch-row-meta">${modelShort}</div>
               <div class="arch-row-meta">${relAge(j.completionTime ?? j.created)}</div>
               <div class="arch-row-status"><span class=${'chip chip--' + tone}>${label}</span></div>

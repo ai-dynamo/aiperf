@@ -1361,7 +1361,7 @@ export function Run({ ns, name, epoch }) {
   const status = detail?.status;
   const pods = detail?.pods ?? [];
   const conditions = status?.conditions ?? [];
-  const gpuMetrics = status?.metrics ?? status?.liveMetrics ?? [];
+  const gpuMetrics = Array.isArray(status?.metrics) ? status.metrics : [];
   const slos = config?.spec?.benchmark?.slos ?? config?.spec?.slos ?? null;
   const slosDeclared = !!(slos && typeof slos === 'object' && Object.keys(slos).length > 0);
   const summary = status?.liveSummary ?? status?.summary ?? {};
