@@ -166,3 +166,20 @@ class CommandPalette:
 
     async def press_enter(self) -> None:
         await self.page.get_by_test_id("command-palette-input").press("Enter")
+
+
+@dataclass
+class NamespaceOverviewPage(BasePage):
+    namespace: str = "aiperf-bench"
+
+    async def goto(self) -> None:
+        await self._goto(f"/ns/{self.namespace}")
+        await expect(
+            self.page.get_by_test_id("page-namespace-overview")
+        ).to_be_visible()
+
+    def stats(self) -> Locator:
+        return self.page.get_by_test_id("no-stats")
+
+    def row(self, name: str) -> Locator:
+        return self.page.get_by_test_id(f"no-row-{self.namespace}-{name}")

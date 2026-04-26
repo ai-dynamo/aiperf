@@ -41,6 +41,7 @@ import { Analysis } from './views/analysis.js';
 import { Compare } from './views/compare.js';
 import { Log } from './views/log.js';
 import { NamespacePicker } from './views/namespace-picker.js';
+import { NamespaceOverview } from './views/namespace-overview.js';
 
 function resolveView(currentRoute) {
   const runEpochMatch = matchRoute('/run/:ns/:name/runs/:epoch', currentRoute)
@@ -51,6 +52,8 @@ function resolveView(currentRoute) {
   if (runMatch)                                        return { kind: 'run', params: runMatch };
   const compareDiffMatch = matchRoute('/compare/:ns/:name/:epochA/:epochB', currentRoute);
   if (compareDiffMatch)                                return { kind: 'compare', params: compareDiffMatch };
+  const nsOverviewMatch = matchRoute('/ns/:ns', currentRoute);
+  if (nsOverviewMatch)                                 return { kind: 'namespace-overview', params: nsOverviewMatch };
   if (currentRoute === '/launch')                      return { kind: 'launch' };
   if (currentRoute === '/archive'
     || currentRoute === '/fleet'
@@ -125,6 +128,8 @@ function App() {
     mainView = html`<${Log} />`;
   } else if (resolved.kind === 'namespace-picker') {
     mainView = html`<${NamespacePicker} />`;
+  } else if (resolved.kind === 'namespace-overview') {
+    mainView = html`<${NamespaceOverview} ns=${resolved.params.ns} />`;
   } else {
     mainView = html`<${Home} />`;
   }
