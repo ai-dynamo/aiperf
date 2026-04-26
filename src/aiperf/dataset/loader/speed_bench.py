@@ -1,14 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import defaultdict
 from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.models import Conversation, Text, Turn
-from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+from aiperf.common.utils import load_json_str
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
+from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 
-class SpeedBenchLoader(BaseHFDatasetLoader):
+class SpeedBenchLoader(MultiTurnDatasetLoader):
     """HuggingFace dataset loader for nvidia/SPEED-Bench.
 
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
@@ -50,56 +52,43 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
+        filename: str,
         user_config: UserConfig,
         category: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         self.category = category
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(filename=filename, user_config=user_config, **kwargs)
 
-    async def convert_to_conversations(
-        self, data: dict[str, Any]
-    ) -> list[Conversation]:
-        """Convert each dataset row into a single-turn Conversation."""
-        dataset = data["dataset"]
-        conversations: list[Conversation] = []
-        skipped = 0
-        max_conversations = self._max_conversations()
+    def load_dataset(self) -> dict[str, list[MultiTurn]]:
+        """Load multi-turn data from a JSONL file.
 
-        for row in dataset:
-            if (
-                max_conversations is not None
-                and len(conversations) >= max_conversations
-            ):
-                break
+        Each line represents a complete multi-turn conversation with its own
+        session_id and multiple turns.
 
-            if self.category and row.get("category") != self.category:
-                continue
+        Returns:
+            A dictionary mapping session_id to list of MultiTurn objects.
+        """
+        data: dict[str, list[MultiTurn]] = defaultdict(list)
 
-            turns = row.get("turns")
-            if not turns or not isinstance(turns, list) or not turns[0]:
-                skipped += 1
-                continue
+        with open(self.filename) as f:
+            for line in f:
+                if (line := line.strip()) == "":
+                    continue  # Skip empty lines
 
-            prompt = str(turns[0]).strip()
-            if not prompt:
-                skipped += 1
-                continue
+                loaded_line = load_json_str(line)
 
-            conversations.append(
-                Conversation(
-                    session_id=self.session_id_generator.next(),
+                if self.category and loaded_line.get("category") != self.category:
+                    continue
+
+                multi_turn_data = MultiTurn(
+                    session_id=loaded_line["question_id"],
                     turns=[
-                        Turn(texts=[Text(contents=[prompt])]),
+                        SingleTurn(text=message["content"], role=message["role"])
+                        for message in loaded_line["messages"]
                     ],
                 )
-            )
 
-        self.debug(
-            lambda: (
-                f"Converted {len(conversations)} rows"
-                f" (skipped {skipped} empty"
-                f"{f', filtered to category={self.category!r}' if self.category else ''})"
-            )
-        )
-        return conversations
+                data[multi_turn_data.session_id].append(multi_turn_data)
+
+        return data
