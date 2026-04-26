@@ -19,7 +19,17 @@ from aiperf.cli_commands.kube.generate import (
     _resolve_spec_and_name,
     generate,
 )
+from aiperf.config.v1 import ServiceConfig, UserConfig
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
+
+
+def _user_config() -> UserConfig:
+    """Minimal UserConfig that satisfies the kube-CLI argument shape."""
+    return UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+        }
+    )
 
 
 class _StubKubeOptions:
@@ -45,7 +55,8 @@ class TestGenerateMutualExclusion:
         """Must specify one of --operator or --no-operator."""
         with pytest.raises(SystemExit, match="Specify --operator"):
             await generate(
-                cli_model=object(),
+                user_config=_user_config(),
+                service_config=ServiceConfig(),
                 kube_options=_StubKubeOptions(),
                 operator=False,
                 no_operator=False,
@@ -55,7 +66,8 @@ class TestGenerateMutualExclusion:
         """Cannot pass both --operator and --no-operator simultaneously."""
         with pytest.raises(SystemExit, match="Cannot use both"):
             await generate(
-                cli_model=object(),
+                user_config=_user_config(),
+                service_config=ServiceConfig(),
                 kube_options=_StubKubeOptions(),
                 operator=True,
                 no_operator=True,
@@ -81,7 +93,8 @@ class TestGenerateOperatorMode:
             ),
         ):
             await generate(
-                cli_model=object(),
+                user_config=_user_config(),
+                service_config=ServiceConfig(),
                 kube_options=kube_options,
                 operator=True,
                 no_operator=False,
@@ -114,7 +127,8 @@ class TestGenerateOperatorMode:
             ),
         ):
             await generate(
-                cli_model=object(),
+                user_config=_user_config(),
+                service_config=ServiceConfig(),
                 kube_options=kube_options,
                 operator=True,
                 no_operator=False,
@@ -146,7 +160,8 @@ class TestGenerateNoOperatorMode:
             ) as mock_mem,
         ):
             await generate(
-                cli_model=object(),
+                user_config=_user_config(),
+                service_config=ServiceConfig(),
                 kube_options=kube_options,
                 operator=False,
                 no_operator=True,
@@ -162,8 +177,8 @@ class TestResolveSpecAndName:
     def test_flag_format_uses_cli_converter_when_no_cr_file(self) -> None:
         """No config_file -> build via CLI flags, name via generate_benchmark_name."""
         kube_options = _StubKubeOptions()
-        cli_model = MagicMock()
-        cli_model.config_file = None
+        user_config = _user_config()
+        service_config = ServiceConfig()
         fake_config = MagicMock()
         fake_spec = {"benchmark": {}}
 
@@ -173,7 +188,7 @@ class TestResolveSpecAndName:
                 return_value=None,
             ),
             patch(
-                "aiperf.cli_commands.kube.profile._resolve_config",
+                "aiperf.cli_commands.kube.profile.resolve_config",
                 return_value=fake_config,
             ),
             patch.object(
@@ -184,7 +199,9 @@ class TestResolveSpecAndName:
                 return_value="gen-bench",
             ),
         ):
-            spec, config, name = _resolve_spec_and_name(cli_model, kube_options)
+            spec, config, name = _resolve_spec_and_name(
+                user_config, service_config, kube_options
+            )
 
         assert spec == fake_spec
         assert config is fake_config
@@ -193,8 +210,10 @@ class TestResolveSpecAndName:
     def test_cr_format_uses_cr_name_when_present(self) -> None:
         """If config_file is an AIPerfJob CR, use its metadata.name when kube_options.name is None."""
         kube_options = _StubKubeOptions()
-        cli_model = MagicMock()
-        cli_model.config_file = MagicMock()  # truthy
+        user_config = _user_config()
+        # Set a truthy config_file to trigger the CR-load branch.
+        user_config.config_file = MagicMock()  # type: ignore[assignment]
+        service_config = ServiceConfig()
         fake_config = MagicMock()
         fake_spec = {"benchmark": {}}
         cr_raw = {"metadata": {"name": "cr-bench"}, "spec": {}}
@@ -213,6 +232,8 @@ class TestResolveSpecAndName:
                 return_value="fallback",
             ),
         ):
-            _, _, name = _resolve_spec_and_name(cli_model, kube_options)
+            _, _, name = _resolve_spec_and_name(
+                user_config, service_config, kube_options
+            )
 
         assert name == "cr-bench"

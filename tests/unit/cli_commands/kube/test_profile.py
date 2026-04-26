@@ -17,7 +17,17 @@ import pytest
 
 from aiperf.cli_commands.kube.profile import profile
 from aiperf.cli_commands.kube.profile_deploy import deploy_via_operator
+from aiperf.config.v1 import ServiceConfig, UserConfig
 from aiperf.operator.models import AIPerfJobSpec
+
+
+def _user_config() -> UserConfig:
+    """Minimal UserConfig that satisfies kube-CLI argument shape."""
+    return UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+        }
+    )
 
 
 class _StubKubeOptions:
@@ -36,7 +46,8 @@ class _StubKubeOptions:
 async def test_profile_forwards_skip_endpoint_check_to_deploy_via_operator() -> None:
     """--skip-endpoint-check must arrive as a kwarg on deploy_via_operator."""
     kube_options = _StubKubeOptions()
-    cli_model = object()
+    user_config = _user_config()
+    service_config = ServiceConfig()
     fake_spec = {"benchmark": {"endpoint": {"url": "http://x"}}}
     fake_config = object()
     captured: dict[str, Any] = {}
@@ -61,7 +72,8 @@ async def test_profile_forwards_skip_endpoint_check_to_deploy_via_operator() -> 
         ),
     ):
         await profile(
-            cli_model=cli_model,
+            user_config=user_config,
+            service_config=service_config,
             kube_options=kube_options,
             skip_endpoint_check=True,
             dry_run=True,  # short-circuit operator_available so no cluster probe
@@ -74,7 +86,8 @@ async def test_profile_forwards_skip_endpoint_check_to_deploy_via_operator() -> 
 async def test_profile_forwards_skip_endpoint_check_to_deploy_direct() -> None:
     """--skip-endpoint-check must arrive as a kwarg on deploy_direct too."""
     kube_options = _StubKubeOptions()
-    cli_model = object()
+    user_config = _user_config()
+    service_config = ServiceConfig()
     fake_spec: dict[str, Any] = {}
     fake_config = object()
     captured: dict[str, Any] = {}
@@ -95,7 +108,8 @@ async def test_profile_forwards_skip_endpoint_check_to_deploy_direct() -> None:
         ),
     ):
         await profile(
-            cli_model=cli_model,
+            user_config=user_config,
+            service_config=service_config,
             kube_options=kube_options,
             skip_endpoint_check=True,
             dry_run=True,

@@ -352,11 +352,14 @@ async def test_sweep_dry_run_uses_kube_console_not_builtin_print(
     builtin print (the kube CLI forbids builtin print per CLAUDE.md)."""
     import builtins
 
+    from aiperf.config.v1 import ServiceConfig, UserConfig
     from aiperf.kubernetes import console as kube_console
 
     config_file = _write_valid_sweep(tmp_path)
-    cli_model = MagicMock()
-    cli_model.config_file = config_file
+    user_config = UserConfig.model_validate(
+        {"endpoint": {"model_names": ["m"], "urls": ["http://x"]}}
+    )
+    user_config.config_file = config_file
 
     def _exploding_print(*_a, **_kw):
         raise AssertionError("builtins.print must not be used by the sweep CLI")
@@ -371,7 +374,8 @@ async def test_sweep_dry_run_uses_kube_console_not_builtin_print(
     monkeypatch.setattr(kube_console.console, "print", _capture)
 
     await sweep_cmd.sweep(
-        cli_model=cli_model,
+        user_config=user_config,
+        service_config=ServiceConfig(),
         kube_options=_kube_options_mock(),
         dry_run=True,
     )
