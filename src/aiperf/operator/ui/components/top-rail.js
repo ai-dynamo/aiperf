@@ -15,7 +15,8 @@
 
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { navigate } from '../lib/router.js';
+import { route, matchRoute, navigate } from '../lib/router.js';
+import { NamespaceSwitcher } from './namespace-switcher.js';
 
 const pad = n => String(n).padStart(2, '0');
 
@@ -52,21 +53,29 @@ function useNetStatus() {
   return status;
 }
 
-/** Derive breadcrumb segments from the current view + params. */
-function breadcrumbFor(viewKind, runParams) {
+/** Derive the current namespace from the route, or null on cross-namespace tier. */
+function deriveNamespace(currentRoute) {
+  const patterns = [
+    '/ns/:ns',
+    '/ns/:ns/launch',
+    '/ns/:ns/archive',
+    '/ns/:ns/run/:name',
+    '/ns/:ns/run/:name/runs/:epoch',
+  ];
+  for (const p of patterns) {
+    const m = matchRoute(p, currentRoute);
+    if (m) return m.ns;
+  }
+  return null;
+}
+
+/** Derive trailing breadcrumb segments (after the namespace pill, if any). */
+function trailingCrumbs(viewKind, runParams, ns) {
   if (viewKind === 'run' && runParams) {
-    return [
-      { label: 'Run', path: null },
-      { label: runParams.ns, path: '/archive' },
-      { label: runParams.name, path: null, emphasise: true },
-    ];
+    return [{ label: runParams.name, path: null, emphasise: true }];
   }
   if (viewKind === 'compare' && runParams) {
-    return [
-      { label: 'Compare', path: null },
-      { label: runParams.ns, path: '/archive' },
-      { label: runParams.name, path: `/run/${runParams.ns}/${runParams.name}`, emphasise: true },
-    ];
+    return [{ label: runParams.name, path: `/run/${runParams.ns}/${runParams.name}`, emphasise: true }];
   }
   if (viewKind === 'launch')   return [{ label: 'Launch', path: null, emphasise: true }];
   if (viewKind === 'archive')  return [{ label: 'Archive', path: null, emphasise: true }];
@@ -78,9 +87,17 @@ function breadcrumbFor(viewKind, runParams) {
 export function TopRail({ viewKind, runParams, onSearchClick }) {
   const clock = useUtcClock();
   const net = useNetStatus();
-  const crumbs = breadcrumbFor(viewKind, runParams);
+  const currentRoute = route.value;
+  const ns = deriveNamespace(currentRoute);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
+  // Close the switcher whenever the route changes (covers item-click +
+  // any other in-app nav).
+  useEffect(() => { setSwitcherOpen(false); }, [currentRoute]);
+
+  const crumbs = trailingCrumbs(viewKind, runParams, ns);
   const netLabel = net === 'ok' ? 'UP' : net === 'warn' ? 'RETRY' : 'DOWN';
+  const launchTarget = ns ? `/ns/${encodeURIComponent(ns)}/launch` : null;
 
   return html`
     <header class="topbar" data-testid="top-nav">
@@ -95,8 +112,22 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
           <span>AIPerf Operator</span>
         </a>
         <nav class="topbar-crumbs" aria-label="Breadcrumb" data-testid="breadcrumb">
+          ${ns && html`
+            <span class="topbar-crumb topbar-crumb--ns">
+              <button
+                class="ns-switcher-pill"
+                data-testid="ns-switcher-pill"
+                onclick=${() => setSwitcherOpen(v => !v)}
+                title="Switch namespace"
+              >${ns}</button>
+              ${switcherOpen && html`<${NamespaceSwitcher}
+                currentNs=${ns}
+                onClose=${() => setSwitcherOpen(false)}
+              />`}
+            </span>
+          `}
           ${crumbs.map((c, i) => html`
-            ${i > 0 && html`<span class="topbar-crumb-sep">/</span>`}
+            ${(ns || i > 0) && html`<span class="topbar-crumb-sep">/</span>`}
             <span class=${'topbar-crumb' + (i === crumbs.length - 1 ? ' topbar-crumb--current' : '')}>
               ${c.path
                 ? html`<a href=${'#' + c.path} onclick=${(e) => { e.preventDefault(); navigate(c.path); }}>${c.label}</a>`
@@ -125,12 +156,14 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
           data-testid="nav-search"
           title="Open command palette"
         >Search <span class="kbd">⌘ K</span></button>
-        <button
-          class="btn btn--primary"
-          onclick=${() => navigate('/launch')}
-          data-testid="rail-launch"
-          title="Launch new run (⌘N)"
-        >+ Launch</button>
+        ${launchTarget && html`
+          <button
+            class="btn btn--primary"
+            onclick=${() => navigate(launchTarget)}
+            data-testid="rail-launch"
+            title="Launch new run (⌘N)"
+          >+ Launch</button>
+        `}
         <div class=${'topbar-net topbar-net--' + net} title=${'Network ' + netLabel} data-testid="net-status">
           <span class="status-dot"></span>
           <span>${netLabel}</span>

@@ -1771,3 +1771,40 @@ body {
 .no-empty-title code { font-family: var(--font-mono); background: var(--bg-tile); padding: 2px 8px; border-radius: var(--radius-sm); color: var(--accent); }
 .no-empty-sub   { color: var(--sub); margin-bottom: var(--space-5); }
 
+/* ---- Namespace switcher (breadcrumb pill + dropdown) ---------------- */
+.topbar-crumb--ns { position: relative; }
+.ns-switcher-pill {
+  background: var(--bg-tile); border: 1px solid var(--border);
+  color: var(--text); padding: var(--space-1) var(--space-3); border-radius: var(--radius);
+  font-family: var(--font-sans); font-size: var(--font-sm); cursor: pointer;
+}
+.ns-switcher-pill:hover { background: var(--bg-raised); border-color: var(--border-hover); }
+.ns-switcher-dropdown {
+  position: absolute; top: calc(100% + var(--space-2)); left: 0;
+  width: 280px; max-height: 360px; overflow: auto;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--space-2); z-index: 200;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.ns-switcher-search {
+  width: 100%; padding: var(--space-2); margin-bottom: var(--space-2);
+  background: var(--bg-tile); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); font-family: var(--font-sans); font-size: var(--font-sm);
+}
+.ns-switcher-list { display: flex; flex-direction: column; }
+.ns-switcher-item {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: var(--space-2); text-align: left;
+  background: transparent; border: none; color: var(--text); cursor: pointer;
+  border-radius: var(--radius-sm); font-family: var(--font-sans); font-size: var(--font-sm);
+}
+.ns-switcher-item:hover { background: var(--bg-raised); }
+.ns-switcher-item--current { background: var(--bg-raised); font-weight: 600; }
+.ns-switcher-meta { color: var(--muted); font-size: var(--font-xs); }
+.ns-switcher-view-all {
+  width: 100%; padding: var(--space-2); margin-top: var(--space-2);
+  background: transparent; border: none; border-top: 1px solid var(--border);
+  color: var(--sub); text-align: left; cursor: pointer;
+  font-family: var(--font-sans); font-size: var(--font-sm);
+}
+.ns-switcher-view-all:hover { color: var(--text); }

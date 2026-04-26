@@ -108,9 +108,20 @@ async def test_top_rail_buttons_present(
     fake_k8s_client,
     page,
 ) -> None:
-    """The three primary top-rail actions (Launch / Archive / Compare) render."""
-    home = HomePage(page, live_operator_app.base_url)
-    await home.goto()
+    """The top-rail's namespace-aware actions render correctly.
+
+    Cross-namespace tier (``/``): Archive + Compare visible, Launch hidden
+    (no namespace selected → nowhere to launch into). Inside a namespace
+    (``/ns/<ns>``): Launch visible alongside Archive + Compare.
+    """
+    await page.goto(live_operator_app.base_url + "/")
+    await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
+    await expect(page.get_by_test_id("rail-archive")).to_be_visible()
+    await expect(page.get_by_test_id("rail-compare")).to_be_visible()
+    await expect(page.get_by_test_id("rail-launch")).to_have_count(0)
+
+    await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
     for testid in ("rail-launch", "rail-archive", "rail-compare"):
         await expect(page.get_by_test_id(testid)).to_be_visible()
 
@@ -180,3 +191,34 @@ async def test_escape_on_run_view_returns_to_home(
         or u.endswith("/")
     )
     await expect(page.get_by_test_id("page-home")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_breadcrumb_namespace_pill_opens_switcher(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
+    await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
+    await page.get_by_test_id("ns-switcher-pill").click()
+    await expect(page.get_by_test_id("ns-switcher-dropdown")).to_be_visible()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_switcher_navigates_to_other_namespace(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
+    await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
+    await page.get_by_test_id("ns-switcher-pill").click()
+    await page.get_by_test_id("ns-switcher-item-ml-lab").click()
+    await page.wait_for_url(lambda u: u.rstrip("/").endswith("#/ns/ml-lab"))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_switcher_view_all_returns_to_picker(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+):
+    await page.goto(live_operator_app.base_url + "/#/ns/aiperf-bench")
+    await page.get_by_test_id("ns-switcher-pill").click()
+    await page.get_by_test_id("ns-switcher-view-all").click()
+    await page.wait_for_url(lambda u: u.endswith("#/") or u.endswith("#"))
