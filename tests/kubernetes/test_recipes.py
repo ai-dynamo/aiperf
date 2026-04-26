@@ -80,19 +80,21 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     # -- phases (small counts) - replace any existing warmup/profiling --
     bench.pop("warmup", None)
     bench.pop("profiling", None)
-    bench["phases"] = {
-        "warmup": {
+    bench["phases"] = [
+        {
+            "name": "warmup",
             "type": "concurrency",
             "concurrency": TEST_CONCURRENCY,
             "requests": TEST_WARMUP,
             "exclude_from_results": True,
         },
-        "profiling": {
+        {
+            "name": "profiling",
             "type": "concurrency",
             "concurrency": TEST_CONCURRENCY,
             "requests": TEST_REQUEST_COUNT,
         },
-    }
+    ]
 
     # -- runtime: disable UI --
     bench.setdefault("runtime", {})["ui"] = "none"

@@ -66,7 +66,7 @@ datasets:
       isl: 8
       osl: 4
 phases:
-  default:
+  - name: default
     type: concurrency
     requests: 3
     concurrency: 1
@@ -203,7 +203,7 @@ datasets:
       isl: 8
       osl: 4
 phases:
-  default:
+  - name: default
     type: concurrency
     requests: 3
     concurrency: 1

@@ -61,7 +61,14 @@ def kube_config() -> AIPerfConfig:
                 "prompts": {"isl": 32, "osl": 16},
             }
         },
-        phases={"default": {"type": "concurrency", "requests": 100, "concurrency": 10}},
+        phases=[
+            {
+                "name": "default",
+                "type": "concurrency",
+                "requests": 100,
+                "concurrency": 10,
+            }
+        ],
     )
 
 
@@ -119,9 +126,14 @@ def full_spec_with_scheduling() -> dict[str, Any]:
                     "prompts": {"isl": 32, "osl": 16},
                 }
             },
-            "phases": {
-                "default": {"type": "concurrency", "requests": 100, "concurrency": 10}
-            },
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 10,
+                }
+            ],
         },
     }
 
@@ -652,9 +664,14 @@ class TestKueueOperatorFlow:
                         "prompts": {"isl": 32, "osl": 16},
                     }
                 },
-                "phases": {
-                    "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-                },
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
             },
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")

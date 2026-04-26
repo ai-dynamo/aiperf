@@ -116,13 +116,14 @@ class TestConfigValidation:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases={
-                "default": {
+            phases=[
+                {
+                    "name": "default",
                     "type": "concurrency",
                     "requests": 50,
                     "concurrency": 5,
                 }
-            },
+            ],
         )
 
         yaml_str = dump_config(config, exclude_defaults=False)
@@ -151,9 +152,14 @@ class TestConfigValidation:
                     "prompts": {"isl": 32, "osl": 16},
                 }
             },
-            phases={
-                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
-            },
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
 
         path = Path(tempfile.mktemp(suffix=".yaml"))

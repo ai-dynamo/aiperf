@@ -423,9 +423,9 @@ class TestHelmErrorHandling:
                 "imagePullPolicy": "Never",
                 "benchmark": {
                     "endpoint": {},  # Missing required fields
-                    "phases": {
-                        "profiling": {"type": "concurrency", "concurrency": 5},
-                    },
+                    "phases": [
+                        {"name": "profiling", "type": "concurrency", "concurrency": 5},
+                    ],
                 },
             },
         }
