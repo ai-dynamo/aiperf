@@ -998,8 +998,6 @@ code, pre { font-family: var(--f-mono); font-size: 0.92em; }
    RUN VIEW
    ══════════════════════════════════════════════════════════════════════════ */
 
-.v-run { display: flex; flex-direction: column; gap: var(--s-5); max-width: 1320px; margin: 0 auto; }
-
 .run-404 {
   padding: var(--s-8); text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: var(--s-3);
@@ -1019,133 +1017,7 @@ code, pre { font-family: var(--f-mono); font-size: 0.92em; }
   color: var(--paper-faint); letter-spacing: 0.12em;
 }
 
-/* 1. Header */
-.run-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  gap: var(--s-5);
-  padding: var(--s-5) var(--s-6);
-  background:
-    radial-gradient(ellipse 700px 350px at 0% 0%, var(--amber-bed), transparent 70%),
-    linear-gradient(135deg, var(--ink-1), var(--ink-0));
-  border: 1px solid var(--edge-2);
-  position: relative;
-  overflow: hidden;
-}
-
-.v-run--fault .run-header {
-  background: radial-gradient(ellipse 700px 350px at 0% 0%, var(--red-bed), transparent 70%), linear-gradient(135deg, var(--ink-1), var(--ink-0));
-}
-.v-run--passed .run-header {
-  background: radial-gradient(ellipse 700px 350px at 0% 0%, var(--green-bed), transparent 70%), linear-gradient(135deg, var(--ink-1), var(--ink-0));
-}
-
-.run-header-title { display: flex; gap: var(--s-3); align-items: flex-start; min-width: 0; flex: 1; }
-.run-header-back {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px;
-  color: var(--paper-faint);
-  border: 1px solid var(--edge-2);
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-}
-.run-header-back:hover { color: var(--amber); border-color: var(--edge-amber); }
-.run-header-ns-row {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 6px;
-  font-family: var(--f-mono);
-}
-.run-header-ns-eyebrow {
-  font-size: 9px; font-weight: 700;
-  letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--paper-faint);
-}
-.run-header-ns-name {
-  font-size: 12px; font-weight: 700;
-  letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--amber);
-  text-decoration: none;
-  padding: 2px 6px;
-  border: 1px solid var(--edge-amber);
-  background: var(--amber-ink);
-  transition: all var(--transition-fast);
-}
-.run-header-ns-name:hover {
-  background: var(--amber);
-  color: var(--ink-0);
-  box-shadow: var(--amber-glow);
-}
-.run-header-ns-sep { color: var(--paper-ghost); font-size: 14px; }
-.run-header-model {
-  font-family: var(--f-mono); font-size: 10px;
-  color: var(--paper-dim);
-  letter-spacing: 0.08em;
-}
-.run-header-eyebrow {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  font-family: var(--f-mono); font-size: 10px; font-weight: 600;
-  letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--paper-faint);
-  margin-bottom: var(--s-1);
-}
-.run-header-phase {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 8px;
-  font-weight: 700; font-size: 9px;
-  letter-spacing: 0.24em;
-  border: 1px solid;
-}
-.run-header-phase::before {
-  content: ''; display: inline-block; width: 5px; height: 5px; background: currentColor;
-}
-.run-header-phase--live   { color: var(--amber); border-color: var(--edge-amber); background: var(--amber-ink); }
-.run-header-phase--live::before { animation: pilot 1.4s ease-in-out infinite; box-shadow: 0 0 6px currentColor; }
-.run-header-phase--passed { color: var(--green); border-color: rgba(159, 232, 112, 0.35); background: var(--green-ink); }
-.run-header-phase--fault  { color: var(--red); border-color: rgba(255, 89, 100, 0.35); background: var(--red-ink); }
-.run-header-phase--other  { color: var(--paper-faint); border-color: var(--edge-2); background: var(--ink-2); }
-
-.run-header-name {
-  font-family: var(--f-sans); font-weight: 600;
-  font-size: clamp(22px, 2.6vw, 32px);
-  line-height: 1.05;
-  letter-spacing: -0.015em;
-  color: var(--paper);
-  /* Identifiers like "failed-run" or "aiperf-llama3-c128" must NEVER break
-   * mid-token at a hyphen. keep-all keeps hyphenated tokens atomic;
-   * overflow-wrap: break-word is a last-resort fallback when a single
-   * unbreakable token is wider than the container (e.g. very narrow viewport). */
-  word-break: keep-all;
-  overflow-wrap: break-word;
-  hyphens: none;
-}
-.run-header-sub {
-  display: flex; flex-wrap: wrap; gap: 14px;
-  margin-top: var(--s-3);
-  font-family: var(--f-mono); font-size: 11px;
-  color: var(--paper-dim);
-  letter-spacing: 0.06em;
-}
-.run-header-sub span { display: inline-flex; align-items: center; gap: 4px; }
-
-.run-header-clocks {
-  display: flex; gap: var(--s-4); flex-shrink: 0;
-}
-.run-clock {
-  display: flex; flex-direction: column; gap: 4px; text-align: right;
-  padding-left: var(--s-4); border-left: 1px solid var(--edge-2);
-}
-.run-clock-label {
-  font-family: var(--f-mono); font-size: 9px; font-weight: 700;
-  letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--paper-faint);
-}
-.run-clock-val {
-  font-family: var(--f-mono); font-weight: 600;
-  font-size: 24px;
-  color: var(--paper);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.015em;
-}
-.run-clock-val.is-dim { color: var(--paper-ghost); }
+/* 1. Header — replaced by .run-hero (Task 9) */
 
 .run-cancel {
   display: inline-flex; align-items: center; gap: 8px;
@@ -1160,97 +1032,9 @@ code, pre { font-family: var(--f-mono); font-size: 0.92em; }
 }
 .run-cancel:hover { background: var(--red); color: var(--ink-0); box-shadow: 0 0 14px rgba(255,89,100,0.5); }
 
-/* 2. Meter bay */
-.run-meters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0;
-  border: 1px solid var(--edge-2);
-  background: var(--ink-1);
-}
-.run-meter {
-  padding: var(--s-4) var(--s-5);
-  border-right: 1px solid var(--edge-1);
-  transition: background var(--transition-fast);
-  position: relative;
-}
-.run-meter:last-child { border-right: 0; }
-.run-meter:hover { background: var(--amber-ink); }
-.run-meter:hover::before {
-  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
-  background: var(--amber);
-}
-.run-meter-label {
-  font-family: var(--f-mono); font-size: 10px; font-weight: 700;
-  letter-spacing: 0.26em; text-transform: uppercase;
-  color: var(--paper-faint);
-  margin-bottom: var(--s-2);
-}
-.run-meter-value {
-  font-family: var(--f-mono); font-weight: 600;
-  font-size: clamp(28px, 3vw, 40px);
-  line-height: 1;
-  letter-spacing: -0.03em;
-  color: var(--paper);
-  font-variant-numeric: tabular-nums;
-  display: flex; align-items: baseline; gap: 6px;
-}
-.run-meter-unit {
-  font-size: 0.32em; font-weight: 500;
-  color: var(--paper-faint);
-  letter-spacing: 0.14em; text-transform: uppercase;
-  font-family: var(--f-mono);
-}
-.run-meter--amber .run-meter-value { color: var(--amber); text-shadow: 0 0 12px rgba(118, 185, 0, 0.25); }
-.run-meter--red   .run-meter-value { color: var(--red); }
-.run-meter--green .run-meter-value { color: var(--green); }
-.run-meter--dim   .run-meter-value { color: var(--paper-ghost); }
+/* 2. Meter bay — replaced by .run-kpis (Task 9) */
 
-/* 3b. Live sparklines (only during live runs) */
-.run-sparks {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0;
-  border: 1px solid var(--edge-2);
-  border-top: 0;
-  background: var(--ink-1);
-}
-.run-spark {
-  padding: var(--s-3) var(--s-4) var(--s-2);
-  border-right: 1px solid var(--edge-1);
-  min-width: 0;
-}
-.run-spark:last-child { border-right: 0; }
-.run-spark-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--s-2);
-  margin-bottom: 4px;
-}
-.run-spark-label {
-  font-family: var(--f-mono); font-size: 9px; font-weight: 700;
-  letter-spacing: 0.24em; text-transform: uppercase;
-  color: var(--paper-faint);
-}
-.run-spark-val {
-  font-family: var(--f-mono); font-weight: 600;
-  font-size: 16px;
-  letter-spacing: -0.01em;
-  color: var(--paper);
-  font-variant-numeric: tabular-nums;
-}
-.run-spark-val small {
-  font-size: 9px; font-weight: 500;
-  color: var(--paper-faint);
-  letter-spacing: 0.16em; text-transform: uppercase;
-  margin-left: 3px;
-}
-.run-spark-body { height: 60px; position: relative; }
-.run-spark-empty {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--f-mono); font-size: 9px;
-  letter-spacing: 0.24em; color: var(--paper-ghost);
-}
+/* 3b. Live sparklines — replaced by .run-spark-tile (Task 9) */
 
 /* 3. Phase swimlane */
 .run-phases { border: 1px solid var(--edge-2); background: var(--ink-1); }
@@ -1665,8 +1449,7 @@ input[type="text"]::placeholder { color: var(--paper-ghost); letter-spacing: 0.0
 /*  MISSING VARIANTS — audit round 2                                */
 /* ──────────────────────────────────────────────────────────────── */
 
-/* Run meter: default / paper tone (explicit, matches .run-meter default) */
-.run-meter--paper .run-meter-value { color: var(--paper); }
+/* Run meter — replaced by .run-kpi (Task 9) */
 
 /* Phase lane: pending (no background, faint status) */
 .run-lane--pending { background: transparent; }
@@ -1684,107 +1467,7 @@ input[type="text"]::placeholder { color: var(--paper-ghost); letter-spacing: 0.0
   color: var(--paper-dim); border-color: var(--edge-2); background: var(--ink-2);
 }
 
-/* ═══ Run identity manifest (round-4 enhancement) ═══
-   Dense row of tiles immediately under .run-header that surface the experiment
-   identity — model / endpoint / backend / benchmark mode / concurrency /
-   ISL·OSL / requests / duration / GPUs — so the things that make one run
-   comparable to another are visible without expanding the CONFIG details at
-   the bottom. Visually continuous with the header (no top border). */
-.run-identity {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 0;
-  border: 1px solid var(--edge-2);
-  border-top: 0;
-  background: var(--ink-1);
-}
-.run-identity-tile {
-  min-height: 64px;
-  padding: var(--s-3) var(--s-4);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--s-1);
-  border-right: 1px solid var(--edge-1);
-  border-top: 1px solid var(--edge-1);
-}
-.run-identity-tile:first-child { border-top: 0; }
-.run-identity-tile--wide { grid-column: span 2; }
-.run-identity-eyebrow {
-  font-family: var(--f-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--paper-faint);
-}
-.run-identity-value {
-  font-family: var(--f-mono);
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--paper);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.005em;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.run-identity-tile--wide .run-identity-value {
-  font-size: 16px;
-}
-.run-identity-tile:hover {
-  background: var(--amber-ink);
-}
-.run-identity-tile:hover .run-identity-eyebrow {
-  color: var(--amber);
-}
-
-/* ═══ Run: sibling + fault + events (round-5) ═══ */
-
-/* Sibling chip — a tile styled as a button/link, NVIDIA-green accent. */
-.run-identity-tile--sibling {
-  position: relative;
-  grid-column: span 2;
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-  background: var(--ink-1);
-  border-left: 2px solid var(--amber);
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-.run-identity-tile--sibling .run-identity-eyebrow {
-  color: var(--amber);
-}
-.run-identity-tile--sibling:hover,
-.run-identity-tile--sibling:focus-visible {
-  background: var(--amber-ink);
-  border-left-color: var(--amber);
-  outline: none;
-}
-.run-identity-tile--sibling:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--amber);
-}
-.run-identity-sibling-arrow {
-  float: right;
-  margin-left: var(--s-2);
-  color: var(--amber);
-  transition: transform var(--transition-fast);
-}
-.run-identity-tile--sibling:hover .run-identity-sibling-arrow {
-  transform: translateX(2px);
-}
-.run-identity-tile--sibling-empty {
-  cursor: default;
-  opacity: 0.55;
-  border-left-color: var(--edge-2);
-}
-.run-identity-tile--sibling-empty .run-identity-eyebrow {
-  color: var(--paper-faint);
-}
-.run-identity-tile--sibling-empty:hover {
-  background: var(--ink-1);
-}
+/* ═══ Run identity manifest — replaced by .run-identity (Task 9) ═══ */
 
 /* Fault callout — red slab, prominent, between identity strip & conditions. */
 .run-fault-callout {
@@ -2249,3 +1932,157 @@ input[type="text"]::placeholder { color: var(--paper-ghost); letter-spacing: 0.0
   font-size: var(--font-sm);
 }
 
+/* ───── Run view: shell ───── */
+.v-run { display: grid; gap: 16px; max-width: 1400px; margin: 0 auto; padding-bottom: 24px; }
+
+/* ───── Run view: hero ───── */
+.run-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.2fr) minmax(180px, 0.8fr) minmax(300px, 2fr);
+  gap: 16px;
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  align-items: center;
+}
+.run-hero--ok    { border-color: rgba(118, 185, 0, 0.45); box-shadow: 0 0 0 1px rgba(118, 185, 0, 0.12) inset; }
+.run-hero--warn  { border-color: rgba(255, 193, 7, 0.45); box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.12) inset; }
+.run-hero--error { border-color: rgba(239, 83, 80, 0.55); box-shadow: 0 0 0 1px rgba(239, 83, 80, 0.15) inset; }
+.run-hero--idle  { border-color: rgba(117, 117, 117, 0.45); }
+
+.run-hero-health { display: flex; align-items: center; gap: 14px; }
+.run-hero-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.02);
+}
+.run-hero-dot--ok    { background: var(--green); box-shadow: 0 0 16px rgba(118, 185, 0, 0.5); animation: pulse 2s infinite; }
+.run-hero-dot--warn  { background: var(--amber); box-shadow: 0 0 16px rgba(255, 193, 7, 0.5); }
+.run-hero-dot--error { background: var(--red);   box-shadow: 0 0 16px rgba(239, 83, 80, 0.5); animation: pulse 1.2s infinite; }
+.run-hero-dot--idle  { background: var(--muted); }
+.run-hero-label   { font-size: var(--font-lg); font-weight: 700; color: var(--white); line-height: 1.1; }
+.run-hero-reasons { font-size: var(--font-xs); color: var(--sub); margin-top: 4px; font-family: var(--font-mono); }
+
+.run-hero-clock {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-left: var(--space-4); border-left: 1px solid var(--border);
+}
+.run-hero-clock-line { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.run-hero-clock-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+.run-hero-clock-val   { font-family: var(--font-mono); font-size: var(--font-md); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.run-hero-clock-val--dim { color: var(--muted); font-weight: 400; }
+
+.run-hero-phase {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-left: var(--space-4); border-left: 1px solid var(--border);
+}
+.run-hero-phase-head { display: flex; justify-content: space-between; align-items: baseline; }
+.run-hero-phase-name { font-family: var(--font-sans); font-size: var(--font-md); font-weight: 600; color: var(--white); }
+.run-hero-phase-name--idle { color: var(--muted); font-weight: 400; }
+.run-hero-phase-pct  { font-size: var(--font-md); font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.run-hero-phase-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.run-hero-phase-fill  { height: 100%; background: var(--blue); border-radius: 4px; transition: width 300ms ease; }
+.run-hero-phase-fill--done { background: var(--green); }
+.run-hero--error .run-hero-phase-fill { background: var(--red); }
+.run-hero--warn  .run-hero-phase-fill { background: var(--amber); }
+.run-hero-phase-sub { font-size: var(--font-xs); color: var(--sub); font-variant-numeric: tabular-nums; }
+
+.run-hero-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ───── Run view: identity strip ───── */
+.run-identity {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-xs);
+}
+.run-identity-item { display: flex; align-items: baseline; gap: 6px; color: var(--sub); }
+.run-identity-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+.run-identity-value { color: var(--text); font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.run-identity-sep   { width: 1px; align-self: stretch; background: var(--border); }
+.run-identity-item--sibling {
+  text-decoration: none;
+  cursor: pointer;
+  color: var(--accent);
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  transition: color var(--transition-fast);
+}
+.run-identity-item--sibling:hover { color: var(--white); }
+.run-identity-item--sibling .run-identity-label { color: var(--accent); }
+.run-identity-item--sibling-empty {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  opacity: 0.55;
+  cursor: default;
+}
+.run-identity-sibling-arrow {
+  margin-left: 4px;
+  transition: transform var(--transition-fast);
+}
+.run-identity-item--sibling:hover .run-identity-sibling-arrow { transform: translateX(2px); }
+
+/* ───── Run view: KPI tiles (replaces meter bay) ───── */
+.run-meters, .run-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.run-kpi {
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 104px;
+  transition: border-color var(--transition-fast);
+}
+.run-kpi--good { border-color: rgba(118, 185, 0, 0.35); }
+.run-kpi--warn { border-color: rgba(255, 193, 7, 0.35); }
+.run-kpi--bad  { border-color: rgba(239, 83, 80, 0.45); }
+.run-kpi-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.run-kpi-label-block { display: flex; flex-direction: column; gap: 2px; }
+.run-kpi-label-block > span:first-child {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dim); font-weight: 600;
+}
+.run-kpi-primary-stat { font-size: 9px; color: var(--muted); font-family: var(--font-mono); letter-spacing: 0.04em; }
+.run-kpi-big { display: flex; align-items: baseline; gap: 4px; }
+.run-kpi-big-val { font-size: 26px; font-weight: 700; color: var(--white); font-variant-numeric: tabular-nums; line-height: 1; font-family: var(--font-mono); }
+.run-kpi-big-unit { font-size: var(--font-xs); color: var(--muted); font-weight: 500; }
+.run-kpi-sub {
+  font-size: var(--font-xs); color: var(--dim);
+  margin-top: auto;
+  font-variant-numeric: tabular-nums;
+  display: flex; align-items: baseline; gap: 6px;
+}
+.run-kpi-sub b { color: var(--sub); font-weight: 600; }
+.run-kpi-spark { display: block; width: 100%; max-width: 160px; }
+
+/* ───── Run view: sparkline tiles (live only) ───── */
+.run-sparks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.run-spark-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.run-spark-tile-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+.run-spark-tile-value { font-family: var(--font-mono); font-size: var(--font-lg); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.run-spark-tile-svg   { width: 100%; height: 32px; }
+
+/* ───── Run view: latency timeline (completed runs) ───── */
+.run-latency-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}

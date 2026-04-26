@@ -26,8 +26,6 @@ import { api, poll } from '../lib/api.js';
 import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
 import { fmtBytes, fmtDuration, fmtInt, fmtNumber, fmtPercent } from '../lib/format.js';
-import { ChartWrapper } from '../components/chart-wrapper.js';
-import { applyChartTheme } from '../lib/chart-theme.js';
 
 function phaseBucket(phase) {
   const p = (phase ?? '').toLowerCase();
@@ -676,50 +674,52 @@ function IdentityStrip({ job, config, summary: _summary }) {
   const gpus = job?.gpuConfig ?? null;
 
   const tiles = [];
-  if (model != null)     tiles.push({ eyebrow: 'MODEL',          value: model,             wide: true });
-  if (endpoint != null)  tiles.push({ eyebrow: 'ENDPOINT',       value: endpoint,          wide: true });
-  if (backend != null)   tiles.push({ eyebrow: 'BACKEND',        value: backend });
-  if (mode != null)      tiles.push({ eyebrow: 'BENCHMARK MODE', value: String(mode) });
-  if (concurrency != null) tiles.push({ eyebrow: 'CONCURRENCY',  value: fmtInt(concurrency) });
+  if (model != null)     tiles.push({ label: 'MODEL',          value: model });
+  if (endpoint != null)  tiles.push({ label: 'ENDPOINT',       value: endpoint });
+  if (backend != null)   tiles.push({ label: 'BACKEND',        value: backend });
+  if (mode != null)      tiles.push({ label: 'BENCHMARK MODE', value: String(mode) });
+  if (concurrency != null) tiles.push({ label: 'CONCURRENCY',  value: fmtInt(concurrency) });
   if (isl != null || osl != null) {
     tiles.push({
-      eyebrow: 'ISL / OSL',
+      label: 'ISL / OSL',
       value: `${isl ?? '—'} / ${osl ?? '—'}`,
     });
   }
-  if (requests != null)  tiles.push({ eyebrow: 'REQUESTS',       value: fmtInt(requests) });
+  if (requests != null)  tiles.push({ label: 'REQUESTS',       value: fmtInt(requests) });
   if (durationRaw != null) {
     const secs = typeof durationRaw === 'number' ? durationRaw : Number(durationRaw);
-    if (isFinite(secs)) tiles.push({ eyebrow: 'DURATION', value: fmtDuration(secs) });
+    if (isFinite(secs)) tiles.push({ label: 'DURATION', value: fmtDuration(secs) });
   }
-  if (gpus != null)      tiles.push({ eyebrow: 'GPUs',           value: gpus });
+  if (gpus != null)      tiles.push({ label: 'GPUs',           value: gpus });
 
   if (tiles.length === 0) return null;
 
   const sibN = model != null ? siblingCount(job) : -1;
   const clusterKey = model != null ? `${job?.namespace ?? ''} · ${model}` : null;
 
+  // The two data-testid="run-identity-sibling" rendering paths below mirror
+  // the legacy sibling logic — exactly one of (link / empty placeholder)
+  // is rendered per call. Tests inspect the testid, not its count > 1.
   return html`
     <section class="run-identity" data-testid="run-identity" aria-label="Run identity">
-      ${tiles.map(t => html`
-        <div
-          key=${t.eyebrow}
-          class=${'run-identity-tile' + (t.wide ? ' run-identity-tile--wide' : '')}
-        >
-          <span class="run-identity-eyebrow">${t.eyebrow}</span>
+      ${tiles.map((t, i) => html`
+        ${i > 0 && html`<span key=${'sep-' + t.label} class="run-identity-sep"></span>`}
+        <div key=${t.label} class="run-identity-item">
+          <span class="run-identity-label">${t.label}</span>
           <span class="run-identity-value">${t.value}</span>
         </div>
       `)}
       ${sibN > 0 && html`
+        <span key="sib-sep" class="run-identity-sep"></span>
         <a
           key="siblings"
-          class="run-identity-tile run-identity-tile--sibling"
+          class="run-identity-item run-identity-item--sibling"
           href=${'/compare?cluster=' + encodeURIComponent(clusterKey)}
           onclick=${(e) => { e.preventDefault(); navigate('/compare?cluster=' + encodeURIComponent(clusterKey)); }}
           data-testid="run-identity-sibling"
           title=${`Compare runs in ${clusterKey}`}
         >
-          <span class="run-identity-eyebrow">${sibN} COMPARABLE RUN${sibN === 1 ? '' : 'S'}</span>
+          <span class="run-identity-label">${sibN} COMPARABLE RUN${sibN === 1 ? '' : 'S'}</span>
           <span class="run-identity-value">
             ${clusterKey}
             <i class="ph ph-arrow-right run-identity-sibling-arrow"></i>
@@ -727,13 +727,14 @@ function IdentityStrip({ job, config, summary: _summary }) {
         </a>
       `}
       ${sibN === 0 && html`
+        <span key="sib-sep" class="run-identity-sep"></span>
         <div
           key="siblings"
-          class="run-identity-tile run-identity-tile--sibling run-identity-tile--sibling-empty"
+          class="run-identity-item run-identity-item--sibling-empty"
           data-testid="run-identity-sibling"
           aria-disabled="true"
         >
-          <span class="run-identity-eyebrow">NO COMPARABLE RUNS</span>
+          <span class="run-identity-label">NO COMPARABLE RUNS</span>
           <span class="run-identity-value">${clusterKey}</span>
         </div>
       `}
@@ -984,7 +985,7 @@ function GpuTelemetry({ metrics }) {
  *  `ReliabilityTile` on the legacy Job Detail page showed. */
 function ReliabilityMeter({ summary, slosDeclared }) {
   if (!summary || typeof summary !== 'object') {
-    return html`<${RunMeter} label="REQUESTS" value="—" tone="dim" />`;
+    return html`<${RunKpi} label="REQUESTS" value="—" unit="" tone="" />`;
   }
   const total = summary.total_requests;
   const goodput = summary.goodput_count;
@@ -996,11 +997,12 @@ function ReliabilityMeter({ summary, slosDeclared }) {
   if (slosDeclared && total != null && goodput != null) {
     const failed = Math.max(0, Math.round(total - goodput));
     const pct = total > 0 ? Math.max(0, 100 - (failed / total) * 100) : null;
-    return html`<${RunMeter}
+    return html`<${RunKpi}
       label="GOODPUT"
+      primary=${pct != null ? fmtNumber(pct, 1) + '% pass' : 'failed'}
       value=${fmtInt(failed)}
-      unit=${pct != null ? fmtNumber(pct, 1) + '% pass' : 'failed'}
-      tone=${failed === 0 ? 'green' : 'amber'}
+      unit="failed"
+      tone=${failed === 0 ? 'good' : 'warn'}
     />`;
   }
 
@@ -1008,15 +1010,16 @@ function ReliabilityMeter({ summary, slosDeclared }) {
     const errUnit = errorCount != null
       ? errorCount === 0 ? 'no errors' : `${fmtInt(errorCount)} err`
       : 'no errors';
-    return html`<${RunMeter}
+    return html`<${RunKpi}
       label="REQUESTS"
+      primary=${errUnit}
       value=${fmtInt(total)}
-      unit=${errUnit}
-      tone=${(errorCount ?? 0) > 0 ? 'red' : 'green'}
+      unit=""
+      tone=${(errorCount ?? 0) > 0 ? 'bad' : 'good'}
     />`;
   }
 
-  return html`<${RunMeter} label="REQUESTS" value="—" tone="dim" />`;
+  return html`<${RunKpi} label="REQUESTS" value="—" unit="" tone="" />`;
 }
 
 /* ─────────────────────── live sparklines ──────────────────── */
@@ -1030,27 +1033,26 @@ const SPARK_SPECS = [
   { key: 'tokps', label: 'TOKEN/S',     unit: 'tok/s', color: 'var(--green)', digits: 0 },
 ];
 
-const SPARK_OPTS = applyChartTheme({
-  animation: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      displayColors: false,
-      callbacks: { title: () => '', label: ctx => fmtNumber(ctx.parsed.y, 1) },
-    },
-  },
-  elements: { point: { radius: 0, hoverRadius: 3 }, line: { borderWidth: 1.6, tension: 0.25 } },
-  scales: {
-    x: { type: 'linear', display: false, grid: { display: false } },
-    y: { display: false, grid: { display: false } },
-  },
-});
-
 function cssVar(v) {
   if (typeof v !== 'string' || !v.startsWith('var(')) return v;
   const name = v.slice(4, -1).trim();
   if (typeof window === 'undefined') return '#76b900';
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#76b900';
+}
+
+function sparkPath(pts) {
+  if (!pts || pts.length < 2) return '';
+  const ys = pts.map(p => p.y);
+  const min = Math.min(...ys);
+  const max = Math.max(...ys);
+  const range = max - min || 1;
+  const W = 160, H = 32;
+  const stepX = pts.length > 1 ? W / (pts.length - 1) : 0;
+  return pts.map((p, i) => {
+    const x = (i * stepX).toFixed(2);
+    const y = (H - ((p.y - min) / range) * H).toFixed(2);
+    return `${x},${y}`;
+  }).join(' ');
 }
 
 function SparkTile({ spec, samples }) {
@@ -1059,32 +1061,22 @@ function SparkTile({ spec, samples }) {
     .filter(p => p.y != null && isFinite(p.y));
   const last = pts.length > 0 ? pts[pts.length - 1].y : null;
   const color = cssVar(spec.color);
-
-  const data = {
-    datasets: [{
-      data: pts,
-      borderColor: color,
-      backgroundColor: color + '22',
-      fill: true,
-      pointRadius: 0,
-      pointHoverRadius: 3,
-    }],
-  };
+  const path = sparkPath(pts);
 
   return html`
-    <div class="run-spark">
-      <div class="run-spark-head">
-        <span class="run-spark-label">${spec.label}</span>
-        <span class="run-spark-val" style=${'color: ' + color}>
-          ${last != null ? fmtNumber(last, spec.digits) : '—'}
-          <small>${spec.unit}</small>
-        </span>
-      </div>
-      <div class="run-spark-body">
-        ${pts.length < 2
-          ? html`<div class="run-spark-empty">AWAITING DATA</div>`
-          : html`<${ChartWrapper} type="line" data=${data} options=${SPARK_OPTS} height=${60} />`}
-      </div>
+    <div class="run-spark-tile">
+      <span class="run-spark-tile-label">${spec.label}</span>
+      <span class="run-spark-tile-value" style=${'color: ' + color}>
+        ${last != null ? fmtNumber(last, spec.digits) : '—'}
+        <small> ${spec.unit}</small>
+      </span>
+      ${pts.length < 2
+        ? html`<svg class="run-spark-tile-svg" viewBox="0 0 160 32" preserveAspectRatio="none"></svg>`
+        : html`
+          <svg class="run-spark-tile-svg" viewBox="0 0 160 32" preserveAspectRatio="none">
+            <polyline fill="none" stroke=${color} stroke-width="1.4" points=${path}/>
+          </svg>
+        `}
     </div>
   `;
 }
@@ -1180,8 +1172,16 @@ function LatencyTimelineChart({ ns, name, epoch }) {
           parsing: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: { type: 'linear', title: { display: true, text: 'request index' } },
-            y: { title: { display: true, text: 'latency (ms)' }, beginAtZero: true },
+            x: {
+              type: 'linear',
+              title: { display: true, text: 'request index' },
+              ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            },
+            y: {
+              title: { display: true, text: 'latency (ms)' },
+              beginAtZero: true,
+              ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } },
+            },
           },
         },
       });
@@ -1230,7 +1230,7 @@ function LatencyTimelineChart({ ns, name, epoch }) {
   return html`
     <section class="run-latency-chart" data-testid="run-latency-chart">
       ${header(metaText)}
-      <div class="run-latency-chart-body" style="height: 300px;">
+      <div class="card chart-box" style="height: 300px;">
         <canvas ref=${canvasRef}></canvas>
       </div>
     </section>
@@ -1476,49 +1476,78 @@ export function Run({ ns, name, epoch }) {
     `;
   }
 
+  const heroVerdict =
+    bucket === 'fault' ? 'error' :
+    bucket === 'live'  ? 'ok'    :
+    bucket === 'passed'? 'ok'    :
+                         'idle';
+  const heroDotClass    = `run-hero-dot run-hero-dot--${heroVerdict}`;
+  const heroBorderClass = `run-hero run-hero--${heroVerdict}`;
+  const heroLabel =
+    bucket === 'fault'  ? 'Failed'  :
+    bucket === 'live'   ? 'Healthy' :
+    bucket === 'passed' ? 'Completed' :
+                          'Idle';
+  const heroReasons = [
+    job?.model && `model: ${job.model}`,
+    pods.length > 0 && `${pods.filter(p => (p.phase || '').toLowerCase() === 'running').length}/${pods.length} pods running`,
+  ].filter(Boolean).join(' · ');
+  const phasePctNum = phasePct(active);
+  const phaseFillClass =
+    active?.complete ? 'run-hero-phase-fill run-hero-phase-fill--done' :
+                       'run-hero-phase-fill';
+  const phaseTotal = active?.total_expected_requests ?? active?.expected_requests ?? active?.requests_total ?? null;
+  const phaseDone  = active?.final_requests_completed ?? active?.requestsCompleted ?? active?.requests_completed ?? active?.completed ?? 0;
+
   return html`
     <div class=${'v-run v-run--' + bucket} data-testid="page-job-detail">
-      <!-- 1. HEADER -->
-      <header class="run-header">
-        <div class="run-header-title">
-          <button class="run-header-back" onclick=${() => navigate('/')} title="Back to home" aria-label="Back">
-            <i class="ph ph-arrow-left"></i>
-          </button>
+
+      <!-- 1. HERO -->
+      <section class=${heroBorderClass}>
+        <div class="run-hero-health">
+          <div class=${heroDotClass}></div>
           <div>
-            <div class="run-header-ns-row">
-              <span class="run-header-ns-eyebrow">NAMESPACE</span>
-              <a
-                class="run-header-ns-name"
-                href="#/"
-                onclick=${(e) => { e.preventDefault(); navigate('/'); }}
-                title="All runs in this namespace"
-              >${ns}</a>
-              <span class="run-header-ns-sep">/</span>
-            </div>
-            <h1 class="run-header-name">${name}</h1>
-            <div class="run-header-eyebrow">
-              <span class=${'run-header-phase run-header-phase--' + bucket}>
-                ${(job?.phase ?? 'UNKNOWN').toUpperCase()}
-              </span>
-              ${job?.model && html`<span class="run-header-model">${job.model}</span>`}
-            </div>
+            <div class="run-hero-label">${heroLabel}</div>
+            ${heroReasons && html`<div class="run-hero-reasons">${heroReasons}</div>`}
           </div>
         </div>
-        <div class="run-header-clocks">
-          <div class="run-clock">
-            <span class="run-clock-label">ELAPSED</span>
-            <span class="run-clock-val">${elapsed != null ? fmtDuration(elapsed) : '—'}</span>
+        <div class="run-hero-clock">
+          <div class="run-hero-clock-line">
+            <span class="run-hero-clock-label">Elapsed</span>
+            <span class=${'run-hero-clock-val' + (elapsed != null ? '' : ' run-hero-clock-val--dim')}>
+              ${elapsed != null ? fmtDuration(elapsed) : '—'}
+            </span>
           </div>
-          <div class="run-clock">
-            <span class="run-clock-label">PHASE ETA</span>
-            <span class=${'run-clock-val' + (eta != null ? '' : ' is-dim')}>${eta != null ? fmtDuration(eta) : '—'}</span>
+          <div class="run-hero-clock-line">
+            <span class="run-hero-clock-label">Phase ETA</span>
+            <span class=${'run-hero-clock-val' + (eta != null ? '' : ' run-hero-clock-val--dim')}>
+              ${eta != null ? fmtDuration(eta) : '—'}
+            </span>
           </div>
-          <${CancelButton} ns=${ns} name=${name} bucket=${bucket} />
-          <${RelaunchButton} ns=${ns} name=${name} config=${config} />
-          <${RunHistoryDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
-          <${CompareWithDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
         </div>
-      </header>
+        <div class="run-hero-phase">
+          <div class="run-hero-phase-head">
+            <span class=${'run-hero-phase-name' + (active ? '' : ' run-hero-phase-name--idle')}>
+              ${active?.name ?? 'idle'}
+            </span>
+            <span class="run-hero-phase-pct">${fmtPercent(phasePctNum, 0)}</span>
+          </div>
+          <div class="run-hero-phase-track">
+            <div class=${phaseFillClass} style=${'width: ' + phasePctNum + '%'}></div>
+          </div>
+          <div class="run-hero-phase-sub">
+            ${fmtInt(phaseDone)}${phaseTotal ? ' / ' + fmtInt(phaseTotal) : ''} requests
+          </div>
+        </div>
+      </section>
+
+      <!-- 1a. ACTIONS (cancel / relaunch / history / compare) -->
+      <div class="run-hero-actions">
+        <${CancelButton}        ns=${ns} name=${name} bucket=${bucket} />
+        <${RelaunchButton}      ns=${ns} name=${name} config=${config} />
+        <${RunHistoryDropdown}  ns=${ns} name=${name} selectedEpoch=${epoch} />
+        <${CompareWithDropdown} ns=${ns} name=${name} selectedEpoch=${epoch} />
+      </div>
 
       <!-- 1b. IDENTITY -->
       <${IdentityStrip} job=${job} config=${config} summary=${summary} />
@@ -1529,12 +1558,12 @@ export function Run({ ns, name, epoch }) {
       <!-- 2. CONDITIONS -->
       <${ConditionsStrip} conditions=${conditions} />
 
-      <!-- 3. METER BAY -->
-      <section class="run-meters">
-        <${RunMeter} label="THROUGHPUT" value=${rps != null ? fmtNumber(rps, 1) : '—'} unit="req/s" tone=${rps != null ? 'amber' : 'dim'} />
-        <${RunMeter} label="TTFT P99"   value=${ttft != null ? fmtInt(ttft) : '—'}     unit="ms"    tone="paper" />
-        <${RunMeter} label="LATENCY P99" value=${p99 != null ? fmtInt(p99) : '—'}      unit="ms"    tone=${p99 != null && p99 > 500 ? 'red' : 'paper'} />
-        <${RunMeter} label="TOKEN/S"    value=${tokps != null ? fmtInt(tokps) : '—'}   unit="tok/s" tone=${tokps != null ? 'amber' : 'dim'} />
+      <!-- 3. KPIs (replaces METER BAY) -->
+      <section class="run-kpis">
+        <${RunKpi} label="Throughput"  primary=""            value=${rps  != null ? fmtNumber(rps, 1) : '—'} unit="req/s" tone=${rps  != null ? 'good' : ''} />
+        <${RunKpi} label="TTFT p99"    primary="first token" value=${ttft != null ? fmtInt(ttft)     : '—'} unit="ms"    tone="" />
+        <${RunKpi} label="Latency p99" primary="end-to-end"  value=${p99  != null ? fmtInt(p99)      : '—'} unit="ms"    tone=${p99 != null && p99 > 500 ? 'warn' : ''} />
+        <${RunKpi} label="Token/s"     primary="output"      value=${tokps != null ? fmtInt(tokps)   : '—'} unit="tok/s" tone=${tokps != null ? 'good' : ''} />
         <${ReliabilityMeter} summary=${summary} slosDeclared=${slosDeclared} />
       </section>
 
@@ -1620,11 +1649,20 @@ export function Run({ ns, name, epoch }) {
   `;
 }
 
-function RunMeter({ label, value, unit, tone }) {
+function RunKpi({ label, primary, value, unit, tone }) {
+  const cls = 'run-kpi' + (tone ? ' run-kpi--' + tone : '');
   return html`
-    <div class=${'run-meter run-meter--' + (tone ?? 'paper')}>
-      <div class="run-meter-label">${label}</div>
-      <div class="run-meter-value">${value}${unit && html`<span class="run-meter-unit">${unit}</span>`}</div>
+    <div class=${cls}>
+      <div class="run-kpi-head">
+        <div class="run-kpi-label-block">
+          <span>${label}</span>
+          ${primary && html`<span class="run-kpi-primary-stat">${primary}</span>`}
+        </div>
+      </div>
+      <div class="run-kpi-big">
+        <span class="run-kpi-big-val">${value}</span>
+        ${unit && html`<span class="run-kpi-big-unit">${unit}</span>`}
+      </div>
     </div>
   `;
 }
