@@ -83,84 +83,59 @@ export function TopRail({ viewKind, runParams, onSearchClick }) {
   const netLabel = net === 'ok' ? 'UP' : net === 'warn' ? 'RETRY' : 'DOWN';
 
   return html`
-    <header class="rail" data-testid="top-nav">
-      <div class="rail-left">
-        <button
-          class="rail-logo"
-          onclick=${() => navigate('/')}
-          title="Home"
+    <header class="topbar" data-testid="top-nav">
+      <div class="topbar-left">
+        <a
+          class="topbar-logo"
+          href="#/"
+          onclick=${(e) => { e.preventDefault(); navigate('/'); }}
           data-testid="callsign"
         >
-          <span class="rail-logo-light"></span>
-          <span class="rail-logo-head">AIPERF</span>
-          <span class="rail-logo-sep">//</span>
-          <span class="rail-logo-tail">WORKBENCH</span>
-        </button>
-
-        ${crumbs.length > 0 && html`
-          <nav class="rail-crumbs" aria-label="Breadcrumb" data-testid="breadcrumb">
-            ${crumbs.map((c, i) => html`
-              <span key=${i} class="rail-crumb-sep">▸</span>
+          <span class="topbar-logo-badge">AI</span>
+          <span>AIPerf Operator</span>
+        </a>
+        <nav class="topbar-crumbs" aria-label="Breadcrumb" data-testid="breadcrumb">
+          ${crumbs.map((c, i) => html`
+            ${i > 0 && html`<span class="topbar-crumb-sep">/</span>`}
+            <span class=${'topbar-crumb' + (i === crumbs.length - 1 ? ' topbar-crumb--current' : '')}>
               ${c.path
-                ? html`<a class="rail-crumb" href=${'#' + c.path} onclick=${(e) => { e.preventDefault(); navigate(c.path); }}>${c.label}</a>`
-                : html`<span class=${'rail-crumb' + (c.emphasise ? ' rail-crumb--strong' : '')}>${c.label}</span>`}
-            `)}
-          </nav>
-        `}
+                ? html`<a href=${'#' + c.path} onclick=${(e) => { e.preventDefault(); navigate(c.path); }}>${c.label}</a>`
+                : c.label}
+            </span>
+          `)}
+        </nav>
       </div>
 
-      <div class="rail-right">
+      <div class="topbar-right">
         <button
-          class=${'rail-launch' + (viewKind === 'launch' ? ' is-active' : '')}
-          onclick=${() => navigate('/launch')}
-          data-testid="rail-launch"
-          title="Launch a new run (⌘N)"
-        >
-          <i class="ph ph-plus"></i>
-          <span>Launch</span>
-          <kbd>⌘N</kbd>
-        </button>
-
-        <button
-          class=${'rail-btn' + (viewKind === 'archive' ? ' is-active' : '')}
+          class="btn btn--ghost"
           onclick=${() => navigate('/archive')}
           data-testid="rail-archive"
-          title="Browse past runs"
-        >
-          <i class="ph ph-archive"></i>
-          <span>Archive</span>
-        </button>
-
+          title="Archive"
+        >Archive</button>
         <button
-          class=${'rail-btn' + (viewKind === 'analysis' ? ' is-active' : '')}
+          class="btn btn--ghost"
           onclick=${() => navigate('/compare')}
           data-testid="rail-compare"
-          title="Compare runs"
-        >
-          <i class="ph ph-scales"></i>
-          <span>Compare</span>
-        </button>
-
-        <div class="rail-sep" aria-hidden="true"></div>
-
+          title="Compare"
+        >Compare</button>
         <button
-          class="rail-search"
+          class="btn btn--ghost"
           onclick=${onSearchClick}
-          title="Search runs (⌘K)"
           data-testid="nav-search"
-        >
-          <i class="ph ph-magnifying-glass"></i>
-          <kbd>⌘K</kbd>
-        </button>
-
-        <div class=${'rail-net rail-net--' + net} title=${'NET ' + netLabel} data-testid="net-status">
-          <span class="rail-net-dot"></span>
-          NET · ${netLabel}
+          title="Open command palette"
+        >Search <span class="kbd">⌘ K</span></button>
+        <button
+          class="btn btn--primary"
+          onclick=${() => navigate('/launch')}
+          data-testid="rail-launch"
+          title="Launch new run (⌘N)"
+        >+ Launch</button>
+        <div class=${'topbar-net topbar-net--' + net} title=${'Network ' + netLabel} data-testid="net-status">
+          <span class="status-dot"></span>
+          <span>${netLabel}</span>
         </div>
-
-        <div class="rail-clock" data-testid="topbar-clock" title="UTC">
-          ${clock}
-        </div>
+        <div class="topbar-clock" data-testid="topbar-clock" title="UTC">${clock} UTC</div>
       </div>
     </header>
   `;
