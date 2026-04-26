@@ -51,6 +51,15 @@ models:
   - meta-llama/Llama-3.1-8B-Instruct
   - mistralai/Mistral-7B-Instruct-v0.3
 
+endpoint:
+  urls: [http://localhost:8000/v1/chat/completions]
+  type: chat
+datasets:
+  - {name: default, type: synthetic, entries: 100}
+phases:
+  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
+
+---
 # Weighted routing
 models:
   strategy: weighted
@@ -59,6 +68,14 @@ models:
       weight: 0.7
     - name: mistralai/Mistral-7B-Instruct-v0.3
       weight: 0.3
+
+endpoint:
+  urls: [http://localhost:8000/v1/chat/completions]
+  type: chat
+datasets:
+  - {name: default, type: synthetic, entries: 100}
+phases:
+  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
 
 ### Endpoints
@@ -66,19 +83,29 @@ models:
 Configures server connection, API type, streaming, and authentication.
 
 ```yaml
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
 endpoint:
   urls:
-    - ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    - http://localhost:8000/v1/chat/completions
   type: chat           # chat | completions | embeddings | rankings | template
   streaming: true      # Required for TTFT measurement
   timeout: 600.0       # Request timeout in seconds
-  api_key: ${OPENAI_API_KEY}
+  api_key: sk-example
   headers:
-    X-Request-ID: ${TRACE_ID:none}
+    X-Request-ID: trace-abc-123
   extra:
     temperature: 0.7
     top_p: 0.95
+
+datasets:
+  - {name: default, type: synthetic, entries: 100}
+phases:
+  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
+
+In production, replace any of the literal values above with `${VAR}` or `${VAR:default}` (e.g. `urls: [${INFERENCE_URL:http://localhost:8000/v1/chat/completions}]`, `api_key: ${OPENAI_API_KEY}`) and substitute at deploy time.
 
 ## Datasets
 
@@ -523,25 +550,31 @@ Streaming must be enabled on the endpoint for TTFT and ITL measurement.
 
 ## Environment Variables
 
-Use `${VAR}` syntax in any string value. Variables are resolved at config load time.
+Use `${VAR}` syntax in any string value. Variables are resolved at config load time. The example below is a complete config using literal values that round-trips against `AIPerfConfig`; in production, replace any value with `${VAR}` (required) or `${VAR:default}` (optional with default) and substitute at deploy time.
 
 ```yaml
-# Required (error if not set)
 endpoint:
-  api_key: ${OPENAI_API_KEY}
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  api_key: sk-example                    # ${OPENAI_API_KEY}
 
-# Optional with default
 models:
-  - ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+  - meta-llama/Llama-3.1-8B-Instruct     # ${MODEL_NAME:...}
 
 # Works in nested fields, numeric fields, and lists
-random_seed: ${BENCHMARK_SEED:42}
+random_seed: 42                          # ${BENCHMARK_SEED:42}
+
+datasets:
+  - {name: default, type: synthetic, entries: 100}
+
 phases:
   - name: profiling
     type: gamma
-    rate: ${TARGET_RATE:30.0}
-    duration: ${DURATION:300}
-    concurrency: ${MAX_CONCURRENCY:64}
+    dataset: default
+    rate: 30.0                           # ${TARGET_RATE:30.0}
+    duration: 300                        # ${DURATION:300}
+    concurrency: 64                      # ${MAX_CONCURRENCY:64}
 ```
 
 ## Artifacts
@@ -601,7 +634,11 @@ Templates render twice: once at load time (for validation) and again after sweep
 The `template` endpoint type uses Jinja2 for custom request payloads. These are rendered at request time (not config load time), with different variables (`text`, `model`, `max_tokens`, etc.).
 
 ```yaml
+models:
+  - custom-llm
 endpoint:
+  urls:
+    - http://localhost:8000/generate
   type: template
   template:
     body: |
@@ -610,6 +647,10 @@ endpoint:
         "model": {{ model|tojson }},
         "max_tokens": {{ max_tokens|tojson }}
       }
+datasets:
+  - {name: default, type: synthetic, entries: 100}
+phases:
+  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
 
 See the [Template Endpoint tutorial](template-endpoint.md) for complete examples.

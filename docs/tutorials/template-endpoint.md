@@ -278,12 +278,9 @@ datasets:
     entries: 1000
     prompts:
       isl:
-        type: mixture
-        components:
-          - distribution: {type: normal, mean: 64, stddev: 10}
-            weight: 60
-          - distribution: {type: normal, mean: 512, stddev: 50}
-            weight: 40
+        peaks:
+          - {mean: 64, stddev: 10, weight: 60}
+          - {mean: 512, stddev: 50, weight: 40}
       batch_size: 4
 
 phases:
@@ -291,7 +288,6 @@ phases:
     type: concurrency
     concurrency: 16
     requests: 1000
-    grace_period: 30
 ```
 
 ### Ranking API with Passage Distributions
@@ -321,7 +317,7 @@ datasets:
       isl: {type: normal, mean: 32, stddev: 8}
     rankings:
       passages: {type: normal, mean: 10, stddev: 3}
-      passage_tokens: {type: lognormal, mean: 128, sigma: 0.4}
+      passage_tokens: {type: lognormal, mean: 128, median: 96}
       query_tokens: {type: normal, mean: 32, stddev: 8}
 
 phases:
@@ -338,9 +334,12 @@ phases:
 Use scenario sweeps to benchmark multiple custom API formats:
 
 ```yaml
+models:
+  - custom-llm
+
 endpoint:
   urls:
-    - ${INFERENCE_URL:http://localhost:8000/v1}
+    - http://localhost:8000/v1
   type: template
   template:
     body: |

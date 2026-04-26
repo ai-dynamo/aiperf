@@ -58,7 +58,6 @@ sweep:
 
 artifacts:
   dir: ./artifacts/saturation_sweep
-  console: table
   summary: [json]
 ```
 
@@ -136,7 +135,6 @@ sweep:
 
 artifacts:
   dir: ./artifacts/workload_comparison
-  console: table
   summary: [json]
 ```
 
@@ -184,7 +182,6 @@ sweep:
 
 artifacts:
   dir: ./artifacts/isl_sweep
-  console: table
   summary: [json]
 ```
 
@@ -344,7 +341,6 @@ random_seed: 42
 
 artifacts:
   dir: ./artifacts/concurrency_confidence
-  console: table
   summary: [json]
 ```
 
@@ -374,23 +370,22 @@ artifacts/concurrency_confidence/
 
 ## Environment Variables in Sweeps
 
-YAML configs support `${VAR}` and `${VAR:default}` syntax for environment variable substitution. This is useful for CI pipelines that override sweep base values without editing the YAML file.
+YAML configs support `${VAR}` and `${VAR:default}` syntax for environment variable substitution. This is useful for CI pipelines that override sweep base values without editing the YAML file. The example below uses literal defaults so it round-trips against `AIPerfConfig`; in production, replace any of the values with `${VAR:default}` and substitute at deploy time.
 
 ```yaml
 endpoint:
   urls:
-    - ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    - http://localhost:8000/v1/chat/completions
   type: chat
   streaming: true
-  api_key: ${API_KEY:}
 
 models:
-  - ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+  - meta-llama/Llama-3.1-8B-Instruct
 
 datasets:
   - name: main
     type: synthetic
-    entries: ${NUM_PROMPTS:2000}
+    entries: 2000
     prompts:
       isl: {type: normal, mean: 512, stddev: 50}
       osl: {type: normal, mean: 128, stddev: 25}
@@ -399,7 +394,7 @@ phases:
   - name: profiling
     type: poisson
     dataset: main
-    duration: ${DURATION:120}
+    duration: 120
     rate: 30
     concurrency: 32
     grace_period: 30
@@ -410,7 +405,7 @@ sweep:
     phases.profiling.concurrency: [16, 32, 64, 128]
 
 multi_run:
-  num_runs: ${NUM_RUNS:3}
+  num_runs: 3
   cooldown_seconds: 5.0
 ```
 

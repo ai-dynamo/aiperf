@@ -141,27 +141,26 @@ def _all_configs() -> list[tuple[str, dict]]:
     return out
 
 
-# Pre-existing docs lag — these tutorial snippets use legacy distribution
-# shorthand (``{type: normal, mean, stddev}`` → ``{mean, stddev}``), the
-# legacy ``{type: clamped, ...}`` / ``{type: mixture, ...}`` distribution
-# shapes (no longer supported), or are intentionally partial illustrations
-# of one section that would need synthetic ``models`` / ``endpoint`` /
-# ``datasets`` / ``phases`` added to validate as a full ``AIPerfConfig``.
-# Mark xfail rather than rewriting tutorials here; tracked separately.
-_KNOWN_DOCS_LAG_SUBSTRINGS = (
-    "docs/tutorials/sweeps.md",
-    "docs/tutorials/template-endpoint.md",
-    "docs/tutorials/yaml-config.md",
+# Pre-existing docs lag — these specific tutorial fences use the legacy
+# ``{type: clamped, ...}`` distribution shape, which has no replacement in
+# the current Distribution union (no ClampedDistribution exists). The
+# tutorial authors must decide between dropping the example or documenting
+# an alternative. Tracked separately; until then, mark these specific
+# fences xfail so the rest of the round-trip suite stays clean.
+_KNOWN_DOCS_LAG_FENCES = (
+    "docs/tutorials/template-endpoint.md::yaml-fence-0",
+    "docs/tutorials/yaml-config.md::yaml-fence-34",
 )
 
 
 def _maybe_xfail(yaml_id: str) -> tuple:
     """Wrap parametrize entries with xfail for known-stale doc snippets."""
-    for needle in _KNOWN_DOCS_LAG_SUBSTRINGS:
+    for needle in _KNOWN_DOCS_LAG_FENCES:
         if needle in yaml_id:
             return (
                 pytest.mark.xfail(
-                    reason="docs lag: legacy dict shapes for datasets/phases",
+                    reason="docs lag: legacy `type: clamped` distribution "
+                    "(no replacement in current union)",
                     strict=False,
                 ),
             )
