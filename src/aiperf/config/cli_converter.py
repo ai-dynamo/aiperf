@@ -68,10 +68,10 @@ def build_aiperf_config(cli: BaseModel) -> AIPerfConfig:
     models = build_models(cli, s)
     prof = build_profiling(cli, s)
 
-    phases: dict[str, Any] = {}
+    phases: list[dict[str, Any]] = []
     if (warmup := build_warmup(cli, s)) is not None:
-        phases["warmup"] = warmup
-    phases["profiling"] = prof
+        phases.append({"name": "warmup", **warmup})
+    phases.append({"name": "profiling", **prof})
 
     ds = build_dataset(cli, s)
 

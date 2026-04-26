@@ -14,8 +14,8 @@ Example Usage:
     >>> from aiperf.config import load_config
     >>> config = load_config("benchmark.yaml")
     >>> print(config.models)
-    >>> for name, phase in config.phases.items():
-    ...     print(f"{name}: {phase.dataset}")
+    >>> for phase in config.phases:
+    ...     print(f"{phase.name}: {phase.dataset}")
 
     Or programmatically:
     >>> from aiperf.config import AIPerfConfig
@@ -23,7 +23,7 @@ Example Usage:
     ...     models=["llama-3-8b"],
     ...     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
     ...     datasets={"main": {"type": "synthetic", "count": 1000, "prompts": {"isl": 512}}},
-    ...     phases={"profiling": {"type": "concurrency", "dataset": "main", "requests": 100, "concurrency": 8}}
+    ...     phases=[{"name": "profiling", "type": "concurrency", "dataset": "main", "requests": 100, "concurrency": 8}]
     ... )
 """
 
@@ -63,7 +63,6 @@ from aiperf.config.models import (
     TokenizerConfig,
 )
 from aiperf.config.phases import (
-    BasePhaseConfig,
     PhaseConfig,
 )
 from aiperf.config.sweep import SweepConfig
@@ -156,13 +155,15 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     ]
 
     phases: Annotated[
-        dict[str, PhaseConfig],
+        list[PhaseConfig],
         Field(
             min_length=1,
-            description="Benchmark phase configuration. Can be a single phase config "
-            "(with 'type' key) or named phases (dict of phase configs). "
-            "Single config is normalized to {'default': config}. "
-            "Order is preserved (Python 3.7+) for execution sequence.",
+            description="Ordered benchmark phases. Each entry must have a unique 'name' "
+            "(e.g. 'warmup', 'profiling'). Order in the list IS the execution order; "
+            "the first phase runs first. Single-config shorthand "
+            "({'type': 'concurrency', ...}) is normalized to a list of one. "
+            "Top-level 'warmup:'/'profiling:' shorthand is normalized to a "
+            "[warmup, profiling] list pre-validation.",
         ),
     ]
 
@@ -297,25 +298,24 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @field_validator("phases", mode="before")
     @classmethod
-    def parse_phases(cls, v: Any) -> dict[str, Any]:
-        """Parse phase configurations from dict format.
+    def parse_phases(cls, v: Any) -> list[Any]:
+        """Validate that phases is a list (post-normalizer shape).
 
-        Injects the phase name from the dict key into each phase config.
+        The dict shape is rejected with a migration-pointing message; valid
+        shorthand inputs (`warmup:` / `profiling:` top-level, or a single
+        flat config under `phases:`) are converted to lists by the
+        pre-model normalizers in `_benchmark_normalizers`.
         """
-        if not isinstance(v, dict):
-            raise ValueError("phases must be a dictionary with phase names as keys")
-
-        result = {}
-        for name, config in v.items():
-            if isinstance(config, BasePhaseConfig):
-                config._name = name
-                result[name] = config
-            elif isinstance(config, dict):
-                result[name] = config
-            else:
-                raise ValueError(f"Phase config '{name}' must be a dictionary")
-
-        return result
+        if isinstance(v, dict):
+            raise ValueError(
+                "phases must be a list of named phase configs (e.g. "
+                "[{name: warmup, ...}, {name: profiling, ...}]); the legacy "
+                "dict shape is no longer supported. See "
+                "docs/tutorials/yaml-config.md#phases for the new shape."
+            )
+        if not isinstance(v, list):
+            raise ValueError("phases must be a list of named phase configs")
+        return v
 
     @field_validator("datasets", mode="before")
     @classmethod
@@ -327,46 +327,49 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return parse_datasets_input(v)
 
     @model_validator(mode="after")
-    def inject_phase_names(self) -> Self:
-        """Inject phase names from dict keys into PhaseConfig objects."""
-        for name, phase in self.phases.items():
-            phase._name = name
+    def validate_phase_names_unique(self) -> Self:
+        """Reject duplicate phase names — they must be unique within the list."""
+        seen: set[str] = set()
+        for phase in self.phases:
+            if phase.name in seen:
+                raise ValueError(
+                    f"duplicate phase name '{phase.name}' — names must be unique. "
+                    f"Found names: {[p.name for p in self.phases]}"
+                )
+            seen.add(phase.name)
         return self
 
     @model_validator(mode="after")
     def validate_dataset_references(self) -> Self:
         """Validate that all dataset references in phase configs exist."""
         dataset_names = set(self.datasets.keys())
-
-        for name, phase in self.phases.items():
+        for phase in self.phases:
             if phase.dataset is not None and phase.dataset not in dataset_names:
                 raise ValueError(
-                    f"Phase config '{name}' references undefined dataset '{phase.dataset}'. "
-                    f"Available datasets: {sorted(dataset_names)}"
+                    f"Phase config '{phase.name}' references undefined dataset "
+                    f"'{phase.dataset}'. Available datasets: {sorted(dataset_names)}"
                 )
-
         return self
 
     @model_validator(mode="after")
     def validate_seamless_not_on_first_phase(self) -> Self:
         """Ensure seamless is not enabled on the first phase config."""
-        if self.phases:
-            first_name = next(iter(self.phases.keys()))
-            first_phase = self.phases[first_name]
-            if first_phase.seamless:
-                raise ValueError(
-                    f"Phase config '{first_name}' cannot have seamless=True because it is first. "
-                    "Seamless transitions only apply to subsequent phase configs."
-                )
+        if self.phases and self.phases[0].seamless:
+            raise ValueError(
+                f"Phase config '{self.phases[0].name}' cannot have seamless=True "
+                "because it is first. Seamless transitions only apply to "
+                "subsequent phase configs."
+            )
         return self
 
     @model_validator(mode="after")
     def validate_prefill_requires_streaming(self) -> Self:
         """Prefill concurrency requires streaming to measure TTFT boundaries."""
-        for name, phase in self.phases.items():
+        for phase in self.phases:
             if phase.prefill_concurrency is not None and not self.endpoint.streaming:
                 raise ValueError(
-                    f"Phase '{name}': prefill_concurrency requires endpoint.streaming=true"
+                    f"Phase '{phase.name}': prefill_concurrency requires "
+                    "endpoint.streaming=true"
                 )
         return self
 
@@ -379,13 +382,13 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         from aiperf.config.resolved import check_phase_dataset_compatibility
 
-        for phase_name, phase in self.phases.items():
+        for phase in self.phases:
             dataset_name = phase.dataset or self.get_default_dataset_name()
             ds = self.datasets.get(dataset_name)
             if ds is None:
                 continue
             errors = check_phase_dataset_compatibility(
-                phase, ds, phase_name, dataset_name
+                phase, ds, phase.name, dataset_name
             )
             if errors:
                 raise ValueError(errors[0])

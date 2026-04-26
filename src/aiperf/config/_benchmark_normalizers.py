@@ -54,14 +54,18 @@ def _normalize_warmup_profiling_to_phases(data: dict[str, Any]) -> None:
     if not (has_warmup or has_profiling):
         return
 
-    phases: dict[str, Any] = {}
+    phases: list[dict[str, Any]] = []
     if has_warmup:
         warmup = data.pop("warmup")
         if isinstance(warmup, dict):
+            warmup = {"name": "warmup", **warmup}
             warmup.setdefault("exclude_from_results", True)
-        phases["warmup"] = warmup
+        phases.append(warmup)
     if has_profiling:
-        phases["profiling"] = data.pop("profiling")
+        prof = data.pop("profiling")
+        if isinstance(prof, dict):
+            prof = {"name": "profiling", **prof}
+        phases.append(prof)
     data["phases"] = phases
 
 
@@ -85,8 +89,9 @@ def _normalize_dataset_and_phases(data: dict[str, Any]) -> None:
 
     if "phases" in data:
         phases = data["phases"]
+        # Single flat-dict shorthand: phases: {type: concurrency, ...}
         if isinstance(phases, dict) and "type" in phases:
-            data["phases"] = {"default": phases}
+            data["phases"] = [{"name": "default", **phases}]
 
 
 def normalize_benchmark_input(data: Any) -> Any:

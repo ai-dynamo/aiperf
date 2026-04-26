@@ -41,6 +41,9 @@ from tools._core import (
 # =============================================================================
 
 HELM_CRD_FILE = Path("deploy/helm/aiperf-operator/templates/crd.yaml")
+HELM_SWEEP_CRD_FILE = Path(
+    "deploy/helm/aiperf-operator/templates/crd-aiperfsweep.yaml"
+)
 HELM_CHART_FILE = Path("deploy/helm/aiperf-operator/Chart.yaml")
 PYPROJECT_FILE = Path("pyproject.toml")
 
@@ -609,6 +612,188 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
 
 
 # =============================================================================
+# AIPerfSweep CRD
+# =============================================================================
+
+
+def _aiperfsweep_status_schema() -> dict[str, Any]:
+    """OpenAPI V3 schema for AIPerfSweep.status.
+
+    The orchestrator writes phase, run counts, per-cell summaries, and refs to
+    aggregated artifacts here. Most nested objects use
+    ``x-kubernetes-preserve-unknown-fields`` so the schema can evolve without a
+    CRD bump.
+    """
+    return {
+        "type": "object",
+        "x-kubernetes-preserve-unknown-fields": True,
+        "properties": {
+            "phase": {
+                "type": "string",
+                "enum": [
+                    "Pending",
+                    "Running",
+                    "Aggregating",
+                    "Succeeded",
+                    "PartiallyFailed",
+                    "Failed",
+                    "Cancelled",
+                ],
+            },
+            "runEpoch": {"type": "integer"},
+            "totalVariations": {"type": "integer"},
+            "maxTotalRuns": {"type": "integer"},
+            "completedRuns": {"type": "integer"},
+            "failedRuns": {"type": "integer"},
+            "currentCell": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "cells": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "aggregation": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "aggregateRef": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "runtimeRef": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "childRunEpochsRef": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "startTime": {"type": "string", "format": "date-time"},
+            "completionTime": {"type": "string", "format": "date-time"},
+            "lastChildEvent": {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            },
+            "conditions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "x-kubernetes-preserve-unknown-fields": True,
+                },
+            },
+        },
+    }
+
+
+def _aiperfsweep_printer_columns() -> list[dict[str, Any]]:
+    """``additionalPrinterColumns`` for ``kubectl get aiperfsweeps``."""
+    return [
+        {"name": "Phase", "type": "string", "jsonPath": ".status.phase"},
+        {
+            "name": "Completed",
+            "type": "integer",
+            "jsonPath": ".status.completedRuns",
+        },
+        {
+            "name": "Total",
+            "type": "integer",
+            "jsonPath": ".status.maxTotalRuns",
+        },
+        {
+            "name": "Failed",
+            "type": "integer",
+            "jsonPath": ".status.failedRuns",
+        },
+        {
+            "name": "Current",
+            "type": "string",
+            "jsonPath": ".status.currentCell.label",
+        },
+        {"name": "Age", "type": "date", "jsonPath": ".metadata.creationTimestamp"},
+    ]
+
+
+def build_aiperfsweep_crd() -> dict[str, Any]:
+    """Build the CRD dict for ``aiperfsweeps.aiperf.nvidia.com``.
+
+    Derives ``spec`` from ``AIPerfSweepSpec.model_json_schema(by_alias=True)``
+    so the CRD field names follow K8s camelCase conventions, then attaches CEL
+    immutability rules to the orchestration-critical top-level spec fields
+    (``sweep``, ``multiRun``, ``convergence``).
+
+    Note: ``template.spec`` is intentionally a free-form object rather than the
+    strict AIPerfJobSpec schema. Like ``spec.benchmark`` on AIPerfJob, the
+    sweep controller normalizes/validates the AIPerfJobSpec stamp on its side
+    via Pydantic, so the CRD passes it through with
+    ``x-kubernetes-preserve-unknown-fields``.
+    """
+    from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
+
+    raw_schema = AIPerfSweepSpec.model_json_schema(mode="validation", by_alias=True)
+    defs = raw_schema.get("$defs") or {}
+    spec_schema = _convert_schema(raw_schema, defs)
+
+    properties = spec_schema.setdefault("properties", {})
+
+    # Attach CEL immutability rules to top-level orchestration fields.
+    # Re-running a sweep with mutated axes would corrupt the run-epoch ledger
+    # and produce non-comparable cells, so the apiserver must reject mutation.
+    for field in ("sweep", "multiRun", "convergence"):
+        if field in properties:
+            properties[field].setdefault("x-kubernetes-validations", []).append(
+                {
+                    "rule": "oldSelf == self",
+                    "message": f"spec.{field} is immutable after creation",
+                }
+            )
+
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+            "name": "aiperfsweeps.aiperf.nvidia.com",
+            "annotations": {
+                # Match AIPerfJob: keep the CRD when the helm release is
+                # uninstalled so package-scoped test clusters don't see a
+                # Terminating CRD between modules.
+                "helm.sh/resource-policy": "keep",
+            },
+        },
+        "spec": {
+            "group": "aiperf.nvidia.com",
+            "names": {
+                "kind": "AIPerfSweep",
+                "listKind": "AIPerfSweepList",
+                "plural": "aiperfsweeps",
+                "singular": "aiperfsweep",
+                "shortNames": ["aps"],
+            },
+            "scope": "Namespaced",
+            "versions": [
+                {
+                    "name": "v1alpha1",
+                    "served": True,
+                    "storage": True,
+                    "additionalPrinterColumns": _aiperfsweep_printer_columns(),
+                    "subresources": {"status": {}},
+                    "schema": {
+                        "openAPIV3Schema": {
+                            "type": "object",
+                            "required": ["spec"],
+                            "properties": {
+                                "spec": spec_schema,
+                                "status": _aiperfsweep_status_schema(),
+                            },
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+
+# =============================================================================
 # YAML Rendering
 # =============================================================================
 
@@ -700,6 +885,38 @@ def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_helm_sweep_crd_yaml(crd: dict[str, Any]) -> str:
+    """Render the AIPerfSweep CRD as a Helm chart template.
+
+    Sibling of :func:`render_helm_crd_yaml` for AIPerfJob. Reuses the same
+    dumper and brace-escape logic, then injects the standard Helm labels block
+    after the CRD ``metadata.name`` line.
+    """
+    helm_crd = copy.deepcopy(crd)
+
+    yaml_str = yaml.dump(
+        helm_crd,
+        Dumper=_CRDDumper,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+        allow_unicode=True,
+    )
+
+    yaml_str = yaml_str.replace(
+        "  name: aiperfsweeps.aiperf.nvidia.com\n",
+        "  name: aiperfsweeps.aiperf.nvidia.com\n"
+        "  labels:\n"
+        '    {{- include "aiperf-operator.labels" . | nindent 4 }}\n',
+    )
+
+    yaml_str = _escape_helm_braces(yaml_str)
+
+    lines = list(SPDX_HEADER)
+    lines.append(yaml_str.rstrip())
+    return "\n".join(lines) + "\n"
+
+
 # =============================================================================
 # Generator
 # =============================================================================
@@ -752,6 +969,9 @@ class CRDGenerator(Generator):
 
         helm_yaml = render_helm_crd_yaml(crd)
 
+        sweep_crd = build_aiperfsweep_crd()
+        helm_sweep_yaml = render_helm_sweep_crd_yaml(sweep_crd)
+
         version = _get_project_version()
         chart_yaml = _sync_chart_app_version(version)
 
@@ -759,9 +979,10 @@ class CRDGenerator(Generator):
         return GeneratorResult(
             files=[
                 GeneratedFile(HELM_CRD_FILE, helm_yaml),
+                GeneratedFile(HELM_SWEEP_CRD_FILE, helm_sweep_yaml),
                 GeneratedFile(HELM_CHART_FILE, chart_yaml),
             ],
-            summary=f"CRD with {field_count} AIPerfConfig fields",
+            summary=f"CRD with {field_count} AIPerfConfig fields + AIPerfSweep CRD",
         )
 
 
