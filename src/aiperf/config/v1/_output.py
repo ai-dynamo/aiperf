@@ -94,6 +94,21 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.EXPORT_HTTP_TRACE
 
+    export_per_chunk_data: Annotated[
+        bool,
+        Field(
+            description=(
+                "Include per-chunk list data (e.g., inter_chunk_latency arrays) in "
+                "per-record exports. These arrays contain one timing value per SSE "
+                "chunk and can be very large for long responses."
+            ),
+        ),
+        CLIParameter(
+            name=("--export-per-chunk-data",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
     show_trace_timing: Annotated[
         bool,
         Field(

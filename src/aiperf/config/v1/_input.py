@@ -1141,6 +1141,7 @@ class InputConfig(BaseConfig):
         CLIParameter(
             name=("--fixed-schedule",),
             group=_CLI_GROUP,
+            negative=None,
         ),
     ] = _INPUT_FIXED_SCHEDULE
 

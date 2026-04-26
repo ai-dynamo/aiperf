@@ -193,3 +193,18 @@ class UserConfig(BaseConfig):
     ] = _DEFAULT_SERVER_METRICS_FORMATS
 
     _server_metrics_urls: list[str] = []
+
+    config_file: Annotated[
+        Path | None,
+        Field(
+            default=None,
+            description=(
+                "Path to a YAML configuration file. "
+                "CLI flags override values from the config file."
+            ),
+        ),
+        CLIParameter(
+            name=("--config", "-f"),
+            group=Groups.INPUT,
+        ),
+    ] = None

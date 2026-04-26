@@ -161,6 +161,21 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.TIMEOUT
 
+    ready_check_timeout: Annotated[
+        float,
+        Field(
+            description=(
+                "Seconds to wait for endpoint readiness before benchmarking "
+                "(0 = skip). Sends a real inference request to verify the model "
+                "is loaded and can generate output."
+            ),
+        ),
+        CLIParameter(
+            name=("--ready-check-timeout",),
+            group=_CLI_GROUP,
+        ),
+    ] = 0.0
+
     api_key: Annotated[
         str | None,
         Field(
