@@ -18,6 +18,7 @@ from aiperf.common.enums import MessageType, WorkerStartupState
 from aiperf.common.messages import (
     WorkerPodStateMessage,
     WorkerStartupStateMessage,
+    WorkerStatusSummaryMessage,
 )
 from aiperf.common.mixins.pod_state_tracker_mixin import (
     PodStateTracker,
@@ -151,3 +152,63 @@ class TestPodStateTrackerMixinSubscriptions:
         handler = PodStateTrackerMixin._on_worker_startup_state
         params = getattr(handler, "__aiperf_hook_params__", ())
         assert MessageType.WORKER_STARTUP_STATE in params
+
+    def test_mixin_handler_handles_status_summary(self) -> None:
+        """Required for the K8s wire path — workers send their startup state
+        to the WGM over DEALER, and the WGM republishes the per-worker map
+        as ``WorkerStatusSummaryMessage.worker_startup_states``. Without
+        this subscription, ``worker_startup_states`` is always empty in K8s
+        (verified live on the DGX cluster on 2026-04-25)."""
+        handler = PodStateTrackerMixin._on_worker_status_summary
+        params = getattr(handler, "__aiperf_hook_params__", ())
+        assert MessageType.WORKER_STATUS_SUMMARY in params
+
+
+class TestPodStateTrackerStatusSummaryFold:
+    """Test that WGM-aggregated summaries fold into the per-worker map."""
+
+    def test_summary_populates_worker_startup_states(
+        self, tracker: PodStateTracker
+    ) -> None:
+        msg = WorkerStatusSummaryMessage(
+            service_id="wgm-0",
+            worker_statuses={},
+            worker_startup_states={
+                "w-0": WorkerStartupState.READY,
+                "w-1": WorkerStartupState.WAITING_FOR_DATASET,
+            },
+        )
+        tracker.update_worker_startup_states_from_summary(msg)
+        assert tracker.worker_startup_states == {
+            "w-0": "ready",
+            "w-1": "waiting_for_dataset",
+        }
+
+    def test_summary_overlays_subsequent_state_transitions(
+        self, tracker: PodStateTracker
+    ) -> None:
+        first = WorkerStatusSummaryMessage(
+            service_id="wgm-0",
+            worker_statuses={},
+            worker_startup_states={"w-0": WorkerStartupState.WAITING_FOR_DATASET},
+        )
+        second = WorkerStatusSummaryMessage(
+            service_id="wgm-0",
+            worker_statuses={},
+            worker_startup_states={"w-0": WorkerStartupState.READY},
+        )
+        tracker.update_worker_startup_states_from_summary(first)
+        tracker.update_worker_startup_states_from_summary(second)
+        assert tracker.worker_startup_states == {"w-0": "ready"}
+
+    def test_empty_summary_is_a_no_op(self, tracker: PodStateTracker) -> None:
+        tracker.update_worker_startup_state(
+            WorkerStartupStateMessage(
+                service_id="w-0", startup_state=WorkerStartupState.READY
+            )
+        )
+        empty = WorkerStatusSummaryMessage(
+            service_id="wgm-0", worker_statuses={}, worker_startup_states={}
+        )
+        tracker.update_worker_startup_states_from_summary(empty)
+        assert tracker.worker_startup_states == {"w-0": "ready"}

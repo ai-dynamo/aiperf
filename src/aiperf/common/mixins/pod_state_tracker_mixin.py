@@ -19,6 +19,7 @@ from aiperf.common.hooks import on_message
 from aiperf.common.messages import (
     WorkerPodStateMessage,
     WorkerStartupStateMessage,
+    WorkerStatusSummaryMessage,
 )
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 
@@ -46,6 +47,19 @@ class PodStateTracker:
     def update_worker_startup_state(self, message: WorkerStartupStateMessage) -> None:
         """Record a worker's most recently reported startup state."""
         self._worker_startup_states[message.service_id] = str(message.startup_state)
+
+    def update_worker_startup_states_from_summary(
+        self, message: WorkerStatusSummaryMessage
+    ) -> None:
+        """Fold a WGM-published per-pod summary into the per-worker cache.
+
+        In Kubernetes mode workers send WorkerStartupStateMessage to the
+        WGM over DEALER, not on the global pub/sub. The WGM republishes
+        the aggregate as ``WorkerStatusSummaryMessage.worker_startup_states``
+        — that's the wire path we have to listen on to fill this cache.
+        """
+        for service_id, state in message.worker_startup_states.items():
+            self._worker_startup_states[service_id] = str(state)
 
     @property
     def pod_states(self) -> dict[str, WorkerPodStateMessage]:
@@ -79,5 +93,20 @@ class PodStateTrackerMixin(MessageBusClientMixin):
     async def _on_worker_startup_state(
         self, message: WorkerStartupStateMessage
     ) -> None:
-        """Cache the most recent startup-state transition from each worker."""
+        """Cache the most recent startup-state transition from each worker.
+
+        Fires only in non-group-managed modes (component-integration tests).
+        In K8s the per-worker message goes to the WGM over DEALER instead;
+        :meth:`_on_worker_status_summary` handles that path.
+        """
         self._pod_state_tracker.update_worker_startup_state(message)
+
+    @on_message(MessageType.WORKER_STATUS_SUMMARY)
+    async def _on_worker_status_summary(
+        self, message: WorkerStatusSummaryMessage
+    ) -> None:
+        """Fold the WGM-aggregated per-worker startup-state map into the cache.
+
+        This is the K8s-mode wire path for ``worker_startup_states``.
+        """
+        self._pod_state_tracker.update_worker_startup_states_from_summary(message)
