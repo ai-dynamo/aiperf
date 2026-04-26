@@ -46,7 +46,6 @@ from aiperf.config.benchmark import (
     BenchmarkRun,
     ResolvedConfig,
 )
-from aiperf.config.cli_converter import build_aiperf_config
 from aiperf.config.cli_parameter import (
     CLIParameter,
     DisableCLI,
@@ -276,7 +275,6 @@ __all__ = [
     "ZMQIPCProxyConfig",
     "ZMQTCPConfig",
     "ZMQTCPProxyConfig",
-    "build_aiperf_config",
     "build_benchmark_plan",
     "build_comm_config",
     "build_default_resolver_chain",

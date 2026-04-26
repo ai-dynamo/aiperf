@@ -26,9 +26,6 @@ async def _fake_k8s_client(api: Any):
     yield api
 
 
-_BUILD_CONFIG = "aiperf.config.cli_converter.build_aiperf_config"
-
-
 def _test_config() -> AIPerfConfig:
     """Create a minimal AIPerfConfig for testing."""
     return AIPerfConfig(
