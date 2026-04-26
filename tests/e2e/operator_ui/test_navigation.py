@@ -251,3 +251,28 @@ async def test_switcher_view_all_returns_to_picker(
     await page.get_by_test_id("ns-switcher-pill").click()
     await page.get_by_test_id("ns-switcher-view-all").click()
     await page.wait_for_url(lambda u: u.endswith("#/") or u.endswith("#"))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_root_redirects_to_last_namespace_when_known(live_operator_app, seeded_results_dir, fake_k8s_client, page):
+    # First visit: pick 'aiperf-bench' to set lastNamespace.
+    await page.goto(live_operator_app.base_url + "/")
+    await page.get_by_test_id("np-tile-aiperf-bench").click()
+    await page.wait_for_url(lambda u: u.rstrip("/").endswith("#/ns/aiperf-bench"))
+    # Reload root: should redirect to /ns/aiperf-bench.
+    await page.goto(live_operator_app.base_url + "/")
+    await page.wait_for_url(lambda u: u.rstrip("/").endswith("#/ns/aiperf-bench"))
+    await expect(page.get_by_test_id("page-namespace-overview")).to_be_visible()
+    # Clean up so subsequent tests don't see the stale key.
+    await page.evaluate("window.localStorage.removeItem('aiperf.ui.lastNamespace')")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_root_renders_picker_when_last_namespace_absent_from_jobs(live_operator_app, seeded_results_dir, fake_k8s_client, page):
+    # Set lastNamespace to a value the fixture doesn't have, then reload root.
+    await page.goto(live_operator_app.base_url + "/")
+    await page.evaluate("window.localStorage.setItem('aiperf.ui.lastNamespace', 'ghost-ns')")
+    await page.goto(live_operator_app.base_url + "/")
+    await expect(page.get_by_test_id("page-namespace-picker")).to_be_visible()
+    # Clean up so subsequent tests don't see the stale key.
+    await page.evaluate("window.localStorage.removeItem('aiperf.ui.lastNamespace')")

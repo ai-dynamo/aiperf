@@ -43,6 +43,7 @@ import { Compare } from './views/compare.js';
 import { Log } from './views/log.js';
 import { NamespacePicker } from './views/namespace-picker.js';
 import { NamespaceOverview } from './views/namespace-overview.js';
+import { getLastNamespace } from './lib/ns-prefs.js';
 
 function resolveView(currentRoute) {
   const runEpochMatch = matchRoute('/ns/:ns/run/:name/runs/:epoch', currentRoute);
@@ -85,6 +86,19 @@ function App() {
       try { clusterInfo.value = await api.getCluster(); } catch (_e) { /* ignore */ }
     }, 15000, ac.signal);
     return () => ac.abort();
+  }, []);
+
+  useEffect(() => {
+    if (route.value !== '/') return;
+    const last = getLastNamespace();
+    if (!last) return;
+    // Wait one tick for the first poll to populate jobs.value, then redirect
+    // only if the namespace appears in the observed list.
+    const t = setTimeout(() => {
+      const present = (jobs.value ?? []).some(j => (j.namespace || 'default') === last);
+      if (present && route.value === '/') navigate('/ns/' + encodeURIComponent(last));
+    }, 200);
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
