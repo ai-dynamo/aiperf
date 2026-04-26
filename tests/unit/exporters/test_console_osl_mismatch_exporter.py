@@ -38,7 +38,14 @@ class TestConsoleOSLMismatchExporter:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
 
     def _create_profile_results(

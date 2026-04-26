@@ -95,7 +95,9 @@ class TestToAIPerfConfig:
         assert config.get_model_names() == ["gpt-4"]
         assert "http://api.example.com/v1/chat/completions" in config.endpoint.urls
         assert any(p.name == "profiling" for p in config.phases)
-        assert next(p for p in config.phases if p.name == "profiling").concurrency == 500
+        assert (
+            next(p for p in config.phases if p.name == "profiling").concurrency == 500
+        )
         assert next(p for p in config.phases if p.name == "profiling").requests == 1000
 
     def test_kubernetes_service_run_type(
@@ -252,9 +254,14 @@ class TestToDeploymentConfig:
                     "models": ["mock"],
                     "endpoint": {"urls": ["http://example/v1/chat/completions"]},
                     "datasets": {"main": {"type": "synthetic"}},
-                    "phases": [{"name": "profiling", "type": "concurrency",
+                    "phases": [
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "requests": 10,
-                            "concurrency": 1,}],
+                            "concurrency": 1,
+                        }
+                    ],
                 },
             },
             "test-job",
@@ -369,11 +376,20 @@ class TestCalculateWorkers:
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
                 "datasets": {"main": {"type": "synthetic"}},
-                "phases": [{"name": "warmup", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
                         "requests": 10,
-                        "concurrency": 10,}, {"name": "profiling", "type": "concurrency",
+                        "concurrency": 10,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "requests": 100,
-                        "concurrency": 200,}],
+                        "concurrency": 200,
+                    },
+                ],
             },
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")
@@ -427,7 +443,14 @@ def _expansion_spec(benchmark_overrides: dict[str, Any]) -> dict[str, Any]:
         "models": ["test-model"],
         "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
         "datasets": {"main": {"type": "synthetic", "entries": 10}},
-        "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 8, "requests": 100}],
+        "phases": [
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 8,
+                "requests": 100,
+            }
+        ],
     }
     base.update(benchmark_overrides)
     return {"benchmark": base}
@@ -500,9 +523,14 @@ class TestEnvVarExpansion:
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
                 "datasets": {"main": {"type": "synthetic"}},
-                "phases": [{"name": "profiling", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": "${WORKER_CONCURRENCY}",
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             }
         }
         converter = AIPerfJobSpecConverter(spec, "job", "default")
@@ -517,9 +545,14 @@ class TestJinja2Expansion:
         spec = _expansion_spec(
             {
                 "variables": {"target_concurrency": 16},
-                "phases": [{"name": "profiling", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": "{{ target_concurrency }}",
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             }
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
@@ -530,9 +563,14 @@ class TestJinja2Expansion:
         spec = _expansion_spec(
             {
                 "variables": {"base": 8},
-                "phases": [{"name": "profiling", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": "{{ base }}",
-                        "requests": "{{ base * 10 }}",}],
+                        "requests": "{{ base * 10 }}",
+                    }
+                ],
             }
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
@@ -555,9 +593,14 @@ class TestJinja2Expansion:
                 "models": ["test-model"],
                 "endpoint": {"urls": ["http://localhost:8000"]},
                 "datasets": {"main": {"type": "synthetic"}},
-                "phases": [{"name": "profiling", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": "{{ c }}",
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             }
         }
         converter = AIPerfJobSpecConverter(spec, "job", "default")

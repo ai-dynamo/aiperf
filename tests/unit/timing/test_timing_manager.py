@@ -34,10 +34,15 @@ _BASE = dict(
 def _make_config(phases: dict | None = None) -> AIPerfConfig:
     """Create an AIPerfConfig for timing manager tests."""
     if phases is None:
-        phases = [{"name": "profiling", "type": "poisson",
+        phases = [
+            {
+                "name": "profiling",
+                "type": "poisson",
                 "rate": 10.0,
                 "requests": 100,
-                "concurrency": 10,}]
+                "concurrency": 10,
+            }
+        ]
     return AIPerfConfig(**_BASE, phases=phases)
 
 

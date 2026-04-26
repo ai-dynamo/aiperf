@@ -62,9 +62,14 @@ _MINIMAL_CONFIG_KWARGS = {
             "prompts": {"isl": 32, "osl": 16},
         }
     },
-    "phases": [{"name": "default", "type": "concurrency",
+    "phases": [
+        {
+            "name": "default",
+            "type": "concurrency",
             "requests": 10,
-            "concurrency": 1,}],
+            "concurrency": 1,
+        }
+    ],
 }
 
 

@@ -32,7 +32,9 @@ _MINIMAL_DATASETS = {
         "prompts": {"isl": 128, "osl": 64},
     }
 }
-_MINIMAL_PHASES = [{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}]
+_MINIMAL_PHASES = [
+    {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+]
 
 
 def _make_csv_config(tmp_artifact_dir: Path, **artifacts_overrides) -> AIPerfConfig:

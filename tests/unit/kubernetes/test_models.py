@@ -714,9 +714,7 @@ class TestAIPerfJobInfoProgress:
         assert info.progress_percent is None
 
     def test_progress_none_when_phase_has_no_percent(self) -> None:
-        raw = _make_raw_aiperfjob(
-            status={"phases": {"warmup": {"state": "active"}}}
-        )
+        raw = _make_raw_aiperfjob(status={"phases": {"warmup": {"state": "active"}}})
         info = AIPerfJobCR.model_validate(raw).to_info()
         assert info.progress_percent is None
 

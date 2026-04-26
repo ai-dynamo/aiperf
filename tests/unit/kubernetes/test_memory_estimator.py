@@ -539,9 +539,14 @@ class TestFromConfig:
                     "prompts": {"isl": 256, "osl": 64},
                 }
             },
-            phases=[{"name": "profiling", "type": "concurrency",
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
                     "concurrency": 32,
-                    "requests": 5000,}],
+                    "requests": 5000,
+                }
+            ],
         )
         params = MemoryEstimationParams.from_config(config, total_workers=10)
         assert params.max_concurrency == 32
@@ -560,12 +565,21 @@ class TestFromConfig:
             datasets={
                 "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
             },
-            phases=[{"name": "warmup", "type": "concurrency",
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "concurrency": 4,
                     "requests": 100,
-                    "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
                     "concurrency": 64,
-                    "requests": 10000,}],
+                    "requests": 10000,
+                },
+            ],
         )
         params = MemoryEstimationParams.from_config(config)
         assert params.max_concurrency == 64
@@ -601,9 +615,14 @@ class TestFromConfig:
                     "prompts": {"isl": 512, "osl": 128},
                 }
             },
-            phases=[{"name": "profiling", "type": "concurrency",
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
                     "concurrency": 100,
-                    "requests": 50000,}],
+                    "requests": 50000,
+                }
+            ],
         )
         est = estimate_memory(config, total_workers=20, workers_per_pod=10)
         assert est.params.num_worker_pods == 2
@@ -621,7 +640,9 @@ class TestFromConfig:
             datasets={
                 "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
             },
-            phases=[{"name": "profiling", "type": "poisson", "rate": 50, "duration": 120}],
+            phases=[
+                {"name": "profiling", "type": "poisson", "rate": 50, "duration": 120}
+            ],
         )
         params = MemoryEstimationParams.from_config(config)
         # rate=50 * duration=120 = 6000 requests

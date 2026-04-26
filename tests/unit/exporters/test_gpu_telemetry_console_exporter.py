@@ -37,7 +37,9 @@ def gpu_config():
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+        ],
         gpu_telemetry={"urls": ["http://localhost:9400/metrics"]},
     )
 
@@ -75,7 +77,14 @@ class TestGPUTelemetryConsoleExporter:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
             gpu_telemetry={"enabled": False},
         )
         exporter_config = ExporterConfig(

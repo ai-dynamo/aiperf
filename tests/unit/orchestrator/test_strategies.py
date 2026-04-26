@@ -22,10 +22,16 @@ _MINIMAL_CONFIG_KWARGS = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": [{"name": "warmup", "type": "concurrency",
+    "phases": [
+        {
+            "name": "warmup",
+            "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
-            "exclude_from_results": True,}, {"name": "default", "type": "concurrency", "requests": 100, "concurrency": 1}],
+            "exclude_from_results": True,
+        },
+        {"name": "default", "type": "concurrency", "requests": 100, "concurrency": 1},
+    ],
     "random_seed": 42,
 }
 

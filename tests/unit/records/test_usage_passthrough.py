@@ -61,7 +61,9 @@ def parser():
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+        ],
     )
 
     with (

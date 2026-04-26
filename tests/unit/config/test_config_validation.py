@@ -28,9 +28,14 @@ def _base_config(**overrides) -> dict:
                 "prompts": {"isl": 128, "osl": 64},
             },
         },
-        "phases": [{"name": "profiling", "type": "concurrency",
+        "phases": [
+            {
+                "name": "profiling",
+                "type": "concurrency",
                 "concurrency": 8,
-                "requests": 100,}],
+                "requests": 100,
+            }
+        ],
     }
     base.update(overrides)
     return base
@@ -51,13 +56,21 @@ class TestPrefillConcurrencyRequiresStreaming:
                     "urls": ["http://localhost:8000/v1/chat/completions"],
                     "streaming": True,
                 },
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "prefill_concurrency": 4,
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             )
         )
-        assert next(p for p in config.phases if p.name == "profiling").prefill_concurrency == 4
+        assert (
+            next(p for p in config.phases if p.name == "profiling").prefill_concurrency
+            == 4
+        )
         assert config.endpoint.streaming is True
 
     def test_prefill_without_streaming_fails(self):
@@ -70,10 +83,15 @@ class TestPrefillConcurrencyRequiresStreaming:
                         "urls": ["http://localhost:8000/v1/chat/completions"],
                         "streaming": False,
                     },
-                    phases=[{"name": "profiling", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "prefill_concurrency": 4,
-                            "requests": 100,}],
+                            "requests": 100,
+                        }
+                    ],
                 )
             )
 
@@ -98,13 +116,22 @@ class TestPrefillConcurrencyRequiresStreaming:
                         "urls": ["http://localhost:8000/v1/chat/completions"],
                         "streaming": False,
                     },
-                    phases=[{"name": "warmup", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "warmup",
+                            "type": "concurrency",
                             "concurrency": 4,
                             "requests": 50,
-                            "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                            "exclude_from_results": True,
+                        },
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "prefill_concurrency": 4,
-                            "requests": 100,}],
+                            "requests": 100,
+                        },
+                    ],
                 )
             )
 
@@ -115,14 +142,23 @@ class TestPrefillConcurrencyRequiresStreaming:
                     "urls": ["http://localhost:8000/v1/chat/completions"],
                     "streaming": True,
                 },
-                phases=[{"name": "warmup", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
                         "concurrency": 4,
                         "prefill_concurrency": 2,
                         "requests": 50,
-                        "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                        "exclude_from_results": True,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "prefill_concurrency": 4,
-                        "requests": 100,}],
+                        "requests": 100,
+                    },
+                ],
             )
         )
         assert len(config.phases) == 2
@@ -194,11 +230,19 @@ class TestFixedScheduleSampling:
                         "sampling": "sequential",
                     },
                 },
-                phases=[{"name": "replay", "type": "fixed_schedule",
-                        "dataset": "trace",}],
+                phases=[
+                    {
+                        "name": "replay",
+                        "type": "fixed_schedule",
+                        "dataset": "trace",
+                    }
+                ],
             )
         )
-        assert next(p for p in config.phases if p.name == "replay").type == "fixed_schedule"
+        assert (
+            next(p for p in config.phases if p.name == "replay").type
+            == "fixed_schedule"
+        )
 
     def test_fixed_schedule_with_random_fails(self):
         with pytest.raises(
@@ -214,8 +258,13 @@ class TestFixedScheduleSampling:
                             "sampling": "random",
                         },
                     },
-                    phases=[{"name": "replay", "type": "fixed_schedule",
-                            "dataset": "trace",}],
+                    phases=[
+                        {
+                            "name": "replay",
+                            "type": "fixed_schedule",
+                            "dataset": "trace",
+                        }
+                    ],
                 )
             )
 
@@ -223,11 +272,19 @@ class TestFixedScheduleSampling:
         """Synthetic datasets don't have format, so no validation needed."""
         config = AIPerfConfig(
             **_base_config(
-                phases=[{"name": "replay", "type": "fixed_schedule",
-                        "dataset": "main",}],
+                phases=[
+                    {
+                        "name": "replay",
+                        "type": "fixed_schedule",
+                        "dataset": "main",
+                    }
+                ],
             )
         )
-        assert next(p for p in config.phases if p.name == "replay").type == "fixed_schedule"
+        assert (
+            next(p for p in config.phases if p.name == "replay").type
+            == "fixed_schedule"
+        )
 
 
 # =============================================================================
@@ -248,14 +305,22 @@ class TestUserCentricRequiresMultiTurn:
                         "format": "multi_turn",
                     },
                 },
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "dataset": "conversations",
                         "rate": 10.0,
                         "users": 5,
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             )
         )
-        assert next(p for p in config.phases if p.name == "profiling").type == "user_centric"
+        assert (
+            next(p for p in config.phases if p.name == "profiling").type
+            == "user_centric"
+        )
 
     def test_user_centric_with_single_turn_fails(self):
         with pytest.raises(ValidationError, match="user_centric.*multi_turn.*format"):
@@ -268,11 +333,16 @@ class TestUserCentricRequiresMultiTurn:
                             "format": "single_turn",
                         },
                     },
-                    phases=[{"name": "profiling", "type": "user_centric",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "user_centric",
                             "dataset": "data",
                             "rate": 10.0,
                             "users": 5,
-                            "requests": 100,}],
+                            "requests": 100,
+                        }
+                    ],
                 )
             )
 
@@ -280,14 +350,22 @@ class TestUserCentricRequiresMultiTurn:
         """Synthetic datasets aren't FileDataset, so no format check."""
         config = AIPerfConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "dataset": "main",
                         "rate": 10.0,
                         "users": 5,
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             )
         )
-        assert next(p for p in config.phases if p.name == "profiling").type == "user_centric"
+        assert (
+            next(p for p in config.phases if p.name == "profiling").type
+            == "user_centric"
+        )
 
 
 # =============================================================================

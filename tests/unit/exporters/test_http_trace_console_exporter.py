@@ -158,7 +158,9 @@ def make_exporter_config(
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+        ],
         artifacts={"show_trace_timing": show_trace_timing},
     )
     return ExporterConfig(

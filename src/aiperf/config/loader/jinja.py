@@ -34,6 +34,37 @@ _JINJA_ENV = jinja2.Environment(
 )
 
 
+def _flatten_into_context(
+    obj: Any, prefix: str, context: dict[str, Any]
+) -> None:
+    """Recursively flatten ``obj`` into ``context`` keyed by dot-paths.
+
+    Dict children are exposed at both the dotted path (``a.b``) and at the
+    top-level bare key (``b``) when no parent prefix is set. List children
+    with a string ``name`` field also get a name-keyed alias under
+    ``prefix.<name>`` so jinja's attribute chain (``{{ phases.profiling.rate }}``)
+    resolves to the named entry.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            new_key = f"{prefix}.{key}" if prefix else key
+            context[new_key] = value
+            if not prefix:
+                context[key] = value
+            _flatten_into_context(value, new_key, context)
+    elif isinstance(obj, list):
+        named_entries = {
+            item["name"]: item
+            for item in obj
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        context[prefix] = named_entries if named_entries else obj
+        for i, item in enumerate(obj):
+            _flatten_into_context(item, f"{prefix}.{i}", context)
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                _flatten_into_context(item, f"{prefix}.{item['name']}", context)
+
+
 def build_template_context(data: dict[str, Any]) -> dict[str, Any]:
     """Build context for Jinja2 template rendering.
 
@@ -48,37 +79,7 @@ def build_template_context(data: dict[str, Any]) -> dict[str, Any]:
     see the computed value rather than the raw template.
     """
     context: dict[str, Any] = {}
-
-    def flatten(obj: Any, prefix: str = "") -> None:
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                new_key = f"{prefix}.{key}" if prefix else key
-                context[new_key] = value
-                if not prefix:
-                    context[key] = value
-                flatten(value, new_key)
-        elif isinstance(obj, list):
-            # List entries with a ``name`` field (e.g.
-            # ``phases: [{name: profiling, ...}]``) are exposed as a
-            # name-keyed dict so jinja's attribute chain
-            # (``{{ phases.profiling.rate }}``) resolves to the entry.
-            named_entries = {
-                item["name"]: item
-                for item in obj
-                if isinstance(item, dict) and isinstance(item.get("name"), str)
-            }
-            if named_entries:
-                context[prefix] = named_entries
-                if "." not in prefix:
-                    context[prefix] = named_entries
-            else:
-                context[prefix] = obj
-            for i, item in enumerate(obj):
-                flatten(item, f"{prefix}.{i}")
-                if isinstance(item, dict) and isinstance(item.get("name"), str):
-                    flatten(item, f"{prefix}.{item['name']}")
-
-    flatten(data)
+    _flatten_into_context(data, "", context)
 
     if "variables" in data and isinstance(data["variables"], dict):
         # Variables can reference any flattened context entry except other

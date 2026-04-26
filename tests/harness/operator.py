@@ -82,14 +82,23 @@ def build_full_aiperfjob_spec() -> dict[str, Any]:
                 "urls": ["http://api.example.com/v1/chat/completions"],
             },
             "datasets": {"main": {"type": "synthetic"}},
-            "phases": [{"name": "warmup", "type": "concurrency",
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "dataset": "main",
                     "requests": 50,
                     "concurrency": 500,
-                    "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
                     "dataset": "main",
                     "requests": 1000,
-                    "concurrency": 500,}],
+                    "concurrency": 500,
+                },
+            ],
         },
         "podTemplate": {
             "nodeSelector": {"gpu": "true"},

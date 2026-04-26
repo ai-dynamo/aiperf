@@ -22,7 +22,9 @@ class TestTimingConfigurationIntegration:
     def test_explicit_request_count_honored(self) -> None:
         config = AIPerfConfig(
             **_BASE,
-            phases=[{"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 100}],
+            phases=[
+                {"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 100}
+            ],
         )
         tcfg = TimingConfig.from_config(config)
         assert tcfg.phase_configs[0].total_expected_requests == 100
@@ -38,7 +40,9 @@ class TestTimingConfigurationIntegration:
     def test_poisson_phase_uses_request_rate_mode(self) -> None:
         config = AIPerfConfig(
             **_BASE,
-            phases=[{"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 10}],
+            phases=[
+                {"name": "profiling", "type": "poisson", "rate": 10.0, "requests": 10}
+            ],
         )
         tcfg = TimingConfig.from_config(config)
         assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
@@ -47,7 +51,14 @@ class TestTimingConfigurationIntegration:
     def test_request_count_from_load_phase(self) -> None:
         config = AIPerfConfig(
             **_BASE,
-            phases=[{"name": "profiling", "type": "concurrency", "concurrency": 4, "requests": 42}],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 4,
+                    "requests": 42,
+                }
+            ],
         )
         tcfg = TimingConfig.from_config(config)
         assert tcfg.phase_configs[0].total_expected_requests == 42
@@ -55,7 +66,9 @@ class TestTimingConfigurationIntegration:
     def test_duration_based_phase_has_no_request_count(self) -> None:
         config = AIPerfConfig(
             **_BASE,
-            phases=[{"name": "profiling", "type": "poisson", "rate": 10.0, "duration": 60}],
+            phases=[
+                {"name": "profiling", "type": "poisson", "rate": 10.0, "duration": 60}
+            ],
         )
         tcfg = TimingConfig.from_config(config)
         assert tcfg.phase_configs[0].total_expected_requests is None

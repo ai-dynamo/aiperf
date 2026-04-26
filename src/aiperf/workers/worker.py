@@ -207,8 +207,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
         # when the orchestrator doesn't need TTFT events for slot management.
         self._prefill_concurrency_enabled = any(
-            phase.prefill_concurrency is not None
-            for phase in self.run.cfg.phases
+            phase.prefill_concurrency is not None for phase in self.run.cfg.phases
         )
 
         # Only used as a fallback when dataset client is not initialized

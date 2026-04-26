@@ -54,7 +54,9 @@ def _make_config(**overrides):
         "datasets": {
             "main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
         },
-        "phases": [{"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}],
+        "phases": [
+            {"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}
+        ],
     }
     defaults.update(overrides)
     return BenchmarkConfig(**defaults)
@@ -274,7 +276,14 @@ class TestDatasetResolverEdgeCases:
                 "val": {"type": "file", "path": files["val"]},
                 "test": {"type": "file", "path": files["test"]},
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -294,7 +303,14 @@ class TestDatasetResolverEdgeCases:
 
         config = _make_config(
             datasets={"main": {"type": "file", "path": str(link)}},
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -309,7 +325,14 @@ class TestDatasetResolverEdgeCases:
             datasets={
                 "my_special_ds": {"type": "file", "path": "/nonexistent/data.jsonl"}
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -356,10 +379,21 @@ class TestTimingResolverEdgeCases:
     def test_excluded_phases_included_in_total(self, tmp_path) -> None:
         """Phases with exclude_from_results=True still contribute to total duration."""
         config = _make_config(
-            phases=[{"name": "warmup", "type": "concurrency",
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,}, {"name": "main", "type": "concurrency", "duration": 60, "concurrency": 2}],
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "main",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 2,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -371,7 +405,20 @@ class TestTimingResolverEdgeCases:
         """Phase with duration=0 is not valid (>0 constraint), but a very small
         duration adds to total without being skipped."""
         config = _make_config(
-            phases=[{"name": "quick", "type": "concurrency", "duration": 0.001, "concurrency": 1}, {"name": "main", "type": "concurrency", "duration": 60, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "quick",
+                    "type": "concurrency",
+                    "duration": 0.001,
+                    "concurrency": 1,
+                },
+                {
+                    "name": "main",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 1,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -382,16 +429,29 @@ class TestTimingResolverEdgeCases:
     def test_multiple_grace_periods_summed(self, tmp_path) -> None:
         """Grace periods from multiple phases are all added to total."""
         config = _make_config(
-            phases=[{"name": "phase_a", "type": "concurrency",
+            phases=[
+                {
+                    "name": "phase_a",
+                    "type": "concurrency",
                     "duration": 30,
                     "grace_period": 5,
-                    "concurrency": 1,}, {"name": "phase_b", "type": "concurrency",
+                    "concurrency": 1,
+                },
+                {
+                    "name": "phase_b",
+                    "type": "concurrency",
                     "duration": 60,
                     "grace_period": 10,
-                    "concurrency": 2,}, {"name": "phase_c", "type": "concurrency",
+                    "concurrency": 2,
+                },
+                {
+                    "name": "phase_c",
+                    "type": "concurrency",
                     "duration": 90,
                     "grace_period": 15,
-                    "concurrency": 4,}],
+                    "concurrency": 4,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -403,7 +463,20 @@ class TestTimingResolverEdgeCases:
     def test_none_duration_short_circuits(self, tmp_path) -> None:
         """If any phase lacks duration, total is None even if others have durations."""
         config = _make_config(
-            phases=[{"name": "timed", "type": "concurrency", "duration": 60, "concurrency": 1}, {"name": "untimed", "type": "concurrency", "requests": 100, "concurrency": 2}],
+            phases=[
+                {
+                    "name": "timed",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 1,
+                },
+                {
+                    "name": "untimed",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 2,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -427,7 +500,14 @@ class TestResolverChainIntegration:
 
         config = _make_config(
             datasets={"main": {"type": "file", "path": str(dataset_file)}},
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "artifacts")
 
@@ -447,10 +527,15 @@ class TestResolverChainIntegration:
         config = _make_config(
             tokenizer=TokenizerConfig(name="test-tok"),
             datasets={"main": {"type": "file", "path": str(dataset_file)}},
-            phases=[{"name": "default", "type": "concurrency",
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
                     "duration": 60,
                     "grace_period": 10,
-                    "concurrency": 1,}],
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "artifacts")
 

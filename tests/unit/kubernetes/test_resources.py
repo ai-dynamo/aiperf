@@ -987,9 +987,14 @@ class TestConfigMapSpecFromBenchmarkRun:
                         "prompts": {"isl": 128, "osl": 128},
                     },
                 },
-                "phases": [{"name": "profiling", "type": "concurrency",
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 1,
-                        "duration": 10,}],
+                        "duration": 10,
+                    }
+                ],
             }
         )
         return BenchmarkRun(

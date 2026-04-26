@@ -46,7 +46,9 @@ def mock_tokenizer(mock_tokenizer_cls):
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+    phases=[
+        {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+    ],
 )
 
 

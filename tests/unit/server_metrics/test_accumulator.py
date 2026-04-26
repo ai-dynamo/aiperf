@@ -37,7 +37,9 @@ def mock_config() -> AIPerfConfig:
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
+        ],
     )
 
 
@@ -388,7 +390,14 @@ class TestSliceDurationConfig:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         # Set slice_duration to 2 seconds
         config.output.slice_duration = 2.0
@@ -451,7 +460,14 @@ class TestSliceDurationConfig:
                     "prompts": {"isl": 128, "osl": 64},
                 }
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         # Ensure slice_duration is None (default)
         config.output.slice_duration = None

@@ -1013,7 +1013,9 @@ def _make_transport_run(
                 "prompts": {"isl": 128, "osl": 64},
             }
         },
-        phases=[{"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
+        ],
     )
     return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 

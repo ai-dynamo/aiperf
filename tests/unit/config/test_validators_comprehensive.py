@@ -46,9 +46,14 @@ def _base_config(**overrides: object) -> dict:
                 "prompts": {"isl": 128, "osl": 64},
             },
         },
-        "phases": [{"name": "profiling", "type": "concurrency",
+        "phases": [
+            {
+                "name": "profiling",
+                "type": "concurrency",
                 "concurrency": 8,
-                "requests": 100,}],
+                "requests": 100,
+            }
+        ],
     }
     base.update(overrides)
     return base
@@ -65,14 +70,23 @@ class TestSeamlessNotOnFirstPhase:
     def test_seamless_on_second_phase_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "warmup", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
                         "concurrency": 4,
                         "requests": 50,
                         "seamless": False,
-                        "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                        "exclude_from_results": True,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "requests": 100,
-                        "seamless": True,}],
+                        "seamless": True,
+                    },
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").seamless is True
@@ -81,24 +95,42 @@ class TestSeamlessNotOnFirstPhase:
         with pytest.raises(ValidationError, match="seamless"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "warmup", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "warmup",
+                            "type": "concurrency",
                             "concurrency": 4,
                             "requests": 50,
-                            "seamless": True,}, {"name": "profiling", "type": "concurrency",
+                            "seamless": True,
+                        },
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
-                            "requests": 100,}],
+                            "requests": 100,
+                        },
+                    ],
                 )
             )
 
     def test_no_seamless_anywhere_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "warmup", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
                         "concurrency": 4,
                         "requests": 50,
-                        "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                        "exclude_from_results": True,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
-                        "requests": 100,}],
+                        "requests": 100,
+                    },
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "warmup").seamless is False
@@ -108,10 +140,15 @@ class TestSeamlessNotOnFirstPhase:
         with pytest.raises(ValidationError, match="seamless"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "only_phase", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "only_phase",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "requests": 100,
-                            "seamless": True,}],
+                            "seamless": True,
+                        }
+                    ],
                 )
             )
 
@@ -127,9 +164,14 @@ class TestStopConditionRequired:
     def test_concurrency_phase_with_duration_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
-                        "duration": 60,}],
+                        "duration": 60,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").duration == 60.0
@@ -137,9 +179,14 @@ class TestStopConditionRequired:
     def test_concurrency_phase_with_requests_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").requests == 100
@@ -148,8 +195,13 @@ class TestStopConditionRequired:
         with pytest.raises(ValidationError, match="at least one of"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "concurrency",
-                            "concurrency": 8,}],
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
+                            "concurrency": 8,
+                        }
+                    ],
                 )
             )
 
@@ -165,8 +217,13 @@ class TestStopConditionRequired:
                         "sampling": "sequential",
                     },
                 },
-                phases=[{"name": "replay", "type": "fixed_schedule",
-                        "dataset": "trace",}],
+                phases=[
+                    {
+                        "name": "replay",
+                        "type": "fixed_schedule",
+                        "dataset": "trace",
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "replay").requests is None
@@ -175,10 +232,15 @@ class TestStopConditionRequired:
     def test_user_centric_with_sessions_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "rate": 10.0,
                         "users": 5,
-                        "sessions": 10,}],
+                        "sessions": 10,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").sessions == 10
@@ -187,18 +249,28 @@ class TestStopConditionRequired:
         with pytest.raises(ValidationError, match="at least one of"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "poisson",
-                            "rate": 10.0,}],
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "poisson",
+                            "rate": 10.0,
+                        }
+                    ],
                 )
             )
 
     def test_constant_phase_with_both_stop_conditions_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "constant",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "constant",
                         "rate": 5.0,
                         "requests": 100,
-                        "duration": 60,}],
+                        "duration": 60,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").requests == 100
@@ -286,10 +358,15 @@ class TestUserCentricConstraints:
     def test_sessions_greater_than_users_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "rate": 10.0,
                         "users": 5,
-                        "sessions": 10,}],
+                        "sessions": 10,
+                    }
+                ],
             )
         )
         phase = next(p for p in cfg.phases if p.name == "profiling")
@@ -300,31 +377,49 @@ class TestUserCentricConstraints:
         with pytest.raises(ValidationError, match="num-sessions.*num-users"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "user_centric",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "user_centric",
                             "rate": 10.0,
                             "users": 5,
-                            "sessions": 3,}],
+                            "sessions": 3,
+                        }
+                    ],
                 )
             )
 
     def test_sessions_equal_to_users_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "rate": 10.0,
                         "users": 5,
-                        "sessions": 5,}],
+                        "sessions": 5,
+                    }
+                ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").sessions == next(p for p in cfg.phases if p.name == "profiling").users
+        assert (
+            next(p for p in cfg.phases if p.name == "profiling").sessions
+            == next(p for p in cfg.phases if p.name == "profiling").users
+        )
 
     def test_requests_greater_than_users_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "rate": 10.0,
                         "users": 5,
-                        "requests": 10,}],
+                        "requests": 10,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").requests == 10
@@ -333,23 +428,36 @@ class TestUserCentricConstraints:
         with pytest.raises(ValidationError, match="request-count.*num-users"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "user_centric",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "user_centric",
                             "rate": 10.0,
                             "users": 5,
-                            "requests": 3,}],
+                            "requests": 3,
+                        }
+                    ],
                 )
             )
 
     def test_requests_equal_to_users_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "user_centric",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "user_centric",
                         "rate": 10.0,
                         "users": 5,
-                        "requests": 5,}],
+                        "requests": 5,
+                    }
+                ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").requests == next(p for p in cfg.phases if p.name == "profiling").users
+        assert (
+            next(p for p in cfg.phases if p.name == "profiling").requests
+            == next(p for p in cfg.phases if p.name == "profiling").users
+        )
 
 
 # ============================================================
@@ -363,10 +471,15 @@ class TestDatasetReferences:
     def test_valid_dataset_reference_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "requests": 100,
-                        "dataset": "main",}],
+                        "dataset": "main",
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").dataset == "main"
@@ -375,10 +488,15 @@ class TestDatasetReferences:
         with pytest.raises(ValidationError, match="undefined dataset.*missing"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "requests": 100,
-                            "dataset": "missing",}],
+                            "dataset": "missing",
+                        }
+                    ],
                 )
             )
 
@@ -402,14 +520,23 @@ class TestDatasetReferences:
                         "prompts": {"isl": 256},
                     },
                 },
-                phases=[{"name": "warmup", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
                         "concurrency": 4,
                         "requests": 50,
                         "dataset": "train",
-                        "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                        "exclude_from_results": True,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "requests": 100,
-                        "dataset": "eval",}],
+                        "dataset": "eval",
+                    },
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "warmup").dataset == "train"
@@ -419,14 +546,23 @@ class TestDatasetReferences:
         with pytest.raises(ValidationError, match="undefined dataset.*bad"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "warmup", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "warmup",
+                            "type": "concurrency",
                             "concurrency": 4,
                             "requests": 50,
                             "dataset": "main",
-                            "exclude_from_results": True,}, {"name": "profiling", "type": "concurrency",
+                            "exclude_from_results": True,
+                        },
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "requests": 100,
-                            "dataset": "bad",}],
+                            "dataset": "bad",
+                        },
+                    ],
                 )
             )
 
@@ -523,9 +659,14 @@ class TestDurationSpec:
         """DurationSpec integration: string durations work in phase fields."""
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
-                        "duration": "5m",}],
+                        "duration": "5m",
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").duration == 300.0
@@ -542,10 +683,15 @@ class TestGracePeriodRequiresDuration:
     def test_grace_period_with_duration_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "duration": 60,
-                        "grace_period": 10,}],
+                        "grace_period": 10,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").grace_period == 10.0
@@ -555,19 +701,29 @@ class TestGracePeriodRequiresDuration:
         with pytest.raises(ValidationError, match="duration"):
             BenchmarkConfig(
                 **_base_config(
-                    phases=[{"name": "profiling", "type": "concurrency",
+                    phases=[
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
                             "concurrency": 8,
                             "requests": 100,
-                            "grace_period": 10,}],
+                            "grace_period": 10,
+                        }
+                    ],
                 )
             )
 
     def test_no_grace_period_no_duration_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
-                        "requests": 100,}],
+                        "requests": 100,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").grace_period is None
@@ -577,10 +733,15 @@ class TestGracePeriodRequiresDuration:
         """Both grace_period and duration accept DurationSpec strings."""
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "duration": "5m",
-                        "grace_period": "30s",}],
+                        "grace_period": "30s",
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").duration == 300.0
@@ -589,10 +750,15 @@ class TestGracePeriodRequiresDuration:
     def test_zero_grace_period_with_duration_passes(self) -> None:
         cfg = BenchmarkConfig(
             **_base_config(
-                phases=[{"name": "profiling", "type": "concurrency",
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
                         "concurrency": 8,
                         "duration": 60,
-                        "grace_period": 0,}],
+                        "grace_period": 0,
+                    }
+                ],
             )
         )
         assert next(p for p in cfg.phases if p.name == "profiling").grace_period == 0.0

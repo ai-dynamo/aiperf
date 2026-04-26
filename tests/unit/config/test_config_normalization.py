@@ -274,7 +274,9 @@ class TestPhaseFlattening:
         cfg = BenchmarkConfig.model_validate(data)
 
         assert any(p.name == "profiling" for p in cfg.phases)
-        assert next(p for p in cfg.phases if p.name == "profiling").type == "concurrency"
+        assert (
+            next(p for p in cfg.phases if p.name == "profiling").type == "concurrency"
+        )
 
     def test_warmup_and_profiling(self) -> None:
         data = {
@@ -287,7 +289,10 @@ class TestPhaseFlattening:
         cfg = BenchmarkConfig.model_validate(data)
 
         assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
-        assert next(p for p in cfg.phases if p.name == "warmup").exclude_from_results is True
+        assert (
+            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
+            is True
+        )
 
     def test_warmup_auto_sets_exclude_from_results(self) -> None:
         data = {
@@ -299,7 +304,10 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert next(p for p in cfg.phases if p.name == "warmup").exclude_from_results is True
+        assert (
+            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
+            is True
+        )
 
     def test_warmup_without_profiling_rejected(self) -> None:
         data = {

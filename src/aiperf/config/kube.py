@@ -246,10 +246,7 @@ class KubeOptions(KubeManageOptions):
         # already has connectionsPerWorker, don't override it.
         if "workers" in self.model_fields_set and self.workers > 0:
             concurrency = max(
-                (
-                    getattr(phase, "concurrency", 1) or 1
-                    for phase in config.phases
-                ),
+                (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
                 default=1,
             )
             dc_dict["connectionsPerWorker"] = max(

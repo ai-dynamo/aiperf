@@ -49,7 +49,9 @@ def minimal_config():
         models=["test-model"],
         endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
         datasets={"main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}},
-        phases=[{"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}],
+        phases=[
+            {"name": "default", "type": "concurrency", "duration": 60, "concurrency": 1}
+        ],
     )
 
 
@@ -313,7 +315,14 @@ class TestDatasetResolver:
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
             datasets={"main": {"type": "file", "path": str(dataset_file)}},
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -328,7 +337,14 @@ class TestDatasetResolver:
             models=["test-model"],
             endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
             datasets={"main": {"type": "file", "path": "/nonexistent/data.jsonl"}},
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -346,7 +362,14 @@ class TestDatasetResolver:
                 "synth": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}},
                 "real": {"type": "file", "path": str(dataset_file)},
             },
-            phases=[{"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}],
+            phases=[
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
@@ -370,10 +393,21 @@ class TestTimingResolver:
             datasets={
                 "main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
             },
-            phases=[{"name": "warmup", "type": "concurrency",
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,}, {"name": "main", "type": "concurrency", "duration": 120, "concurrency": 4}],
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "main",
+                    "type": "concurrency",
+                    "duration": 120,
+                    "concurrency": 4,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -388,10 +422,15 @@ class TestTimingResolver:
             datasets={
                 "main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
             },
-            phases=[{"name": "main", "type": "concurrency",
+            phases=[
+                {
+                    "name": "main",
+                    "type": "concurrency",
                     "duration": 60,
                     "grace_period": 10,
-                    "concurrency": 1,}],
+                    "concurrency": 1,
+                }
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 
@@ -406,10 +445,21 @@ class TestTimingResolver:
             datasets={
                 "main": {"type": "synthetic", "entries": 10, "prompts": {"isl": 32}}
             },
-            phases=[{"name": "warmup", "type": "concurrency",
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,}, {"name": "main", "type": "concurrency", "requests": 100, "concurrency": 4}],
+                    "exclude_from_results": True,
+                },
+                {
+                    "name": "main",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 4,
+                },
+            ],
         )
         run = _make_run(config, artifact_dir=tmp_path)
 

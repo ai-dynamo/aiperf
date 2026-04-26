@@ -78,6 +78,12 @@ async def _idle_until_terminated() -> None:
 
 
 async def main() -> int:
+    """Run the sweep-controller pod: load CR, execute variations, aggregate, idle.
+
+    Returns 0 on clean completion, 1 on unrecoverable error. Idempotent across
+    pod restarts (existing terminal child jobs are reused; aggregation re-runs
+    only if the ready marker is missing).
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
