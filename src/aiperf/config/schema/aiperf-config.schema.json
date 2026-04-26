@@ -605,6 +605,12 @@
       "additionalProperties": false,
       "description": "Concurrency-controlled load: dispatch immediately when a slot opens.\n\nPrimary control is ``concurrency`` (defaults to 1).\nNo rate limiting -- pure concurrency-based throughput.",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "concurrency",
           "description": "Concurrency-controlled immediate dispatch.",
@@ -869,6 +875,7 @@
         }
       },
       "required": [
+        "name",
         "type"
       ],
       "title": "ConcurrencyPhase",
@@ -888,6 +895,12 @@
       "additionalProperties": false,
       "description": "Constant-rate request arrivals (fixed inter-arrival time).",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "constant",
           "description": "Constant rate-controlled arrivals.",
@@ -1207,6 +1220,7 @@
         }
       },
       "required": [
+        "name",
         "type",
         "rate"
       ],
@@ -1896,6 +1910,12 @@
       "additionalProperties": false,
       "description": "Replay requests at predetermined timestamps from a trace dataset.\n\nStop condition not required -- the trace dataset determines when the\nphase ends.",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "fixed_schedule",
           "description": "Replay requests at trace timestamps.",
@@ -2216,6 +2236,7 @@
         }
       },
       "required": [
+        "name",
         "type"
       ],
       "title": "FixedSchedulePhase",
@@ -2225,6 +2246,12 @@
       "additionalProperties": false,
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "gamma",
           "description": "Gamma-distributed rate-controlled arrivals.",
@@ -2569,6 +2596,7 @@
         }
       },
       "required": [
+        "name",
         "type",
         "rate"
       ],
@@ -3333,6 +3361,12 @@
       "additionalProperties": false,
       "description": "Poisson-distributed request arrivals at the target rate.",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "poisson",
           "description": "Poisson-distributed rate-controlled arrivals.",
@@ -3652,6 +3686,7 @@
         }
       },
       "required": [
+        "name",
         "type",
         "rate"
       ],
@@ -5402,6 +5437,12 @@
       "additionalProperties": false,
       "description": "N concurrent users sharing a global request rate.\n\nRequires multi-turn conversations. Each user gets a proportional\nshare of the global ``rate``.",
       "properties": {
+        "name": {
+          "description": "Phase identifier — unique within the benchmark's phases list. Used in logs, status, sweep targeting, and result file naming. Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere an identifier is allowed (no shell meta-chars).",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "type": {
           "const": "user_centric",
           "description": "N users sharing a global request rate.",
@@ -5744,6 +5785,7 @@
         }
       },
       "required": [
+        "name",
         "type",
         "rate",
         "users"
@@ -6132,7 +6174,8 @@
       "type": "object"
     },
     "phases": {
-      "additionalProperties": {
+      "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
+      "items": {
         "discriminator": {
           "propertyName": "type",
           "mapping": {
@@ -6165,10 +6208,9 @@
           }
         ]
       },
-      "description": "Benchmark phase configuration. Can be a single phase config (with 'type' key) or named phases (dict of phase configs). Single config is normalized to {'default': config}. Order is preserved (Python 3.7+) for execution sequence.",
-      "minProperties": 1,
+      "minItems": 1,
       "title": "Phases",
-      "type": "object"
+      "type": "array"
     },
     "artifacts": {
       "$ref": "#/$defs/ArtifactsConfig",
