@@ -218,6 +218,15 @@ class Record(AIPerfBaseModel):
     value: float = Field(description="Measured value")
 ```
 
+### `RunExecutor` pattern (orchestrator seam)
+
+`MultiRunOrchestrator.execute(plan, executor)` iterates `plan.configs × plan.trials` via an injected `RunExecutor` (see `src/aiperf/orchestrator/executor.py`). Two implementations:
+
+- `LocalSubprocessExecutor` (`src/aiperf/orchestrator/local_executor.py`) — forks `aiperf.orchestrator.subprocess_runner` for each run. Used by the local `aiperf profile` CLI.
+- `K8sChildJobExecutor` (`src/aiperf/sweep_controller/k8s_executor.py`) — creates an `AIPerfJob` child CR via `kubernetes_asyncio`, watches it to terminal phase, pulls metrics from the operator results-server. Used by the sweep-controller pod.
+
+Adding a new execution backend = subclass `RunExecutor`, implement `execute(run)` returning a `RunResult` and `derive_id(plan, var_idx, trial)` returning a stable id. The orchestrator code is unchanged.
+
 ## Message Pattern
 
 Messages require `message_type` field and handler decorator:

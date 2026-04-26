@@ -181,6 +181,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Production Deployments](docs/kubernetes/production.md) - CI/CD, Kueue, secrets, GitOps, multi-tenant
 - [AI Agent Deployment Guide](docs/kubernetes/ai-deployment-guide.md) - Step-by-step deployment playbook with JSON gates for AI agents
 - [AI Agent Debugging Guide](docs/kubernetes/ai-debugging-guide.md) - Machine-parseable diagnostics and decision trees for AI agents
+- [Parameter Sweeps on Kubernetes](docs/kubernetes/sweeps.md) — grid/scenarios sweeps, multi-run trials, adaptive convergence on cluster.
 
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis

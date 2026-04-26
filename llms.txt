@@ -52,6 +52,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/kubernetes/sidecars.md](docs/kubernetes/sidecars.md): Controller-pod sidecars — event-bus proxy (XPUB:5663/XSUB:5664, fan-in isolation) and results sidecar (port 9091, fallback retrieval with readiness marker).
 - [docs/kubernetes/memory-estimator.md](docs/kubernetes/memory-estimator.md): Per-component memory model (RecordsManager, Workers, DatasetManager, RecordProcessor, ...); calibration constants; OOM-risk thresholds; tuning recipes.
 - [docs/kubernetes/kueue.md](docs/kubernetes/kueue.md): Kueue gang-scheduling integration — `spec.scheduling.{queueName,priorityClass}`, namespace default queues, Workload admission watching.
+- [docs/kubernetes/sweeps.md](docs/kubernetes/sweeps.md): Tutorial: parameter sweeps and multi-run on Kubernetes via AIPerfSweep CRD.
 - [docs/kubernetes/gpu-telemetry.md](docs/kubernetes/gpu-telemetry.md): GPU telemetry on Kubernetes — opt-out sidecar, endpoint configuration (no auto-discovery), DCGM scrape flow, ingest path.
 - [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
 - [docs/kubernetes/user-files.md](docs/kubernetes/user-files.md): User-declared templated output files (`artifacts.user_files`) — schema, jinja2 context, injected names, error catalog.

@@ -138,6 +138,10 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
 - Exporting server metrics alongside benchmark results
 
+### AIPerfSweep (parameter sweeps and multi-run on Kubernetes)
+
+The `AIPerfSweep` CRD owns child `AIPerfJob` CRs via `ownerReferences` to orchestrate parameter sweeps, multi-run confidence trials, and adaptive convergence on a Kubernetes cluster. The orchestration loop runs in a dedicated **sweep-controller pod** (created by the kopf operator from a JobSet manifest), not in the operator itself; this keeps kopf as a thin reconciler. The sweep-controller uses `kubernetes_asyncio` to create child `AIPerfJob`s deterministically named per `(variation, trial)`, watches each to terminal phase, pulls per-child summary metrics from the operator's results-server, and runs `aggregate_and_export` over the cumulative `RunResult` list. Idempotency is anchored on the apiserver — deterministic child names plus owner references — so a sweep-controller pod restart resumes from the first non-existent child without re-running terminal ones. See [docs/kubernetes/sweeps.md](kubernetes/sweeps.md) for usage and [docs/superpowers/specs/2026-04-25-k8s-sweeps-design.md](superpowers/specs/2026-04-25-k8s-sweeps-design.md) for design rationale.
+
 ## How AIPerf Works
 
 ### Credit System & Request Timing

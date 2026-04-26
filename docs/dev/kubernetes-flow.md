@@ -467,6 +467,14 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 | `AIPERF_K8S_PORT_API_SERVICE` | 9090 | API service port |
 | `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | 300 | TTL after completion |
 
+### AIPerfSweep handlers
+
+The kopf operator gains three handlers in `src/aiperf/operator/main.py` for the parent `AIPerfSweep` CRD:
+
+- `@kopf.on.create AIPerfSweep` (handler in `handlers/sweep/create.py`) — validates spec via `AIPerfSweepSpec.model_validate`, computes `totalVariations`/`maxTotalRuns`, sets `status.runEpoch` from `metadata.creationTimestamp`, provisions a namespace-scoped ServiceAccount/Role/RoleBinding for the sweep-controller pod, and creates a single-replica JobSet that runs `python -m aiperf.sweep_controller.main`.
+- `@kopf.on.update AIPerfSweep field=spec.cancel` (handler in `handlers/sweep/lifecycle.py`) — mirrors the cancel signal into `status.conditions[Cancelling]`. The sweep-controller pod observes `spec.cancel` directly via its own poll and propagates it to the current child.
+- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, recomputes the parent's `completedRuns`/`failedRuns`/`lastChildEvent`. When all children are terminal, transitions parent to `Aggregating`; the sweep-controller's aggregation step then flips it to `Succeeded` or `PartiallyFailed`. Standalone AIPerfJobs are no-ops.
+
 ## Key Architecture Decisions
 
 | Decision | Rationale |
