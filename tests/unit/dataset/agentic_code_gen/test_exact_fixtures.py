@@ -74,7 +74,7 @@ def _generate_trace(
 ) -> tuple[Path, list[dict]]:
     sessions = SessionSynthesizer(config, seed=7).synthesize_sessions(1)
     run_dir = tmp_path / "run"
-    jsonl_path, _, _ = write_dataset(sessions, run_dir, config, seed=7)
+    jsonl_path, _, _, _ = write_dataset(sessions, run_dir, config, seed=7)
     rows = [
         orjson.loads(line)
         for line in jsonl_path.read_bytes().splitlines()

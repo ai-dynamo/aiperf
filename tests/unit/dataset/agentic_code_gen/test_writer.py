@@ -38,7 +38,7 @@ class TestWriteDataset:
         self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
     ) -> None:
         run_dir = tmp_path / "run"
-        jsonl_path, manifest_path, quality_path = write_dataset(
+        jsonl_path, manifest_path, quality_path, _ = write_dataset(
             sessions, run_dir, coding_config, seed=42, config_name="default"
         )
         assert jsonl_path.exists()
@@ -66,7 +66,7 @@ class TestWriteDataset:
         self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
     ) -> None:
         run_dir = tmp_path / "run"
-        _, manifest_path, _ = write_dataset(
+        _, manifest_path, _, _ = write_dataset(
             sessions, run_dir, coding_config, seed=42, config_name="default"
         )
         manifest = orjson.loads(manifest_path.read_bytes())

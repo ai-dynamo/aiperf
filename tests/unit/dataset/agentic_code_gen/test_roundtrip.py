@@ -30,7 +30,7 @@ class TestRoundtrip:
         sessions = synth.synthesize_sessions(50)
 
         run_dir = tmp_path / "run"
-        jsonl_path, manifest_path, quality_path = write_dataset(
+        jsonl_path, manifest_path, quality_path, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
 
@@ -102,7 +102,7 @@ class TestRoundtrip:
         sessions = synth.synthesize_sessions(100)
 
         run_dir = tmp_path / "block_check"
-        jsonl_path, _, _ = write_dataset(
+        jsonl_path, _, _, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
         block_size = config.block_size
@@ -163,7 +163,7 @@ class TestRoundtrip:
         sessions = synth.synthesize_sessions(20)
 
         run_dir = tmp_path / "run"
-        jsonl_path, _, _ = write_dataset(
+        jsonl_path, _, _, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
 
@@ -206,7 +206,7 @@ class TestRoundtrip:
         assert len(session.turns) >= 3, f"Expected >= 3 turns, got {len(session.turns)}"
 
         run_dir = tmp_path / "run"
-        jsonl_path, _, _ = write_dataset(
+        jsonl_path, _, _, _ = write_dataset(
             sessions, run_dir, config, seed=99, config_name="test"
         )
 
@@ -250,7 +250,7 @@ class TestRoundtrip:
         sessions = synth.synthesize_sessions(20)
 
         run_dir = tmp_path / "run"
-        jsonl_path, _, _ = write_dataset(
+        jsonl_path, _, _, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
 
@@ -274,7 +274,7 @@ class TestRoundtrip:
         l15 = alloc.l15_blocks
 
         run_dir = tmp_path / "run"
-        jsonl_path, _, _ = write_dataset(
+        jsonl_path, _, _, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
 
@@ -307,7 +307,7 @@ class TestRoundtrip:
         sessions = synth.synthesize_sessions(10)
 
         run_dir = tmp_path / "run"
-        _, manifest_path, _ = write_dataset(
+        _, manifest_path, _, _ = write_dataset(
             sessions, run_dir, config, seed=42, config_name="default"
         )
 

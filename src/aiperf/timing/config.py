@@ -168,6 +168,14 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Duration in seconds to ramp request rate from 1 QPS to target. "
         "If None, request rate starts at target immediately.",
     )
+    concurrency_schedule_ticks: tuple[tuple[float, int], ...] | None = Field(
+        default=None,
+        description=(
+            "Pre-computed (time_sec, concurrency) tick stream driving session "
+            "concurrency over wall-clock time. Loaded from schedule.jsonl. "
+            "Mutually exclusive with concurrency_ramp_duration_sec."
+        ),
+    )
     auto_offset_timestamps: bool = Field(
         default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
         description="The auto offset timestamps of the timing manager.",
@@ -247,13 +255,32 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
     loadgen = user_config.loadgen
     input = user_config.input
 
+    schedule_ticks: tuple[tuple[float, int], ...] | None = None
+    expected_duration_sec = loadgen.benchmark_duration
+    concurrency = loadgen.concurrency
+    if loadgen.concurrency_schedule_file is not None:
+        # Local import so loader dependency stays inside the runtime's dataset tree.
+        from aiperf.dataset.loader.schedule import load_schedule
+
+        ticks = load_schedule(loadgen.concurrency_schedule_file)
+        schedule_ticks = tuple((t.time_sec, t.concurrency) for t in ticks)
+        # Upper-bound the limiter pool on the schedule's peak so set_session_limit
+        # calls always land within the configured range.
+        schedule_peak = max(t.concurrency for t in ticks)
+        if concurrency is None or schedule_peak > concurrency:
+            concurrency = schedule_peak
+        # Default the phase duration to the last tick timestamp; user-supplied
+        # benchmark_duration still wins if set explicitly.
+        if expected_duration_sec is None:
+            expected_duration_sec = ticks[-1].time_sec
+
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=user_config.timing_mode,
-        expected_duration_sec=loadgen.benchmark_duration,
+        expected_duration_sec=expected_duration_sec,
         total_expected_requests=loadgen.request_count,
         expected_num_sessions=input.conversation.num,
-        concurrency=loadgen.concurrency,
+        concurrency=concurrency,
         prefill_concurrency=loadgen.prefill_concurrency,
         request_rate=loadgen.request_rate or loadgen.user_centric_rate,
         arrival_pattern=loadgen.arrival_pattern,
@@ -263,6 +290,7 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         concurrency_ramp_duration_sec=loadgen.concurrency_ramp_duration,
         prefill_concurrency_ramp_duration_sec=loadgen.prefill_concurrency_ramp_duration,
         request_rate_ramp_duration_sec=loadgen.request_rate_ramp_duration,
+        concurrency_schedule_ticks=schedule_ticks,
         # Fixed schedule config
         auto_offset_timestamps=input.fixed_schedule_auto_offset,
         fixed_schedule_start_offset=input.fixed_schedule_start_offset,

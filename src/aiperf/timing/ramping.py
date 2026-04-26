@@ -92,6 +92,13 @@ class RampConfig(AIPerfBaseModel):
         gt=1.0,
         description="Exponent for ExponentialStrategy (default: 2.0). Must be > 1.0.",
     )
+    schedule_ticks: tuple[tuple[float, int], ...] | None = Field(
+        default=None,
+        description=(
+            "Pre-computed (time_sec, concurrency) stream for ScheduleFollowerStrategy. "
+            "Tuple (not list) so the frozen model stays hashable."
+        ),
+    )
 
 
 # =============================================================================
@@ -485,3 +492,53 @@ class PoissonStrategy(BaseRampStrategy):
         # Binary search: find first event AFTER elapsed_sec
         idx = bisect.bisect_right(self._event_times, elapsed_sec)
         return self._values[idx]
+
+
+# =============================================================================
+# ScheduleFollowerStrategy - Replay a pre-computed (time, concurrency) stream
+# =============================================================================
+
+
+class ScheduleFollowerStrategy:
+    """Walk a pre-computed (time_sec, concurrency) tick stream in discrete mode.
+
+    Each call to ``next_step`` returns the next (delay, value) pair. The stream
+    encodes the exact load shape — no interpolation, no math — so any ramp or
+    noise profile has already been baked in by the generator that emitted it
+    (e.g., ``agentic_code_gen.schedule.expand_schedule``).
+    """
+
+    def __init__(self, config: RampConfig) -> None:
+        if not config.schedule_ticks:
+            raise ValueError("ScheduleFollowerStrategy requires config.schedule_ticks")
+        self._ticks: tuple[tuple[float, int], ...] = config.schedule_ticks
+        self._idx = 0
+
+    @property
+    def start(self) -> float:
+        return float(self._ticks[0][1])
+
+    @property
+    def target(self) -> float:
+        return float(self._ticks[-1][1])
+
+    def next_step(
+        self, current: float, elapsed_sec: float
+    ) -> tuple[float, float] | None:
+        """Return (delay_until_next_tick, concurrency) or None when exhausted."""
+        if self._idx >= len(self._ticks):
+            return None
+        time_sec, concurrency = self._ticks[self._idx]
+        self._idx += 1
+        delay = max(0.0, time_sec - elapsed_sec)
+        return (delay, float(concurrency))
+
+    def value_at(self, elapsed_sec: float) -> float | None:
+        """Continuous-mode fallback: step function over the tick stream."""
+        if not self._ticks:
+            return None
+        if elapsed_sec >= self._ticks[-1][0]:
+            return None
+        idx = bisect.bisect_right([t for t, _ in self._ticks], elapsed_sec) - 1
+        idx = max(0, idx)
+        return float(self._ticks[idx][1])

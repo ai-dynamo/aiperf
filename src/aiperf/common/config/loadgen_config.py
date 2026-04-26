@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from typing import Annotated
 
 from cyclopts import Parameter
@@ -315,6 +316,20 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    concurrency_schedule_file: Annotated[
+        Path | None,
+        Field(
+            description="Path to a schedule.jsonl (emitted by agentic_code_gen synthesize) "
+            "that drives session concurrency over wall-clock time. Each line is "
+            '{"time_sec": float, "concurrency": int}. Mutually exclusive with '
+            "--concurrency-ramp-duration.",
+        ),
+        CLIParameter(
+            name=("--concurrency-schedule-file",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     prefill_concurrency_ramp_duration: Annotated[
         float | None,
         Field(
@@ -562,6 +577,30 @@ class LoadGeneratorConfig(BaseConfig):
         self.warmup_concurrency_ramp_duration = None
         self.warmup_prefill_concurrency_ramp_duration = None
         self.warmup_request_rate_ramp_duration = None
+
+    @model_validator(mode="after")
+    def validate_concurrency_schedule_exclusivity(self) -> "LoadGeneratorConfig":
+        """concurrency_schedule_file is mutually exclusive with concurrency_ramp_duration.
+
+        The schedule already describes the full concurrency trajectory, so a
+        separate ramp would fight it. File existence is checked here so misspelled
+        paths fail early instead of crashing inside the phase runner.
+        """
+        if self.concurrency_schedule_file is None:
+            return self
+
+        if self.concurrency_ramp_duration is not None:
+            raise ValueError(
+                "--concurrency-schedule-file cannot be combined with "
+                "--concurrency-ramp-duration (the schedule already encodes the ramp)."
+            )
+
+        if not self.concurrency_schedule_file.is_file():
+            raise ValueError(
+                f"--concurrency-schedule-file path does not exist: "
+                f"{self.concurrency_schedule_file}"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_multi_run_params(self) -> "LoadGeneratorConfig":

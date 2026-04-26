@@ -20,6 +20,7 @@ For other use cases:
 - **Custom prompts without timing**: See [Custom Prompt Benchmarking](../tutorials/custom-prompt-benchmarking.md)
 - **Precise timestamp control for any dataset**: See [Fixed Schedule](../tutorials/fixed-schedule.md)
 - **Multi-turn conversations from files**: See [Multi-Turn Conversations](../tutorials/multi-turn.md)
+- **Changing concurrency over time**: See [Request Rate with Max Concurrency](../tutorials/request-rate-concurrency.md#scheduled-concurrency)
 
 ## Start a vLLM Server
 
@@ -87,6 +88,43 @@ aiperf profile \
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
+
+## Replay With a Concurrency Schedule
+
+`--fixed-schedule` controls when individual trace rows are sent. Separately,
+`--concurrency-schedule-file` controls how many sessions may be active over
+time. Use it when replaying a trace against a planned load shape, such as a
+warm-up period followed by sustained peak concurrency.
+
+Create a concurrency schedule:
+
+```bash
+cat > concurrency_schedule.jsonl << 'EOF'
+{"time_sec": 0, "concurrency": 1}
+{"time_sec": 60, "concurrency": 25}
+{"time_sec": 300, "concurrency": 100}
+{"time_sec": 900, "concurrency": 100}
+EOF
+```
+
+Replay the trace with that schedule:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file custom_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --fixed-schedule \
+    --concurrency-schedule-file concurrency_schedule.jsonl
+```
+
+Each schedule row is `{"time_sec": float, "concurrency": int}`. The first row
+must be at `time_sec: 0`, timestamps must increase strictly, and the
+concurrency values are applied as step changes. If `--benchmark-duration` is
+omitted, the last schedule timestamp becomes the profiling duration.
 
 ## Using Pre-formatted Messages
 

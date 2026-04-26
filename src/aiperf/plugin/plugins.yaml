@@ -645,6 +645,13 @@ ramp:
       Poisson ramp strategy with exponentially-distributed intervals.
       Provides stochastic burstiness while guaranteeing completion within duration.
 
+  schedule_follower:
+    class: aiperf.timing.ramping:ScheduleFollowerStrategy
+    description: |
+      Replay a pre-computed (time_sec, concurrency) tick stream in discrete mode.
+      Interpolation and noise are baked in by the upstream generator; this
+      strategy performs zero math and just walks the ticks.
+
 # =============================================================================
 # Record Processors
 # =============================================================================

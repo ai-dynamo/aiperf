@@ -30,6 +30,74 @@
       "title": "CacheLayerConfig",
       "type": "object"
     },
+    "ConcurrencyScheduleAnchor": {
+      "additionalProperties": true,
+      "description": "A single anchor point in the concurrency schedule.",
+      "properties": {
+        "concurrency": {
+          "description": "Target session concurrency at this anchor.",
+          "minimum": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "time_sec": {
+          "description": "Wall-clock seconds from benchmark start.",
+          "minimum": 0.0,
+          "title": "Time Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time_sec",
+        "concurrency"
+      ],
+      "title": "ConcurrencyScheduleAnchor",
+      "type": "object"
+    },
+    "ConcurrencyScheduleConfig": {
+      "additionalProperties": true,
+      "description": "High-level concurrency schedule spec.\n\nExpanded at write time into a dense tick stream (schedule.jsonl) that\naiperf follows literally: one record per ``tick_sec``, interpolation and\ngaussian noise baked in. aiperf's runtime sees only the tick stream and\nhas no knowledge of interpolation mode or noise_sigma.",
+      "properties": {
+        "anchors": {
+          "description": "Ordered schedule anchors. First anchor must be at time_sec=0.",
+          "items": {
+            "$ref": "#/$defs/ConcurrencyScheduleAnchor"
+          },
+          "minItems": 2,
+          "title": "Anchors",
+          "type": "array"
+        },
+        "interpolation": {
+          "default": "linear",
+          "description": "How to interpolate between anchors when expanding to ticks. 'linear' walks the straight line between adjacent anchors. 'step' holds each anchor's value until the next anchor.",
+          "enum": [
+            "linear",
+            "step"
+          ],
+          "title": "Interpolation",
+          "type": "string"
+        },
+        "noise_sigma": {
+          "default": 0.0,
+          "description": "Gaussian multiplicative jitter baked into each tick. 0 disables noise.",
+          "minimum": 0.0,
+          "title": "Noise Sigma",
+          "type": "number"
+        },
+        "tick_sec": {
+          "default": 1.0,
+          "description": "Emission granularity for the expanded tick stream.",
+          "exclusiveMinimum": 0.0,
+          "title": "Tick Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "anchors"
+      ],
+      "title": "ConcurrencyScheduleConfig",
+      "type": "object"
+    },
     "Layer15GroupConfig": {
       "additionalProperties": true,
       "description": "Group assignment for L1.5 cache sharing via Zipf distribution.",
@@ -352,6 +420,18 @@
     "cache": {
       "$ref": "#/$defs/CacheLayerConfig",
       "description": "Cache layer config"
+    },
+    "concurrency_schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConcurrencyScheduleConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional concurrency schedule. When set, synthesize emits schedule.jsonl alongside dataset.jsonl; aiperf consumes it via --concurrency-schedule-file to drive session concurrency over wall-clock time."
     },
     "generation_length": {
       "$ref": "#/$defs/LognormalParams",
