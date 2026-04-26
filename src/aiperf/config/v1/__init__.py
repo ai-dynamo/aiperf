@@ -23,7 +23,26 @@ Anywhere downstream of cli_commands/, only AIPerfConfig / BenchmarkPlan /
 BenchmarkRun flow.
 """
 
+# Import nested classes so forward-ref strings on UserConfig/ServiceConfig can be
+# resolved by model_rebuild() below. These names intentionally are NOT re-exported
+# in __all__ - only UserConfig + ServiceConfig are public.
+from aiperf.config.v1._accuracy import AccuracyConfig  # noqa: F401
+from aiperf.config.v1._endpoint import EndpointConfig  # noqa: F401
+from aiperf.config.v1._input import InputConfig  # noqa: F401
+from aiperf.config.v1._loadgen import LoadGeneratorConfig  # noqa: F401
+from aiperf.config.v1._output import OutputConfig  # noqa: F401
+from aiperf.config.v1._tokenizer import TokenizerConfig  # noqa: F401
+from aiperf.config.v1._workers import WorkersConfig  # noqa: F401
+from aiperf.config.v1._zmq import (  # noqa: F401
+    ZMQDualBindConfig,
+    ZMQIPCConfig,
+    ZMQTCPConfig,
+)
 from aiperf.config.v1.service_config import ServiceConfig
 from aiperf.config.v1.user_config import UserConfig
+
+# Resolve forward-ref string types on the top-level DTOs now that nested classes exist.
+UserConfig.model_rebuild()
+ServiceConfig.model_rebuild()
 
 __all__ = ["ServiceConfig", "UserConfig"]

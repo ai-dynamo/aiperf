@@ -10,7 +10,7 @@ the converter) owns the resolution logic for these knobs.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, ClassVar
 
 from pydantic import Field
 
@@ -21,10 +21,10 @@ from aiperf.config.defaults import ServiceDefaults
 from aiperf.plugin.enums import ServiceRunType, UIType
 
 if TYPE_CHECKING:
-    from aiperf.config._zmq_dual_bind import ZMQDualBindConfig
-    from aiperf.config._zmq_ipc import ZMQIPCConfig
-    from aiperf.config._zmq_tcp import ZMQTCPConfig
+    from cyclopts import Group
+
     from aiperf.config.v1._workers import WorkersConfig
+    from aiperf.config.v1._zmq import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
 
 
 class ServiceConfig(BaseConfig):
@@ -36,7 +36,7 @@ class ServiceConfig(BaseConfig):
     classes by the converter).
     """
 
-    _CLI_GROUP = Groups.SERVICE
+    _CLI_GROUP: ClassVar[Group] = Groups.SERVICE
 
     service_run_type: Annotated[
         ServiceRunType,
