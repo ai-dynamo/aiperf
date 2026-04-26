@@ -185,7 +185,7 @@ def _derive_load_profile(config: AIPerfConfig) -> tuple[int, int, float]:
     max_conc = 1
     total_req = 0
     total_dur = 0.0
-    for phase in config.phases.values():
+    for phase in config.phases:
         conc = getattr(phase, "concurrency", None) or 1
         max_conc = max(max_conc, conc)
         total_req += _estimate_phase_requests(phase, conc)

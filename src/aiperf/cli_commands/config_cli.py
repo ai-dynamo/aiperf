@@ -59,7 +59,7 @@ def validate_config(
         print(f"✓ Configuration valid: {path}")
         print(f"  Models: {config.get_model_names()}")
         print(f"  Datasets: {list(config.datasets.keys())}")
-        print(f"  Phases: {[p.name for p in config.phases.values()]}")
+        print(f"  Phases: {[p.name for p in config.phases]}")
 
 
 @config_app.command(name="show")

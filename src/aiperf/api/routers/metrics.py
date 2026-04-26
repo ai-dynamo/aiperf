@@ -110,7 +110,7 @@ def build_info_labels(config: BenchmarkConfig) -> InfoLabels:
     # Get concurrency/rate from the first profiling phase (if any)
     profiling_phases = config.get_profiling_phases()
     if profiling_phases:
-        first_phase = next(iter(profiling_phases.values()))
+        first_phase = profiling_phases[0]
         if first_phase.concurrency is not None:
             labels["concurrency"] = str(first_phase.concurrency)
         rate = getattr(first_phase, "rate", None)

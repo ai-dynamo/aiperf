@@ -30,7 +30,7 @@ def calculate_worker_count(config: AIPerfConfig) -> int:
 
     # Extract max concurrency across all phases
     concurrency: int | None = None
-    for phase in config.phases.values():
+    for phase in config.phases:
         if phase.concurrency is not None:
             concurrency = max(concurrency or 0, phase.concurrency)
 

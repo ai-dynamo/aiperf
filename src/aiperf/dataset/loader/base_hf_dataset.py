@@ -122,7 +122,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         entries = getattr(dataset, "entries", None)
         if entries is not None:
             return entries
-        for phase in self.run.cfg.phases.values():
+        for phase in self.run.cfg.phases:
             requests = getattr(phase, "requests", None)
             if requests is not None:
                 return requests

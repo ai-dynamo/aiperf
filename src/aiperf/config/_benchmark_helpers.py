@@ -65,21 +65,21 @@ class BenchmarkHelpersMixin:
         dataset_name = phase.dataset or self.get_default_dataset_name()
         return self.get_dataset(dataset_name)
 
-    def get_profiling_phases(self) -> dict[str, PhaseConfig]:
+    def get_profiling_phases(self) -> list[PhaseConfig]:
         """Get phase configs with exclude_from_results=False."""
-        return {
-            name: phase
-            for name, phase in self.phases.items()  # type: ignore[attr-defined]
+        return [
+            phase
+            for phase in self.phases  # type: ignore[attr-defined]
             if not phase.exclude_from_results
-        }
+        ]
 
-    def get_warmup_phases(self) -> dict[str, PhaseConfig]:
+    def get_warmup_phases(self) -> list[PhaseConfig]:
         """Get warmup phase configs (excluded from results)."""
-        return {
-            name: phase
-            for name, phase in self.phases.items()  # type: ignore[attr-defined]
+        return [
+            phase
+            for phase in self.phases  # type: ignore[attr-defined]
             if phase.exclude_from_results
-        }
+        ]
 
     # ==========================================================================
     # CONVENIENCE PROPERTIES

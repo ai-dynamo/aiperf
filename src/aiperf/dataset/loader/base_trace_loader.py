@@ -25,7 +25,7 @@ TraceT = TypeVar("TraceT")
 
 def _extract_phase_offsets(config: BenchmarkConfig) -> tuple[int | None, int | None]:
     """Extract start_offset and end_offset from the first fixed_schedule phase."""
-    for phase in config.phases.values():
+    for phase in config.phases:
         start = getattr(phase, "start_offset", None)
         end = getattr(phase, "end_offset", None)
         if start is not None or end is not None:

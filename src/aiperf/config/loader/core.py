@@ -49,7 +49,7 @@ def load_config(
         >>> print(config.models)
         ['meta-llama/Llama-3.1-8B-Instruct']
 
-        >>> print(list(config.phases.keys())[0])
+        >>> print(config.phases[0].name)
         'warmup'
     """
     file_path = Path(file_path)
@@ -306,10 +306,10 @@ def validate_config_file(file_path: Path | str) -> list[str]:
             )
 
     # Warn if prefill_concurrency set without streaming
-    for name, phase in config.phases.items():
+    for phase in config.phases:
         if phase.prefill_concurrency and not config.endpoint.streaming:
             warnings.append(
-                f"Load config '{name}' has prefill_concurrency set but "
+                f"Load config '{phase.name}' has prefill_concurrency set but "
                 "streaming is disabled. Prefill concurrency requires streaming=true."
             )
 

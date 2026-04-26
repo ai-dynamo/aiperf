@@ -90,7 +90,7 @@ def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     dc_dict = dc.model_dump(mode="json", by_alias=True, exclude_defaults=True)
 
     concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases.values()),
+        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
         default=1,
     )
     dc_dict["connectionsPerWorker"] = max(
@@ -116,7 +116,7 @@ def generate_benchmark_name(config: AIPerfConfig) -> str:
 
     model_name = config.get_model_names()[0].split("/")[-1].lower()
     endpoint_type = str(config.endpoint.type)
-    first_phase = next(iter(config.phases.values()))
+    first_phase = config.phases[0]
     phase_type = str(first_phase.type)
     raw = "-".join([model_name, endpoint_type, phase_type])
     # Sanitize to valid DNS label: replace invalid chars, strip leading/trailing hyphens

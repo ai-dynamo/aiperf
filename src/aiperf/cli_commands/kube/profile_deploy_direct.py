@@ -95,7 +95,7 @@ def _prepare_direct_deploy(
         )
 
     concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases.values()),
+        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
         default=1,
     )
     total_workers = max(

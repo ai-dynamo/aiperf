@@ -248,7 +248,7 @@ class KubeOptions(KubeManageOptions):
             concurrency = max(
                 (
                     getattr(phase, "concurrency", 1) or 1
-                    for phase in config.phases.values()
+                    for phase in config.phases
                 ),
                 default=1,
             )

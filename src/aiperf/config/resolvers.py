@@ -147,7 +147,7 @@ class ArtifactDirResolver:
 
 def _get_stimulus(cfg: object) -> str:
     """Extract stimulus description from the first non-warmup phase."""
-    for phase in cfg.phases.values():  # type: ignore[union-attr]
+    for phase in cfg.phases:  # type: ignore[union-attr]
         if phase.exclude_from_results:
             continue
         return _describe_phase(phase)
@@ -323,7 +323,7 @@ class TimingResolver:
         from aiperf.plugin.enums import PhaseType
 
         total = 0.0
-        for phase_name, phase in run.cfg.phases.items():
+        for phase in run.cfg.phases:
             if phase.duration is None:
                 run.resolved.total_expected_duration = None
                 return
@@ -333,7 +333,7 @@ class TimingResolver:
 
             # Validate fixed_schedule phases have timing data in their dataset
             if str(phase.type) == str(PhaseType.FIXED_SCHEDULE):
-                self._validate_fixed_schedule_timing(run, phase_name, phase)
+                self._validate_fixed_schedule_timing(run, phase.name, phase)
 
         run.resolved.total_expected_duration = total
 

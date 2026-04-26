@@ -104,7 +104,7 @@ def _add_config_info(metadata: dict[bytes, bytes], run) -> None:
     profiling_phases = run.cfg.get_profiling_phases()
     if not profiling_phases:
         return
-    first_phase = next(iter(profiling_phases.values()))
+    first_phase = profiling_phases[0]
     if first_phase.concurrency is not None:
         metadata[b"aiperf.concurrency"] = str(first_phase.concurrency).encode("utf-8")
     rate = getattr(first_phase, "rate", None)
