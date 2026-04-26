@@ -137,7 +137,7 @@ class K8sChildJobExecutor(RunExecutor):
         """Produce the child AIPerfJob spec from the sweep template + this run."""
         template_spec = copy.deepcopy(self.sweep["spec"]["template"]["spec"])
         template_spec["benchmark"] = run.cfg.model_dump(
-            by_alias=True, exclude_none=True
+            mode="json", by_alias=True, exclude_none=True
         )
         return template_spec
 
