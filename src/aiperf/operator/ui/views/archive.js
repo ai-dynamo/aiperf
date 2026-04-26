@@ -6,7 +6,7 @@
  *
  * Same organizing principle as Home (namespace-first, no drill-down) but:
  *   - Denser row layout
- *   - Includes a global phase-filter strip at the top (live / passed / fault)
+ *   - Includes a global phase-filter strip at the top (Live / Passed / Failed)
  *   - Text search narrows across every namespace at once
  *   - A namespace whose runs are all filtered out disappears (no empty blocks)
  *
@@ -18,13 +18,12 @@ import { html } from 'htm/preact';
 import { useMemo, useState } from 'preact/hooks';
 import { jobs } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
-import { fmtDuration, fmtInt, fmtNumber } from '../lib/format.js';
 
 const BUCKETS = [
-  { key: 'all',   label: 'ALL',    match: () => true },
-  { key: 'live',  label: 'LIVE',   match: j => ['running', 'initializing', 'pending'].includes((j.phase ?? '').toLowerCase()) },
-  { key: 'pass',  label: 'PASSED', match: j => ['completed', 'succeeded'].includes((j.phase ?? '').toLowerCase()) },
-  { key: 'fault', label: 'FAULT',  match: j => ['failed', 'error'].includes((j.phase ?? '').toLowerCase()) },
+  { key: 'all',   label: 'All',    match: () => true },
+  { key: 'live',  label: 'Live',   match: j => ['running', 'initializing', 'pending'].includes((j.phase ?? '').toLowerCase()) },
+  { key: 'pass',  label: 'Passed', match: j => ['completed', 'succeeded'].includes((j.phase ?? '').toLowerCase()) },
+  { key: 'fault', label: 'Failed', match: j => ['failed', 'error'].includes((j.phase ?? '').toLowerCase()) },
 ];
 
 const SORTS = [
@@ -41,6 +40,22 @@ function phaseBucket(phase) {
   if (p === 'failed' || p === 'error')                              return 'fault';
   if (p === 'completed' || p === 'succeeded')                       return 'passed';
   return 'other';
+}
+
+function statusTone(phase) {
+  const b = phaseBucket(phase);
+  if (b === 'fault')  return 'bad';
+  if (b === 'live')   return 'info';
+  if (b === 'passed') return 'good';
+  return 'neutral';
+}
+
+function statusLabel(phase) {
+  const b = phaseBucket(phase);
+  if (b === 'fault')  return 'Failed';
+  if (b === 'live')   return 'Running';
+  if (b === 'passed') return 'Passed';
+  return phase ? String(phase) : '—';
 }
 
 function groupByNamespace(list) {
@@ -118,76 +133,41 @@ export function Archive() {
 
   return html`
     <div class="v-archive" data-testid="page-archive">
-      <header class="v-head">
-        <div class="v-head-title">
-          <span class="v-head-caret">▸</span>
-          <h1>ARCHIVE</h1>
-        </div>
-        <div class="v-head-meta">
-          ${filtered.length} of ${list.length} RUNS · ${byNs.length} NAMESPACE${byNs.length === 1 ? '' : 'S'}
-        </div>
-      </header>
-
       <section class="hm-summary" data-testid="arch-summary">
-        <div class="hm-cell hm-cell--dim">
-          <span class="hm-cell-label">Shown</span>
-          <span class="hm-cell-val">${shownCount}</span>
-        </div>
-        <div class=${'hm-cell ' + (hiddenCount > 0 ? 'hm-cell--accent' : 'hm-cell--dim')}>
-          <span class="hm-cell-label">Hidden</span>
-          <span class="hm-cell-val">${hiddenCount}</span>
-        </div>
-        <div class=${'hm-cell ' + (liveShown > 0 ? 'hm-cell--live' : 'hm-cell--dim')}>
-          <span class="hm-cell-label">Live</span>
-          <span class="hm-cell-val">${liveShown}</span>
-        </div>
-        <div class=${'hm-cell ' + (passedShown > 0 ? 'hm-cell--pass' : 'hm-cell--dim')}>
-          <span class="hm-cell-label">Passed</span>
-          <span class="hm-cell-val">${passedShown}</span>
-        </div>
-        <div class=${'hm-cell ' + (faultShown > 0 ? 'hm-cell--fault' : 'hm-cell--dim')}>
-          <span class="hm-cell-label">Fault</span>
-          <span class="hm-cell-val">${faultShown}</span>
-        </div>
-        <div class="hm-cell hm-cell--dim">
-          <span class="hm-cell-label">NS</span>
-          <span class="hm-cell-val">${byNs.length}</span>
-        </div>
+        <div class="hm-summary-item"><span>Shown</span><b>${shownCount}</b></div>
+        <div class="hm-summary-item"><span>Hidden</span><b>${hiddenCount}</b></div>
+        <div class="hm-summary-item"><span>Running</span><b>${liveShown}</b></div>
+        <div class="hm-summary-item"><span>Passed</span><b>${passedShown}</b></div>
+        <div class="hm-summary-item"><span>Failed</span><b>${faultShown}</b></div>
+        <div class="hm-summary-item"><span>Namespaces</span><b>${byNs.length}</b></div>
       </section>
 
-      <div class="v-archive-controls">
-        <div class="v-archive-tabs" role="tablist">
-          ${BUCKETS.map(b => html`
-            <button
-              key=${b.key}
-              class=${'v-archive-tab' + (bucket === b.key ? ' is-active' : '')}
-              onclick=${() => setBucket(b.key)}
-              role="tab"
-              aria-selected=${bucket === b.key}
-            >
-              ${b.label}
-              <span class="v-archive-tab-count">${bucketCount(b.key)}</span>
-            </button>
-          `)}
-        </div>
-        <div class="v-archive-search">
-          <i class="ph ph-magnifying-glass"></i>
-          <input
-            type="text"
-            value=${q}
-            oninput=${e => setQ(e.target.value)}
-            placeholder="filter name / namespace / model…"
-            data-testid="archive-search"
-          />
-          ${q && html`<button onclick=${() => setQ('')} aria-label="Clear"><i class="ph ph-x"></i></button>`}
-        </div>
+      <div class="arch-tabs" role="tablist">
+        ${BUCKETS.map(b => html`
+          <button
+            key=${b.key}
+            class=${'arch-tab' + (bucket === b.key ? ' arch-tab--active' : '')}
+            data-testid=${'tab-' + b.key}
+            onclick=${() => setBucket(b.key)}
+            role="tab"
+            aria-selected=${bucket === b.key}
+          >${b.label}<span class="arch-tab-count">${bucketCount(b.key)}</span></button>
+        `)}
+      </div>
+
+      <div class="arch-toolbar">
+        <input
+          type="text"
+          value=${q}
+          oninput=${e => setQ(e.target.value)}
+          placeholder="filter name / namespace / model…"
+          data-testid="archive-search"
+        />
         <select
-          class="v-archive-tab"
           value=${sort}
           onchange=${e => setSort(e.target.value)}
           data-testid="archive-sort"
           aria-label="Sort runs"
-          style="font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; padding: 0 var(--s-3);"
         >
           ${SORTS.map(s => html`<option key=${s.key} value=${s.key}>${s.label}</option>`)}
         </select>
@@ -195,74 +175,46 @@ export function Archive() {
 
       ${byNs.length === 0
         ? html`
-          <section class="arch-ns" data-testid="arch-empty">
-            <div class="arch-ns-rows">
-              <div
-                class="arch-row"
-                style="display: block; text-align: center; color: var(--paper-faint); font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.12em; padding: var(--s-5) var(--s-4);"
-              >
-                NO MATCHES — TRY CHANGING THE BUCKET FILTER${q ? ' OR CLEARING THE SEARCH' : ''}
-              </div>
-            </div>
-          </section>`
+          <div class="empty" data-testid="arch-empty">
+            No matches — try changing the filter${q ? ' or clearing the search' : ''}.
+          </div>`
         : byNs.map(([ns, runs]) => {
           const live = runs.filter(j => phaseBucket(j.phase) === 'live').length;
           const passed = runs.filter(j => phaseBucket(j.phase) === 'passed').length;
           const fault = runs.filter(j => phaseBucket(j.phase) === 'fault').length;
           return html`
             <section key=${ns} class="arch-ns" data-testid=${'arch-ns-' + ns}>
-              <header class="arch-ns-head">
-                <div class="arch-ns-left">
-                  <div class="arch-ns-eyebrow">NAMESPACE</div>
-                  <h2 class="arch-ns-name">${ns}</h2>
-                </div>
+              <div class="arch-ns-head">
+                <div class="arch-ns-name">${ns}</div>
                 <div class="arch-ns-counts">
-                  ${live > 0   && html`<span class="ns-count ns-count--live">${live} LIVE</span>`}
-                  ${passed > 0 && html`<span class="ns-count ns-count--pass">${passed} PASSED</span>`}
-                  ${fault > 0  && html`<span class="ns-count ns-count--fail">${fault} FAULT</span>`}
-                  <span class="arch-ns-total">${runs.length} total</span>
+                  ${live > 0   && html`<span class="chip chip--info">${live} Running</span>`}
+                  ${passed > 0 && html`<span class="chip chip--good">${passed} Passed</span>`}
+                  ${fault > 0  && html`<span class="chip chip--bad">${fault} Failed</span>`}
+                  <span class="chip chip--neutral">${runs.length} total</span>
                 </div>
-              </header>
-
-              <div class="arch-ns-rows">
-                ${runs.map(j => {
-                  const kind = phaseBucket(j.phase);
-                  const modelShort = j.model ? String(j.model).split('/').pop() : null;
-                  const conc = j.concurrency;
-                  return html`
-                    <button
-                      key=${j.namespace + '/' + j.name}
-                      class=${'arch-row arch-row--' + kind}
-                      onclick=${() => navigate(`/run/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)}
-                      data-testid=${'arch-row-' + j.namespace + '-' + j.name}
-                    >
-                      <span class=${'arch-row-tag arch-row-tag--' + kind}>
-                        <span class="arch-row-dot"></span>
-                        ${(j.phase ?? '—').toUpperCase()}
-                      </span>
-                      <span class="arch-row-name">
-                        ${j.name}
-                        ${(modelShort || conc != null) && html`
-                          <small>
-                            ${modelShort ?? ''}${modelShort && conc != null ? ' · ' : ''}${conc != null ? `c=${conc}` : ''}
-                          </small>
-                        `}
-                      </span>
-                      <span class="arch-row-stat"><small>R/S</small>${j.throughputRps != null ? fmtNumber(j.throughputRps, 0) : '—'}</span>
-                      <span class="arch-row-stat"><small>P99</small>${j.latencyP99Ms != null ? fmtInt(j.latencyP99Ms) : '—'}</span>
-                      <span class="arch-row-dur">
-                        ${j.startTime && j.completionTime
-                          ? fmtDuration((new Date(j.completionTime) - new Date(j.startTime)) / 1000)
-                          : j.startTime
-                          ? fmtDuration((Date.now() - new Date(j.startTime).getTime()) / 1000)
-                          : '—'}
-                      </span>
-                      <span class="arch-row-age">${relAge(j.completionTime ?? j.created)}</span>
-                      <i class="ph ph-arrow-right"></i>
-                    </button>
-                  `;
-                })}
               </div>
+
+              ${runs.map(j => {
+                const tone = statusTone(j.phase);
+                const label = statusLabel(j.phase);
+                const modelShort = j.model ? String(j.model).split('/').pop() : '—';
+                return html`
+                  <div
+                    key=${j.namespace + '/' + j.name}
+                    class="arch-row"
+                    data-testid=${'arch-row-' + j.namespace + '-' + j.name}
+                    onclick=${() => navigate(`/run/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)}
+                  >
+                    <div>
+                      <div class="arch-row-name">${j.name}</div>
+                      <div class="arch-row-ns">${j.namespace}</div>
+                    </div>
+                    <div class="arch-row-meta">${modelShort}</div>
+                    <div class="arch-row-meta">${relAge(j.completionTime ?? j.created)}</div>
+                    <div class="arch-row-status"><span class=${'chip chip--' + tone}>${label}</span></div>
+                  </div>
+                `;
+              })}
             </section>
           `;
         })
