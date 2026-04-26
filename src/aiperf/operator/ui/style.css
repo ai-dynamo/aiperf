@@ -1676,3 +1676,31 @@ body {
 .hm-row[data-state="fault"]  { --row-tint: var(--red);   }
 .hm-row[data-state="passed"] { --row-tint: var(--green); }
 .hm-row[data-state="other"]  { --row-tint: var(--muted); }
+
+/* ───── Alpha banner — present on every page ───── */
+.alpha-banner {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  padding: 6px 16px;
+  margin-bottom: 12px;
+  background:
+    linear-gradient(90deg,
+      rgba(255, 193, 7, 0.06) 0%,
+      rgba(255, 193, 7, 0.10) 50%,
+      rgba(255, 193, 7, 0.06) 100%);
+  border: 1px solid rgba(255, 193, 7, 0.25);
+  border-radius: var(--radius);
+  font-size: var(--font-xs);
+  color: var(--sub);
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+.alpha-banner-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--bg);
+  background: var(--amber);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
