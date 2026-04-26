@@ -28,7 +28,7 @@ Example Usage:
     >>> config = AIPerfConfig(
     ...     models=["llama-3-8b"],
     ...     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-    ...     datasets={"main": {"type": "synthetic", "count": 1000}},
+    ...     datasets=[{"name": "main", "type": "synthetic", "count": 1000}],
     ...     phases=[{"name": "profiling", "dataset": "main", "concurrency": 8}]
     ... )
 

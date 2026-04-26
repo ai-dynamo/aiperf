@@ -88,7 +88,7 @@ aiperf profile --config benchmark.yaml
 ## Configuration Structure
 
 All templates use a common top-level structure. Singular shorthand (`model`, `dataset`,
-`phases`) and plural/named forms (`models`, `datasets`, `phases` as a list of named
+`phases`) and plural list forms (`models`, `datasets`, `phases` as a list of named
 entries) are both accepted — use whichever fits the config complexity.
 
 ```yaml
@@ -110,7 +110,7 @@ models: [meta-llama/Llama-3.1-8B-Instruct]
 endpoint:
   urls: [http://localhost:8000/v1/chat/completions]
 datasets:
-  main: {type: synthetic, ...}
+  - {name: main, type: synthetic, ...}
 phases:
   - {name: warmup, type: concurrency, ...}
   - {name: benchmark, type: rate, ...}

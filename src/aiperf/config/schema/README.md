@@ -87,7 +87,7 @@ endpoint:
   streaming: true
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     count: 1000
     prompts:

@@ -237,7 +237,7 @@ endpoint:
     response_field: generated_text
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 500
     prompts:
@@ -273,7 +273,7 @@ endpoint:
     response_field: "data[0].embedding"
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 1000
     prompts:
@@ -314,7 +314,7 @@ endpoint:
     response_field: "results"
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 500
     prompts:
@@ -350,7 +350,7 @@ endpoint:
       }
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 500
     prompts:

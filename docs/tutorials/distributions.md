@@ -244,7 +244,7 @@ Short prompts with low variance. Most user queries are brief questions, with a s
 
 ```yaml
 datasets:
-  chatbot:
+  - name: chatbot
     type: synthetic
     entries: 1000
     prompts:
@@ -260,7 +260,7 @@ Medium ISL with high variance from variable-length retrieved context. LogNormal 
 
 ```yaml
 datasets:
-  rag:
+  - name: rag
     type: synthetic
     entries: 500
     prompts:
@@ -274,7 +274,7 @@ Long input documents, short output summaries. Clamped to stay within the model's
 
 ```yaml
 datasets:
-  summarization:
+  - name: summarization
     type: synthetic
     entries: 500
     prompts:
@@ -296,7 +296,7 @@ Two distinct user populations hit the same endpoint: interactive chat (high volu
 
 ```yaml
 datasets:
-  production_bimodal:
+  - name: production_bimodal
     type: synthetic
     entries: 2000
     prompts:
@@ -322,7 +322,7 @@ When you have histogram data from production logs, use empirical distributions t
 
 ```yaml
 datasets:
-  production_replay:
+  - name: production_replay
     type: synthetic
     entries: 2000
     prompts:
@@ -402,7 +402,7 @@ Sweep the mean of a lognormal ISL distribution while holding all other parameter
 
 ```yaml
 datasets:
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 500
     prompts:
@@ -430,7 +430,7 @@ Compare how the server handles different workload shapes at the same average ISL
 
 ```yaml
 datasets:
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 500
     prompts:
@@ -449,25 +449,25 @@ sweep:
   runs:
     - name: fixed_baseline
       datasets:
-        profiling:
+        - name: profiling
           prompts:
             isl: 512
 
     - name: normal_moderate
       datasets:
-        profiling:
+        - name: profiling
           prompts:
             isl: {type: normal, mean: 512, stddev: 100}
 
     - name: lognormal_skewed
       datasets:
-        profiling:
+        - name: profiling
           prompts:
             isl: {type: lognormal, mean: 512, sigma: 0.8}
 
     - name: bimodal_production
       datasets:
-        profiling:
+        - name: profiling
           prompts:
             isl:
               type: mixture
@@ -490,7 +490,7 @@ When `random_seed` is set at the top level, AIPerf initializes its random number
 random_seed: 42
 
 datasets:
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 500
     prompts:
@@ -508,7 +508,7 @@ Individual datasets can override the global seed. This is useful when you want o
 random_seed: 42
 
 datasets:
-  stable_baseline:
+  - name: stable_baseline
     type: synthetic
     entries: 500
     random_seed: 100  # Always the same
@@ -516,7 +516,7 @@ datasets:
       isl: {type: normal, mean: 512, stddev: 100}
       osl: 128
 
-  variable_workload:
+  - name: variable_workload
     type: synthetic
     entries: 500
     # Uses global seed (42) -- same across runs with same config
@@ -533,7 +533,7 @@ For reproducible A/B testing (comparing two server configurations, two model ver
 random_seed: 42
 
 datasets:
-  profiling:
+  - name: profiling
     type: synthetic
     entries: 1000
     prompts:

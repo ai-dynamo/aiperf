@@ -34,7 +34,7 @@ endpoint:
   streaming: true
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 2000
     prompts:
@@ -83,7 +83,7 @@ endpoint:
   streaming: true
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 2000
     prompts:
@@ -104,7 +104,7 @@ sweep:
   runs:
     - name: short_chatbot
       datasets:
-        main:
+        - name: main
           prompts:
             isl: {type: normal, mean: 64, stddev: 10}
             osl: {type: normal, mean: 32, stddev: 8}
@@ -114,7 +114,7 @@ sweep:
 
     - name: summarization
       datasets:
-        main:
+        - name: main
           prompts:
             isl: {type: normal, mean: 2048, stddev: 200}
             osl: {type: normal, mean: 256, stddev: 50}
@@ -125,7 +125,7 @@ sweep:
 
     - name: long_context_qa
       datasets:
-        main:
+        - name: main
           prompts:
             isl: {type: normal, mean: 8192, stddev: 500}
             osl: {type: normal, mean: 512, stddev: 100}
@@ -161,7 +161,7 @@ endpoint:
   streaming: true
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 2000
     prompts:
@@ -200,19 +200,19 @@ sweep:
   runs:
     - name: fixed_512
       datasets:
-        main:
+        - name: main
           prompts:
             isl: 512
 
     - name: normal_512_wide
       datasets:
-        main:
+        - name: main
           prompts:
             isl: {type: normal, mean: 512, stddev: 100}
 
     - name: normal_512_narrow
       datasets:
-        main:
+        - name: main
           prompts:
             isl: {type: normal, mean: 512, stddev: 20}
 ```
@@ -306,7 +306,7 @@ endpoint:
   streaming: true
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 2000
     prompts:
@@ -388,7 +388,7 @@ models:
   - ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: ${NUM_PROMPTS:2000}
     prompts:

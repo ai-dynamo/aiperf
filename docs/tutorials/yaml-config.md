@@ -82,7 +82,7 @@ endpoint:
 
 ## Datasets
 
-Datasets are named data sources referenced by phases. Four types are supported.
+Datasets are a list of named data sources referenced by phases. The list is ordered — the first entry is the implicit default for phases that omit `dataset`. Four types are supported.
 
 ### Synthetic
 
@@ -90,7 +90,7 @@ Generated prompts with configurable token length distributions.
 
 ```yaml
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: 1000
     prompts:
@@ -104,7 +104,7 @@ Multi-turn conversations:
 
 ```yaml
 datasets:
-  conversation:
+  - name: conversation
     type: synthetic
     entries: 500
     prompts:
@@ -120,7 +120,7 @@ Load prompts from a local JSONL file.
 
 ```yaml
 datasets:
-  custom:
+  - name: custom
     type: file
     path: ./data/prompts.jsonl
     format: single_turn   # single_turn | multi_turn | mooncake_trace
@@ -134,9 +134,9 @@ Auto-downloaded public benchmarking datasets.
 
 ```yaml
 datasets:
-  sharegpt:
+  - name: sharegpt
     type: public
-    name: sharegpt
+    dataset: sharegpt
     entries: 1000
 ```
 
@@ -146,7 +146,7 @@ Combines a file source with synthetic augmentation (e.g., applying OSL control t
 
 ```yaml
 datasets:
-  with_osl:
+  - name: with_osl
     type: composed
     source:
       type: file
@@ -161,16 +161,16 @@ datasets:
 
 ### Using Multiple Datasets
 
-Name each dataset and reference it from phases. Phases that omit `dataset` use the first one.
+List each dataset with a `name` and reference it from phases. Phases that omit `dataset` use the first one.
 
 ```yaml
 datasets:
-  warmup_data:
+  - name: warmup_data
     type: synthetic
     entries: 100
     prompts: {isl: 256, osl: 64}
 
-  profiling_data:
+  - name: profiling_data
     type: synthetic
     entries: 5000
     prompts:
@@ -473,7 +473,7 @@ sweep:
   runs:
     - name: chatbot
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {type: normal, mean: 128, stddev: 20}
             osl: {type: normal, mean: 64, stddev: 10}
@@ -483,7 +483,7 @@ sweep:
 
     - name: summarization
       datasets:
-        workload:
+        - name: workload
           prompts:
             isl: {type: lognormal, mean: 4096, sigma: 0.6}
             osl: {type: normal, mean: 128, stddev: 30}
@@ -568,7 +568,7 @@ variables:
   target_isl: 512
 
 datasets:
-  main:
+  - name: main
     type: synthetic
     entries: "{{ base_concurrency * 10 }}"    # 160
     prompts:
@@ -633,14 +633,14 @@ endpoint:
   api_key: ${API_KEY:}
 
 datasets:
-  warmup:
+  - name: warmup
     type: synthetic
     entries: 100
     prompts:
       isl: 256
       osl: 64
 
-  workload:
+  - name: workload
     type: synthetic
     entries: 2000
     prompts:
