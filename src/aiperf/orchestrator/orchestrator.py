@@ -1,25 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Multi-run orchestrator for AIPerf benchmarks."""
+"""Multi-run orchestrator for AIPerf benchmarks.
 
+Iterates variations x trials from a BenchmarkPlan via a pluggable RunExecutor.
+Strategy decisions (when to stop a cell, what config to run next) are made
+per-variation with a fresh strategy instance, so AdaptiveStrategy convergence
+state does not leak across cells.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import logging
-import subprocess
-import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
-import orjson
-
-from aiperf.common.redact import REDACTED_VALUE
-from aiperf.config.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import ExecutionStrategy
 
 if TYPE_CHECKING:
-    from aiperf.common.models.export_models import JsonMetricResult
-    from aiperf.config.benchmark import BenchmarkRun
+    from aiperf.config.benchmark import BenchmarkPlan
+    from aiperf.orchestrator.executor import RunExecutor
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,314 +30,102 @@ __all__ = [
 
 
 class MultiRunOrchestrator:
-    """Orchestrates execution of multiple benchmark runs using a strategy.
+    """Orchestrates execution of multiple benchmark runs across variations x trials.
 
-    The strategy decides:
-    - What to run next (which config)
-    - When to stop (based on results so far)
-    - How to label runs
-    - Cooldown duration between runs
-    - Artifact path structure
-
-    This orchestrator sits above the SystemController and coordinates multiple
-    single-run executions.
+    Each (variation, trial) pair is executed via the injected RunExecutor.
+    Strategy state is per-cell: a fresh ExecutionStrategy is built for each
+    variation so adaptive convergence operates on cell-local results only.
     """
 
-    def __init__(
-        self,
-        base_dir: Path,
-    ):
+    def __init__(self, base_dir: Path) -> None:
         """Initialize MultiRunOrchestrator.
 
         Args:
-            base_dir: Base directory for all artifacts
+            base_dir: Base directory for all artifacts.
         """
         self.base_dir = Path(base_dir)
 
-    def execute(
-        self, base_config: BenchmarkConfig, strategy: ExecutionStrategy
+    async def execute(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
     ) -> list[RunResult]:
-        """Execute runs based on strategy.
+        """Execute all (variation, trial) runs in the plan.
 
         Args:
-            base_config: Base benchmark configuration
-            strategy: Execution strategy that decides what to run
+            plan: BenchmarkPlan with configs[], variations[], trials, convergence config.
+            executor: Concrete RunExecutor (LocalSubprocessExecutor or K8sChildJobExecutor).
 
         Returns:
-            List of RunResult, one per run executed
+            Flat list of RunResult, ordered by (variation_index, trial_index).
         """
-        results = []
-        run_index = 0
-
-        logger.info(
-            f"Starting multi-run benchmark with strategy: {strategy.__class__.__name__}"
-        )
-
-        # Let strategy validate config before starting
-        strategy.validate_config(base_config)
-
-        should_continue = strategy.should_continue(results)
-
-        while should_continue:
-            # Strategy decides next config (including warmup handling)
-            config = strategy.get_next_config(base_config, results)
-
-            # Strategy provides label
-            label = strategy.get_run_label(run_index)
-
-            logger.info(f"[{run_index + 1}] Executing {label}...")
-
-            # Execute run - strategy determines artifact path
-            result = self._execute_single_run(config, strategy, run_index)
-            results.append(result)
-
-            if result.success:
-                logger.info(f"[{run_index + 1}] {label} completed successfully")
-            else:
-                logger.error(f"[{run_index + 1}] {label} failed: {result.error}")
-
-            run_index += 1
-
-            # Check if there will be another run (single call to should_continue)
-            should_continue = strategy.should_continue(results)
-
-            # Apply cooldown only if there's another run coming
-            if should_continue:
-                cooldown = strategy.get_cooldown_seconds()
-                if cooldown > 0:
-                    logger.info(f"Applying cooldown: {cooldown}s")
-                    time.sleep(cooldown)
-
-        successful = sum(1 for r in results if r.success)
-        logger.info(f"All runs complete: {successful}/{len(results)} successful")
-
-        return results
-
-    def _execute_single_run(
-        self, config: BenchmarkConfig, strategy: ExecutionStrategy, run_index: int
-    ) -> RunResult:
-        """Execute a single benchmark run in a subprocess.
-
-        Each run is executed in a separate subprocess to ensure complete isolation.
-        This allows the SystemController to call os._exit() without affecting the orchestrator.
-
-        Args:
-            config: Benchmark configuration
-            strategy: Execution strategy (determines artifact path and label)
-            run_index: Zero-based run index
-
-        Returns:
-            RunResult with success status and metrics or error
-        """
-        # Initialize label and artifacts_path BEFORE try block to ensure they're always defined
-        # This prevents UnboundLocalError in the except block if any operation fails
-        label = None
-        artifacts_path = None
-
-        try:
-            artifacts_path = strategy.get_run_path(self.base_dir, run_index)
-            artifacts_path.mkdir(parents=True, exist_ok=True)
-            label = strategy.get_run_label(run_index)
-
-            run, config_file = self._prepare_run_artifacts(config, artifacts_path)
-            result = self._run_benchmark_subprocess(config_file)
-            self._write_redacted_config(run, config_file)
-
-            if result.returncode != 0:
-                return self._failure_from_subprocess(result, label, artifacts_path)
-
-            summary_metrics = self._extract_summary_metrics(artifacts_path)
-            return self._build_result_from_metrics(
-                summary_metrics, label, artifacts_path
-            )
-        except Exception as e:
-            # Use safe values for label and artifacts_path in case they weren't set
-            safe_label = label if label is not None else f"run_{run_index:04d}"
-            logger.exception(f"Error executing run {safe_label}")
-            return RunResult(
-                label=safe_label,
-                success=False,
-                error=str(e),
-                artifacts_path=artifacts_path,
-            )
-
-    def _prepare_run_artifacts(
-        self, config: BenchmarkConfig, artifacts_path: Path
-    ) -> tuple["BenchmarkRun", Path]:
-        """Clone config into the artifacts dir and serialize the run config for the subprocess."""
+        from aiperf._cli_runner_helpers import build_strategy
         from aiperf.config.benchmark import BenchmarkRun
 
-        config = config.model_copy(deep=True)
-        config.artifacts.dir = artifacts_path
-
-        run = BenchmarkRun(
-            benchmark_id=uuid4().hex,
-            cfg=config,
-            artifact_dir=artifacts_path,
+        all_results: list[RunResult] = []
+        logger.info(
+            f"Starting multi-run benchmark: {len(plan.configs)} variations, "
+            f"{plan.trials} trials per variation"
         )
 
-        # Serialize config to JSON (with secrets for subprocess to read)
-        # Overwritten with redacted version after the subprocess finishes.
-        config_file = artifacts_path / "run_config.json"
-        with open(config_file, "wb") as f:
-            f.write(
-                orjson.dumps(
-                    run.model_dump(mode="json", exclude_none=True),
-                    option=orjson.OPT_INDENT_2,
+        for var_idx, (cfg, variation) in enumerate(
+            zip(plan.configs, plan.variations, strict=False)
+        ):
+            strategy = build_strategy(plan, logger)  # fresh per-cell strategy
+            strategy.validate_config(cfg)
+            cell_results: list[RunResult] = []
+            trial = 0
+
+            while strategy.should_continue(cell_results):
+                next_cfg = strategy.get_next_config(cfg, cell_results)
+                label = strategy.get_run_label(trial)
+                cell_dir = self.base_dir / variation.label
+                artifact_dir = strategy.get_run_path(cell_dir, trial)
+
+                run = BenchmarkRun(
+                    benchmark_id=executor.derive_id(plan, var_idx, trial),
+                    cfg=next_cfg,
+                    variation=variation,
+                    trial=trial,
+                    label=label,
+                    artifact_dir=artifact_dir,
                 )
-            )
-        return run, config_file
+                logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
+                result = await executor.execute(run)
+                cell_results.append(result)
+                trial += 1
+
+                if self._sweep_failure_threshold_exceeded(
+                    all_results + cell_results, plan
+                ):
+                    logger.warning("Failure threshold exceeded; aborting sweep")
+                    all_results.extend(cell_results)
+                    return all_results
+
+                if strategy.should_continue(cell_results):
+                    cooldown = strategy.get_cooldown_seconds()
+                    if cooldown > 0:
+                        logger.info(f"Cooldown: {cooldown}s")
+                        await asyncio.sleep(cooldown)
+
+            all_results.extend(cell_results)
+
+        successful = sum(1 for r in all_results if r.success)
+        logger.info(f"All runs complete: {successful}/{len(all_results)} successful")
+        return all_results
 
     @staticmethod
-    def _run_benchmark_subprocess(
-        config_file: Path,
-    ) -> "subprocess.CompletedProcess[str]":
-        """Run the benchmark subprocess runner and return its completed-process."""
-        # No timeout is set - SystemController handles benchmark duration and grace period internally
-        # stdin/stdout are passed through to terminal so Textual can detect TTY and render live dashboard
-        # stderr is captured for error reporting
-        # -u flag forces unbuffered output so live dashboard updates are visible immediately
-        return subprocess.run(
-            [
-                sys.executable,
-                "-u",  # Unbuffered output - critical for live dashboard rendering
-                "-m",
-                "aiperf.orchestrator.subprocess_runner",
-                str(config_file),
-            ],
-            stdin=sys.stdin,  # Pass through stdin so Textual can detect interactive TTY
-            stdout=sys.stdout,  # Pass through stdout for live dashboard rendering
-            stderr=subprocess.PIPE,  # Capture for error reporting
-            text=True,
-        )
-
-    @staticmethod
-    def _write_redacted_config(run: "BenchmarkRun", config_file: Path) -> None:
-        """Overwrite the on-disk config file with a redacted copy so secrets don't persist."""
-        redacted = run.model_dump(mode="json", exclude_none=True)
-        if "cfg" in redacted and "endpoint" in redacted["cfg"]:
-            endpoint = redacted["cfg"]["endpoint"]
-            if "api_key" in endpoint and endpoint["api_key"] is not None:
-                endpoint["api_key"] = REDACTED_VALUE
-        with open(config_file, "wb") as f:
-            f.write(orjson.dumps(redacted, option=orjson.OPT_INDENT_2))
-
-    @staticmethod
-    def _failure_from_subprocess(
-        result: "subprocess.CompletedProcess[str]",
-        label: str,
-        artifacts_path: Path,
-    ) -> RunResult:
-        """Build a failed RunResult from a non-zero subprocess exit."""
-        error_msg = f"Benchmark failed with exit code {result.returncode}"
-        if result.stderr:
-            # Get last 2000 chars of stderr for debugging
-            error_msg += f"\nStderr: {result.stderr[-2000:]}"
-        logger.error(error_msg)
-        return RunResult(
-            label=label,
-            success=False,
-            error=error_msg,
-            artifacts_path=artifacts_path,
-        )
-
-    @staticmethod
-    def _build_result_from_metrics(
-        summary_metrics: dict[str, "JsonMetricResult"],
-        label: str,
-        artifacts_path: Path,
-    ) -> RunResult:
-        """Classify success/failure from extracted summary metrics."""
-        if not summary_metrics:
-            error_msg = (
-                "No metrics found in artifacts - run may have failed to complete"
-            )
-            logger.error(error_msg)
-            return RunResult(
-                label=label,
-                success=False,
-                error=error_msg,
-                artifacts_path=artifacts_path,
-            )
-
-        # request_count only counts valid (successful) requests; error_request_count
-        # counts failures. If request_count is missing/0 and error_request_count>0
-        # the whole run failed; if both are absent, no requests were made.
-        request_count_metric = summary_metrics.get("request_count")
-        error_request_count_metric = summary_metrics.get("error_request_count")
-
-        if not request_count_metric or request_count_metric.avg == 0:
-            if error_request_count_metric and error_request_count_metric.avg > 0:
-                error_msg = f"All {int(error_request_count_metric.avg)} requests failed"
-            else:
-                error_msg = "No requests completed"
-            logger.error(error_msg)
-            return RunResult(
-                label=label,
-                success=False,
-                error=error_msg,
-                artifacts_path=artifacts_path,
-            )
-
-        return RunResult(
-            label=label,
-            success=True,
-            summary_metrics=summary_metrics,
-            artifacts_path=artifacts_path,
-        )
-
-    def _extract_summary_metrics(
-        self, artifacts_path: Path
-    ) -> dict[str, "JsonMetricResult"]:
-        """Extract run-level summary statistics from artifacts.
-
-        Reads the profile_export_aiperf.json file written by the SystemController
-        and extracts the summary metrics, preserving the full structure with units.
-
-        Args:
-            artifacts_path: Path to run artifacts directory
-
-        Returns:
-            Dict mapping metric name to JsonMetricResult (e.g., {"time_to_first_token": JsonMetricResult(unit="ms", avg=150, p99=195)})
-        """
-        from aiperf.common.models.export_models import JsonMetricResult
-
-        # Read the profile export JSON file (supports zstd-compressed variant)
-        json_file = artifacts_path / "profile_export_aiperf.json"
-        zst_file = artifacts_path / "profile_export_aiperf.json.zst"
-
-        if zst_file.exists():
-            json_file = zst_file
-        elif not json_file.exists():
-            logger.warning(f"Profile export file not found: {json_file}")
-            return {}
-
-        try:
-            # Load JSON as dict directly
-            raw = json_file.read_bytes()
-            if json_file.suffix == ".zst":
-                import io
-
-                import zstandard
-
-                raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(raw)).read()
-            data = orjson.loads(raw)
-
-            # Extract metrics - keep the structure intact, don't flatten
-            metrics = {}
-
-            for field_name, field_value in data.items():
-                # Check if this field is a metric (has the metric structure with "unit")
-                if isinstance(field_value, dict) and "unit" in field_value:
-                    try:
-                        # Parse as JsonMetricResult to preserve full structure
-                        metrics[field_name] = JsonMetricResult(**field_value)
-                    except TypeError as e:
-                        logger.debug(f"Skipping field {field_name}: {e}")
-                        continue
-
-            return metrics
-
-        except (OSError, ValueError, orjson.JSONDecodeError) as e:
-            logger.warning(f"Error extracting metrics from {json_file}: {e}")
-            return {}
+    def _sweep_failure_threshold_exceeded(
+        results: list[RunResult], plan: BenchmarkPlan
+    ) -> bool:
+        """Return True if the sweep should abort due to failure-policy limits."""
+        failure_policy = getattr(plan, "failure_policy", None)
+        if failure_policy is None:
+            return False
+        if getattr(failure_policy, "on_child_failure", "continue") == "abort":
+            return any(not r.success for r in results)
+        max_fail = getattr(failure_policy, "max_failures", 0)
+        if max_fail > 0:
+            failed = sum(1 for r in results if not r.success)
+            return failed >= max_fail
+        return False

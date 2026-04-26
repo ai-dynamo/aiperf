@@ -342,12 +342,20 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
     base_dir = _estimate_and_log_duration(plan, first_config, total_runs, logger)
 
+    # Strategy is rebuilt per-cell inside the orchestrator; this top-level
+    # instance is kept solely so aggregate_and_export() can resolve aggregate
+    # paths and seed/warmup helpers consistently with what the runs used.
     strategy = build_strategy(plan, logger)
 
     orchestrator = MultiRunOrchestrator(base_dir=base_dir)
 
+    import asyncio as _asyncio
+
+    from aiperf.orchestrator.local_executor import LocalSubprocessExecutor
+
+    executor = LocalSubprocessExecutor(base_dir=base_dir)
     try:
-        results = orchestrator.execute(first_config, strategy)
+        results = _asyncio.run(orchestrator.execute(plan, executor))
     except Exception:
         logger.exception("Error executing multi-run benchmark")
         raise

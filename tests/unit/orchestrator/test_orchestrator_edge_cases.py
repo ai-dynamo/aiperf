@@ -1,23 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Edge-case tests for MultiRunOrchestrator and FixedTrialsStrategy.
+"""Edge-case tests for FixedTrialsStrategy.
 
-Focuses on:
-- FixedTrialsStrategy seed handling, warmup removal, config isolation
-- Cooldown timing
-- Subprocess execution: config file, stderr truncation, exit codes
-- Metrics extraction: valid/partial/empty/missing JSON, request_count=0
+Subprocess-execution and metrics-extraction edge cases moved to
+tests/unit/orchestrator/test_local_executor.py with the Task 7/8 split
+(those concerns now live on LocalSubprocessExecutor).
 """
 
-import json
 from pathlib import Path
-from unittest.mock import Mock, patch
-
-import orjson
 
 from aiperf.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 from aiperf.orchestrator.strategies import FixedTrialsStrategy
 
 _MINIMAL_CONFIG_KWARGS: dict = {
@@ -30,15 +23,16 @@ _MINIMAL_CONFIG_KWARGS: dict = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": {
-        "warmup": {
+    "phases": [
+        {
+            "name": "warmup",
             "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
             "exclude_from_results": True,
         },
-        "profiling": {"type": "concurrency", "requests": 100, "concurrency": 1},
-    },
+        {"name": "profiling", "type": "concurrency", "requests": 100, "concurrency": 1},
+    ],
     "random_seed": 42,
 }
 
@@ -46,18 +40,6 @@ _MINIMAL_CONFIG_KWARGS: dict = {
 def _make_config(**overrides: object) -> BenchmarkConfig:
     kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
     return BenchmarkConfig(**kwargs)
-
-
-def _mock_subprocess_success(artifacts_path, metrics=None):
-    if metrics is None:
-        metrics = {"request_count": {"unit": "requests", "avg": 10.0}}
-    artifacts_path.mkdir(parents=True, exist_ok=True)
-    with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
-        json.dump(metrics, f)
-    mock_result = Mock()
-    mock_result.returncode = 0
-    mock_result.stderr = ""
-    return mock_result
 
 
 # ============================================================
@@ -110,20 +92,27 @@ class TestFixedTrialsStrategyEdgeCases:
 
     def test_warmup_removal_only_removes_excluded_phases(self) -> None:
         config = _make_config(
-            phases={
-                "warmup": {
+            phases=[
+                {
+                    "name": "warmup",
                     "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
                     "exclude_from_results": True,
                 },
-                "main": {"type": "concurrency", "requests": 50, "concurrency": 4},
-                "cooldown_phase": {
+                {
+                    "name": "main",
+                    "type": "concurrency",
+                    "requests": 50,
+                    "concurrency": 4,
+                },
+                {
+                    "name": "cooldown_phase",
                     "type": "concurrency",
                     "requests": 10,
                     "concurrency": 1,
                 },
-            }
+            ]
         )
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
         run = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
@@ -158,230 +147,3 @@ class TestFixedTrialsStrategyEdgeCases:
         assert strategy.get_run_path(tmp_path, 0) == (
             tmp_path / "profile_runs" / "run_0001"
         )
-
-
-# ============================================================
-# Cooldown behavior
-# ============================================================
-
-
-class TestCooldownBehavior:
-    def test_cooldown_between_every_run(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=3, cooldown_seconds=5.0)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(art_dir)
-
-        with (
-            patch("subprocess.run", side_effect=mock_subprocess),
-            patch("time.sleep") as mock_sleep,
-        ):
-            orch.execute(config, strategy)
-
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_any_call(5.0)
-
-    def test_zero_cooldown_no_sleep(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=3, cooldown_seconds=0.0)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(art_dir)
-
-        with (
-            patch("subprocess.run", side_effect=mock_subprocess),
-            patch("time.sleep") as mock_sleep,
-        ):
-            orch.execute(config, strategy)
-
-        mock_sleep.assert_not_called()
-
-    def test_single_run_no_cooldown(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1, cooldown_seconds=5.0)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(art_dir)
-
-        with (
-            patch("subprocess.run", side_effect=mock_subprocess),
-            patch("time.sleep") as mock_sleep,
-        ):
-            orch.execute(config, strategy)
-
-        mock_sleep.assert_not_called()
-
-
-# ============================================================
-# Subprocess execution
-# ============================================================
-
-
-class TestSubprocessExecution:
-    def test_run_config_json_written(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(art_dir)
-
-        with patch("subprocess.run", side_effect=mock_subprocess):
-            orch.execute(config, strategy)
-
-        config_file = tmp_path / "profile_runs" / "run_0001" / "run_config.json"
-        assert config_file.exists()
-        data = orjson.loads(config_file.read_bytes())
-        assert "benchmark_id" in data
-        assert "cfg" in data
-
-    def test_subprocess_stderr_truncated(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        mock_result = Mock()
-        mock_result.returncode = 1
-        mock_result.stderr = "X" * 5000
-
-        with patch("subprocess.run", return_value=mock_result):
-            results = orch.execute(config, strategy)
-
-        assert results[0].success is False
-        assert "Stderr:" in results[0].error
-        assert len(results[0].error.split("Stderr: ", 1)[1]) <= 2000
-
-    def test_subprocess_nonzero_exit(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        mock_result = Mock()
-        mock_result.returncode = 1
-        mock_result.stderr = "segfault"
-
-        with patch("subprocess.run", return_value=mock_result):
-            results = orch.execute(config, strategy)
-
-        assert results[0].success is False
-        assert "exit code 1" in results[0].error
-
-    def test_subprocess_exception_caught(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        with patch("subprocess.run", side_effect=OSError("No such file")):
-            results = orch.execute(config, strategy)
-
-        assert results[0].success is False
-        assert "No such file" in results[0].error
-
-
-# ============================================================
-# Metrics extraction
-# ============================================================
-
-
-class TestMetricsExtraction:
-    def _write_metrics(self, path: Path, data: dict) -> None:
-        path.mkdir(parents=True, exist_ok=True)
-        (path / "profile_export_aiperf.json").write_bytes(
-            orjson.dumps(data, option=orjson.OPT_INDENT_2)
-        )
-
-    def test_valid_metrics_parsed(self, tmp_path: Path) -> None:
-        art = tmp_path / "run"
-        self._write_metrics(
-            art,
-            {
-                "ttft": {"unit": "ms", "avg": 150.0, "p99": 195.0},
-                "throughput": {"unit": "req/s", "avg": 30.0},
-            },
-        )
-
-        orch = MultiRunOrchestrator(tmp_path)
-        metrics = orch._extract_summary_metrics(art)
-
-        assert "ttft" in metrics
-        assert metrics["ttft"].avg == 150.0
-        assert metrics["throughput"].avg == 30.0
-
-    def test_non_metric_fields_skipped(self, tmp_path: Path) -> None:
-        art = tmp_path / "run"
-        self._write_metrics(
-            art,
-            {
-                "ttft": {"unit": "ms", "avg": 100.0},
-                "metadata": {"version": "1.0"},
-                "name": "benchmark_xyz",
-            },
-        )
-
-        orch = MultiRunOrchestrator(tmp_path)
-        metrics = orch._extract_summary_metrics(art)
-        assert list(metrics.keys()) == ["ttft"]
-
-    def test_empty_json(self, tmp_path: Path) -> None:
-        art = tmp_path / "run"
-        self._write_metrics(art, {})
-        orch = MultiRunOrchestrator(tmp_path)
-        assert orch._extract_summary_metrics(art) == {}
-
-    def test_missing_file(self, tmp_path: Path) -> None:
-        art = tmp_path / "no_such_dir"
-        art.mkdir(parents=True, exist_ok=True)
-        orch = MultiRunOrchestrator(tmp_path)
-        assert orch._extract_summary_metrics(art) == {}
-
-    def test_request_count_zero_is_failure(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(
-                art_dir, {"request_count": {"unit": "requests", "avg": 0.0}}
-            )
-
-        with patch("subprocess.run", side_effect=mock_subprocess):
-            results = orch.execute(config, strategy)
-
-        assert results[0].success is False
-        assert "No requests completed" in results[0].error
-
-    def test_all_error_requests(self, tmp_path: Path) -> None:
-        config = _make_config()
-        strategy = FixedTrialsStrategy(num_trials=1)
-        orch = MultiRunOrchestrator(tmp_path)
-
-        def mock_subprocess(*args, **kwargs):
-            config_path = args[0][4]
-            art_dir = Path(config_path).parent
-            return _mock_subprocess_success(
-                art_dir,
-                {
-                    "request_count": {"unit": "requests", "avg": 0.0},
-                    "error_request_count": {"unit": "requests", "avg": 50.0},
-                },
-            )
-
-        with patch("subprocess.run", side_effect=mock_subprocess):
-            results = orch.execute(config, strategy)
-
-        assert results[0].success is False
-        assert "All 50 requests failed" in results[0].error

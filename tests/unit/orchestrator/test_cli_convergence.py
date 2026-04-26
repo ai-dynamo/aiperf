@@ -3,7 +3,7 @@
 """Tests for CLI convergence wiring in _run_multi_benchmark."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,9 +26,9 @@ _MINIMAL_CONFIG_KWARGS = {
             "prompts": {"isl": 128, "osl": 64},
         }
     },
-    "phases": {
-        "default": {"type": "concurrency", "requests": 100, "concurrency": 1},
-    },
+    "phases": [
+        {"name": "default", "type": "concurrency", "requests": 100, "concurrency": 1}
+    ],
     "runtime": {"ui": "simple"},
     "random_seed": 42,
 }
@@ -139,7 +139,7 @@ class TestCliConvergenceStrategyWiring:
         self, _tr, _adr, _log, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute = AsyncMock(return_value=_make_successful_results(3))
         mock_orch_cls.return_value = mock_orch
 
         plan = _make_plan(
@@ -148,12 +148,20 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
+        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
 
-        _run_multi_benchmark(plan)
+        captured: list = []
 
-        strategy = mock_orch.execute.call_args[0][1]
-        assert isinstance(strategy, FixedTrialsStrategy)
+        def spy(p, lg):
+            s = real_build_strategy(p, lg)
+            captured.append(s)
+            return s
+
+        with patch("aiperf.cli_runner.build_strategy", side_effect=spy):
+            _run_multi_benchmark(plan)
+
+        assert isinstance(captured[0], FixedTrialsStrategy)
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     @patch("aiperf.common.logging.setup_rich_logging")
@@ -163,7 +171,7 @@ class TestCliConvergenceStrategyWiring:
         self, _tr, _adr, _log, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute = AsyncMock(return_value=_make_successful_results(3))
         mock_orch_cls.return_value = mock_orch
 
         plan = _make_plan(
@@ -175,11 +183,20 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
+        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
 
-        _run_multi_benchmark(plan)
+        captured: list = []
 
-        strategy = mock_orch.execute.call_args[0][1]
+        def spy(p, lg):
+            s = real_build_strategy(p, lg)
+            captured.append(s)
+            return s
+
+        with patch("aiperf.cli_runner.build_strategy", side_effect=spy):
+            _run_multi_benchmark(plan)
+
+        strategy = captured[0]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, CIWidthConvergence)
         assert strategy.criterion._metric == "time_to_first_token"
@@ -195,7 +212,7 @@ class TestCliConvergenceStrategyWiring:
         self, _tr, _adr, _log, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute = AsyncMock(return_value=_make_successful_results(3))
         mock_orch_cls.return_value = mock_orch
 
         plan = _make_plan(
@@ -206,11 +223,20 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
+        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
 
-        _run_multi_benchmark(plan)
+        captured: list = []
 
-        strategy = mock_orch.execute.call_args[0][1]
+        def spy(p, lg):
+            s = real_build_strategy(p, lg)
+            captured.append(s)
+            return s
+
+        with patch("aiperf.cli_runner.build_strategy", side_effect=spy):
+            _run_multi_benchmark(plan)
+
+        strategy = captured[0]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, CVConvergence)
         assert strategy.criterion._metric == "request_latency"
@@ -224,7 +250,7 @@ class TestCliConvergenceStrategyWiring:
         self, _tr, _adr, _log, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute = AsyncMock(return_value=_make_successful_results(3))
         mock_orch_cls.return_value = mock_orch
 
         plan = _make_plan(
@@ -236,11 +262,20 @@ class TestCliConvergenceStrategyWiring:
             artifact_dir=tmp_path,
         )
 
+        from aiperf._cli_runner_helpers import build_strategy as real_build_strategy
         from aiperf.cli_runner import _run_multi_benchmark
 
-        _run_multi_benchmark(plan)
+        captured: list = []
 
-        strategy = mock_orch.execute.call_args[0][1]
+        def spy(p, lg):
+            s = real_build_strategy(p, lg)
+            captured.append(s)
+            return s
+
+        with patch("aiperf.cli_runner.build_strategy", side_effect=spy):
+            _run_multi_benchmark(plan)
+
+        strategy = captured[0]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, DistributionConvergence)
         assert strategy.criterion._metric == "time_to_first_token"
