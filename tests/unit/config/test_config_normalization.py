@@ -12,6 +12,7 @@ Focuses on:
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.dataset import ComposedDataset, SyntheticDataset
@@ -86,21 +87,15 @@ class TestModelNormalization:
         assert cfg.models.items[0].name == "llama-3"
         assert cfg.models.items[1].name == "mistral-7b"
 
-    def test_singular_model_ignored_when_models_present(self) -> None:
-        """When both `model` and `models` are present, `models` wins and `model` is dropped.
-
-        `model` is now a real schema-visible shortcut field with exclude=True; the
-        before-validator only hoists it into `models` when `models` is missing,
-        so the singular key is silently ignored when the plural is supplied.
-        """
+    def test_singular_model_with_plural_models_rejected(self) -> None:
+        """`model` and `models` together are mutually exclusive — like `dataset`/`datasets`."""
         data = _minimal(models=["keep-me"])
         data["model"] = "ignore-me"
 
-        cfg = BenchmarkConfig.model_validate(data)
-
-        assert [m.name for m in cfg.models.items] == ["keep-me"]
-        # The shortcut must not leak into canonical dump.
-        assert "model" not in cfg.model_dump(exclude_none=True)
+        with pytest.raises(
+            ValidationError, match="'model' cannot be used with 'models'"
+        ):
+            BenchmarkConfig.model_validate(data)
 
 
 # ============================================================

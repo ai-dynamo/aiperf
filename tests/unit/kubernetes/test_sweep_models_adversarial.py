@@ -225,20 +225,11 @@ def test_failure_policy_max_failures_negative_rejected() -> None:
 
 
 def test_template_spec_ttl_negative_rejected() -> None:
-    """AIPerfJobSpec.ttl_seconds_after_finished has no ge constraint by default
-    (None is the default), but if it's tightened to ge=0 this test guards it.
-
-    Documents observed behavior: AIPerfJobSpec.ttl_seconds_after_finished does
-    NOT currently set ge=0. Negative values are accepted at the model layer; the
-    rejection (if any) happens in the kopf controller. If a future tightening
-    adds ge=0, this test will flip and assert ValidationError.
-    """
-    spec = AIPerfSweepSpec.model_validate(
-        _sweep(template_spec_extra={"ttlSecondsAfterFinished": -1}),
-    )
-    # If this assertion ever flips to ValidationError, replace with:
-    #   with pytest.raises(ValidationError, match=...): ...
-    assert spec.template.spec.ttl_seconds_after_finished == -1
+    """``template.spec.ttl_seconds_after_finished`` is ge=0 (matches sweep-level field)."""
+    with pytest.raises(ValidationError, match=r"(?i)ttl|greater"):
+        AIPerfSweepSpec.model_validate(
+            _sweep(template_spec_extra={"ttlSecondsAfterFinished": -1}),
+        )
 
 
 def test_aiperfsweep_ttl_negative_rejected() -> None:
@@ -519,28 +510,15 @@ def test_all_three_axes_set_accepted() -> None:
     assert spec.convergence is not None
 
 
-def test_benchmark_with_both_model_and_models_documents_behavior() -> None:
-    """``model`` (singular) and ``models`` (plural) coexisting under benchmark.
+def test_benchmark_with_both_model_and_models_rejected() -> None:
+    """``model`` (singular) and ``models`` (plural) are mutually exclusive under benchmark.
 
-    Documents observed behavior: AIPerfConfig defines BOTH ``model`` and
-    ``models`` as fields. ``model`` has ``exclude=True`` and is hoisted into
-    ``models`` only when ``models`` is absent. With both set, ``_normalize_models``
-    is a no-op (``models`` already present), and ``model`` survives as a
-    silently-dropped shorthand. There is currently no rejection at the AIPerfConfig
-    layer for this conflict.
-
-    If we ever decide to add a ``model``+``models`` mutual-exclusivity check
-    (mirroring the existing ``dataset``+``datasets`` check in
-    ``_check_mutual_exclusivity``), this test will flip and need to assert
-    ValidationError.
+    Mirrors the existing ``dataset``+``datasets`` mutex check in
+    ``_check_mutual_exclusivity``.
     """
     bench = {**_VALID_BENCHMARK, "model": "from-singular"}
-    spec = AIPerfSweepSpec.model_validate(_sweep(benchmark=bench))
-    # Plural wins; singular is dropped silently (exclude=True on the field).
-    items = spec.template.spec.benchmark.models.items
-    names = [m.name for m in items]
-    assert "test-model" in names
-    assert "from-singular" not in names
+    with pytest.raises(ValidationError, match="'model' cannot be used with 'models'"):
+        AIPerfSweepSpec.model_validate(_sweep(benchmark=bench))
 
 
 # ============================================================================
