@@ -17,7 +17,6 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
-    PrivateAttr,
     model_validator,
 )
 from typing_extensions import Self
@@ -69,6 +68,17 @@ class BasePhaseConfig(BaseConfig):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="Phase identifier — unique within the benchmark's phases list. "
+            "Used in logs, status, sweep targeting, and result file naming. "
+            "Common names: 'warmup', 'profiling'. Must be 1+ chars; allowed everywhere "
+            "an identifier is allowed (no shell meta-chars).",
+        ),
+    ]
+
     # Narrowed to Literal in each concrete class; declared here so that
     # code holding a BasePhaseConfig reference can always access .type.
     type: Annotated[
@@ -81,8 +91,6 @@ class BasePhaseConfig(BaseConfig):
             "fixed_schedule: replay from timestamps.",
         ),
     ]
-
-    _name: str | None = PrivateAttr(default=None)
 
     # =========================================================================
     # UNIVERSAL FIELDS
@@ -217,20 +225,6 @@ class BasePhaseConfig(BaseConfig):
     _stop_condition_required: ClassVar[bool] = True
 
     # =========================================================================
-    # HELPERS
-    # =========================================================================
-
-    @property
-    def name(self) -> str:
-        """Phase name (injected from dict key)."""
-        return self._name or "unnamed"
-
-    @property
-    def _display_name(self) -> str:
-        """Name for error messages (handles None case)."""
-        return self.name
-
-    # =========================================================================
     # VALIDATORS
     # =========================================================================
 
@@ -244,7 +238,7 @@ class BasePhaseConfig(BaseConfig):
             and self.sessions is None
         ):
             raise ValueError(
-                f"Phase '{self._display_name}': at least one of "
+                f"Phase '{self.name}': at least one of "
                 "'requests', 'duration', or 'sessions' must be specified"
             )
         if (
@@ -253,13 +247,11 @@ class BasePhaseConfig(BaseConfig):
             and self.prefill_concurrency > self.concurrency
         ):
             raise ValueError(
-                f"Phase '{self._display_name}': "
-                "prefill_concurrency must be <= concurrency"
+                f"Phase '{self.name}': prefill_concurrency must be <= concurrency"
             )
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
-                f"Phase '{self._display_name}': "
-                "grace_period requires duration to be set"
+                f"Phase '{self.name}': grace_period requires duration to be set"
             )
         return self
 
@@ -381,13 +373,13 @@ class UserCentricPhase(RatePhaseConfig):
         """Validate user-centric mode constraints."""
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(
-                f"Phase '{self._display_name}': --num-sessions ({self.sessions}) must be "
+                f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "
                 f">= --num-users ({self.users}). Each user needs at least one session."
             )
 
         if self.requests is not None and self.requests < self.users:
             raise ValueError(
-                f"Phase '{self._display_name}': --request-count ({self.requests}) must be "
+                f"Phase '{self.name}': --request-count ({self.requests}) must be "
                 f">= --num-users ({self.users}). Each user needs at least one request."
             )
 
