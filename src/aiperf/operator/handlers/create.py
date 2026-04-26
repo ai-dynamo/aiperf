@@ -69,7 +69,7 @@ def _validate_spec(
 ) -> AIPerfJobSpec:
     """Validate the raw CRD spec and update status conditions."""
     try:
-        validated_spec = AIPerfJobSpec.from_crd_spec(spec)
+        validated_spec = AIPerfJobSpec.model_validate(spec)
     except ValueError as e:
         status.conditions.set_false(ConditionType.CONFIG_VALID, "SpecInvalid", str(e))
         status.set_phase(Phase.FAILED).set_error(f"Invalid spec: {e}")

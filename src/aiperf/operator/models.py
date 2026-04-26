@@ -13,13 +13,21 @@ from __future__ import annotations
 import dataclasses
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config import AIPerfConfig
+from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.k8s_models import K8sCamelModel
+
+
+def _camel(name: str) -> str:
+    """snake_case -> camelCase for Pydantic field aliases."""
+    head, *tail = name.split("_")
+    return head + "".join(part.capitalize() for part in tail)
 
 
 class OwnerReference(K8sCamelModel):
@@ -259,93 +267,85 @@ class K8sEndpointConfig(AIPerfBaseModel):
 
 
 class AIPerfJobSpec(AIPerfBaseModel):
-    """Validated AIPerfJob spec from nested CRD.
+    """Validated AIPerfJob spec mirroring the full CRD spec.
 
-    Validates required fields and value ranges before creating resources.
-    The CRD spec is nested — AIPerfConfig fields live under spec.benchmark
-    and deployment fields live at the spec level.
+    Composes DeploymentConfig fields (camelCase on the wire via aliases) plus
+    benchmark: AIPerfConfig plus skip_endpoint_check. Validate a raw CRD dict
+    via AIPerfJobSpec.model_validate(spec) — from_crd_spec is a thin alias for
+    back-compat.
     """
 
-    __slots__ = ()
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        alias_generator=lambda f: _camel(f),
+    )
 
     image: str = Field(
         default="nvcr.io/nvidia/aiperf:latest",
         description="Container image for AIPerf",
     )
     image_pull_policy: ImagePullPolicy | None = Field(
-        default=None, description="Image pull policy"
+        default=None, description="Image pull policy (Always, Never, IfNotPresent)"
     )
-    endpoint: dict[str, Any] = Field(description="Endpoint configuration")
+    resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
+        default="guaranteed",
+        description="CPU/memory resource mode for controller and worker pods.",
+    )
+    connections_per_worker: int = Field(
+        default=100,
+        ge=1,
+        description="Maximum concurrent connections each worker handles.",
+    )
     timeout_seconds: float = Field(
         default=0, ge=0, description="Job timeout in seconds (0 = no timeout)"
     )
     ttl_seconds_after_finished: int | None = Field(
-        default=None, ge=0, description="TTL for completed jobs"
+        default=300, description="TTL after finished (seconds)"
     )
     results_ttl_days: int | None = Field(
         default=None, ge=1, le=365, description="TTL for results in PVC (days)"
     )
+    keep_failed_pods: bool = Field(
+        default=False,
+        description="Preserve failed JobSet pod attempts for debugging.",
+    )
     cancel: bool = Field(default=False, description="Set to true to cancel the job")
+    pod_template: PodTemplateConfig = Field(
+        default_factory=PodTemplateConfig,
+        description="Pod template configuration",
+    )
+
     skip_endpoint_check: bool = Field(
         default=False,
         description="Skip the operator-side endpoint reachability probe before deploying.",
     )
 
+    benchmark: AIPerfConfig = Field(
+        ..., description="Benchmark configuration (AIPerfConfig)."
+    )
+
     @field_validator("image")
     @classmethod
-    def validate_image(cls, v: str) -> str:
-        """Validate image is not empty."""
+    def _validate_image_non_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError(
                 f"Image is required (got {v!r}); set image.repository and image.tag or pass --image."
             )
         return v
 
-    @model_validator(mode="after")
-    def validate_endpoint_config(self) -> AIPerfJobSpec:
-        """Validate endpoint has required fields."""
-        endpoint = self.endpoint
-        if not endpoint:
-            raise ValueError(
-                f"endpoint.url or endpoint.urls is required, got keys={sorted(endpoint.keys()) if isinstance(endpoint, dict) else type(endpoint).__name__!r}"
-            )
-
-        if not endpoint.get("url") and not endpoint.get("urls"):
-            raise ValueError(
-                f"endpoint.url or endpoint.urls is required, got keys={sorted(endpoint.keys())!r}"
-            )
-
-        return self
-
     @classmethod
     def from_crd_spec(cls, spec: dict[str, Any]) -> AIPerfJobSpec:
-        """Create from nested CRD spec dict.
-
-        Reads deployment fields from the top-level spec and endpoint
-        from spec.benchmark.
-
-        Args:
-            spec: Raw spec from Kubernetes CRD (deployment fields at top level,
-                AIPerfConfig fields under spec.benchmark).
-
-        Returns:
-            Validated AIPerfJobSpec.
-
-        Raises:
-            ValueError: If validation fails.
-        """
-        benchmark = spec.get("benchmark") or {}
-        return cls(
-            image=spec.get("image", "nvcr.io/nvidia/aiperf:latest"),
-            image_pull_policy=spec.get("imagePullPolicy"),
-            endpoint=benchmark.get("endpoint", {}),
-            timeout_seconds=spec.get("timeoutSeconds", 0),
-            ttl_seconds_after_finished=spec.get("ttlSecondsAfterFinished"),
-            results_ttl_days=spec.get("resultsTtlDays"),
-            cancel=spec.get("cancel", False),
-            skip_endpoint_check=spec.get("skipEndpointCheck", False),
-        )
+        """Validate a raw CRD spec dict (back-compat alias for model_validate)."""
+        return cls.model_validate(spec)
 
     def get_endpoint_url(self) -> str | None:
-        """Extract primary endpoint URL from flat spec."""
-        return self.endpoint.get("url") or (self.endpoint.get("urls") or [None])[0]
+        """Extract primary endpoint URL from benchmark.endpoint."""
+        endpoint = self.benchmark.endpoint
+        if endpoint is None:
+            return None
+        url = getattr(endpoint, "url", None)
+        if url:
+            return url
+        urls = getattr(endpoint, "urls", None) or []
+        return urls[0] if urls else None

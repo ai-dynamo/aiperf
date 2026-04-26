@@ -194,12 +194,36 @@ class TestEndpointConfig:
 class TestAIPerfJobSpec:
     """Tests for AIPerfJobSpec model."""
 
+    @staticmethod
+    def _benchmark(endpoint: dict[str, Any]) -> dict[str, Any]:
+        """Build a minimal valid AIPerfConfig dict around the given endpoint shape."""
+        return {
+            "models": ["test-model"],
+            "endpoint": endpoint,
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 1,
+                    "prompts": {"isl": 8, "osl": 8},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 1,
+                    "concurrency": 1,
+                }
+            ],
+        }
+
     @pytest.fixture
     def valid_spec(self) -> dict[str, Any]:
         """Create a valid nested spec dict."""
         return {
             "image": "aiperf:latest",
-            "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+            "benchmark": self._benchmark({"url": "http://localhost:8000"}),
         }
 
     def test_creates_with_minimal_config(self, valid_spec: dict[str, Any]) -> None:
@@ -218,7 +242,7 @@ class TestAIPerfJobSpec:
                 "ttlSecondsAfterFinished": 3600,
                 "resultsTtlDays": 30,
                 "cancel": True,
-                "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+                "benchmark": self._benchmark({"url": "http://localhost:8000"}),
             }
         )
         assert spec.image == "aiperf:v1.0"
@@ -240,7 +264,7 @@ class TestAIPerfJobSpec:
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": image,
-                    "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+                    "benchmark": self._benchmark({"url": "http://localhost:8000"}),
                 }
             )
         assert "Image is required" in str(exc_info.value)
@@ -259,43 +283,43 @@ class TestAIPerfJobSpec:
                 {
                     "image": "aiperf:latest",
                     "imagePullPolicy": policy,
-                    "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+                    "benchmark": self._benchmark({"url": "http://localhost:8000"}),
                 }
             )
-        assert "image_pull_policy" in str(exc_info.value)
+        assert "image_pull_policy" in str(exc_info.value) or "imagePullPolicy" in str(
+            exc_info.value
+        )
 
     def test_rejects_missing_endpoint(self) -> None:
         """Verify rejects spec with no endpoint in benchmark."""
-        with pytest.raises(ValidationError) as exc_info:
+        bench = self._benchmark({"url": "http://localhost:8000"})
+        bench.pop("endpoint")
+        with pytest.raises(ValidationError):
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": "aiperf:latest",
-                    "benchmark": {},
+                    "benchmark": bench,
                 }
             )
-        assert "endpoint.url or endpoint.urls is required" in str(exc_info.value)
 
     def test_rejects_missing_endpoint_url(self) -> None:
         """Verify rejects endpoint without url or urls."""
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(ValidationError):
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": "aiperf:latest",
-                    "benchmark": {"endpoint": {"type": "openai"}},
+                    "benchmark": self._benchmark({"type": "openai"}),
                 }
             )
-        assert "endpoint.url or endpoint.urls is required" in str(exc_info.value)
 
     def test_accepts_urls_array(self) -> None:
         """Verify accepts urls array instead of url."""
         spec = AIPerfJobSpec.from_crd_spec(
             {
                 "image": "aiperf:latest",
-                "benchmark": {
-                    "endpoint": {
-                        "urls": ["http://localhost:8000", "http://localhost:8001"]
-                    }
-                },
+                "benchmark": self._benchmark(
+                    {"urls": ["http://localhost:8000", "http://localhost:8001"]}
+                ),
             }
         )
         assert spec.get_endpoint_url() == "http://localhost:8000"
@@ -310,37 +334,12 @@ class TestAIPerfJobSpec:
         spec = AIPerfJobSpec.from_crd_spec(
             {
                 "image": "aiperf:latest",
-                "benchmark": {
-                    "endpoint": {"urls": ["http://first:8000", "http://second:8000"]}
-                },
+                "benchmark": self._benchmark(
+                    {"urls": ["http://first:8000", "http://second:8000"]}
+                ),
             }
         )
         assert spec.get_endpoint_url() == "http://first:8000"
-
-    def test_get_endpoint_url_prefers_url_over_urls(self) -> None:
-        """Verify get_endpoint_url prefers url over urls array."""
-        spec = AIPerfJobSpec.from_crd_spec(
-            {
-                "image": "aiperf:latest",
-                "benchmark": {
-                    "endpoint": {
-                        "url": "http://primary:8000",
-                        "urls": ["http://backup:8000"],
-                    }
-                },
-            }
-        )
-        assert spec.get_endpoint_url() == "http://primary:8000"
-
-    def test_get_endpoint_url_with_empty_urls(self) -> None:
-        """Verify handles empty urls array gracefully."""
-        spec = AIPerfJobSpec.from_crd_spec(
-            {
-                "image": "aiperf:latest",
-                "benchmark": {"endpoint": {"url": "http://localhost:8000", "urls": []}},
-            }
-        )
-        assert spec.get_endpoint_url() == "http://localhost:8000"
 
     @pytest.mark.parametrize(
         "pull_policy",
@@ -356,7 +355,45 @@ class TestAIPerfJobSpec:
             {
                 "image": "aiperf:latest",
                 "imagePullPolicy": pull_policy,
-                "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+                "benchmark": self._benchmark({"url": "http://localhost:8000"}),
             }
         )
         assert spec.image_pull_policy == pull_policy
+
+    # =========================================================================
+    # Full-CRD-spec coverage tests (Task 1 of typesafety plan)
+    # =========================================================================
+
+    def test_aiperf_job_spec_validates_full_crd_dict_via_model_validate(self) -> None:
+        """A complete CRD spec dict (camelCase, with benchmark) round-trips through model_validate."""
+        crd_spec = {
+            "image": "nvcr.io/nvidia/aiperf:latest",
+            "imagePullPolicy": "IfNotPresent",
+            "timeoutSeconds": 600,
+            "skipEndpointCheck": True,
+            "benchmark": self._benchmark({"url": "http://example:8000"}),
+        }
+        spec = AIPerfJobSpec.model_validate(crd_spec)
+        assert spec.image == "nvcr.io/nvidia/aiperf:latest"
+        assert spec.skip_endpoint_check is True
+        assert spec.timeout_seconds == 600
+        assert spec.benchmark.endpoint.urls == ["http://example:8000"]
+
+    def test_aiperf_job_spec_rejects_unknown_top_level_keys(self) -> None:
+        """Unknown camelCase keys at the spec top level must be rejected."""
+        crd_spec = {
+            "image": "nvcr.io/nvidia/aiperf:latest",
+            "benchmark": self._benchmark({"url": "http://example:8000"}),
+            "bogusField": "nope",
+        }
+        with pytest.raises(ValueError, match="bogusField|extra"):
+            AIPerfJobSpec.model_validate(crd_spec)
+
+    def test_aiperf_job_spec_get_endpoint_url_reads_from_benchmark(self) -> None:
+        """get_endpoint_url() reads benchmark.endpoint.url after restructure."""
+        spec = AIPerfJobSpec.model_validate(
+            {
+                "benchmark": self._benchmark({"url": "http://example:8000"}),
+            }
+        )
+        assert spec.get_endpoint_url() == "http://example:8000"

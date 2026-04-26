@@ -142,14 +142,38 @@ async def test_deploy_via_operator_injects_skip_endpoint_check_into_cr() -> None
     assert spec.get("skipEndpointCheck") is True
 
 
+def _minimal_benchmark(url: str = "http://x") -> dict:
+    """Build a minimal valid AIPerfConfig dict for AIPerfJobSpec.benchmark."""
+    return {
+        "models": ["test-model"],
+        "endpoint": {"url": url},
+        "datasets": [
+            {
+                "name": "default",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 8, "osl": 8},
+            }
+        ],
+        "phases": [
+            {
+                "name": "default",
+                "type": "concurrency",
+                "requests": 1,
+                "concurrency": 1,
+            }
+        ],
+    }
+
+
 def test_aiperfjobspec_reads_skip_endpoint_check_from_crd() -> None:
-    """AIPerfJobSpec.from_crd_spec must honor skipEndpointCheck from the raw CR."""
+    """AIPerfJobSpec.model_validate must honor skipEndpointCheck from the raw CR."""
     crd_spec = {
         "image": "aiperf:latest",
         "skipEndpointCheck": True,
-        "benchmark": {"endpoint": {"url": "http://x"}},
+        "benchmark": _minimal_benchmark(),
     }
-    validated = AIPerfJobSpec.from_crd_spec(crd_spec)
+    validated = AIPerfJobSpec.model_validate(crd_spec)
     assert validated.skip_endpoint_check is True
 
 
@@ -157,9 +181,9 @@ def test_aiperfjobspec_skip_endpoint_check_defaults_false() -> None:
     """Absent skipEndpointCheck defaults to False (preserves prior behaviour)."""
     crd_spec = {
         "image": "aiperf:latest",
-        "benchmark": {"endpoint": {"url": "http://x"}},
+        "benchmark": _minimal_benchmark(),
     }
-    validated = AIPerfJobSpec.from_crd_spec(crd_spec)
+    validated = AIPerfJobSpec.model_validate(crd_spec)
     assert validated.skip_endpoint_check is False
 
 
