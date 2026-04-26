@@ -38,7 +38,13 @@ operator:
   # operator.nodeSelector is a map of node selector labels
   nodeSelector: {}
 
-  # operator.tolerations is a list of pod tolerations
+  # operator.tolerations is a list of pod tolerations.
+  #
+  # The operator is a control-plane component and intentionally does NOT
+  # tolerate ``nvidia.com/gpu:NoSchedule`` — landing a control-plane pod
+  # on a tainted GPU node wastes expensive GPU capacity that should be
+  # reserved for benchmark workers (whose pod-template tolerates it
+  # themselves).
   tolerations:
     - key: dedicated
       operator: Equal
@@ -48,9 +54,6 @@ operator:
       operator: Equal
       value: user-workload
       effect: NoExecute
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
     - key: kubernetes.io/arch
       operator: Exists
       effect: NoSchedule

@@ -149,38 +149,16 @@ def _all_configs() -> list[tuple[str, dict]]:
 #   * 2026-04-26: legacy ``{type: clamped, ...}`` distribution wrapper replaced
 #     by ``min``/``max`` fields on every distribution; tutorial fences migrated
 #     to the flat shape in the same change.
-#   * 2026-04-26: ``docs/tutorials/yaml-config.md::yaml-fence-34`` xfailed
-#     separately because it uses ``${VAR:default}`` env-var template syntax
-#     throughout (``${NUM_RUNS:3}``, ``${COOLDOWN:30.0}``, etc.) and the doc
-#     itself notes substitution happens "at deploy time" — orthogonal to the
-#     distributions schema. Tracked as a docs/test-harness mismatch (the
-#     test should expand env-vars before validating, or the fence should
-#     drop the templating); kept narrow so the rest of the suite stays clean.
-_KNOWN_DOCS_LAG_FENCES = ("docs/tutorials/yaml-config.md::yaml-fence-34",)
-
-
-def _maybe_xfail(yaml_id: str) -> tuple:
-    """Wrap parametrize entries with xfail for known-stale doc snippets."""
-    for needle in _KNOWN_DOCS_LAG_FENCES:
-        if needle in yaml_id:
-            return (
-                pytest.mark.xfail(
-                    reason="docs lag: fence uses ${VAR:default} env-var template "
-                    "syntax (orthogonal to schema); doc notes substitution "
-                    "is deploy-time.",
-                    strict=False,
-                ),
-            )
-    return ()
+#   * 2026-04-26: ``docs/tutorials/yaml-config.md::yaml-fence-34`` rewrote
+#     ``${VAR:default}`` env-var template syntax to literal defaults with
+#     inline ``# ${VAR:default}`` comments, matching the pattern already used
+#     in fence-29 of this file and fence-6 of ``sweeps.md``.
 
 
 _CONFIGS = _all_configs()
 
 
-_PARAMS = [
-    pytest.param(yaml_id, config, id=yaml_id, marks=_maybe_xfail(yaml_id))
-    for (yaml_id, config) in _CONFIGS
-]
+_PARAMS = [pytest.param(yaml_id, config, id=yaml_id) for (yaml_id, config) in _CONFIGS]
 
 
 @pytest.mark.parametrize("yaml_id, config", _PARAMS)

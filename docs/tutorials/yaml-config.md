@@ -653,21 +653,21 @@ See the [Template Endpoint tutorial](template-endpoint.md) for complete examples
 
 ## Complete End-to-End Example
 
-This example combines distributions, scenario sweep, multi-run statistics, SLOs, and environment variables into a single production benchmark config.
+This example combines distributions, scenario sweep, multi-run statistics, SLOs, and environment variables into a single production benchmark config. Values are literal so the file round-trips against `AIPerfConfig`; in production, pipe the file through `envsubst` (or your CI's templating) to substitute the env-vars shown in comments at deploy time.
 
 ```yaml
-random_seed: ${BENCHMARK_SEED:42}
+random_seed: 42                                    # ${BENCHMARK_SEED:42}
 
 models:
-  - ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+  - meta-llama/Llama-3.1-8B-Instruct               # ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
 endpoint:
   urls:
-    - ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    - http://localhost:8000/v1/chat/completions    # ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
   type: chat
   streaming: true
   timeout: 600.0
-  api_key: ${API_KEY:}
+  api_key: ""                                      # ${API_KEY:}
 
 datasets:
   - name: warmup
@@ -700,8 +700,8 @@ phases:
     dataset: workload
     rate: 30.0
     smoothness: 1.5
-    duration: ${DURATION:300}
-    concurrency: ${MAX_CONCURRENCY:64}
+    duration: 300                                  # ${DURATION:300}
+    concurrency: 64                                # ${MAX_CONCURRENCY:64}
     rate_ramp: 30s
     seamless: true
     grace_period: 60
@@ -732,14 +732,14 @@ slos:
   tokens_per_second: 20.0
 
 multi_run:
-  num_runs: ${NUM_RUNS:3}
-  cooldown_seconds: ${COOLDOWN:30.0}
+  num_runs: 3                                      # ${NUM_RUNS:3}
+  cooldown_seconds: 30.0                           # ${COOLDOWN:30.0}
   confidence_level: 0.95
   set_consistent_seed: true
   disable_warmup_after_first: true
 
 artifacts:
-  dir: ${ARTIFACTS_DIR:./artifacts/production}
+  dir: ./artifacts/production                      # ${ARTIFACTS_DIR:./artifacts/production}
   summary: [json]
   records: [jsonl, csv]
   slice_duration: 60
