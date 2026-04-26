@@ -41,9 +41,7 @@ from tools._core import (
 # =============================================================================
 
 HELM_CRD_FILE = Path("deploy/helm/aiperf-operator/templates/crd.yaml")
-HELM_SWEEP_CRD_FILE = Path(
-    "deploy/helm/aiperf-operator/templates/crd-aiperfsweep.yaml"
-)
+HELM_SWEEP_CRD_FILE = Path("deploy/helm/aiperf-operator/templates/crd-aiperfsweep.yaml")
 HELM_CHART_FILE = Path("deploy/helm/aiperf-operator/Chart.yaml")
 PYPROJECT_FILE = Path("pyproject.toml")
 

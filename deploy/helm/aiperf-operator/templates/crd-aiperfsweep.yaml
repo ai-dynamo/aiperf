@@ -1,0 +1,218 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: aiperfsweeps.aiperf.nvidia.com
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  group: aiperf.nvidia.com
+  names:
+    kind: AIPerfSweep
+    listKind: AIPerfSweepList
+    plural: aiperfsweeps
+    singular: aiperfsweep
+    shortNames:
+    - aps
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Completed
+      type: integer
+      jsonPath: .status.completedRuns
+    - name: Total
+      type: integer
+      jsonPath: .status.maxTotalRuns
+    - name: Failed
+      type: integer
+      jsonPath: .status.failedRuns
+    - name: Current
+      type: string
+      jsonPath: .status.currentCell.label
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            description: Top-level spec for an AIPerfSweep CR.
+            properties:
+              sweep:
+                x-kubernetes-preserve-unknown-fields: true
+                description: Variation generator (grid | scenarios). Reuses aiperf.config.sweep.SweepConfig.
+                x-kubernetes-validations:
+                - rule: oldSelf == self
+                  message: spec.sweep is immutable after creation
+              multiRun:
+                type: object
+                description: Per-variation trial configuration.
+                properties:
+                  trials:
+                    type: integer
+                    minimum: 1
+                    maximum: 20
+                    description: Fixed trials per variation. Must be unset when `convergence` is set.
+                  cooldownSeconds:
+                    type: number
+                    description: Sleep duration between trials within a variation.
+                    default: 0.0
+                    minimum: 0
+                  autoSetSeed:
+                    type: boolean
+                    description: Auto-set random seed for workload consistency across trials.
+                    default: true
+                  disableWarmupAfterFirst:
+                    type: boolean
+                    description: Skip warmup on trials 2..N for steady-state measurement.
+                    default: true
+                x-kubernetes-validations:
+                - rule: oldSelf == self
+                  message: spec.multiRun is immutable after creation
+              convergence:
+                type: object
+                description: Per-variation adaptive early-stop configuration.
+                properties:
+                  metric:
+                    type: string
+                    description: Metric name from docs/metrics-reference.md (e.g., ttft_p99).
+                  criterion:
+                    type: string
+                    description: Convergence criterion. v1 supports cv_threshold only.
+                    enum:
+                    - cv_threshold
+                    default: cv_threshold
+                  minRuns:
+                    type: integer
+                    description: Minimum trials per variation before convergence is checked.
+                    default: 3
+                    minimum: 2
+                  maxRuns:
+                    type: integer
+                    description: Maximum trials per variation; hard cap regardless of convergence.
+                    default: 10
+                    minimum: 2
+                  threshold:
+                    type: number
+                    description: Criterion threshold. For cv_threshold, the coefficient-of-variation cap.
+                    default: 0.05
+                    exclusiveMinimum: true
+                    minimum: 0
+                    exclusiveMaximum: true
+                    maximum: 1
+                required:
+                - metric
+                x-kubernetes-validations:
+                - rule: oldSelf == self
+                  message: spec.convergence is immutable after creation
+              failurePolicy:
+                type: object
+                description: When and whether to abort on child failure.
+                properties:
+                  onChildFailure:
+                    type: string
+                    description: 'continue: failed child becomes a status entry, advance to next variation. abort: any failure
+                      terminates the sweep with phase=Failed.'
+                    enum:
+                    - continue
+                    - abort
+                    default: continue
+                  maxFailures:
+                    type: integer
+                    description: 0 = unbounded. Otherwise, terminate sweep when failed count reaches this value.
+                    default: 0
+                    minimum: 0
+              cancel:
+                type: boolean
+                description: 'Cooperative cancel: signals the current child and skips remaining variations.'
+                default: false
+              ttlSecondsAfterFinished:
+                type: integer
+                description: Parent CR retention after terminal phase; children use their own TTL.
+              template:
+                type: object
+                description: Child stamp; spec is an AIPerfJobSpec.
+                properties:
+                  metadata:
+                    type: object
+                    description: ObjectMeta merged into every child (labels, annotations).
+                    additionalProperties: true
+                  spec:
+                    type: object
+                    description: AIPerfJobSpec used as the child stamp. Must not contain sweep:/multi_run:.
+                    additionalProperties: true
+                required:
+                - spec
+            required:
+            - template
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Running
+                - Aggregating
+                - Succeeded
+                - PartiallyFailed
+                - Failed
+                - Cancelled
+              runEpoch:
+                type: integer
+              totalVariations:
+                type: integer
+              maxTotalRuns:
+                type: integer
+              completedRuns:
+                type: integer
+              failedRuns:
+                type: integer
+              currentCell:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              cells:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              aggregation:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              aggregateRef:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              runtimeRef:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              childRunEpochsRef:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              startTime:
+                type: string
+                format: date-time
+              completionTime:
+                type: string
+                format: date-time
+              lastChildEvent:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
