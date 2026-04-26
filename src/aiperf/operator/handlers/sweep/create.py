@@ -229,12 +229,23 @@ async def _create_sweep_controller_jobset(
         "volumeMounts": [{"name": "results", "mountPath": "/results"}],
     }
 
-    pod_spec = {
+    pod_spec: dict[str, Any] = {
         "restartPolicy": "OnFailure",
         "serviceAccountName": sa_name,
         "containers": [container],
         "volumes": [{"name": "results", "emptyDir": {}}],
     }
+    # Lift scheduling primitives from the user's template.spec.podTemplate so the
+    # sweep-controller pod can land on the same nodes as its child workers will.
+    pod_template = template_spec.get("podTemplate") or {}
+    for key in ("nodeSelector", "tolerations", "affinity",
+                "imagePullSecrets", "priorityClassName", "runtimeClassName"):
+        if key in pod_template and pod_template[key] is not None:
+            value = pod_template[key]
+            if key == "imagePullSecrets" and value and isinstance(value[0], str):
+                # CRD takes a list of bare names; native PodSpec wants {name: ...}.
+                value = [{"name": s} for s in value]
+            pod_spec[key] = value
 
     jobset_body = {
         "apiVersion": "jobset.x-k8s.io/v1alpha2",
