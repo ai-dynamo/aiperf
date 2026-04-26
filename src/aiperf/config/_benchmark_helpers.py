@@ -42,19 +42,25 @@ class BenchmarkHelpersMixin:
         Raises:
             KeyError: If dataset not found.
         """
-        if name not in self.datasets:  # type: ignore[attr-defined]
-            raise KeyError(
-                f"Dataset '{name}' not found. Available: {sorted(self.datasets.keys())}"  # type: ignore[attr-defined]
-            )
-        return self.datasets[name]  # type: ignore[attr-defined]
+        for d in self.datasets:  # type: ignore[attr-defined]
+            if d.name == name:
+                return d
+        available = [d.name for d in self.datasets]  # type: ignore[attr-defined]
+        raise KeyError(
+            f"Dataset '{name}' not found. Available: {sorted(available)}"
+        )
+
+    def _dataset_by_name(self, name: str) -> DatasetConfig:
+        """Look up a dataset by name; raises KeyError if not found."""
+        return self.get_dataset(name)
 
     def get_default_dataset_name(self) -> str:
-        """Get the default dataset name (first dataset in the datasets dict)."""
-        return next(iter(self.datasets.keys()))  # type: ignore[attr-defined]
+        """Returns the name of the first dataset in the list (the default)."""
+        return self.datasets[0].name  # type: ignore[attr-defined]
 
     def get_default_dataset(self) -> DatasetConfig:
-        """Get the default dataset (first dataset in the datasets dict)."""
-        return next(iter(self.datasets.values()))  # type: ignore[attr-defined]
+        """Get the default dataset (first dataset in the list)."""
+        return self.datasets[0]  # type: ignore[attr-defined]
 
     def get_phase_dataset(self, phase: PhaseConfig) -> DatasetConfig:
         """Get the dataset for a specific phase.

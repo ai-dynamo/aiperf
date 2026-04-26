@@ -85,7 +85,10 @@ def _normalize_models(data: dict[str, Any]) -> None:
 
 def _normalize_dataset_and_phases(data: dict[str, Any]) -> None:
     if "dataset" in data and "datasets" not in data:
-        data["datasets"] = {"default": data.pop("dataset")}
+        ds = data.pop("dataset")
+        if isinstance(ds, dict):
+            ds = {"name": "default", **ds}
+        data["datasets"] = [ds]
 
     if "phases" in data:
         phases = data["phases"]
@@ -134,13 +137,20 @@ def _hoist_synthetic_prompt_fields(config: dict[str, Any]) -> None:
         prompts.setdefault("osl", config.pop("osl"))
 
 
-def _normalize_single_dataset(name: str, config: Any, dataset_types: tuple) -> Any:
+def _normalize_single_dataset_listed(
+    idx: int, config: Any, dataset_types: tuple
+) -> Any:
     # Accept already-constructed Pydantic models (for programmatic use)
     if isinstance(config, dataset_types):
         return config
     if not isinstance(config, dict):
         raise ValueError(
-            f"Dataset '{name}' configuration must be a dictionary or Pydantic model"
+            f"datasets[{idx}] must be a dictionary or Pydantic model"
+        )
+    if "name" not in config:
+        raise ValueError(
+            f"datasets[{idx}] is missing required 'name' field. "
+            f"Each dataset entry needs a name (e.g. 'main', 'eval')."
         )
 
     _hoist_synthetic_prompt_fields(config)
@@ -153,12 +163,11 @@ def _normalize_single_dataset(name: str, config: Any, dataset_types: tuple) -> A
     return config
 
 
-def parse_datasets_input(v: Any) -> dict[str, Any]:
-    """Parse dataset configurations, handling composed datasets.
+def parse_datasets_input(v: Any) -> list[Any]:
+    """Parse dataset configurations into a list, handling composed datasets.
 
     Composed datasets don't have a 'type' field but have 'source' and
-    'augment'. Accepts already-constructed Pydantic models for
-    programmatic use.
+    'augment'. Accepts already-constructed Pydantic models for programmatic use.
     """
     from aiperf.config.dataset import (
         ComposedDataset,
@@ -169,10 +178,14 @@ def parse_datasets_input(v: Any) -> dict[str, Any]:
 
     dataset_types = (SyntheticDataset, FileDataset, PublicDataset, ComposedDataset)
 
-    if not isinstance(v, dict):
-        raise ValueError("datasets must be a dictionary")
+    if not isinstance(v, list):
+        raise ValueError(
+            f"datasets must be a list of named entries (was a dict in earlier versions); "
+            f"got {type(v).__name__}. Use [{{'name': 'main', 'type': 'synthetic', ...}}, ...]. "
+            f"See docs/tutorials/yaml-config.md#datasets."
+        )
 
-    return {
-        name: _normalize_single_dataset(name, cfg, dataset_types)
-        for name, cfg in v.items()
-    }
+    return [
+        _normalize_single_dataset_listed(idx, item, dataset_types)
+        for idx, item in enumerate(v)
+    ]

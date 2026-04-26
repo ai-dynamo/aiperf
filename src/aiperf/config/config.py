@@ -145,12 +145,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     ]
 
     datasets: Annotated[
-        dict[str, DatasetConfig],
+        list[DatasetConfig],
         Field(
             min_length=1,
-            description="Named dataset configurations. Keys are dataset names that can be "
-            "referenced in phases. Values are dataset configs (synthetic, file, public, "
-            "or composed with source+augment).",
+            description="Named dataset configurations. Each entry must have a unique 'name' "
+            "(e.g. 'main', 'eval'). Phases reference datasets by name "
+            "(`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. "
+            "Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to "
+            "a one-entry list with name='default'.",
         ),
     ]
 
@@ -322,8 +324,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @field_validator("datasets", mode="before")
     @classmethod
-    def parse_datasets(cls, v: Any) -> dict[str, Any]:
-        """Parse dataset configurations, handling composed datasets.
+    def parse_datasets(cls, v: Any) -> list[Any]:
+        """Parse dataset configurations into a list shape, validating each item has a name.
 
         See `_benchmark_normalizers.parse_datasets_input`.
         """
@@ -343,9 +345,22 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_datasets_unique_names(self) -> Self:
+        """Reject duplicate dataset names — they must be unique within the list."""
+        seen: set[str] = set()
+        for ds in self.datasets:
+            if ds.name in seen:
+                raise ValueError(
+                    f"duplicate dataset name '{ds.name}' — names must be unique. "
+                    f"Found names: {[d.name for d in self.datasets]}"
+                )
+            seen.add(ds.name)
+        return self
+
+    @model_validator(mode="after")
     def validate_dataset_references(self) -> Self:
         """Validate that all dataset references in phase configs exist."""
-        dataset_names = set(self.datasets.keys())
+        dataset_names = {d.name for d in self.datasets}
         for phase in self.phases:
             if phase.dataset is not None and phase.dataset not in dataset_names:
                 raise ValueError(
@@ -385,9 +400,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         from aiperf.config.resolved import check_phase_dataset_compatibility
 
+        by_name = {d.name: d for d in self.datasets}
         for phase in self.phases:
             dataset_name = phase.dataset or self.get_default_dataset_name()
-            ds = self.datasets.get(dataset_name)
+            ds = by_name.get(dataset_name)
             if ds is None:
                 continue
             errors = check_phase_dataset_compatibility(

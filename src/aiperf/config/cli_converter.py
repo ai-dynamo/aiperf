@@ -85,7 +85,7 @@ def build_aiperf_config(cli: BaseModel) -> AIPerfConfig:
         "endpoint": endpoint,
         "models": models,
         "phases": phases,
-        "datasets": {"main": ds},
+        "datasets": [{"name": "main", **ds}],
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,
         "server_metrics": server_metrics,
