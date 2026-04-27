@@ -335,3 +335,19 @@ class _ZMQSettings(BaseSettings):
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
     )
+    EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=5663,
+        description="Default TCP port for the event-bus XPUB/XSUB proxy frontend "
+        "(producers connect here). Single source of truth for the non-k8s comm "
+        "configs (TCP, dual-bind); k8s pod manifests pull the same value via "
+        "``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match).",
+    )
+    EVENT_BUS_PROXY_BACKEND_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=5664,
+        description="Default TCP port for the event-bus XPUB/XSUB proxy backend "
+        "(subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``.",
+    )

@@ -17,6 +17,20 @@ from aiperf.common.enums import CommunicationType
 from aiperf.config._base import BaseConfig
 
 
+def _event_bus_proxy_default() -> TcpProxyConfig:
+    """Default event-bus proxy ports, sourced from ``Environment.ZMQ``.
+
+    Lazy import: ``Environment`` pulls in ``aiperf.common._env_data`` which
+    re-imports ``aiperf.config`` — module-level import here would deadlock.
+    """
+    from aiperf.common.environment import Environment
+
+    return TcpProxyConfig(
+        frontend_port=Environment.ZMQ.EVENT_BUS_PROXY_FRONTEND_PORT,
+        backend_port=Environment.ZMQ.EVENT_BUS_PROXY_BACKEND_PORT,
+    )
+
+
 class TcpProxyConfig(BaseConfig):
     """TCP proxy port configuration for a single ZMQ proxy."""
 
@@ -117,9 +131,7 @@ class TcpCommunicationConfig(BaseConfig):
     event_bus_proxy: Annotated[
         TcpProxyConfig,
         Field(
-            default_factory=lambda: TcpProxyConfig(
-                frontend_port=5663, backend_port=5664
-            ),
+            default_factory=_event_bus_proxy_default,
             description="Event bus proxy ports (XPUB/XSUB).",
         ),
     ]
@@ -225,9 +237,7 @@ class DualBindCommunicationConfig(BaseConfig):
     event_bus_proxy: Annotated[
         TcpProxyConfig,
         Field(
-            default_factory=lambda: TcpProxyConfig(
-                frontend_port=5663, backend_port=5664
-            ),
+            default_factory=_event_bus_proxy_default,
             description="Event bus proxy ports (XPUB/XSUB).",
         ),
     ]

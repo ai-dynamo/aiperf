@@ -10,6 +10,20 @@ from aiperf.config._zmq_base import BaseZMQCommunicationConfig, BaseZMQProxyConf
 from aiperf.plugin.enums import CommunicationBackend
 
 
+def _event_bus_proxy_default() -> "ZMQTCPProxyConfig":
+    """Default event-bus proxy ports, sourced from ``Environment.ZMQ``.
+
+    Lazy import: ``Environment`` re-imports the config tree during bootstrap;
+    a module-level import of ``Environment`` here would deadlock.
+    """
+    from aiperf.common.environment import Environment
+
+    return ZMQTCPProxyConfig(
+        frontend_port=Environment.ZMQ.EVENT_BUS_PROXY_FRONTEND_PORT,
+        backend_port=Environment.ZMQ.EVENT_BUS_PROXY_BACKEND_PORT,
+    )
+
+
 class ZMQTCPProxyConfig(BaseZMQProxyConfig):
     """Configuration for TCP proxy."""
 
@@ -113,12 +127,10 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     event_bus_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig,
         Field(
+            default_factory=_event_bus_proxy_default,
             description="Configuration for the ZMQ Proxy for the event bus.",
         ),
-    ] = ZMQTCPProxyConfig(
-        frontend_port=5663,
-        backend_port=5664,
-    )
+    ]
     raw_inference_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig,
         Field(

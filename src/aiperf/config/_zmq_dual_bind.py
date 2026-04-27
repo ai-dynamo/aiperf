@@ -12,6 +12,20 @@ from aiperf.config._zmq_base import BaseZMQCommunicationConfig, BaseZMQProxyConf
 from aiperf.plugin.enums import CommunicationBackend
 
 
+def _event_bus_proxy_default() -> "ZMQDualBindProxyConfig":
+    """Default event-bus proxy ports, sourced from ``Environment.ZMQ``.
+
+    Lazy import: see ``aiperf.config._zmq_tcp._event_bus_proxy_default``.
+    """
+    from aiperf.common.environment import Environment
+
+    return ZMQDualBindProxyConfig(
+        name="event_bus_proxy",
+        tcp_frontend_port=Environment.ZMQ.EVENT_BUS_PROXY_FRONTEND_PORT,
+        tcp_backend_port=Environment.ZMQ.EVENT_BUS_PROXY_BACKEND_PORT,
+    )
+
+
 class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     """Configuration for dual-bind proxy (IPC + TCP).
 
@@ -175,11 +189,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     )
 
     event_bus_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
-        default=ZMQDualBindProxyConfig(
-            name="event_bus_proxy",
-            tcp_frontend_port=5663,
-            tcp_backend_port=5664,
-        ),
+        default_factory=_event_bus_proxy_default,
         description="Event bus proxy configuration (XPUB/XSUB).",
     )
     dataset_manager_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
