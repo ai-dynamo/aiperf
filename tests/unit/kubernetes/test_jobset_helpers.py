@@ -301,17 +301,16 @@ class TestBuildEnvVars:
         assert by_name["AIPERF_JOB_ID"]["value"] == "job-xyz"
         assert by_name["AIPERF_NAMESPACE"]["value"] == "ns-7"
 
-    def test_hf_home_default_added_when_missing(self) -> None:
-        """Default HF_HOME points at /tmp/hf_home so read-only root FS still works."""
+    def test_hf_home_not_auto_injected(self) -> None:
+        """HF_HOME is no longer auto-injected — tokenizer bundles arrive via operator API."""
         env = build_env_vars(
             job_id="j", namespace="n", pod_template=PodTemplateConfig()
         )
         hf = [item for item in env if item["name"] == "HF_HOME"]
-        assert len(hf) == 1
-        assert hf[0]["value"] == "/tmp/hf_home"
+        assert len(hf) == 0
 
-    def test_hf_home_not_added_when_pod_template_sets_it(self) -> None:
-        """User-supplied HF_HOME must not be duplicated by the default injection."""
+    def test_hf_home_passes_through_pod_template(self) -> None:
+        """User-supplied HF_HOME on pod_template still flows into the container env."""
         template = PodTemplateConfig(env=[{"name": "HF_HOME", "value": "/data/hf"}])
         env = build_env_vars(job_id="j", namespace="n", pod_template=template)
         hf = [item for item in env if item["name"] == "HF_HOME"]

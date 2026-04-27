@@ -172,9 +172,6 @@ def build_env_vars(
 ) -> list[dict[str, Any]]:
     """Create environment variables for a container."""
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
-    has_hf_home = any(
-        (item or {}).get("name") == "HF_HOME" for item in pod_template.env
-    )
     # Give the controller enough registration headroom for workers to
     # complete their PUB/SUB connection probes plus one restart cycle if
     # the first-attempt probe fails (Kubernetes restarts on exit).
@@ -200,10 +197,6 @@ def build_env_vars(
             "value": str(registration_timeout),
         },
     ]
-
-    # HF cache must be writable (readOnlyRootFilesystem)
-    if not has_hf_home:
-        env.append({"name": "HF_HOME", "value": "/tmp/hf_home"})
 
     if include_pod_index:
         # Expose the JobSet job-index as a unique pod identifier for
