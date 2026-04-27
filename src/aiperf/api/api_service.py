@@ -27,10 +27,6 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
-from aiperf.common.tokenizer_bundle_registry import TokenizerBundleRegistry
-from aiperf.common.tokenizer_validator import (
-    set_default_registry as set_tokenizer_registry,
-)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType
 
@@ -81,12 +77,6 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         from aiperf.api.routers.websocket import WebSocketManager
 
         self.ws_manager = WebSocketManager()
-
-        # Tokenizer bundle registry: populated by validate_tokenizers_eager on
-        # the controller side, served as tar+zstd to worker pods via the
-        # TokenizerRouter mounted in _create_app.
-        self._tokenizer_registry = TokenizerBundleRegistry()
-        set_tokenizer_registry(self._tokenizer_registry)
 
         self._routers: dict[str, BaseRouter] = {}
         self._load_routers()
@@ -150,7 +140,7 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         # Mount the tokenizer-bundle router (plain APIRouter factory, not a
         # BaseRouter plugin: it has no lifecycle and only closes over the
         # registry).
-        app.include_router(build_tokenizer_router(self._tokenizer_registry))
+        app.include_router(build_tokenizer_router())
 
         return app
 

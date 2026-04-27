@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for TokenizerRouter -- tar+zstd snapshot bundle streaming."""
+"""Tests for TokenizerRouter -- tar+zstd snapshot bundle streaming.
+
+Patches ``_resolve_snapshot_dir`` so the router is tested in isolation from
+the HuggingFace Hub. Live HF round-trip is covered by the
+component-integration test.
+"""
 
 from __future__ import annotations
 
@@ -10,53 +15,52 @@ from pathlib import Path
 
 import pytest
 import zstandard
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 
+from aiperf.api.routers import tokenizer as tokenizer_router_mod
 from aiperf.api.routers.tokenizer import build_tokenizer_router
-from aiperf.common.tokenizer_bundle_registry import TokenizerBundleRegistry
 
 
-def _make_snapshot(tmp_path: Path) -> Path:
+def _make_snapshot(tmp_path: Path, files: dict[str, str]) -> Path:
     snap = tmp_path / "snap"
     snap.mkdir()
-    (snap / "tokenizer.json").write_text('{"version":"1.0"}')
-    (snap / "tokenizer_config.json").write_text("{}")
+    for name, body in files.items():
+        (snap / name).write_text(body)
     return snap
 
 
+def _patch_resolver(monkeypatch, snap: Path) -> None:
+    async def _resolver(name: str) -> Path:
+        if name == "unknown":
+            raise HTTPException(status_code=404, detail=f"tokenizer '{name}' not found")
+        return snap
+
+    monkeypatch.setattr(tokenizer_router_mod, "_resolve_snapshot_dir", _resolver)
+
+
 @pytest.fixture
-def app_and_registry(tmp_path: Path) -> tuple[FastAPI, TokenizerBundleRegistry, Path]:
-    reg = TokenizerBundleRegistry()
-    snap = _make_snapshot(tmp_path)
+def app_with_mock_hf(monkeypatch, tmp_path: Path) -> tuple[FastAPI, Path]:
+    snap = _make_snapshot(
+        tmp_path, {"tokenizer.json": '{"version":"1.0"}', "tokenizer_config.json": "{}"}
+    )
+    _patch_resolver(monkeypatch, snap)
     app = FastAPI()
-    app.include_router(build_tokenizer_router(reg))
-    return app, reg, snap
+    app.include_router(build_tokenizer_router())
+    return app, snap
 
 
 @pytest.mark.asyncio
-async def test_404_when_not_registered(app_and_registry) -> None:
-    app, _, _ = app_and_registry
+async def test_404_when_repo_unknown(app_with_mock_hf) -> None:
+    app, _ = app_with_mock_hf
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/api/tokenizer/unknown/bundle")
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_503_when_pending(app_and_registry) -> None:
-    app, reg, _ = app_and_registry
-    reg.register_pending("gpt2")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/api/tokenizer/gpt2/bundle")
-    assert resp.status_code == 503
-    assert resp.headers.get("retry-after") == "1"
-
-
-@pytest.mark.asyncio
-async def test_200_streams_tar_zstd_round_trip(app_and_registry) -> None:
-    app, reg, snap = app_and_registry
-    reg.register_pending("gpt2")
-    reg.mark_ready("gpt2", snap)
+async def test_200_streams_tar_zstd_round_trip(app_with_mock_hf) -> None:
+    app, _ = app_with_mock_hf
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/api/tokenizer/gpt2/bundle")
     assert resp.status_code == 200
@@ -73,16 +77,9 @@ async def test_200_streams_tar_zstd_round_trip(app_and_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_path_with_slash_routes_correctly(
-    app_and_registry, tmp_path: Path
-) -> None:
-    """Verify `:path` converter handles `org/model` style names."""
-    app, reg, _ = app_and_registry
-    snap = tmp_path / "ll"
-    snap.mkdir()
-    (snap / "tokenizer.json").write_text("{}")
-    reg.register_pending("meta-llama/Llama-3.1-8B")
-    reg.mark_ready("meta-llama/Llama-3.1-8B", snap)
+async def test_path_with_slash_routes_correctly(app_with_mock_hf) -> None:
+    """Verify ``:path`` converter handles ``org/model`` style names."""
+    app, _ = app_with_mock_hf
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/api/tokenizer/meta-llama/Llama-3.1-8B/bundle")
     assert resp.status_code == 200
