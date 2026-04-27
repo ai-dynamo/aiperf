@@ -269,7 +269,7 @@ class SweepAuditRunner:
         ``v<i>-t<j>/`` with that cell's downloaded artifacts.
         """
         suffix = uuid.uuid4().hex[:6]
-        sweep_name = f"audit-sweep-{case.case_id}-{suffix}"
+        sweep_name = f"sw-{case.case_id}-{suffix}"
 
         await self.kubectl.run("create", "namespace", namespace, check=False)
 

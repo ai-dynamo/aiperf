@@ -105,6 +105,16 @@ class OperatorAuditRunner:
                 f"stdout:\n{stdout.decode(errors='replace')}\n"
                 f"stderr:\n{stderr.decode(errors='replace')}"
             )
+        # `aiperf kube results` exits 0 even when retrieval internally fails
+        # (e.g. operator pod not found). Verify dest_dir is non-empty so the
+        # underlying error surfaces instead of an empty-bucket diff failure.
+        files = [p for p in dest_dir.rglob("*") if p.is_file()]
+        if not files:
+            raise RuntimeError(
+                f"aiperf kube results {job_name} exited 0 but produced no files in {dest_dir}\n"
+                f"stdout:\n{stdout.decode(errors='replace')}\n"
+                f"stderr:\n{stderr.decode(errors='replace')}"
+            )
 
     async def run(
         self,
@@ -117,7 +127,7 @@ class OperatorAuditRunner:
         timeout: int = 600,
     ) -> Path:
         suffix = uuid.uuid4().hex[:6]
-        job_name = f"audit-op-{case.case_id}-{suffix}"
+        job_name = f"op-{case.case_id}-{suffix}"
         cfg = self._build_job_config(case, swept_value=swept_value)
 
         await self.deployer.kubectl.run("create", "namespace", namespace, check=False)

@@ -95,9 +95,7 @@ class BarePodDeployer:
         """
         wrapped_argv = " ".join(shlex.quote(a) for a in argv)
         shell_cmd = (
-            f"aiperf {wrapped_argv}; "
-            f"echo $? > /aiperf-output/.aiperf_exit_code; "
-            f"sleep 3600"
+            f"aiperf {wrapped_argv}; echo $? > /tmp/.aiperf_exit_code; sleep 3600"
         )
         body = {
             "apiVersion": "batch/v1",
@@ -175,7 +173,7 @@ class BarePodDeployer:
         )
 
     async def _wait_for_sentinel(self, pod: str, namespace: str, timeout: int) -> int:
-        """Poll until /aiperf-output/.aiperf_exit_code exists. Return the exit code."""
+        """Poll until /tmp/.aiperf_exit_code exists. Return the exit code."""
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
             result = await self.kubectl.run(
@@ -187,7 +185,7 @@ class BarePodDeployer:
                 "aiperf",
                 "--",
                 "cat",
-                "/aiperf-output/.aiperf_exit_code",
+                "/tmp/.aiperf_exit_code",
                 check=False,
             )
             if result.returncode == 0:
@@ -198,7 +196,7 @@ class BarePodDeployer:
             await asyncio.sleep(3)
         raise TimeoutError(
             f"bare-pod {namespace}/{pod}: aiperf did not finish "
-            f"(no /aiperf-output/.aiperf_exit_code) within {timeout}s"
+            f"(no /tmp/.aiperf_exit_code) within {timeout}s"
         )
 
     async def _kubectl_cp(self, pod: str, namespace: str, dest_dir: Path) -> None:
@@ -224,7 +222,7 @@ class BarePodDeployer:
     ) -> Path:
         """Run one bare-pod invocation; return ``dest_dir`` with artifacts copied in."""
         suffix = uuid.uuid4().hex[:6]
-        name = f"audit-bare-{case.case_id}-{suffix}"
+        name = f"bare-{case.case_id}-{suffix}"
 
         await self.kubectl.create_namespace(namespace)
 
