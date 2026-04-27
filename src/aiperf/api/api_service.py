@@ -11,16 +11,15 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import HTTPConnection
 from starlette_compress import CompressMiddleware
 
 from aiperf import __version__ as aiperf_version
-from aiperf.api.dataset_mixin import DatasetMixin
+from aiperf.api.depends import ServiceDep, get_service
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.api.routers.tokenizer import build_tokenizer_router
 from aiperf.common.base_component_service import BaseComponentService
@@ -36,18 +35,12 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
 
-def get_service(conn: HTTPConnection) -> FastAPIService:
-    """Get FastAPIService from app state. Works for both HTTP and WebSocket."""
-    service = getattr(conn.app.state, "service", None)
-    if service is None:
-        raise RuntimeError("Service not initialized in app.state")
-    return service
+# Re-exported from `aiperf.api.depends` so existing imports of
+# `get_service` / `ServiceDep` from `aiperf.api.api_service` keep working.
+__all__ = ["FastAPIService", "ServiceDep", "get_service", "main"]
 
 
-ServiceDep = Annotated["FastAPIService", Depends(get_service)]
-
-
-class FastAPIService(DatasetMixin, BaseComponentService):
+class FastAPIService(BaseComponentService):
     """FastAPI-based API Service.
 
     Provides HTTP endpoints for metrics and status, plus WebSocket streaming
@@ -73,10 +66,6 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
         self._stop_task: asyncio.Task | None = None
-
-        from aiperf.api.routers.websocket import WebSocketManager
-
-        self.ws_manager = WebSocketManager()
 
         self._routers: dict[str, BaseRouter] = {}
         self._load_routers()
@@ -192,7 +181,16 @@ class FastAPIService(DatasetMixin, BaseComponentService):
 
         Mirrors ``WorkerGroupManager._unique_tokenizer_names``: explicit
         ``cfg.tokenizer.name`` wins; otherwise fall back to model names.
+
+        Excludes the local-only names (``builtin`` and the tiktoken
+        encodings) — they are constructed in-process and never travel
+        through the bundle endpoint.
         """
+        from aiperf.common.tokenizer import (
+            BUILTIN_TOKENIZER_NAME,
+            TIKTOKEN_ENCODING_NAMES,
+        )
+
         cfg = self.run.cfg
         seen: dict[str, None] = {}
         tokenizer_cfg = getattr(cfg, "tokenizer", None)
@@ -201,7 +199,11 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         else:
             for model_name in cfg.get_model_names():
                 seen.setdefault(model_name, None)
-        return list(seen)
+        return [
+            n
+            for n in seen
+            if n != BUILTIN_TOKENIZER_NAME and n not in TIKTOKEN_ENCODING_NAMES
+        ]
 
     async def _prewarm_tokenizers(self) -> None:
         """Populate the shared HF cache for every configured tokenizer.

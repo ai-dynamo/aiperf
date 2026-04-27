@@ -1231,19 +1231,23 @@ class TestResultsFileEndpoints:
 
 
 class TestWebSocketBroadcast:
-    """Test broadcasting messages via WebSocketManager."""
+    """Test broadcasting messages via WebSocketManager.
+
+    Exercises the standalone manager — the FastAPIService no longer owns a
+    ws_manager attribute (that lives on WebSocketRouter).
+    """
 
     @pytest.mark.asyncio
     async def test_broadcast_message_to_subscribers(
-        self, mock_fastapi_service: FastAPIService
+        self, websocket_manager: WebSocketManager
     ) -> None:
         """Test that messages are broadcast to subscribed WebSocket clients."""
         from aiperf.common.enums import LifecycleState
         from aiperf.common.messages import HeartbeatMessage
 
         mock_ws = AsyncMock()
-        mock_fastapi_service.ws_manager.add("client-1", mock_ws)
-        mock_fastapi_service.ws_manager.subscribe("client-1", ["heartbeat"])
+        websocket_manager.add("client-1", mock_ws)
+        websocket_manager.subscribe("client-1", ["heartbeat"])
 
         message = HeartbeatMessage(
             service_id="test",
@@ -1251,13 +1255,13 @@ class TestWebSocketBroadcast:
             state=LifecycleState.RUNNING,
         )
 
-        await mock_fastapi_service.ws_manager.broadcast(message)
+        await websocket_manager.broadcast(message)
 
         mock_ws.send_text.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_broadcast_message_no_subscribers(
-        self, mock_fastapi_service: FastAPIService
+        self, websocket_manager: WebSocketManager
     ) -> None:
         """Test broadcast with no subscribers does not raise."""
         from aiperf.common.enums import LifecycleState
@@ -1269,7 +1273,7 @@ class TestWebSocketBroadcast:
             state=LifecycleState.RUNNING,
         )
 
-        sent = await mock_fastapi_service.ws_manager.broadcast(message)
+        sent = await websocket_manager.broadcast(message)
         assert sent == 0
 
 

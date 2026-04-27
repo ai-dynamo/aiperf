@@ -42,6 +42,14 @@ class _APIServerSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for graceful API server shutdown before force-cancelling",
     )
+    GET_POD_STATES_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Timeout in seconds for the GET_POD_STATES RPC issued by the "
+        "/api/progress and /api/debug/* routers. Kept short so a slow / unresponsive "
+        "SystemController falls back to the bus-fed cache rather than hanging the endpoint.",
+    )
 
 
 class _CompressionSettings(BaseSettings):

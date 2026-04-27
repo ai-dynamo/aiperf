@@ -16,28 +16,22 @@ down, etc.), they fall back to the bus-fed mirror maintained by
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Annotated, Any
 
-import orjson
 from fastapi import APIRouter
 from pydantic import Field
 from starlette.requests import HTTPConnection
 
+from aiperf.api.pod_state_rpc import query_controller_pod_states
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.control_structs import CommandOk
-from aiperf.common.enums import CommandType
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.models import AIPerfBaseModel
 
 DebugDep = Annotated["DebugRouter", component_dependency("debug")]
 
 debug_router = APIRouter()
-
-# Timeout for the GET_POD_STATES RPC. Kept short so a slow / unresponsive
-# controller falls back to the bus-fed cache rather than hanging the endpoint.
-_GET_POD_STATES_TIMEOUT = 2.0
 
 
 class PodStatesResponse(AIPerfBaseModel):
@@ -104,23 +98,12 @@ class DebugRouter(PodStateTrackerMixin, BaseRouter):
 async def _query_controller_snapshot(conn: HTTPConnection) -> dict[str, Any] | None:
     """Issue a GET_POD_STATES RPC to the SystemController.
 
-    Returns the decoded snapshot dict (``{pod_states, worker_startup_states}``)
-    on success, or ``None`` if the controller is unreachable / unavailable —
-    callers fall back to the local cache in that case.
+    Thin wrapper around :func:`aiperf.api.pod_state_rpc.query_controller_pod_states`
+    that pins the timeout to the API-service env setting.
     """
-    service = getattr(conn.app.state, "service", None)
-    if service is None or not hasattr(service, "send_command_to_controller"):
-        return None
-    try:
-        response = await service.send_command_to_controller(
-            CommandType.GET_POD_STATES,
-            timeout=_GET_POD_STATES_TIMEOUT,
-        )
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - any RPC failure → cache fallback
-        return None
-    if not isinstance(response, CommandOk):
-        return None
-    return orjson.loads(response.payload)
+    return await query_controller_pod_states(
+        conn, timeout=Environment.API_SERVER.GET_POD_STATES_TIMEOUT
+    )
 
 
 @debug_router.get(

@@ -650,12 +650,17 @@ class ProgressClient:
 
     @staticmethod
     def _resolve_dest_path(response: aiohttp.ClientResponse, dest_path: Path) -> Path:
-        """Apply the server's ``X-Filename`` override to ``dest_path`` if present."""
+        """Apply the server's ``X-Filename`` override to ``dest_path`` if present.
+
+        Drops the ``X-Filename`` value if it would resolve to an unsafe name
+        (empty, ``.``, ``..``) — e.g. ``Path("..").name == ".."`` would let
+        a hostile/buggy server steer the download one directory up.
+        """
         x_filename = response.headers.get("X-Filename")
         if not x_filename:
             return dest_path
         safe_name = Path(x_filename).name
-        if not safe_name:
+        if safe_name in ("", ".", ".."):
             return dest_path
         return dest_path.parent / safe_name
 

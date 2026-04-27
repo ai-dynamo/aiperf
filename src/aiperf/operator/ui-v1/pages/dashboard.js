@@ -62,8 +62,8 @@ function StatusBar({ allJobs, cluster, best }) {
     const p = (j.phase ?? '').toLowerCase();
     return p === 'failed' || p === 'error';
   }).length;
-  const gpus = cluster?.gpus ?? cluster?.gpuCount ?? cluster?.gpu_count ?? '?';
-  const nodes = cluster?.nodes ?? cluster?.nodeCount ?? cluster?.node_count ?? '?';
+  const gpus = cluster?.gpus ?? '?';
+  const nodes = cluster?.nodes ?? '?';
 
   return html`
     <div class="status-bar">
@@ -146,7 +146,6 @@ function ThroughputLatencyScatter({ completedJobs }) {
       x: j[mode.xField],
       y: j[mode.yField],
       jobName: j.name,
-      backend: j.backend ?? '',
     })),
     backgroundColor: modelColor(model) + 'cc',
     borderColor: modelColor(model),
@@ -165,7 +164,10 @@ function ThroughputLatencyScatter({ completedJobs }) {
             const pt = ctx.raw;
             const xUnit = mode.xLabel.includes('tok/s') ? 'tok/s' : 'req/s';
             const yUnit = 'ms';
-            return `${ctx.dataset.label} @ ${pt.backend}\n${fmtNumber(pt.x, 1)} ${xUnit}, ${fmtNumber(pt.y, 0)} ${yUnit}`;
+            return [
+              `${ctx.dataset.label}${pt.jobName ? ' · ' + pt.jobName : ''}`,
+              `${fmtNumber(pt.x, 1)} ${xUnit}, ${fmtNumber(pt.y, 0)} ${yUnit}`,
+            ];
           },
         },
       },
@@ -421,11 +423,9 @@ export function Dashboard() {
             <tr>
               <th style="width:40px">#</th>
               <th>Configuration</th>
-              <th>Backend</th>
               <th style="width:200px">Throughput</th>
               <th style="width:200px">Latency P99</th>
               <th>TTFT</th>
-              <th>GPUs</th>
             </tr>
           </thead>
           <tbody>
@@ -449,7 +449,6 @@ export function Dashboard() {
                       <span class="model-name">${job.model ?? job.name}</span>
                     </div>
                   </td>
-                  <td>${job.backend ?? '---'}</td>
                   <td>
                     <div class="bar-cell">
                       <div class="inline-bar">
@@ -467,7 +466,6 @@ export function Dashboard() {
                     </div>
                   </td>
                   <td>${job.ttftMs != null ? fmtNumber(job.ttftMs, 0) + ' ms' : '---'}</td>
-                  <td>${job.gpuConfig ?? '---'}</td>
                 </tr>
               `;
             })}
