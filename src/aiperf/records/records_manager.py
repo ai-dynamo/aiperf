@@ -215,17 +215,34 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Trigger final server metrics scrape and wait for completion.
         # Include the results time window so side-channel managers can compute
         # their export window from the same authoritative source.
+        # The relayed scrape can take 10-30s on contended clusters
+        # (Prometheus query + Parquet write); a TimeoutError must not abort
+        # _finalize_and_process_results, because that would skip
+        # _process_results and the resulting ProcessRecordsResultMessage —
+        # the system controller would then never run _export_results_data
+        # and the .aiperf_results_ready.json marker would never be written,
+        # which the operator's results fetch loop interprets as a failed run.
         start_ns, end_ns = self._records_tracker.get_results_time_window()
-        response = await self.control_client.request(
-            Command(
-                cid=uuid.uuid4().hex,
-                cmd=CommandType.PROFILE_COMPLETE,
-                payload=orjson.dumps({"start_ns": start_ns, "end_ns": end_ns}),
-            ),
-            timeout=10.0,
-        )
-        if isinstance(response, ErrorDetails):
-            self.warning(f"Server metrics final scrape timed out or failed: {response}")
+        try:
+            response = await self.control_client.request(
+                Command(
+                    cid=uuid.uuid4().hex,
+                    cmd=CommandType.PROFILE_COMPLETE,
+                    payload=orjson.dumps({"start_ns": start_ns, "end_ns": end_ns}),
+                ),
+                timeout=Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self.warning(
+                "Server metrics final scrape timed out after "
+                f"{Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT}s; "
+                "continuing with results processing"
+            )
+        else:
+            if isinstance(response, ErrorDetails):
+                self.warning(
+                    f"Server metrics final scrape timed out or failed: {response}"
+                )
 
         flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
         flush_end_ns = (end_ns or time.time_ns()) + (

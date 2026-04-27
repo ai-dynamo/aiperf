@@ -250,6 +250,17 @@ class _ServerMetricsSettings(BaseSettings):
         description="Time in seconds to continue collecting metrics after profiling completes, "
         "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
     )
+    PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Seconds the records manager waits for the system controller to relay "
+        "PROFILE_COMPLETE to GPU telemetry, server metrics, and worker group manager. The "
+        "relay blocks on the slowest scrape (Prometheus query + Parquet write), which can "
+        "exceed 30s on contended clusters. A timeout here is non-fatal: the records manager "
+        "logs a warning and continues to _process_results so the operator's results-fetch "
+        "loop still sees a complete export.",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.001,
         le=300.0,
