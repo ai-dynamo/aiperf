@@ -31,19 +31,38 @@ export const api = {
     return apiFetch('/sweeps');
   },
 
-  /** Get a single sweep by namespace and name */
-  getSweep(ns, name) {
-    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
+  /** Get a single job by namespace and name (optional epoch) */
+  getJob(ns, name, epoch) {
+    const q = epoch ? `?epoch=${encodeURIComponent(epoch)}` : '';
+    return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}${q}`);
   },
 
-  /** Per-cell aggregate metrics for a sweep */
-  getSweepCells(ns, name) {
-    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cells`);
+  /** List the persisted run epochs for a job */
+  getJobEpochs(ns, name) {
+    return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/epochs`);
   },
 
-  /** Get a single job by namespace and name */
-  getJob(ns, name) {
-    return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`);
+  /** Get a sweep, optionally a specific epoch */
+  getSweep(ns, name, epoch) {
+    const q = epoch ? `?epoch=${encodeURIComponent(epoch)}` : '';
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}${q}`);
+  },
+
+  /** List sweep epochs */
+  getSweepEpochs(ns, name) {
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/epochs`);
+  },
+
+  /** Per-cell aggregates, optional epoch */
+  getSweepCells(ns, name, epoch) {
+    const q = epoch ? `?epoch=${encodeURIComponent(epoch)}` : '';
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cells${q}`);
+  },
+
+  /** Per-epoch children manifest */
+  getSweepChildren(ns, name, epoch) {
+    const q = epoch ? `?epoch=${encodeURIComponent(epoch)}` : '';
+    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/children${q}`);
   },
 
   /** Cancel a running job */
