@@ -213,6 +213,20 @@ class _PortSettings(BaseSettings):
     EVENT_BUS_PROXY_HEALTH: int = Field(
         default=8088, ge=1, le=65535, description="Event-bus proxy sidecar health port"
     )
+    EVENT_BUS_PROXY_PUB_FRONTEND: int = Field(
+        default=5663,
+        ge=1,
+        le=65535,
+        description="Event-bus XPUB/XSUB proxy publisher-frontend bind port "
+        "(producers connect to this).",
+    )
+    EVENT_BUS_PROXY_SUB_BACKEND: int = Field(
+        default=5664,
+        ge=1,
+        le=65535,
+        description="Event-bus XPUB/XSUB proxy subscriber-backend bind port "
+        "(subscribers connect to this).",
+    )
 
     # Worker pod ports
     WORKER_HEALTH: int = Field(
@@ -266,6 +280,124 @@ class _JobSetSettings(BaseSettings):
     DATASETS_PATH: str = Field(
         default="/aiperf/datasets",
         description="Shared path for dataset files (dataset-manager writes, API serves)",
+    )
+    SWEEP_AGGREGATE_INLINE_MAX_BYTES: int = Field(
+        default=600_000,
+        ge=10_000,
+        le=900_000,
+        description="Max encoded size of the AIPerfSweep aggregate bundle inlined "
+        "into status.aggregate. K8s rejects CR patches over ~1 MiB with HTTP 413; "
+        "if the bundle exceeds this cap, the sweep-controller drops `confidence` "
+        "(the largest contributor on big sweeps) and relies on the disk-backed "
+        "results sidecar to serve the full document. Default 600 KB leaves headroom "
+        "for status fields and apiserver framing under the 1 MiB ceiling.",
+    )
+
+
+class _PortForwardSettings(BaseSettings):
+    """Tunables for ``aiperf.kubernetes.port_forward`` kubectl-based forwards."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_PORT_FORWARD_")
+
+    TIMEOUT_SECONDS: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=600.0,
+        description="Total seconds to wait for kubectl port-forward to start "
+        "and (optionally) for the API to respond.",
+    )
+    API_INITIAL_DELAY_SECONDS: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=10.0,
+        description="Seconds to wait after the tunnel comes up before the "
+        "first API health check.",
+    )
+    API_RETRY_DELAY_SECONDS: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=30.0,
+        description="Seconds to back off between port-forward restart attempts "
+        "while the API isn't ready.",
+    )
+    API_MAX_RETRIES: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="Maximum number of port-forward restarts before giving up "
+        "on the API readiness probe.",
+    )
+    PROCESS_CLEANUP_TIMEOUT_SECONDS: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=60.0,
+        description="Seconds to wait for graceful kubectl termination before "
+        "escalating to SIGKILL.",
+    )
+
+
+class _ProgressStreamSettings(BaseSettings):
+    """Tunables for ``aiperf.kubernetes.progress_stream`` WebSocket reconnects."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_PROGRESS_STREAM_")
+
+    WS_INITIAL_BACKOFF_SECONDS: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=60.0,
+        description="Initial reconnect backoff after a WebSocket transport error.",
+    )
+    WS_MAX_BACKOFF_SECONDS: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=300.0,
+        description="Cap on the exponential reconnect backoff.",
+    )
+    WS_HEARTBEAT_SECONDS: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Seconds between aiohttp WebSocket heartbeats.",
+    )
+
+
+class _WatchSettings(BaseSettings):
+    """Tunables for ``aiperf.kubernetes.watch_diagnosis`` heuristics."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_WATCH_")
+
+    STALLED_PENDING_THRESHOLD_SECONDS: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=3600.0,
+        description="Pending job is flagged as stalled after this many seconds.",
+    )
+    STALLED_RUNNING_THRESHOLD_SECONDS: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=3600.0,
+        description="Running job with no metrics/progress is flagged as stalled "
+        "after this many seconds.",
+    )
+    CRASH_LOOP_RESTART_THRESHOLD: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        description="Pod restart count above which the diagnosis flags a crash loop.",
+    )
+    HIGH_ERROR_RATE_THRESHOLD: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Error rate (0.0-1.0) above which the diagnosis flags "
+        "high-error-rate as a problem.",
+    )
+    HIGH_LATENCY_P99_MULTIPLIER: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=1000.0,
+        description="Multiplier on average latency above which p99 is flagged "
+        "as a tail-latency outlier.",
     )
 
 
@@ -373,6 +505,18 @@ class _K8sEnvironment(BaseSettings):
     JOBSET: _JobSetSettings = Field(
         default_factory=_JobSetSettings,
         description="JobSet-level configuration",
+    )
+    PORT_FORWARD: _PortForwardSettings = Field(
+        default_factory=_PortForwardSettings,
+        description="kubectl port-forward CLI tunables",
+    )
+    PROGRESS_STREAM: _ProgressStreamSettings = Field(
+        default_factory=_ProgressStreamSettings,
+        description="Progress-stream WebSocket reconnect tunables",
+    )
+    WATCH: _WatchSettings = Field(
+        default_factory=_WatchSettings,
+        description="aiperf kube watch diagnosis thresholds",
     )
 
 

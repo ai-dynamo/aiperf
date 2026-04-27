@@ -101,8 +101,11 @@ async def find_aiperf_job(
 
     Resolution order:
 
-    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by name.
-    2. Otherwise (or on 404 from step 1), cluster-wide list filtered by
+    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by
+       name. A 404 in this branch returns ``None`` -- we deliberately do NOT
+       fall back to a cluster-wide scan, because a same-named CR in another
+       namespace is a different resource.
+    2. If ``namespace`` is ``None``, cluster-wide list filtered by
        ``metadata.name=<name>``, then match either ``metadata.name`` or
        ``status.jobId`` against the input. This lets callers look up a job by
        either its Kubernetes resource name or its generated ``jobId``.
@@ -129,7 +132,9 @@ async def find_aiperf_job(
     """
     custom = client.CustomObjectsApi(api)
 
-    # Direct lookup by name — most common path.
+    # Direct lookup by name in the supplied namespace. If the GET 404s we
+    # return None instead of falling back to a cluster-wide scan, because the
+    # caller asked specifically about this namespace.
     if namespace is not None:
         try:
             raw = await custom.get_namespaced_custom_object(
@@ -141,16 +146,19 @@ async def find_aiperf_job(
             )
             return AIPerfJobCR.model_validate(raw).to_info()
         except ApiException as e:
-            if e.status != 404:
-                raise
+            if e.status == 404:
+                return None
+            raise
 
-    # Fallback: scan all namespaces for a status.jobId match.
+    # Cluster-wide fallback: only when the caller did not specify a namespace.
+    # Filter by metadata.name to avoid pulling every CR on the cluster, but
+    # still match either metadata.name or status.jobId in Python below.
     try:
         result = await custom.list_cluster_custom_object(
             group=AIPERF_JOB_GROUP,
             version=AIPERF_JOB_VERSION,
             plural=AIPERF_JOB_PLURAL,
-            field_selector=f"metadata.name={name}" if namespace is None else None,
+            field_selector=f"metadata.name={name}",
         )
     except ApiException as e:
         if e.status == 404:
@@ -285,8 +293,11 @@ async def find_aiperf_sweep(
 
     Mirrors :func:`find_aiperf_job` resolution order:
 
-    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by name.
-    2. Otherwise (or on 404 from step 1), cluster-wide list filtered by
+    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by
+       name. A 404 in this branch returns ``None`` -- we deliberately do NOT
+       fall back to a cluster-wide scan, because a same-named sweep in another
+       namespace is a different resource.
+    2. If ``namespace`` is ``None``, cluster-wide list filtered by
        ``metadata.name=<name>`` and return the first match.
 
     Args:
@@ -310,7 +321,8 @@ async def find_aiperf_sweep(
     """
     custom = client.CustomObjectsApi(api)
 
-    # Direct lookup by name — most common path.
+    # Direct lookup by name in the supplied namespace. A 404 here is final --
+    # see find_aiperf_job for the cross-namespace-leak rationale.
     if namespace is not None:
         try:
             raw = await custom.get_namespaced_custom_object(
@@ -322,17 +334,17 @@ async def find_aiperf_sweep(
             )
             return AIPerfSweepCR.model_validate(raw).to_info()
         except ApiException as e:
-            if e.status != 404:
-                raise
+            if e.status == 404:
+                return None
+            raise
 
-    # Fallback: scan all namespaces. Use field_selector when no namespace
-    # was given to avoid pulling every sweep on the cluster.
+    # Cluster-wide fallback: only when the caller did not specify a namespace.
     try:
         result = await custom.list_cluster_custom_object(
             group=_AIPERF_SWEEP_GROUP,
             version=_AIPERF_SWEEP_VERSION,
             plural=_AIPERF_SWEEP_PLURAL,
-            field_selector=f"metadata.name={name}" if namespace is None else None,
+            field_selector=f"metadata.name={name}",
         )
     except ApiException as e:
         if e.status == 404:

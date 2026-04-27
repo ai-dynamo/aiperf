@@ -138,7 +138,10 @@ class WatchOrchestrator:
         return resolved
 
     def _install_signal_handlers(self) -> None:
-        loop = asyncio.get_event_loop()
+        # ``run()`` always invokes this from inside the running loop;
+        # ``get_event_loop()`` is deprecated in this context and raises in newer
+        # Python.
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop)
 

@@ -645,19 +645,16 @@ function IdentityStrip({ job, config, summary: _summary }) {
 
   const model = job?.model ?? spec.model ?? null;
   const endpoint = job?.endpoint ?? spec.endpoint ?? null;
-  const backend = job?.backend ?? spec.backend ?? null;
   const mode = bench.mode ?? spec.mode ?? null;
   const concurrency = job?.concurrency ?? bench.concurrency ?? null;
   const isl = synth.input_length ?? null;
   const osl = synth.output_length ?? null;
   const requests = bench.request_count ?? bench.number_of_requests ?? null;
   const durationRaw = bench.duration_secs ?? bench.duration ?? null;
-  const gpus = job?.gpuConfig ?? null;
 
   const tiles = [];
   if (model != null)     tiles.push({ label: 'MODEL',          value: model });
   if (endpoint != null)  tiles.push({ label: 'ENDPOINT',       value: endpoint });
-  if (backend != null)   tiles.push({ label: 'BACKEND',        value: backend });
   if (mode != null)      tiles.push({ label: 'BENCHMARK MODE', value: String(mode) });
   if (concurrency != null) tiles.push({ label: 'CONCURRENCY',  value: fmtInt(concurrency) });
   if (isl != null || osl != null) {
@@ -671,7 +668,6 @@ function IdentityStrip({ job, config, summary: _summary }) {
     const secs = typeof durationRaw === 'number' ? durationRaw : Number(durationRaw);
     if (isFinite(secs)) tiles.push({ label: 'DURATION', value: fmtDuration(secs) });
   }
-  if (gpus != null)      tiles.push({ label: 'GPUs',           value: gpus });
 
   if (tiles.length === 0) return null;
 
@@ -1382,7 +1378,7 @@ export function Run({ ns, name, epoch }) {
   const rps = summary.throughput_rps;
   const ttft = summary.ttft_p99_ms ?? summary.ttft_avg_ms;
   const p99 = summary.latency_p99_ms ?? summary.latency_avg_ms;
-  const tokps = summary.output_token_throughput ?? summary.throughput_tps ?? job?.tokenThroughput;
+  const tokps = summary.output_token_throughput ?? summary.throughput_tps;
 
   if (!job && !detail) {
     return html`

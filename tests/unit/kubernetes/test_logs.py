@@ -110,7 +110,15 @@ class TestSavePodLogsHappyPath:
             await save_pod_logs("job-123", "my-ns", tmp_path, mock_api)
 
         mock_run.assert_called_once_with(
-            ["kubectl", "logs", "-n", "my-ns", "aiperf-job-controller-0-0"]
+            [
+                "kubectl",
+                "logs",
+                "-n",
+                "my-ns",
+                "aiperf-job-controller-0-0",
+                "--all-containers=true",
+                "--prefix",
+            ]
         )
 
     @pytest.mark.asyncio
@@ -215,6 +223,8 @@ class TestSavePodLogsKubeArgs:
             "-n",
             "default",
             pods[0].metadata.name,
+            "--all-containers=true",
+            "--prefix",
             *expected_extra_args,
         ]
         mock_run.assert_called_once_with(expected_cmd)

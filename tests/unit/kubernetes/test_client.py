@@ -355,14 +355,40 @@ class TestFindAIPerfJob:
         assert result.job_id == "j"
 
     @pytest.mark.asyncio
-    async def test_find_aiperf_job_falls_back_to_job_id(self) -> None:
+    async def test_find_aiperf_job_namespaced_404_returns_none_no_cluster_fallback(
+        self,
+    ) -> None:
+        """When namespace is given and direct GET 404s, do NOT fall back to a
+        cluster-wide scan -- a same-named CR in another namespace is a
+        different resource (cross-namespace leak guard).
+        """
         api = MagicMock()
         mock_custom = MagicMock()
-        # Direct lookup 404
+        # Direct lookup 404 in the given namespace.
         mock_custom.get_namespaced_custom_object = AsyncMock(
             side_effect=_api_exception(404)
         )
-        # Fallback finds by status.jobId
+        # Cluster-wide list would have matched by jobId pre-fix; should NOT be called.
+        mock_custom.list_cluster_custom_object = AsyncMock(
+            return_value={
+                "items": [_raw_aiperfjob(name="cr-target", job_id="target-id")],
+            }
+        )
+        with patch(
+            "aiperf.kubernetes.client.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            result = await find_aiperf_job(api, "target-id", namespace="default")
+        assert result is None
+        mock_custom.list_cluster_custom_object.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_job_no_namespace_falls_back_to_job_id(self) -> None:
+        """When no namespace is given, cluster-wide search matches metadata.name
+        OR status.jobId.
+        """
+        api = MagicMock()
+        mock_custom = MagicMock()
         mock_custom.list_cluster_custom_object = AsyncMock(
             return_value={
                 "items": [
@@ -375,7 +401,7 @@ class TestFindAIPerfJob:
             "aiperf.kubernetes.client.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            result = await find_aiperf_job(api, "target-id", namespace="default")
+            result = await find_aiperf_job(api, "target-id", namespace=None)
         assert result is not None
         assert result.name == "cr-target"
         assert result.job_id == "target-id"
@@ -838,12 +864,16 @@ class TestDeleteNamespace:
         api = MagicMock()
         mock_core = MagicMock()
         mock_core.delete_namespace = AsyncMock(side_effect=_api_exception(500))
-        with patch(
-            "aiperf.kubernetes.client.client.CoreV1Api",
-            return_value=mock_core,
+        with (
+            patch(
+                "aiperf.kubernetes.client.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            pytest.raises(ApiException) as exc_info,
         ):
-            # Does not raise — just logs warning
+            # Re-raises non-404 ApiExceptions (after logging) so callers can react.
             await delete_namespace(api, "ns")
+        assert exc_info.value.status == 500
 
 
 # ============================================================

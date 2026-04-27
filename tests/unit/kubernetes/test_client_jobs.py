@@ -119,12 +119,10 @@ class TestFindAIPerfJobClusterWide:
 
     @pytest.mark.asyncio
     async def test_match_by_metadata_name(self) -> None:
-        """Fallback list result that matches metadata.name (not jobId) still resolves."""
+        """Fallback list result that matches metadata.name (not jobId) still resolves
+        when no namespace is supplied."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
-        mock_custom.get_namespaced_custom_object = AsyncMock(
-            side_effect=_api_exception(404)
-        )
         mock_custom.list_cluster_custom_object = AsyncMock(
             return_value={
                 "items": [
@@ -137,7 +135,7 @@ class TestFindAIPerfJobClusterWide:
             "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            result = await find_aiperf_job(api, "target-name", namespace="ns")
+            result = await find_aiperf_job(api, "target-name", namespace=None)
         assert result is not None
         assert result.name == "target-name"
 
@@ -146,9 +144,6 @@ class TestFindAIPerfJobClusterWide:
         """404 on the fallback list is suppressed to None (CRD not installed)."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
-        mock_custom.get_namespaced_custom_object = AsyncMock(
-            side_effect=_api_exception(404)
-        )
         mock_custom.list_cluster_custom_object = AsyncMock(
             side_effect=_api_exception(404)
         )
@@ -156,17 +151,14 @@ class TestFindAIPerfJobClusterWide:
             "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            result = await find_aiperf_job(api, "nope", namespace="ns")
+            result = await find_aiperf_job(api, "nope", namespace=None)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_fallback_list_non_404_raises(self) -> None:
-        """A 500 on the fallback list propagates to the caller."""
+        """A 500 on the cluster-wide fallback list propagates to the caller."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
-        mock_custom.get_namespaced_custom_object = AsyncMock(
-            side_effect=_api_exception(404)
-        )
         mock_custom.list_cluster_custom_object = AsyncMock(
             side_effect=_api_exception(500)
         )
@@ -177,13 +169,14 @@ class TestFindAIPerfJobClusterWide:
             ),
             pytest.raises(ApiException),
         ):
-            await find_aiperf_job(api, "x", namespace="ns")
+            await find_aiperf_job(api, "x", namespace=None)
 
     @pytest.mark.asyncio
-    async def test_cluster_wide_without_namespace_no_field_selector_when_ns_given(
-        self,
-    ) -> None:
-        """When a namespace is provided, the fallback list omits the field selector."""
+    async def test_namespaced_404_does_not_call_cluster_wide(self) -> None:
+        """Cross-namespace leak guard: a 404 on the namespaced GET must NOT
+        fall back to a cluster-wide scan, because a same-named CR in another
+        namespace is a different resource.
+        """
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.get_namespaced_custom_object = AsyncMock(
@@ -194,9 +187,9 @@ class TestFindAIPerfJobClusterWide:
             "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            await find_aiperf_job(api, "x", namespace="ns")
-        kwargs = mock_custom.list_cluster_custom_object.call_args.kwargs
-        assert kwargs["field_selector"] is None
+            result = await find_aiperf_job(api, "x", namespace="ns")
+        assert result is None
+        mock_custom.list_cluster_custom_object.assert_not_called()
 
 
 class TestGetRawAIPerfJobStatusEdges:
@@ -403,3 +396,31 @@ class TestFindAIPerfSweep:
         ):
             await find_aiperf_sweep(api, "x", namespace="ns")
         assert exc_info.value.status == 500
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_sweep_namespaced_404_does_not_fall_back_to_cluster(
+        self,
+    ) -> None:
+        """Cross-namespace leak guard: 404 in namespaced GET must NOT trigger
+        a cluster-wide scan that would return a same-named sweep from another
+        namespace.
+        """
+        api = MagicMock(spec=ApiClient)
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=_api_exception(404)
+        )
+        # Cluster-wide list would return a same-named sweep from another ns;
+        # we must not call it.
+        mock_custom.list_cluster_custom_object = AsyncMock(
+            return_value={
+                "items": [_raw_aiperfsweep(name="x", namespace="other-ns")],
+            }
+        )
+        with patch(
+            "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            result = await find_aiperf_sweep(api, "x", namespace="ns")
+        assert result is None
+        mock_custom.list_cluster_custom_object.assert_not_called()

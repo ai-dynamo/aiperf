@@ -54,12 +54,18 @@ async def save_pod_logs(
         pod_name = pod.metadata.name if pod.metadata and pod.metadata.name else ""
         if not pod_name:
             continue
+        # Controller pods carry 5+ service containers + sidecars; default
+        # ``kubectl logs`` only emits the first container, so always pass
+        # ``--all-containers`` and ``--prefix`` to interleave per-container
+        # output prefixed by ``[pod/<container>]``.
         cmd = [
             "kubectl",
             "logs",
             "-n",
             namespace,
             pod_name,
+            "--all-containers=true",
+            "--prefix",
             *kube_args,
         ]
         result = await run_command(cmd)

@@ -209,8 +209,11 @@ class _JobSetManifestBuilder:
 
         container_ports: list[dict[str, Any]] = [
             {"containerPort": health_port, "name": "health"},
-            {"containerPort": 5663, "name": "pub-frontend"},
-            {"containerPort": 5664, "name": "sub-backend"},
+            {
+                "containerPort": ports.EVENT_BUS_PROXY_PUB_FRONTEND,
+                "name": "pub-frontend",
+            },
+            {"containerPort": ports.EVENT_BUS_PROXY_SUB_BACKEND, "name": "sub-backend"},
         ]
 
         return AIPerfContainerSpec(
