@@ -69,7 +69,6 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupPeerCommand,
     GroupPeerCommandAck,
     GroupPeerShutdown,
-    GroupTokenizerReady,
     GroupWorkerHealth,
     GroupWorkerStartupState,
     _send_group_peer_hello_with_retry,
@@ -295,11 +294,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._worker_ready_event = asyncio.Event()
         self._worker_ready_lock = asyncio.Lock()
         self._startup_state: WorkerStartupState | None = None
-        # Tokenizer bundle distribution (K8s/group-managed mode): WorkerGroupManager
-        # downloads tokenizer snapshots and publishes GroupTokenizerReady with the
-        # local on-disk paths. Workers consult these bundles instead of reaching HF.
-        self._tokenizer_bundles: dict[str, str] = {}
-        self._tokenizer_ready: asyncio.Event = asyncio.Event()
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
@@ -362,8 +356,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Handle group-local lifecycle messages from WorkerGroupManager."""
         if isinstance(message, GroupDatasetReady):
             await self._on_dataset_ready(message)
-        elif isinstance(message, GroupTokenizerReady):
-            await self._on_tokenizer_ready(message)
         elif isinstance(message, GroupDatasetStateSnapshot):
             self._latest_pod_dataset_state = message
             await self._complete_group_startup_flow(message)
@@ -461,30 +453,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             )
             await self._mark_worker_ready_locked()
-
-    async def _on_tokenizer_ready(self, msg: GroupTokenizerReady) -> None:
-        """Handle group-local tokenizer readiness from WorkerGroupManager.
-
-        On success, store the tokenizer-name -> local-snapshot-dir map and unblock
-        any waiters via ``_tokenizer_ready``. On failure, log the carried error and
-        force-exit so kubelet restarts this container alongside the WGM restart;
-        a clean ``self.stop()`` would exit 0 and leave the pod stuck mid-startup.
-        """
-        if not msg.success:
-            self.error(
-                f"WorkerGroupManager reported tokenizer download failure: "
-                f"{msg.error_message or '<no detail>'}; force-exiting "
-                f"{self.service_id}"
-            )
-            os._exit(1)
-        self._tokenizer_bundles = dict(msg.bundles)
-        self._tokenizer_ready.set()
-        self.debug(
-            lambda: (
-                f"Tokenizer bundles ready: "
-                f"{sorted(self._tokenizer_bundles)} from {msg.service_id}"
-            )
-        )
 
     async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:
         """Fetch the current group-local dataset state from WorkerGroupManager."""

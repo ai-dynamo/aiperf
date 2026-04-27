@@ -37,17 +37,14 @@ from aiperf.plugin.enums import ServiceType
 @pytest.mark.asyncio
 async def test_publish_group_tokenizer_ready_reaches_record_processor() -> None:
     """The bug that broke Qwen2.5-7B smoke after deploy: the RP sibling
-    container never received GroupTokenizerReady because the publisher
-    filtered to ServiceType.WORKER only.
+    container never received GroupTokenizerReady.
 
-    This test wires up a peer table with one WORKER peer and one
-    RECORD_PROCESSOR peer, calls _publish_group_message, and asserts
-    BOTH receive the message. Pre-fix this fails because the RP peer
-    is filtered out.
+    Workers do not tokenize — only RecordProcessor does. The publisher
+    must target ``ServiceType.RECORD_PROCESSOR`` and skip ``ServiceType.WORKER``.
     """
     from aiperf.workers import worker_pod_manager as wpm
 
-    sent_to: list[str] = []
+    sent_to: list[bytes] = []
 
     mgr = MagicMock()
     mgr._pod_peer_identities = {
@@ -74,35 +71,37 @@ async def test_publish_group_tokenizer_ready_reaches_record_processor() -> None:
 
     await wpm.WorkerGroupManagerBase._publish_group_message(mgr, msg)
 
-    # Worker peers must receive the message (existing behavior).
-    assert b"worker-0-id" in sent_to
-    assert b"worker-1-id" in sent_to
-    # RP sibling container must ALSO receive — it's the regression we hit.
+    # RP sibling container must receive — it's the actual consumer.
     assert b"rp-0-id" in sent_to, (
         "RecordProcessor peer was not sent GroupTokenizerReady; "
-        "_publish_group_message is filtering to WORKER-only and excluding RP. "
-        "RP will block forever on _tokenizer_ready.wait()."
+        "_publish_group_message is filtering it out. RP will block "
+        "forever on _tokenizer_ready.wait()."
     )
+    # Workers do NOT tokenize and must NOT receive the message.
+    assert b"worker-0-id" not in sent_to
+    assert b"worker-1-id" not in sent_to
 
 
 @pytest.mark.asyncio
 async def test_publish_group_tokenizer_ready_skips_unknown_peer_types() -> None:
     """Belt-and-suspenders: peers of an unrelated type should not get the
     tokenizer-ready broadcast. Catches accidental over-broadening of the
-    filter when fixing the WORKER-only bug above.
+    RP-only filter.
     """
     from aiperf.workers import worker_pod_manager as wpm
 
-    sent_to: list[str] = []
+    sent_to: list[bytes] = []
 
     mgr = MagicMock()
     mgr._pod_peer_identities = {
-        "worker-0": b"worker-0-id",
+        "rp-0": b"rp-0-id",
         "wgm-self": b"wgm-id",
+        "worker-0": b"worker-0-id",
     }
     mgr._pod_peer_types = {
-        "worker-0": str(ServiceType.WORKER),
+        "rp-0": str(ServiceType.RECORD_PROCESSOR),
         "wgm-self": str(ServiceType.WORKER_GROUP_MANAGER),
+        "worker-0": str(ServiceType.WORKER),
     }
 
     async def _capture(identity, message):
@@ -114,9 +113,9 @@ async def test_publish_group_tokenizer_ready_skips_unknown_peer_types() -> None:
     msg = GroupTokenizerReady(service_id="wgm-0", bundles={})
     await wpm.WorkerGroupManagerBase._publish_group_message(mgr, msg)
 
-    assert b"worker-0-id" in sent_to
-    # The WGM should not loopback to itself.
-    assert b"wgm-id" not in sent_to
+    assert sent_to == [b"rp-0-id"], (
+        f"only RECORD_PROCESSOR should receive GroupTokenizerReady; got {sent_to}"
+    )
 
 
 @pytest.mark.asyncio
