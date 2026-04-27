@@ -10,7 +10,7 @@ server. Results are extracted via ``kubectl cp`` before the Job is deleted.
 from __future__ import annotations
 
 import asyncio
-import json
+import shlex
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +36,7 @@ class BarePodConfig:
 
 
 class BarePodDeployer:
-    """Submits a raw Job, waits for completion, copies artifacts out."""
+    """Submits a raw Job, waits for the aiperf sentinel, copies artifacts out."""
 
     def __init__(
         self,
@@ -86,7 +86,19 @@ class BarePodDeployer:
         namespace: str,
         argv: list[str],
     ) -> str:
-        """Build the batch/v1.Job manifest as a YAML string."""
+        """Build the batch/v1.Job manifest as a YAML string.
+
+        The container runs aiperf, writes the exit code to a sentinel file,
+        then sleeps so ``kubectl cp`` (which uses ``kubectl exec`` under the
+        hood) can still exec into a Running container. The Job is killed
+        explicitly via ``kubectl delete job`` at the end of ``run()``.
+        """
+        wrapped_argv = " ".join(shlex.quote(a) for a in argv)
+        shell_cmd = (
+            f"aiperf {wrapped_argv}; "
+            f"echo $? > /aiperf-output/.aiperf_exit_code; "
+            f"sleep 3600"
+        )
         body = {
             "apiVersion": "batch/v1",
             "kind": "Job",
@@ -109,8 +121,8 @@ class BarePodDeployer:
                                 "name": "aiperf",
                                 "image": self.config.image,
                                 "imagePullPolicy": self.config.image_pull_policy,
-                                "command": ["aiperf"],
-                                "args": argv,
+                                "command": ["/bin/sh", "-c"],
+                                "args": [shell_cmd],
                                 "volumeMounts": [
                                     {"name": "output", "mountPath": "/aiperf-output"},
                                 ],
@@ -123,52 +135,74 @@ class BarePodDeployer:
         }
         return yaml.safe_dump(body, sort_keys=False)
 
-    async def _wait_for_terminal(self, name: str, namespace: str, timeout: int) -> str:
-        """Poll the Job until it reports Complete or Failed. Returns final phase."""
+    async def _wait_for_pod_running(
+        self, job_name: str, namespace: str, timeout: int = 120
+    ) -> str:
+        """Poll until the Job's pod exists and is Running. Return pod name."""
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            name_result = await self.kubectl.run(
+                "get",
+                "pod",
+                "-n",
+                namespace,
+                "-l",
+                f"job-name={job_name}",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+                check=False,
+            )
+            pod = name_result.stdout.strip() if name_result.returncode == 0 else ""
+            if pod:
+                phase_result = await self.kubectl.run(
+                    "get",
+                    "pod",
+                    pod,
+                    "-n",
+                    namespace,
+                    "-o",
+                    "jsonpath={.status.phase}",
+                    check=False,
+                )
+                if (
+                    phase_result.returncode == 0
+                    and phase_result.stdout.strip() == "Running"
+                ):
+                    return pod
+            await asyncio.sleep(2)
+        raise TimeoutError(
+            f"bare-pod {namespace} job {job_name}: pod did not reach Running within {timeout}s"
+        )
+
+    async def _wait_for_sentinel(self, pod: str, namespace: str, timeout: int) -> int:
+        """Poll until /aiperf-output/.aiperf_exit_code exists. Return the exit code."""
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
             result = await self.kubectl.run(
-                "get",
-                "job",
-                name,
+                "exec",
                 "-n",
                 namespace,
-                "-o",
-                "json",
+                pod,
+                "-c",
+                "aiperf",
+                "--",
+                "cat",
+                "/aiperf-output/.aiperf_exit_code",
                 check=False,
             )
             if result.returncode == 0:
-                payload = json.loads(result.stdout)
-                conditions = payload.get("status", {}).get("conditions", []) or []
-                for c in conditions:
-                    if c.get("type") == "Complete" and c.get("status") == "True":
-                        return "Complete"
-                    if c.get("type") == "Failed" and c.get("status") == "True":
-                        return "Failed"
+                try:
+                    return int(result.stdout.strip())
+                except ValueError:
+                    pass  # sentinel half-written; retry
             await asyncio.sleep(3)
         raise TimeoutError(
-            f"bare-pod job {namespace}/{name} did not reach terminal state in {timeout}s"
+            f"bare-pod {namespace}/{pod}: aiperf did not finish "
+            f"(no /aiperf-output/.aiperf_exit_code) within {timeout}s"
         )
-
-    async def _pod_for_job(self, name: str, namespace: str) -> str:
-        result = await self.kubectl.run(
-            "get",
-            "pod",
-            "-n",
-            namespace,
-            "-l",
-            f"job-name={name}",
-            "-o",
-            "jsonpath={.items[0].metadata.name}",
-            check=True,
-        )
-        pod = result.stdout.strip()
-        if not pod:
-            raise RuntimeError(f"no pod found for job {namespace}/{name}")
-        return pod
 
     async def _kubectl_cp(self, pod: str, namespace: str, dest_dir: Path) -> None:
-        """Copy /aiperf-output from the (terminal) pod to dest_dir."""
+        """Copy /aiperf-output from the (still-running) pod to dest_dir."""
         dest_dir.mkdir(parents=True, exist_ok=True)
         await self.kubectl.run(
             "cp",
@@ -199,11 +233,14 @@ class BarePodDeployer:
         await self.kubectl.apply(manifest, namespace=namespace)
 
         try:
-            phase = await self._wait_for_terminal(name, namespace, timeout)
-            pod = await self._pod_for_job(name, namespace)
+            pod = await self._wait_for_pod_running(name, namespace, timeout=120)
+            exit_code = await self._wait_for_sentinel(pod, namespace, timeout=timeout)
             await self._kubectl_cp(pod, namespace, dest_dir)
-            if phase != "Complete":
-                logger.warning(f"bare-pod job {name} terminal phase = {phase}")
+            if exit_code != 0:
+                logger.warning(
+                    f"bare-pod aiperf exited with code {exit_code} (job {name}); "
+                    f"artifacts copied for diff to surface partial state"
+                )
         finally:
             await self.kubectl.run(
                 "delete",
