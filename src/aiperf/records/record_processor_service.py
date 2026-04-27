@@ -60,7 +60,6 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
-from aiperf.records import _tokenizer_preload
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 
@@ -91,7 +90,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
         self._pending_metric_records: list[MetricRecordsData] = []
         self._ingest_batch_size = Environment.RECORD.INGEST_BATCH_SIZE
-        self.tokenizers: dict[str, Tokenizer] = {}
         # Bundle paths advertised by WGM via GroupTokenizerReady. Empty when
         # not running with a worker-group manager (local mode); the readiness
         # event is pre-set in that case so configure() doesn't block.
@@ -99,7 +97,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self._tokenizer_ready: asyncio.Event = asyncio.Event()
         if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
             self._tokenizer_ready.set()
-        self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.inference_result_parser = InferenceResultParser(
             run=self.run,
             tokenizer_bundles=self._tokenizer_bundles,
@@ -237,55 +234,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self._configure_for_profiling()
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
-        """Get the tokenizer for a given model.
+        """Return the model's tokenizer.
 
-        In K8s mode, blocks until ``GroupTokenizerReady`` arrives and then
-        loads the tokenizer from the WGM-advertised local snapshot path.
-        In local mode the readiness event is pre-set and the existing
-        name-based load path is used unchanged.
+        Single source of truth for the tokenizer in this process is
+        ``self.inference_result_parser.tokenizers``. RP delegates to the
+        parser to avoid loading the same HF tokenizer twice into RAM
+        (~10-50 MB per duplicate).
         """
-        async with self.tokenizer_lock:
-            if model not in self.tokenizers:
-                await self._tokenizer_ready.wait()
-                resolved_names = self.run.resolved.tokenizer_names
-                if resolved_names and model in resolved_names:
-                    tokenizer_name = resolved_names[model]
-                    resolve_alias = False
-                else:
-                    tokenizer_name = (
-                        self.run.cfg.tokenizer.name if self.run.cfg.tokenizer else None
-                    ) or model
-                    resolve_alias = True
-                load_target, alias_flag = self._select_load_target(
-                    tokenizer_name, resolve_alias
-                )
-                self.tokenizers[model] = await asyncio.to_thread(
-                    _tokenizer_preload.get_or_load,
-                    load_target,
-                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
-                    if self.run.cfg.tokenizer
-                    else False,
-                    revision=self.run.cfg.tokenizer.revision
-                    if self.run.cfg.tokenizer
-                    else "main",
-                    resolve_alias=alias_flag,
-                )
-            return self.tokenizers[model]
-
-    def _select_load_target(
-        self, tokenizer_name: str, resolve_alias: bool
-    ) -> tuple[str, bool]:
-        """Pick the argument to pass to ``Tokenizer.from_pretrained``.
-
-        K8s: WGM published a bundle path; use it and skip alias resolution
-        (the path is a local dir; HF aliasing doesn't apply).
-        Local: return the name unchanged with the caller's resolve_alias flag.
-        """
-        if self._tokenizer_bundles:
-            local_path = self._tokenizer_bundles.get(tokenizer_name)
-            if local_path is not None:
-                return local_path, False
-        return tokenizer_name, resolve_alias
+        return await self.inference_result_parser.get_tokenizer(model)
 
     async def _on_tokenizer_ready(self, message: GroupTokenizerReady) -> None:
         """Record bundles published by WGM and unblock waiters."""

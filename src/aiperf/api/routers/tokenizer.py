@@ -14,8 +14,6 @@ warmer is still running.
 from __future__ import annotations
 
 import asyncio
-import io
-import tarfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -28,31 +26,29 @@ from aiperf.common.environment import Environment
 _CHUNK_SIZE = 1 << 16  # 64 KiB
 
 
-def _stream_tar_zstd(snapshot_dir: Path) -> AsyncIterator[bytes]:
-    """Yield zstd-compressed tar chunks of ``snapshot_dir`` contents."""
+def _materialize_bundle(snapshot_dir: Path) -> bytes:
+    """Build the full tar+zstd payload for ``snapshot_dir`` once.
 
-    async def _iter() -> AsyncIterator[bytes]:
-        cctx = zstandard.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-        buf = io.BytesIO()
-        with (
-            cctx.stream_writer(buf, closefd=False) as zwriter,
-            tarfile.open(fileobj=zwriter, mode="w|", dereference=True) as tar,
-        ):
+    The bundles are small (tokenizer files only — single-digit MB
+    compressed), so it's cheaper to materialize once into RAM and serve
+    every subsequent worker-pod request from the cached bytes than to
+    re-walk the directory and re-tar/re-compress per request.
+    """
+    import io as _io
+    import tarfile as _tarfile
+
+    cctx = zstandard.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
+    with _io.BytesIO() as raw_tar:
+        with _tarfile.open(fileobj=raw_tar, mode="w", dereference=True) as tar:
             for entry in sorted(snapshot_dir.iterdir()):
                 tar.add(entry, arcname=entry.name)
-                while True:
-                    data = buf.getvalue()
-                    if not data:
-                        break
-                    buf.seek(0)
-                    buf.truncate(0)
-                    for i in range(0, len(data), _CHUNK_SIZE):
-                        yield data[i : i + _CHUNK_SIZE]
-        # Flush any tail bytes that landed after the last yield.
-        tail = buf.getvalue()
-        if tail:
-            for i in range(0, len(tail), _CHUNK_SIZE):
-                yield tail[i : i + _CHUNK_SIZE]
+        return cctx.compress(raw_tar.getvalue())
+
+
+def _stream_bytes(payload: bytes) -> AsyncIterator[bytes]:
+    async def _iter() -> AsyncIterator[bytes]:
+        for i in range(0, len(payload), _CHUNK_SIZE):
+            yield payload[i : i + _CHUNK_SIZE]
 
     return _iter()
 
@@ -98,12 +94,29 @@ def build_tokenizer_router() -> APIRouter:
     router = APIRouter(
         prefix="/api/tokenizer", tags=["Tokenizer"], include_in_schema=False
     )
+    # Per-name bundle cache: materialize tar+zstd once per tokenizer, serve
+    # subsequent worker-pod requests from RAM. Bounded by the number of
+    # distinct tokenizers in the run config (typically 1, never more than a
+    # handful), so no eviction policy is needed.
+    bundle_cache: dict[str, bytes] = {}
+    cache_lock = asyncio.Lock()
+
+    async def _get_bundle_bytes(name: str) -> bytes:
+        cached = bundle_cache.get(name)
+        if cached is not None:
+            return cached
+        async with cache_lock:
+            cached = bundle_cache.get(name)
+            if cached is not None:
+                return cached
+            snapshot_dir = await _resolve_snapshot_dir(name)
+            payload = await asyncio.to_thread(_materialize_bundle, snapshot_dir)
+            bundle_cache[name] = payload
+            return payload
 
     @router.get("/{name:path}/bundle")
     async def get_tokenizer_bundle(name: str) -> StreamingResponse:
-        snapshot_dir = await _resolve_snapshot_dir(name)
-        return StreamingResponse(
-            _stream_tar_zstd(snapshot_dir), media_type="application/zstd"
-        )
+        payload = await _get_bundle_bytes(name)
+        return StreamingResponse(_stream_bytes(payload), media_type="application/zstd")
 
     return router

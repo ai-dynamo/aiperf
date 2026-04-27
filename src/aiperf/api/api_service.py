@@ -151,6 +151,13 @@ class FastAPIService(DatasetMixin, BaseComponentService):
             raise ValueError(
                 "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
             )
+        # Pre-warm the shared HF cache before binding the port. Worker pods
+        # hit `/api/tokenizer/{name}/bundle` as soon as the WGM comes up;
+        # without this, they 503-retry while dataset-manager incidentally
+        # populates the cache via its own `_configure_tokenizer` load. With
+        # this, the bundle endpoint serves on the first attempt.
+        await self._prewarm_tokenizers()
+
         config = uvicorn.Config(
             self.app,
             host=self.api_host,
@@ -179,6 +186,66 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         if exc := task.exception():
             self.exception(f"FastAPI server failed: {exc!r}")
             self._stop_task = asyncio.get_running_loop().create_task(self.stop())
+
+    def _tokenizers_to_warm(self) -> list[str]:
+        """Tokenizer names the api container should pre-fetch into the shared HF cache.
+
+        Mirrors ``WorkerGroupManager._unique_tokenizer_names``: explicit
+        ``cfg.tokenizer.name`` wins; otherwise fall back to model names.
+        """
+        cfg = self.run.cfg
+        seen: dict[str, None] = {}
+        tokenizer_cfg = getattr(cfg, "tokenizer", None)
+        if tokenizer_cfg is not None and getattr(tokenizer_cfg, "name", None):
+            seen.setdefault(tokenizer_cfg.name, None)
+        else:
+            for model_name in cfg.get_model_names():
+                seen.setdefault(model_name, None)
+        return list(seen)
+
+    async def _prewarm_tokenizers(self) -> None:
+        """Populate the shared HF cache for every configured tokenizer.
+
+        Runs before uvicorn binds the port so the bundle endpoint never
+        returns 503 due to a cold cache. Failures are logged but not
+        raised: a missing tokenizer surfaces later as a 503/404 on the
+        bundle endpoint, which the WGM downloader retries.
+        """
+        from huggingface_hub import snapshot_download
+
+        names = self._tokenizers_to_warm()
+        if not names:
+            return
+        self.info(f"Pre-warming tokenizers into shared HF cache: {names}")
+        # Tokenizer-only file patterns: tokenizer*.json, vocab.{json,txt},
+        # merges.txt, special_tokens_map.json, added_tokens.json,
+        # chat_template.jinja, sentencepiece *.model, tiktoken *.tiktoken,
+        # plus *.py for trust_remote_code modules. Excludes weights.
+        allow_patterns = [
+            "*.json",
+            "*.txt",
+            "*.model",
+            "*.tiktoken",
+            "*.jinja",
+            "*.py",
+        ]
+
+        async def _warm_one(name: str) -> None:
+            try:
+                await asyncio.to_thread(
+                    snapshot_download,
+                    repo_id=name,
+                    repo_type="model",
+                    allow_patterns=allow_patterns,
+                )
+                self.info(f"Pre-warmed tokenizer '{name}'")
+            except Exception as exc:  # noqa: BLE001
+                self.warning(
+                    f"Pre-warm of tokenizer '{name}' failed ({exc!r}); "
+                    f"bundle endpoint will retry on first request"
+                )
+
+        await asyncio.gather(*(_warm_one(n) for n in names))
 
     @on_stop
     async def _stop_api_server(self) -> None:
