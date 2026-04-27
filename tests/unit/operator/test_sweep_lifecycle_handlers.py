@@ -81,10 +81,10 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
     parent_patches: list[dict] = []
     phase_calls: list[dict] = []
 
-    async def fake_patch(*, group, version, plural, name, namespace, body):
+    async def fake_patch(*, group, version, plural, name, namespace, body, api=None):
         parent_patches.append(body)
 
-    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase, api=None):
         phase_calls.append({"expect": expect_phase, "new": new_phase})
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
@@ -144,10 +144,10 @@ async def test_child_rollup_does_not_aggregate_mid_run(monkeypatch):
     parent_patches: list[dict] = []
     phase_calls: list[dict] = []
 
-    async def fake_patch(*, group, version, plural, name, namespace, body):
+    async def fake_patch(*, group, version, plural, name, namespace, body, api=None):
         parent_patches.append(body)
 
-    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase, api=None):
         phase_calls.append({"expect": expect_phase, "new": new_phase})
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
@@ -197,10 +197,10 @@ async def test_child_rollup_aggregates_when_all_runs_accounted_for(monkeypatch):
     parent_patches: list[dict] = []
     phase_calls: list[dict] = []
 
-    async def fake_patch(*, group, version, plural, name, namespace, body):
+    async def fake_patch(*, group, version, plural, name, namespace, body, api=None):
         parent_patches.append(body)
 
-    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase, api=None):
         phase_calls.append({"expect": expect_phase, "new": new_phase})
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
