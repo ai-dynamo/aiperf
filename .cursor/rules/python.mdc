@@ -109,6 +109,7 @@ The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiper
 - **Durable completion claim** — Exactly-once completion work is gated by `await try_claim_completion(...)` in `operator/client_cache.py` — a JSON-patch with a `test` op, so concurrent ticks race atomically on the apiserver. The in-process `_shutdown_sent` set is only a fast path; the CR annotation is authoritative.
 - **Cooperative cancellation** — `on_delete` calls `request_cancellation(job_key(ns, name))`; handlers poll `is_cancellation_requested(key)` at every `await` boundary and exit early. Inject the check as a `Callable[[], bool]` into helpers rather than importing the flag deep.
 - **Results-ready marker** — The controller writes `.aiperf_results_ready.json` via `write_ready_marker(base_dir)` only after all artifacts are on disk; the results sidecar refuses to serve top-level files until the marker is present (checkpoints under `checkpoints/` bypass the gate).
+- **K8s-vs-local audit suite** — `tests/kubernetes/audit/` runs each workflow case twice (operator + `aiperf kube results` download path; bare `batch/v1.Job` running `aiperf profile` directly) and diffs the artifact trees through three buckets (exact / tolerance / structural). Opt-in: `pytest -m k8s_audit tests/kubernetes/audit/ -n auto`. Spec: `docs/superpowers/specs/2026-04-26-k8s-vs-local-audit-design.md`.
 
 ## Testing Conventions
 
