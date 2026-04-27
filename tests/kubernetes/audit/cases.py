@@ -67,19 +67,23 @@ AUDIT_CASES: tuple[AuditCase, ...] = (
         case_id="baseline-chat",
         endpoint_type="chat",
         concurrency=4,
-        request_count=64,
+        # request_count chosen so each benchmark runs for several seconds at
+        # mock-server throughput (~1500 RPS). Sub-second benchmarks trip an
+        # operator-side race (CompletedBeforeMonitor → ResultsFetchFailed)
+        # that fails AIPerfJob completion before results land.
+        request_count=5000,
     ),
     AuditCase(
         case_id="baseline-completions",
         endpoint_type="completions",
         concurrency=4,
-        request_count=64,
+        request_count=5000,
     ),
     AuditCase(
         case_id="concurrency-scale",
         endpoint_type="chat",
         concurrency=16,
-        request_count=128,
+        request_count=10000,
         # Higher concurrency on operator side spreads across worker pods;
         # tail latency is structurally noisier than a single bare process.
         metric_tolerance_overrides={
