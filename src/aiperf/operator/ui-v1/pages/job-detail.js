@@ -8,6 +8,7 @@ import { ChartWrapper } from '../components/chart-wrapper.js';
 import { PhaseBar } from '../components/phase-bar.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
+import { EpochSelector } from '../components/epoch-selector.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
@@ -1411,7 +1412,7 @@ function PerRecordAnalysis({ records }) {
   `;
 }
 
-export function JobDetail({ namespace, name }) {
+export function JobDetail({ namespace, name, epoch }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState(null);
   const [files, setFiles] = useState([]);
@@ -1420,6 +1421,7 @@ export function JobDetail({ namespace, name }) {
   const [fileViewer, setFileViewer] = useState(null); // { filename, url }
   const [jsonlRecords, setJsonlRecords] = useState(null);
   const [jobConfig, setJobConfig] = useState(null);
+  const [epochs, setEpochs] = useState([]);
 
   const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 
@@ -1431,6 +1433,19 @@ export function JobDetail({ namespace, name }) {
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getJobEpochs(namespace, name)
+      .then(d => { if (!cancelled) setEpochs(d.epochs ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [namespace, name]);
+
+  function pickEpoch(next) {
+    if (next === undefined) navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+    else navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(next)}`);
+  }
 
   // Rolling throughput chart data - kept in a ref so we don't trigger re-renders for
   // each append; we rebuild the data object for ChartWrapper on each render.
@@ -1446,7 +1461,7 @@ export function JobDetail({ namespace, name }) {
 
     poll(
       async () => {
-        const data = await api.getJob(namespace, name);
+        const data = await api.getJob(namespace, name, epoch);
         setJob(data);
         setError(null);
 
@@ -1528,7 +1543,7 @@ export function JobDetail({ namespace, name }) {
       .catch(() => {});
 
     return () => ac.abort();
-  }, [namespace, name]);
+  }, [namespace, name, epoch]);
 
   function humanSize(bytes) {
     return fmtBytes(bytes);
@@ -1722,6 +1737,7 @@ export function JobDetail({ namespace, name }) {
                   ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
                   : null
               }
+              <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1)">
               ${namespace} · ${model}
@@ -1811,12 +1827,21 @@ export function JobDetail({ namespace, name }) {
             </div>
           `}
 
-          ${pods.length > 0 && html`
-            <div class="card" data-testid="job-detail-pods">
-              <div class="card-title">Pods</div>
-              <${PodsBar} pods=${pods} />
-            </div>
-          `}
+          ${epoch === undefined
+            ? (pods.length > 0 && html`
+              <div class="card" data-testid="job-detail-pods">
+                <div class="card-title">Pods</div>
+                <${PodsBar} pods=${pods} />
+              </div>
+            `)
+            : html`
+              <div class="card" data-testid="job-detail-archived-note">
+                <div class="text-dim" style="font-style: italic; font-size: var(--font-size-sm)">
+                  Pods and events are not retained for archived epochs.
+                </div>
+              </div>
+            `
+          }
         </div>
 
         <!-- Right: Charts -->
