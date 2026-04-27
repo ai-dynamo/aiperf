@@ -47,11 +47,14 @@ __all__ = [
     "job_dir",
     "list_run_epochs",
     "list_runs",
+    "list_sweep_epochs",
     "resolve_latest",
     "resolve_run_dir",
     "resolve_sweep_dir",
+    "resolve_sweep_latest",
     "run_dir",
     "write_latest",
+    "write_sweep_latest",
 ]
 
 
@@ -184,23 +187,112 @@ def resolve_run_dir(
     return candidate
 
 
-def resolve_sweep_dir(base: Path, namespace: str, name: str) -> Path | None:
-    """Return the persisted sweep directory ``<base>/<ns>/sweeps/<name>``, or None.
+def resolve_sweep_dir(
+    base: Path, namespace: str, name: str, *, epoch: str | None = None
+) -> Path | None:
+    """Return ``<base>/<ns>/sweeps/<name>/<epoch>/`` or fall through to ``latest.txt``.
 
-    The directory is the durable parent manifest location for AIPerfSweep CRs:
-    sweep-controllers write ``aggregate.json`` + ``conditions.json`` here at
-    terminal phase. The dual-backed sweep API uses this to render archived
-    sweeps after the parent CR has been TTL-reaped.
+    Mirrors :func:`resolve_run_dir` for sweeps. When ``epoch`` is omitted, the
+    sweep's ``latest.txt`` pointer is consulted; if that file is absent or
+    points at a non-existent epoch dir, ``None`` is returned. The ``epoch``
+    string must match :data:`EPOCH_RE` — out-of-shape values yield ``None``
+    rather than raising, matching the dual-backed sweep API's tolerant
+    "no results yet" semantics.
 
     Example
     -------
-    >>> resolve_sweep_dir(Path("/data"), "bench", "saturation-sweep")
-    PosixPath('/data/bench/sweeps/saturation-sweep')
+    >>> resolve_sweep_dir(Path("/data"), "bench", "satsweep", epoch="1714069323")
+    PosixPath('/data/bench/sweeps/satsweep/1714069323')
     """
-    candidate = base / namespace / "sweeps" / name
-    if not candidate.is_dir():
+    sweep_root = base / namespace / "sweeps" / name
+    if not sweep_root.is_dir():
         return None
-    return candidate
+    if epoch is None:
+        epoch = resolve_sweep_latest(base, namespace, name)
+        if epoch is None:
+            return None
+    if not EPOCH_RE.match(epoch):
+        return None
+    candidate = sweep_root / epoch
+    return candidate if candidate.is_dir() else None
+
+
+def write_sweep_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
+    """Persist ``<base>/<ns>/sweeps/<name>/latest.txt`` with the given epoch.
+
+    Creates the sweep root if absent. Mirrors :func:`write_latest` for the
+    sweep side; sweep-controllers call this at the end of each aggregate
+    write so subsequent reads default to the freshest epoch.
+
+    Example
+    -------
+    >>> write_sweep_latest(Path("/data"), "bench", "satsweep", "1714069323")
+    """
+    sweep_root = base / namespace / "sweeps" / name
+    sweep_root.mkdir(parents=True, exist_ok=True)
+    (sweep_root / LATEST_POINTER).write_text(epoch)
+
+
+def resolve_sweep_latest(base: Path, namespace: str, name: str) -> str | None:
+    """Read ``<base>/<ns>/sweeps/<name>/latest.txt`` or return ``None``.
+
+    Returns ``None`` when the pointer file is absent or its contents do not
+    match :data:`EPOCH_RE` — corrupt pointer files are treated as "no
+    latest known" rather than propagated as garbage.
+
+    Example
+    -------
+    >>> resolve_sweep_latest(Path("/data"), "bench", "satsweep")
+    '1714069323'
+    """
+    pointer = base / namespace / "sweeps" / name / LATEST_POINTER
+    if not pointer.is_file():
+        return None
+    epoch = pointer.read_text().strip()
+    return epoch if EPOCH_RE.match(epoch) else None
+
+
+def list_sweep_epochs(base: Path, namespace: str, name: str) -> list[RunEntry]:
+    """List sweep epochs under ``<base>/<ns>/sweeps/<name>/``, ascending by epoch.
+
+    Each entry carries its own ``is_latest`` flag, determined against
+    ``latest.txt``. ``file_count`` is the count of immediate children under
+    the epoch dir (children.json + aggregate.json + conditions.json + ...);
+    ``total_size_bytes`` sums regular-file sizes for symmetry with
+    :func:`list_runs`. Directories whose stat fails (permission, race) are
+    silently skipped — no partial entry leaks back to the caller.
+
+    Example
+    -------
+    >>> list_sweep_epochs(Path("/data"), "bench", "satsweep")
+    [RunEntry(epoch='1714069323', mtime_epoch=1714069324, file_count=3,
+              total_size_bytes=8421, is_latest=True)]
+    """
+    sweep_root = base / namespace / "sweeps" / name
+    if not sweep_root.is_dir():
+        return []
+    latest = resolve_sweep_latest(base, namespace, name)
+    out: list[RunEntry] = []
+    for p in sweep_root.iterdir():
+        if not p.is_dir() or not EPOCH_RE.match(p.name):
+            continue
+        try:
+            mtime = int(p.stat().st_mtime)
+            children = list(p.iterdir())
+            file_count = len(children)
+            total_size_bytes = sum(c.stat().st_size for c in children if c.is_file())
+        except OSError:
+            continue
+        out.append(
+            RunEntry(
+                epoch=p.name,
+                mtime_epoch=mtime,
+                file_count=file_count,
+                total_size_bytes=total_size_bytes,
+                is_latest=(p.name == latest),
+            )
+        )
+    return sorted(out, key=lambda e: e.epoch)
 
 
 def list_run_epochs(base: Path, namespace: str, name: str) -> list[str]:

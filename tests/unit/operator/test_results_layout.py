@@ -20,11 +20,14 @@ from aiperf.operator.results_layout import (
     epoch_key_from_body,
     job_dir,
     list_run_epochs,
+    list_sweep_epochs,
     resolve_latest,
     resolve_run_dir,
     resolve_sweep_dir,
+    resolve_sweep_latest,
     run_dir,
     write_latest,
+    write_sweep_latest,
 )
 
 EPOCH_A = "1714064523"
@@ -264,10 +267,11 @@ def test_enforce_retention_dry_run_matches_live_candidates(
 
 def test_resolve_sweep_dir_returns_path_when_present(tmp_path: Path) -> None:
     base = tmp_path
-    sweep_dir = base / "bench" / "sweeps" / "saturation-sweep"
-    sweep_dir.mkdir(parents=True)
-    (sweep_dir / "aggregate.json").write_text("{}")
-    assert resolve_sweep_dir(base, "bench", "saturation-sweep") == sweep_dir
+    epoch_dir = base / "bench" / "sweeps" / "saturation-sweep" / "1714069323"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_text("{}")
+    write_sweep_latest(base, "bench", "saturation-sweep", "1714069323")
+    assert resolve_sweep_dir(base, "bench", "saturation-sweep") == epoch_dir
 
 
 def test_resolve_sweep_dir_returns_none_when_missing(tmp_path: Path) -> None:
@@ -279,3 +283,36 @@ def test_resolve_sweep_dir_returns_none_when_not_a_directory(tmp_path: Path) -> 
     (base / "bench" / "sweeps").mkdir(parents=True)
     (base / "bench" / "sweeps" / "saturation-sweep").write_text("not a dir")
     assert resolve_sweep_dir(base, "bench", "saturation-sweep") is None
+
+
+def test_resolve_sweep_dir_with_epoch(tmp_path: Path) -> None:
+    p = tmp_path / "bench" / "sweeps" / "s1" / "1714069323"
+    p.mkdir(parents=True)
+    assert resolve_sweep_dir(tmp_path, "bench", "s1", epoch="1714069323") == p
+
+
+def test_resolve_sweep_dir_with_epoch_missing_returns_none(tmp_path: Path) -> None:
+    assert resolve_sweep_dir(tmp_path, "bench", "s1", epoch="9999999999") is None
+
+
+def test_resolve_sweep_dir_no_epoch_resolves_via_latest(tmp_path: Path) -> None:
+    p = tmp_path / "bench" / "sweeps" / "s1" / "1714069323"
+    p.mkdir(parents=True)
+    write_sweep_latest(tmp_path, "bench", "s1", "1714069323")
+    assert resolve_sweep_dir(tmp_path, "bench", "s1") == p
+
+
+def test_list_sweep_epochs_orders_by_epoch_asc(tmp_path: Path) -> None:
+    base = tmp_path / "bench" / "sweeps" / "s1"
+    (base / "1714069323").mkdir(parents=True)
+    (base / "1714069324" / "aggregate.json").parent.mkdir(parents=True)
+    (base / "1714069324" / "aggregate.json").write_text("{}")
+    write_sweep_latest(tmp_path, "bench", "s1", "1714069324")
+    epochs = list_sweep_epochs(tmp_path, "bench", "s1")
+    assert [e.epoch for e in epochs] == ["1714069323", "1714069324"]
+    assert epochs[-1].is_latest is True
+    assert epochs[0].is_latest is False
+
+
+def test_resolve_sweep_latest_returns_none_when_unset(tmp_path: Path) -> None:
+    assert resolve_sweep_latest(tmp_path, "bench", "s1") is None
