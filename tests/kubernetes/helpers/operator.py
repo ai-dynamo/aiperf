@@ -122,6 +122,11 @@ class AIPerfJobConfig:
     ``request_count``.
     """
 
+    random_seed: int | None = None
+    """Global random seed for dataset/sampling determinism. Maps to
+    ``BenchmarkConfig.random_seed`` so the operator-side run produces the same
+    seeded prompts as a ``--random-seed`` bare invocation."""
+
     def to_flat_spec(self) -> dict[str, Any]:
         """Generate flat CRD spec (config v3 format, no userConfig wrapper).
 
@@ -181,6 +186,11 @@ class AIPerfJobConfig:
             "phases": phases,
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
+            **(
+                {"random_seed": self.random_seed}
+                if self.random_seed is not None
+                else {}
+            ),
         }
 
     def to_cr_manifest(self, name: str, namespace: str) -> str:

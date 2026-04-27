@@ -275,7 +275,14 @@ def _csv_header(path: Path) -> list[str] | None:
 
 
 def _json_keyset_depth2(path: Path) -> set[str] | None:
-    """Top-level + depth-1 keys, joined with '.'. Returns None on read failure."""
+    """Top-level + depth-1 keys, joined with '.'. Returns None on read failure.
+
+    ``input_config.*`` is intentionally excluded: that subtree carries
+    config-construction metadata (``runtime.api_port``, ``logging.level``,
+    ``metrics``, ``variables``) that legitimately differs between the bare
+    CLI path and the operator's spec_converter path. The audit's invariant
+    is metric-schema parity, not config-wrapper parity.
+    """
     if not path.exists():
         return None
     try:
@@ -284,8 +291,10 @@ def _json_keyset_depth2(path: Path) -> set[str] | None:
         return None
     if not isinstance(payload, dict):
         return set()
-    keys: set[str] = set(payload.keys())
+    keys: set[str] = {k for k in payload if k != "input_config"}
     for k, v in payload.items():
+        if k == "input_config":
+            continue
         if isinstance(v, dict):
             keys.update(f"{k}.{kk}" for kk in v)
     return keys

@@ -66,6 +66,7 @@ class OperatorAuditRunner:
             tokenizer_name=self.config.tokenizer_name,
             image=self.config.image,
             image_pull_policy=self.config.image_pull_policy,
+            random_seed=case.seed,
         )
 
     async def _download_results(
