@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Data models and retry constants for the operator progress client.
+"""Data models for the operator progress client.
 
 Split out of ``progress_client.py`` to keep that module focused on the HTTP
-client. External code continues to import these names from
-``aiperf.operator.progress_client`` (which re-exports them).
+client. Retry tunables (max retries, backoff, multiplier) live on
+``OperatorEnvironment.PROGRESS`` in :mod:`aiperf.operator.environment`; only
+``RETRYABLE_STATUS_CODES`` (a fixed HTTP-status set, not a tunable) stays here.
 """
 
 from pydantic import Field
@@ -13,11 +14,8 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import AIPerfBaseModel
 
-# Retry configuration for transient failures
-MAX_RETRIES = 3
-INITIAL_BACKOFF_SEC = 0.5
-BACKOFF_MULTIPLIER = 2.0
-# HTTP status codes that are retryable (transient failures)
+# HTTP status codes that are retryable (transient failures). Not a tunable —
+# these are the canonical RFC-7231/7232 transient codes; do not promote to env.
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
 

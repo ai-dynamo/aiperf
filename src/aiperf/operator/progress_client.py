@@ -22,6 +22,7 @@ from aiperf.common.enums import CreditPhase, WorkerStartupState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import WorkerStats
 from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.k8s_helpers import retry_with_backoff
 from aiperf.operator.progress_download import (
     make_decompressor,
@@ -30,9 +31,6 @@ from aiperf.operator.progress_download import (
     save_zstd_passthrough,
 )
 from aiperf.operator.progress_models import (
-    BACKOFF_MULTIPLIER,
-    INITIAL_BACKOFF_SEC,
-    MAX_RETRIES,
     RETRYABLE_STATUS_CODES,
     ControllerAggregateWorkerStatus,
     JobProgress,
@@ -40,9 +38,6 @@ from aiperf.operator.progress_models import (
 from aiperf.transports.aiohttp_client import create_tcp_connector
 
 __all__ = [
-    "BACKOFF_MULTIPLIER",
-    "INITIAL_BACKOFF_SEC",
-    "MAX_RETRIES",
     "RETRYABLE_STATUS_CODES",
     "ControllerAggregateWorkerStatus",
     "JobProgress",
@@ -93,8 +88,8 @@ class ProgressClient:
     def __init__(
         self,
         port: int | None = None,
-        max_retries: int = MAX_RETRIES,
-        initial_backoff: float = INITIAL_BACKOFF_SEC,
+        max_retries: int | None = None,
+        initial_backoff: float | None = None,
     ) -> None:
         """Initialize the progress client.
 
@@ -102,12 +97,22 @@ class ProgressClient:
             port: The HTTP port on the controller pod. Defaults to
                   K8sEnvironment.PORTS.API_SERVICE (where progress endpoint is served).
             max_retries: Maximum number of retry attempts for transient failures.
-            initial_backoff: Initial backoff duration in seconds.
+                Defaults to ``OperatorEnvironment.PROGRESS.MAX_RETRIES``.
+            initial_backoff: Initial backoff duration in seconds. Defaults to
+                ``OperatorEnvironment.PROGRESS.INITIAL_BACKOFF_SEC``.
         """
         self._port = port or K8sEnvironment.PORTS.API_SERVICE
         self._session: aiohttp.ClientSession | None = None
-        self._max_retries = max_retries
-        self._initial_backoff = initial_backoff
+        self._max_retries = (
+            max_retries
+            if max_retries is not None
+            else OperatorEnvironment.PROGRESS.MAX_RETRIES
+        )
+        self._initial_backoff = (
+            initial_backoff
+            if initial_backoff is not None
+            else OperatorEnvironment.PROGRESS.INITIAL_BACKOFF_SEC
+        )
 
     def _base_url(self, controller_host: str) -> str:
         """Return the base URL (scheme+host+port) for controller HTTP calls.
@@ -182,7 +187,7 @@ class ProgressClient:
                 _do_request,
                 max_retries=self._max_retries,
                 initial_delay=self._initial_backoff,
-                backoff_multiplier=BACKOFF_MULTIPLIER,
+                backoff_multiplier=OperatorEnvironment.PROGRESS.BACKOFF_MULTIPLIER,
                 description=f"GET {url}",
             )
         except aiohttp.ClientResponseError as e:

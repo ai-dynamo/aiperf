@@ -93,6 +93,36 @@ class _ResultsSettings(BaseSettings):
     )
 
 
+class _ProgressSettings(BaseSettings):
+    """Operator progress-client retry settings.
+
+    Used by ``aiperf.operator.progress_client.ProgressClient`` when polling the
+    controller pod's HTTP progress API. Retries apply to transient failures
+    (connection errors, retryable HTTP statuses); other errors propagate.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_OPERATOR_PROGRESS_")
+
+    MAX_RETRIES: int = Field(
+        default=3,
+        ge=0,
+        le=20,
+        description="Max retry attempts on transient progress-API failures.",
+    )
+    INITIAL_BACKOFF_SEC: float = Field(
+        default=0.5,
+        gt=0,
+        le=60,
+        description="Initial backoff (seconds) between progress-API retries.",
+    )
+    BACKOFF_MULTIPLIER: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Multiplicative backoff factor between progress-API retries.",
+    )
+
+
 class _OperatorEnvironment(BaseSettings):
     """Root operator environment configuration.
 
@@ -150,6 +180,10 @@ class _OperatorEnvironment(BaseSettings):
     RESULTS: _ResultsSettings = Field(
         default_factory=_ResultsSettings,
         description="Results fetching and storage settings",
+    )
+    PROGRESS: _ProgressSettings = Field(
+        default_factory=_ProgressSettings,
+        description="Progress-client retry settings (controller HTTP polling).",
     )
 
 
