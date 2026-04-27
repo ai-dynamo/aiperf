@@ -409,9 +409,11 @@ class OperatorDeployer:
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
-        """Install the AIPerfJob CRD by rendering it from the Helm chart."""
+        """Install the AIPerfJob and AIPerfSweep CRDs by rendering them from the Helm chart."""
         chart_path = self.project_root / "deploy" / "helm" / "aiperf-operator"
-        logger.info(f"Installing CRD from chart {chart_path}")
+        logger.info(
+            f"Installing AIPerfJob and AIPerfSweep CRDs from chart {chart_path}"
+        )
 
         result = subprocess.run(
             [
@@ -421,6 +423,8 @@ class OperatorDeployer:
                 str(chart_path),
                 "--show-only",
                 "templates/crd.yaml",
+                "--show-only",
+                "templates/crd-aiperfsweep.yaml",
             ],
             capture_output=True,
             text=True,
