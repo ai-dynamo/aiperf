@@ -327,6 +327,13 @@ class WorkerGroupManagerBase(BaseComponentService):
             return
         dest_root = self._tokenizer_dest_root()
         dest_root.mkdir(parents=True, exist_ok=True)
+        # Tokenizer downloads kick off at WGM startup before the controller
+        # pod's api container has finished booting and warming the shared HF
+        # cache. Use a generous retry budget so the natural api-startup
+        # window doesn't fail the pull. Dataset downloads happen later (after
+        # the dataset-configured notification) so they keep the smaller
+        # default.
+        tokenizer_max_retries = max(20, Environment.DATASET.DOWNLOAD_MAX_RETRIES)
         try:
             results = await asyncio.gather(
                 *(
@@ -334,7 +341,7 @@ class WorkerGroupManagerBase(BaseComponentService):
                         api_base_url=api_base,
                         name=name,
                         dest_root=dest_root,
-                        max_retries=Environment.DATASET.DOWNLOAD_MAX_RETRIES,
+                        max_retries=tokenizer_max_retries,
                         logger=self,
                     )
                     for name in names
