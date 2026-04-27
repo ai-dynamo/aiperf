@@ -166,6 +166,8 @@ On failure, the test prints the markdown to stdout and attaches both raw artifac
 
 ## Workflow cases (tight: 5)
 
+The five cases below are the full target. The first three audit features that are fully wired in `tests/kubernetes/helpers/` today and ship in the initial implementation. The last two depend on operator-helper extensions (`AIPerfJobConfig.epochs`, an `AIPerfSweep` runner equivalent to `OperatorDeployer.run_job`) that do not exist yet; they are documented here as the target shape and added to `AUDIT_CASES` once the helpers land. No harness changes are required to add them — only `cases.py`.
+
 1. **`baseline-chat`** — `--endpoint-type chat`, `--concurrency 4`, `--num-conversations 32`, default request shape. Exercises the most common path; minimum baseline.
 2. **`baseline-completions`** — same as above with `--endpoint-type completions`. Catches per-endpoint exporter divergence.
 3. **`concurrency-scale`** — `--endpoint-type chat`, `--concurrency 16`, `--num-conversations 64`. Operator side exercises multi-worker credit distribution; bare side runs the same load from a single process. Tolerance bands stay loose on tails because the bare process is single-CPU-bound vs. multi-pod parallel.
