@@ -313,17 +313,24 @@ class ProgressClient:
             if data is None:
                 return None
 
+            # /api/workers returns WorkersResponse: {worker_groups: {group_id:
+            # WorkerGroupStats}}. Each WorkerGroupStats carries a `workers`
+            # map of {worker_id: WorkerStats}. Flatten across groups so callers
+            # get the per-worker view they expect.
             states: dict[str, WorkerStartupState] = {}
-            for worker_id, worker_data in data.get("workers", {}).items():
-                try:
-                    worker = WorkerStats(**worker_data)
-                except (TypeError, ValueError) as e:
-                    logger.warning(
-                        f"Skipping malformed worker payload for {worker_id}: {e}"
-                    )
-                    continue
-                if worker.startup_state is not None:
-                    states[worker_id] = worker.startup_state
+            for group_id, group_data in data.get("worker_groups", {}).items():
+                workers_map = (group_data or {}).get("workers", {})
+                for worker_id, worker_data in workers_map.items():
+                    try:
+                        worker = WorkerStats(**worker_data)
+                    except (TypeError, ValueError) as e:
+                        logger.warning(
+                            f"Skipping malformed worker payload for "
+                            f"{group_id}/{worker_id}: {e}"
+                        )
+                        continue
+                    if worker.startup_state is not None:
+                        states[worker_id] = worker.startup_state
             return states
         except aiohttp.ClientError as e:
             logger.warning(f"Failed to fetch worker startup states from {url}: {e}")
@@ -332,7 +339,7 @@ class ProgressClient:
     async def check_health(self, controller_host: str) -> bool:
         """Check if the controller pod is healthy.
 
-        Probes the ``/health`` endpoint served on the API service port.
+        Probes the ``/healthz`` endpoint served on the API service port.
         Does not retry — used for fast liveness polling.
 
         Args:
@@ -357,8 +364,8 @@ class ProgressClient:
                 "wrap in 'async with ProgressClient(...) as pc:'"
             )
 
-        # API service exposes /health endpoint on the API_SERVICE port
-        url = f"{self._base_url(controller_host)}/health"
+        # API service exposes /healthz endpoint on the API_SERVICE port
+        url = f"{self._base_url(controller_host)}/healthz"
 
         try:
             async with self._session.get(url) as response:

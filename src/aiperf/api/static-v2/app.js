@@ -12,10 +12,10 @@
 import { html, render } from 'htm/preact';
 import { useEffect } from 'preact/hooks';
 
-import { connection, config, log } from './lib/state.js';
+import { connection, config, log, serverMetrics } from './lib/state.js';
 import { api } from './lib/api.js';
 import { connectWebSocket, currentEpoch, teardownWebSocket } from './lib/ws.js';
-import { bootstrapProgress } from './lib/ws-dispatch.js';
+import { bootstrapProgress, normalizeEndpointSummaries } from './lib/ws-dispatch.js';
 
 import { ConfigBar } from './components/config-bar.js';
 import { StatusBar } from './components/status-bar.js';
@@ -49,7 +49,12 @@ function Dashboard() {
         await Promise.all([
           safe((s) => api.getConfig(s),       (d) => { if (d) config.value = d; }),
           safe((s) => api.getProgress(s),     (d) => { if (d) bootstrapProgress(d); }),
-          safe((s) => api.getServerMetrics(s), () => { /* WS drives this; HTTP is a warm start */ }),
+          safe((s) => api.getServerMetrics(s), (d) => {
+            // Warm-start before the first WS push lands. WS still drives updates.
+            if (d?.endpoint_summaries) {
+              serverMetrics.value = normalizeEndpointSummaries(d.endpoint_summaries);
+            }
+          }),
         ]);
       },
     });

@@ -36,6 +36,25 @@ function applyRecords(patch) {
   records.value = { ...records.value, ...patch };
 }
 
+/** Normalize the wire-format ``endpoint_summaries`` (a dict keyed by endpoint
+ *  name, each value carrying ``metrics: dict[name, {type, unit, series:[{stats}]}]``)
+ *  into the array shape the v2 ``<ServerMetrics>`` component consumes:
+ *  ``[{endpoint, metrics: [{name, value, unit}, ...]}, ...]``. The component
+ *  shows one representative value per metric — first series, ``stats.avg``
+ *  (or the only stats field that's set, e.g. ``rate`` for counters). */
+export function normalizeEndpointSummaries(summaries) {
+  if (!summaries || typeof summaries !== 'object') return [];
+  return Object.entries(summaries).map(([endpoint, body]) => {
+    const metricsDict = body?.metrics ?? {};
+    const metrics = Object.entries(metricsDict).map(([name, m]) => {
+      const stats = m?.series?.[0]?.stats ?? {};
+      const value = stats.avg ?? stats.rate ?? stats.value ?? null;
+      return { name, value, unit: m?.unit ?? null };
+    });
+    return { endpoint, metrics };
+  });
+}
+
 function shortGroupId(id) {
   if (!id) return '';
   const parts = id.split('-');
@@ -166,9 +185,7 @@ export function handleWsMessage(msg) {
       return;
 
     case 'realtime_server_metrics':
-      if (Array.isArray(msg.endpoint_summaries)) {
-        serverMetrics.value = msg.endpoint_summaries;
-      }
+      serverMetrics.value = normalizeEndpointSummaries(msg.endpoint_summaries);
       return;
 
     case 'realtime_metrics':

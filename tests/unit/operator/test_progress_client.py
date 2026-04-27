@@ -263,21 +263,50 @@ class TestProgressClientGetWorkerStartupStates:
 
     @pytest.mark.asyncio
     async def test_get_worker_startup_states_success(self) -> None:
-        """Test worker startup states are parsed from /api/workers."""
+        """Test worker startup states are parsed from /api/workers.
+
+        Uses the real ``WorkersResponse`` model (worker_groups: dict[group_id,
+        WorkerGroupStats]) so future schema drift trips this test.
+        """
+        import orjson
+
+        from aiperf.api.models.responses import WorkersResponse
+        from aiperf.common.models import WorkerGroupStats, WorkerStats
+
+        response_model = WorkersResponse(
+            worker_groups={
+                "group-a": WorkerGroupStats(
+                    group_id="group-a",
+                    workers={
+                        "worker-1": WorkerStats(
+                            worker_id="worker-1",
+                            startup_state=WorkerStartupState.READY,
+                        ),
+                        "worker-2": WorkerStats(
+                            worker_id="worker-2",
+                            startup_state=WorkerStartupState.WAITING_FOR_DATASET,
+                        ),
+                    },
+                ),
+                "group-b": WorkerGroupStats(
+                    group_id="group-b",
+                    workers={
+                        "worker-3": WorkerStats(
+                            worker_id="worker-3",
+                            startup_state=WorkerStartupState.READY,
+                        ),
+                    },
+                ),
+            }
+        )
+        # Round-trip through orjson so the test mock matches the on-the-wire
+        # JSON shape produced by FastAPI exactly.
+        wire_payload = orjson.loads(response_model.model_dump_json())
+
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = AsyncMock()
             mock_response.raise_for_status = MagicMock()
-            mock_response.json = AsyncMock(
-                return_value={
-                    "workers": {
-                        "worker-1": {"worker_id": "worker-1", "startup_state": "ready"},
-                        "worker-2": {
-                            "worker_id": "worker-2",
-                            "startup_state": "waiting_for_dataset",
-                        },
-                    }
-                }
-            )
+            mock_response.json = AsyncMock(return_value=wire_payload)
 
             mock_session = AsyncMock()
             mock_session.get = MagicMock(
@@ -293,9 +322,78 @@ class TestProgressClientGetWorkerStartupStates:
             assert states == {
                 "worker-1": WorkerStartupState.READY,
                 "worker-2": WorkerStartupState.WAITING_FOR_DATASET,
+                "worker-3": WorkerStartupState.READY,
             }
             url = mock_session.get.call_args[0][0]
             assert url == "http://controller.default:9090/api/workers"
+
+    @pytest.mark.asyncio
+    async def test_get_worker_startup_states_empty_response(self) -> None:
+        """Test empty worker_groups payload yields empty dict (not None)."""
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = AsyncMock(return_value={"worker_groups": {}})
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(
+                return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+            )
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_class.return_value = mock_session
+
+            client = ProgressClient()
+            async with client:
+                states = await client.get_worker_startup_states("controller.default")
+
+            assert states == {}
+
+    @pytest.mark.asyncio
+    async def test_get_worker_startup_states_skips_workers_without_startup_state(
+        self,
+    ) -> None:
+        """Test workers with no startup_state are excluded from the result."""
+        import orjson
+
+        from aiperf.api.models.responses import WorkersResponse
+        from aiperf.common.models import WorkerGroupStats, WorkerStats
+
+        response_model = WorkersResponse(
+            worker_groups={
+                "group-a": WorkerGroupStats(
+                    group_id="group-a",
+                    workers={
+                        "worker-1": WorkerStats(
+                            worker_id="worker-1",
+                            startup_state=WorkerStartupState.READY,
+                        ),
+                        "worker-2": WorkerStats(
+                            worker_id="worker-2",
+                            startup_state=None,  # not yet reported
+                        ),
+                    },
+                )
+            }
+        )
+        wire_payload = orjson.loads(response_model.model_dump_json())
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = AsyncMock(return_value=wire_payload)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(
+                return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
+            )
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_class.return_value = mock_session
+
+            client = ProgressClient()
+            async with client:
+                states = await client.get_worker_startup_states("controller.default")
+
+            assert states == {"worker-1": WorkerStartupState.READY}
 
 
 class TestProgressClientParseResponse:
@@ -474,8 +572,13 @@ class TestProgressClientCheckHealth:
             assert is_healthy is False
 
     @pytest.mark.asyncio
-    async def test_check_health_uses_health_endpoint(self) -> None:
-        """Test check_health uses /health endpoint (API service endpoint)."""
+    async def test_check_health_uses_healthz_endpoint(self) -> None:
+        """Test check_health uses /healthz endpoint (the only path the API server registers).
+
+        The FastAPI app only registers ``/healthz`` (see
+        :mod:`aiperf.api.routers.core`); ``/health`` would 404 and break
+        liveness probing.
+        """
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -493,8 +596,8 @@ class TestProgressClientCheckHealth:
 
             call_args = mock_session.get.call_args
             url = call_args[0][0]
-            assert "/health" in url
-            assert url.endswith("/health")  # Should be /health not /healthz
+            assert url.endswith("/healthz")
+            assert url == "http://my-controller:9090/healthz"
 
 
 class TestProgressClientGetMetrics:
