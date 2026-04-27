@@ -4,23 +4,16 @@
 
 Submits an ``AIPerfSweep`` CR (no test-helper exists for sweep CRs, so the
 manifest is built inline), waits for the parent's ``status.phase`` to reach a
-terminal state, lists the owned child ``AIPerfJob`` CRs by the
-``aiperf.nvidia.com/sweep=<name>`` label, then downloads each child's results
-into a per-cell subdirectory ``v<varidx>-t<trialidx>/`` via
-``aiperf kube results <child_name> --all``.
+terminal state, then shells ``aiperf kube results <sweep-name> --all`` to
+download every child via R2's CLI fan-out path. Reads the resulting
+``sweep_manifest.json`` (camelCase schema; see
+``aiperf.kubernetes.results._fetch_children_manifest``) to enumerate the
+``SweepCell`` list returned to the test.
 
-Notes on the parent download path
----------------------------------
-The plan originally called for ``aiperf kube results <sweep-name>`` to fetch
-the parent's ``children.json`` first. That CLI's ``resolve_job`` only looks
-up ``AIPerfJob`` CRs (and falls back to JobSet), so it cannot resolve a
-sweep-parent name. We instead enumerate children directly from the cluster:
-the sweep-controller stamps ``aiperf.nvidia.com/variation-index`` and
-``aiperf.nvidia.com/trial-index`` labels on every child AIPerfJob (see
-``src/aiperf/sweep_controller/k8s_executor.py``), so we get the
-``(variation_index, trial_index, child_name)`` mapping straight from the
-child CR list. The authoritative ``children.json`` on the operator PVC is
-preserved for post-mortem use; the audit just doesn't need it.
+Exercising the user-facing CLI is the whole point of the audit — until R2,
+``aiperf kube results <sweep-name>`` errored on AIPerfSweep CRs, so the audit
+had to bypass it via ``kubectl get aiperfjob -l aiperf.nvidia.com/sweep=...``.
+R2 made the CLI sweep-aware, so we use it here.
 """
 
 from __future__ import annotations
@@ -48,11 +41,6 @@ logger = AIPerfLogger(__name__)
 _TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
 _SUCCESS_PHASES = frozenset({"Succeeded"})
 
-# Labels stamped on child AIPerfJob CRs by the sweep-controller.
-_SWEEP_LABEL = "aiperf.nvidia.com/sweep"
-_VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
-_TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
-
 
 @dataclass(frozen=True)
 class SweepCell:
@@ -72,7 +60,7 @@ class SweepCell:
 
 
 class SweepAuditRunner:
-    """Submits an AIPerfSweep, waits for terminal phase, downloads each child."""
+    """Submits an AIPerfSweep, waits for terminal phase, downloads via the CLI."""
 
     def __init__(
         self,
@@ -182,78 +170,21 @@ class SweepAuditRunner:
             f"{timeout}s (last seen phase: {last_phase})"
         )
 
-    async def _list_children(
-        self, *, sweep_name: str, namespace: str, dest_root: Path
-    ) -> list[SweepCell]:
-        """List child AIPerfJob CRs by the ``aiperf.nvidia.com/sweep`` label.
-
-        Reads variation/trial indices from the child labels stamped by the
-        sweep-controller (see ``src/aiperf/sweep_controller/k8s_executor.py``
-        ``VARIATION_INDEX_LABEL`` / ``TRIAL_INDEX_LABEL``). Children are
-        sorted by ``(variation_index, trial_index)`` for deterministic diffs.
-        """
-        result = await self.kubectl.run(
-            "get",
-            "aiperfjob",
-            "-n",
-            namespace,
-            "-l",
-            f"{_SWEEP_LABEL}={sweep_name}",
-            "-o",
-            "json",
-            check=True,
-        )
-        payload = json.loads(result.stdout)
-        cells: list[SweepCell] = []
-        for item in payload.get("items", []):
-            metadata = item.get("metadata") or {}
-            labels = metadata.get("labels") or {}
-            child_name = metadata.get("name")
-            if not child_name:
-                continue
-            try:
-                v = int(labels.get(_VARIATION_INDEX_LABEL, "0"))
-                t = int(labels.get(_TRIAL_INDEX_LABEL, "0"))
-            except (TypeError, ValueError) as e:
-                raise RuntimeError(
-                    f"child AIPerfJob {namespace}/{child_name} has malformed "
-                    f"variation/trial label (variation="
-                    f"{labels.get(_VARIATION_INDEX_LABEL)!r}, trial="
-                    f"{labels.get(_TRIAL_INDEX_LABEL)!r}); cannot map to a "
-                    f"sweep cell."
-                ) from e
-            cells.append(
-                SweepCell(
-                    variation_index=v,
-                    trial_index=t,
-                    child_name=child_name,
-                    local_dir=dest_root / f"v{v}-t{t}",
-                )
-            )
-        if not cells:
-            raise RuntimeError(
-                f"No children found for AIPerfSweep {namespace}/{sweep_name} "
-                f"using label selector {_SWEEP_LABEL}={sweep_name}; the "
-                f"sweep-controller may not have created any child AIPerfJobs."
-            )
-        cells.sort(key=lambda c: (c.variation_index, c.trial_index))
-        return cells
-
-    async def _download_child(
+    async def _download_sweep_via_cli(
         self,
         *,
-        child_name: str,
+        sweep_name: str,
         namespace: str,
         dest_dir: Path,
         kubeconfig: str | None,
     ) -> None:
-        """Shell out to ``aiperf kube results <child_name> --all``."""
+        """Shell out to ``aiperf kube results <sweep-name>`` (R2 fans out per child)."""
         dest_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             "aiperf",
             "kube",
             "results",
-            child_name,
+            sweep_name,
             "--namespace",
             namespace,
             "--output",
@@ -273,10 +204,50 @@ class SweepAuditRunner:
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(
-                f"aiperf kube results {child_name} failed (rc={proc.returncode})\n"
+                f"aiperf kube results {sweep_name} failed (rc={proc.returncode})\n"
                 f"stdout:\n{stdout.decode(errors='replace')}\n"
                 f"stderr:\n{stderr.decode(errors='replace')}"
             )
+
+    def _enumerate_cells_from_manifest(self, dest_dir: Path) -> list[SweepCell]:
+        """Read ``sweep_manifest.json`` produced by R2's CLI fan-out.
+
+        Schema (camelCase, see ``aiperf.kubernetes.results._fetch_children_manifest``):
+            {"sweepRunEpoch": int, "children": [{
+                "namespace": str, "name": str,
+                "variationIndex": int, "trialIndex": int | None,
+                "variationLabel": str, "childRunEpoch": str,
+            }]}
+        """
+        manifest_path = dest_dir / "sweep_manifest.json"
+        if not manifest_path.exists():
+            raise RuntimeError(
+                f"sweep_manifest.json missing in {dest_dir} — did `aiperf kube results "
+                f"<sweep>` succeed? Run with `--all` and confirm R2's CLI is wired."
+            )
+        payload = json.loads(manifest_path.read_text())
+        children = payload.get("children", [])
+        if not children:
+            raise RuntimeError(
+                f"sweep_manifest.json at {manifest_path} has no children"
+            )
+
+        cells: list[SweepCell] = []
+        for entry in children:
+            v = int(entry["variationIndex"])
+            # trialIndex may be None (single-trial); coerce to 0 to match the dir name.
+            t_raw = entry.get("trialIndex")
+            t = int(t_raw) if t_raw is not None else 0
+            cells.append(
+                SweepCell(
+                    variation_index=v,
+                    trial_index=t,
+                    child_name=entry["name"],
+                    local_dir=dest_dir / f"v{v}-t{t}",
+                )
+            )
+        cells.sort(key=lambda c: (c.variation_index, c.trial_index))
+        return cells
 
     async def run(
         self,
@@ -287,7 +258,7 @@ class SweepAuditRunner:
         kubeconfig: str | None = None,
         timeout: int = 1800,
     ) -> list[SweepCell]:
-        """Submit sweep, wait, download each child. Returns the SweepCell list.
+        """Submit sweep, wait, download via CLI. Returns the SweepCell list.
 
         ``dest_dir`` will contain one subdirectory per child cell:
         ``v<i>-t<j>/`` with that cell's downloaded artifacts.
@@ -309,18 +280,13 @@ class SweepAuditRunner:
                     f"AIPerfSweep {namespace}/{sweep_name} terminal phase = "
                     f"{phase}; expected one of {sorted(_SUCCESS_PHASES)}."
                 )
-
-            cells = await self._list_children(
-                sweep_name=sweep_name, namespace=namespace, dest_root=dest_dir
+            await self._download_sweep_via_cli(
+                sweep_name=sweep_name,
+                namespace=namespace,
+                dest_dir=dest_dir,
+                kubeconfig=kubeconfig,
             )
-            for cell in cells:
-                logger.info(f"Downloading child {cell.child_name} -> {cell.local_dir}")
-                await self._download_child(
-                    child_name=cell.child_name,
-                    namespace=namespace,
-                    dest_dir=cell.local_dir,
-                    kubeconfig=kubeconfig,
-                )
+            cells = self._enumerate_cells_from_manifest(dest_dir)
             return cells
         finally:
             await self.kubectl.run(
