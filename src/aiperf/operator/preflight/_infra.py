@@ -107,33 +107,34 @@ class _InfraChecksMixin:
     async def _check_dns(self) -> CheckResult:
         """Verify CoreDNS is running in kube-system."""
         try:
+            # Filter by canonical CoreDNS / kube-dns label so sibling deployments
+            # like "coredns-monitoring" don't collide on a name substring.
             deploy_list = await _pf.client.AppsV1Api(
                 self.api
             ).list_namespaced_deployment(
                 namespace="kube-system",
+                label_selector="k8s-app=kube-dns",
             )
             for deploy in deploy_list.items:
-                name = (deploy.metadata.name if deploy.metadata else "") or ""
-                if "coredns" in name.lower():
-                    ready = (
-                        deploy.status.ready_replicas
-                        if deploy.status and deploy.status.ready_replicas
-                        else 0
-                    )
-                    if ready and ready > 0:
-                        return CheckResult(
-                            name="DNS Resolution",
-                            status=CheckStatus.PASS,
-                            message="CoreDNS is running",
-                        )
+                ready = (
+                    deploy.status.ready_replicas
+                    if deploy.status and deploy.status.ready_replicas
+                    else 0
+                )
+                if ready and ready > 0:
                     return CheckResult(
                         name="DNS Resolution",
-                        status=CheckStatus.WARN,
-                        message="CoreDNS found but not ready",
-                        hints=[
-                            "Check: kubectl get pods -n kube-system -l k8s-app=kube-dns"
-                        ],
+                        status=CheckStatus.PASS,
+                        message="CoreDNS is running",
                     )
+                return CheckResult(
+                    name="DNS Resolution",
+                    status=CheckStatus.WARN,
+                    message="CoreDNS found but not ready",
+                    hints=[
+                        "Check: kubectl get pods -n kube-system -l k8s-app=kube-dns"
+                    ],
+                )
             return CheckResult(
                 name="DNS Resolution",
                 status=CheckStatus.WARN,

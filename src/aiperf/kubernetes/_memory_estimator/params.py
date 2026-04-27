@@ -13,8 +13,10 @@ from aiperf.kubernetes._memory_estimator.constants import (
     _DEFAULT_HISTOGRAM_BUCKETS,
     _DEFAULT_HISTOGRAM_METRICS,
     _DEFAULT_NUM_STANDARD_METRICS,
+    _DEFAULT_PHASE_REQUEST_COUNT,
     _DEFAULT_SCRAPE_INTERVAL_S,
     _DEFAULT_UNIQUE_METRIC_SERIES,
+    _PHASE_AVG_SEC_PER_REQUEST,
 )
 
 if TYPE_CHECKING:
@@ -224,19 +226,19 @@ def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
         return int(phase.duration * concurrency * 0.5)
     if phase.sessions is not None:
         return phase.sessions * 3  # assume ~3 turns average
-    return 1000  # conservative default
+    return _DEFAULT_PHASE_REQUEST_COUNT
 
 
 def _estimate_phase_duration(phase: BasePhaseConfig, concurrency: int) -> float:
     """Estimate phase duration in seconds."""
     if phase.duration is not None:
         return phase.duration
-    requests = phase.requests or 1000
+    requests = phase.requests or _DEFAULT_PHASE_REQUEST_COUNT
     rate = getattr(phase, "rate", None)
     if rate is not None:
         return requests / rate
-    # Concurrency-driven: estimate ~2 sec per request / concurrency
-    return requests * 2.0 / max(concurrency, 1)
+    # Concurrency-driven: estimate avg-latency-sec per request / concurrency.
+    return requests * _PHASE_AVG_SEC_PER_REQUEST / max(concurrency, 1)
 
 
 def _extract_dataset_params(ds: object) -> tuple[int, int, int, int]:

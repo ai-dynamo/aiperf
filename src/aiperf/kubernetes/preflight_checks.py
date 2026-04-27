@@ -153,6 +153,18 @@ async def check_namespace(api: ApiClient, *, namespace: str) -> CheckResult:
     except ApiException as e:
         if e.status == 404:
             return await _namespace_missing_result(api, namespace)
+        if e.status == 403:
+            return CheckResult(
+                name="Namespace",
+                status=CheckStatus.SKIP,
+                message=(
+                    f"Cannot verify namespace '{namespace}' (permission denied). "
+                    f"You may still be able to use it if it exists."
+                ),
+                hints=[
+                    "Ensure your account has 'get' on namespaces, or proceed and let pod creation surface the real error"
+                ],
+            )
         return CheckResult(
             name="Namespace",
             status=CheckStatus.FAIL,
@@ -269,9 +281,11 @@ async def check_jobset_crd(api: ApiClient) -> CheckResult:
                 message="JobSet CRD not found",
                 hints=[get_jobset_install_hint()],
             )
+        # JobSet is a hard prerequisite; align with operator-side FAIL on any
+        # non-404 error rather than silently downgrading to WARN.
         return CheckResult(
             name="JobSet CRD",
-            status=CheckStatus.WARN,
+            status=CheckStatus.FAIL,
             message=f"Error checking JobSet CRD: HTTP {e.status}",
         )
 
@@ -362,8 +376,20 @@ async def check_dns(api: ApiClient) -> CheckResult:
     """Check DNS resolution capability."""
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
+    # Match the canonical CoreDNS / kube-dns label rather than substring on the
+    # deployment name — substring "coredns" otherwise matches sibling
+    # deployments like "coredns-monitoring".
     try:
-        found, ready = await _find_deployment(api, "kube-system", "coredns")
+        deployments = (
+            await client.AppsV1Api(api).list_namespaced_deployment(
+                "kube-system", label_selector="k8s-app=kube-dns"
+            )
+        ).items
+        found = bool(deployments)
+        ready = any(
+            (d.status.ready_replicas or 0) > 0 if d.status else False
+            for d in deployments
+        )
         if ready:
             return CheckResult(
                 name="DNS Resolution",

@@ -678,6 +678,15 @@ class TestCheckImageReference:
         assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
+    async def test_digest_reference_does_not_warn_implicit_latest(self) -> None:
+        """Digest refs are immutable; should not trigger implicit-'latest' WARN."""
+        dc = DeploymentConfig()
+        dc.image = "nvcr.io/org/image@sha256:abcdef"
+        checker = _make_checker(deploy_config=dc)
+        result = await checker._check_image_reference()
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
     async def test_private_registry_no_secret_warns(self) -> None:
         dc = DeploymentConfig()
         dc.image = "private.example.com/org/image:1.0"

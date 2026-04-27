@@ -102,3 +102,17 @@ _RECORDS_MANAGER_WARN_PCT = 50.0  # warn when RM uses >50% of limit
 
 # Standard metrics computed per record (TTFT, TPOT, ITL, E2E, throughput, etc.)
 _DEFAULT_NUM_STANDARD_METRICS = 25
+
+# Conservative default request count when a phase declares neither
+# ``requests`` nor ``duration`` nor ``sessions`` (e.g. open-loop trace replay
+# without an explicit cap). Used by ``_estimate_phase_requests`` /
+# ``_estimate_phase_duration`` to bound memory math; underestimating here
+# under-allocates request-shaped buffers, so we err on the high side.
+_DEFAULT_PHASE_REQUEST_COUNT = 1000
+
+# Assumed average per-request latency (seconds) when estimating duration of a
+# concurrency-driven phase (no explicit ``duration`` and no ``rate``). Multiplied
+# against ``requests / max(concurrency, 1)`` to get phase wall time. Calibrated
+# against streaming LLM workloads where an end-to-end request typically takes
+# 1-3s; 2.0 sits in the middle.
+_PHASE_AVG_SEC_PER_REQUEST = 2.0

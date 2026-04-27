@@ -236,46 +236,53 @@ class TestParseImageRef:
         [
             param(
                 "nvcr.io/nvidia/tritonserver:24.01",
-                ("nvcr.io", "nvidia/tritonserver", "24.01"),
+                ("nvcr.io", "nvidia/tritonserver", "24.01", ""),
                 id="full-image-ref",
             ),
             param(
                 "python:3.10",
-                ("docker.io", "python", "3.10"),
+                ("docker.io", "python", "3.10", ""),
                 id="short-docker-hub-name",
             ),
             param(
                 "nvcr.io/nvidia/aiperf",
-                ("nvcr.io", "nvidia/aiperf", ""),
+                ("nvcr.io", "nvidia/aiperf", "", ""),
                 id="no-tag",
             ),
             param(
                 "repo/img@sha256:abc123",
-                ("docker.io", "repo/img", "sha256:abc123"),
+                ("docker.io", "repo/img", "", "sha256:abc123"),
                 id="digest",
             ),
             param(
+                "nvcr.io/org/img:1.0@sha256:deadbeef",
+                ("nvcr.io", "org/img", "1.0", "sha256:deadbeef"),
+                id="tag-and-digest",
+            ),
+            param(
                 "nginx",
-                ("docker.io", "nginx", ""),
+                ("docker.io", "nginx", "", ""),
                 id="single-word",
             ),
             param(
                 "nginx:latest",
-                ("docker.io", "nginx", "latest"),
+                ("docker.io", "nginx", "latest", ""),
                 id="single-word-with-tag",
             ),
             param(
                 "gcr.io/project/team/img:v1",
-                ("gcr.io", "project/team/img", "v1"),
+                ("gcr.io", "project/team/img", "v1", ""),
                 id="multi-level-repo",
             ),
             param(
                 "localhost:5000/myimage:v1",
-                ("localhost:5000", "myimage", "v1"),
+                ("localhost:5000", "myimage", "v1", ""),
                 id="port-in-registry",
             ),
         ],
     )  # fmt: skip
-    def test_parse_image_ref(self, image: str, expected: tuple[str, str, str]) -> None:
-        """Verify parse_image_ref correctly splits registry, repo, and tag."""
+    def test_parse_image_ref(
+        self, image: str, expected: tuple[str, str, str, str]
+    ) -> None:
+        """Verify parse_image_ref correctly splits registry, repo, tag, and digest."""
         assert parse_image_ref(image) == expected

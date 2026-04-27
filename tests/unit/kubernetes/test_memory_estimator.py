@@ -741,6 +741,20 @@ class TestConfigurationDefaults:
         resources = pod.to_k8s_resources()
         assert resources["requests"] == resources["limits"]
 
+    def test_phase_estimation_constants_exist(self) -> None:
+        """Hoisted phase-estimation magic numbers stay at the calibrated values.
+
+        Lifting these to constants is documentation-only — the computed
+        request count and duration math must not change.
+        """
+        from aiperf.kubernetes._memory_estimator.constants import (
+            _DEFAULT_PHASE_REQUEST_COUNT,
+            _PHASE_AVG_SEC_PER_REQUEST,
+        )
+
+        assert _DEFAULT_PHASE_REQUEST_COUNT == 1000
+        assert _PHASE_AVG_SEC_PER_REQUEST == 2.0
+
 
 # =============================================================================
 # Scaling scenarios

@@ -72,26 +72,35 @@ async def check_rbac_access(
     return bool(review.status.allowed)
 
 
-def parse_image_ref(image: str) -> tuple[str, str, str]:
-    """Parse a container image reference into (registry, repository, tag).
+def parse_image_ref(image: str) -> tuple[str, str, str, str]:
+    """Parse a container image reference into (registry, repository, tag, digest).
+
+    A reference may carry either a tag (``image:1.0``), a digest
+    (``image@sha256:...``), or both (``image:1.0@sha256:...``); the digest is
+    always returned in its own slot. Empty strings indicate the field was not
+    present, so callers can distinguish ``digest=""`` (use a tag, possibly
+    implicit ``latest``) from ``digest="sha256:..."`` (immutable reference, no
+    implicit-``latest`` warning needed).
 
     Args:
-        image: Image reference like "nvcr.io/nvidia/tritonserver:24.01".
+        image: Image reference like "nvcr.io/nvidia/tritonserver:24.01" or
+            "repo/img@sha256:abc123".
 
     Returns:
-        Tuple of (registry, repository, tag). Registry defaults to "docker.io"
-        for short names, tag defaults to empty string if not specified.
+        Tuple of (registry, repository, tag, digest). Registry defaults to
+        "docker.io" for short names. ``tag`` and ``digest`` default to "" if
+        absent.
     """
+    digest = ""
     tag = ""
-    if "@" in image:
-        image_no_tag, tag = image.rsplit("@", 1)
-    elif ":" in image.split("/")[-1]:
-        image_no_tag, tag = image.rsplit(":", 1)
-    else:
-        image_no_tag = image
+    remainder = image
+    if "@" in remainder:
+        remainder, digest = remainder.rsplit("@", 1)
+    if ":" in remainder.split("/")[-1]:
+        remainder, tag = remainder.rsplit(":", 1)
 
-    parts = image_no_tag.split("/")
+    parts = remainder.split("/")
     if len(parts) == 1 or ("." not in parts[0] and ":" not in parts[0]):
-        return "docker.io", image_no_tag, tag
+        return "docker.io", remainder, tag, digest
 
-    return parts[0], "/".join(parts[1:]), tag
+    return parts[0], "/".join(parts[1:]), tag, digest

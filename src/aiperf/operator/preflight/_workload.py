@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 
 import aiohttp
+import orjson
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
@@ -100,10 +101,10 @@ class _WorkloadChecksMixin:
                 message="No container image specified",
             )
 
-        registry, _repo, tag = parse_image_ref(image)
+        registry, _repo, tag, digest = parse_image_ref(image)
 
         warnings = []
-        if not tag:
+        if not tag and not digest:
             warnings.append(
                 "Image uses implicit 'latest' tag which may cause inconsistent deployments"
             )
@@ -176,8 +177,6 @@ class _WorkloadChecksMixin:
             msg = str(e)
             if e.body:
                 try:
-                    import orjson
-
                     body = orjson.loads(e.body)
                     msg = body.get("message", msg)
                 except (ValueError, TypeError, orjson.JSONDecodeError):

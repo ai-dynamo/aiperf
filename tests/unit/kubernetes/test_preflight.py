@@ -564,6 +564,20 @@ class TestCheckNamespace:
         assert result.status == CheckStatus.FAIL
         assert "500" in result.message
 
+    @pytest.mark.asyncio
+    async def test_namespace_forbidden_skips(self) -> None:
+        """403 on read_namespace is RBAC denial, not a definitive failure: SKIP."""
+        checker = _make_checker(namespace="locked")
+        checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespace = AsyncMock(side_effect=ApiException(status=403))
+
+        with _patch_core(core):
+            result = await checker._check_namespace()
+
+        assert result.status == CheckStatus.SKIP
+        assert "permission denied" in result.message.lower()
+
 
 # =============================================================================
 # _check_rbac_permissions
@@ -683,7 +697,9 @@ class TestCheckJobSetCRD:
         with _patch_apiext(apiext):
             result = await checker._check_jobset_crd()
 
-        assert result.status == CheckStatus.WARN
+        # JobSet CRD is a hard prerequisite; CLI now FAILs to align with the
+        # operator-side behavior on non-404 errors.
+        assert result.status == CheckStatus.FAIL
         assert "503" in result.message
 
 

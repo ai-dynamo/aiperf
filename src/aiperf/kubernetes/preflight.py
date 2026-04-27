@@ -149,8 +149,8 @@ class PreflightResults:
             logger.info("[dim]Please resolve the issues above before deploying.[/dim]")
 
 
-def _parse_image_ref(image: str) -> tuple[str, str, str]:
-    """Parse a container image reference into (registry, repository, tag).
+def _parse_image_ref(image: str) -> tuple[str, str, str, str]:
+    """Parse a container image reference into (registry, repository, tag, digest).
 
     Delegates to the shared utility in ``preflight_utils``.
     """

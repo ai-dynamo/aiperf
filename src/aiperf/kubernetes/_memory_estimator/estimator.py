@@ -45,7 +45,7 @@ def _get_controller_limit_mib() -> float:
     return float(total)
 
 
-def _get_worker_pod_limit_mib(workers_per_pod: int, rp_per_pod: int) -> float:
+def _get_worker_pod_limit_mib() -> float:
     """Get worker pod memory limit from K8sEnvironment."""
     return float(
         parse_memory_mib(
@@ -190,9 +190,7 @@ class MemoryEstimator:
         return PodEstimate(
             pod_type="worker",
             components=[wpm, workers_total, rp_total],
-            current_limit_mib=_get_worker_pod_limit_mib(
-                p.workers_per_pod, p.record_processors_per_pod
-            ),
+            current_limit_mib=_get_worker_pod_limit_mib(),
             replicas=p.num_worker_pods,
         )
 

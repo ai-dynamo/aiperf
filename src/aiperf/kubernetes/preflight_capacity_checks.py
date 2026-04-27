@@ -385,8 +385,10 @@ async def check_image(
         )
 
     details = [f"Image: {image}"]
-    registry, _repo, tag = _shared_parse_image_ref(image)
-    if tag:
+    registry, _repo, tag, digest = _shared_parse_image_ref(image)
+    if digest:
+        details.append(f"Registry: {registry}, Digest: {digest}")
+    elif tag:
         details.append(f"Registry: {registry}, Tag: {tag}")
     else:
         details.append(f"Registry: {registry}, Tag: latest (implicit)")
