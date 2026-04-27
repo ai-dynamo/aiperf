@@ -9,11 +9,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+_DEFAULT_EPOCH = "1714069323"
 
-def _write_aggregate(base: Path, ns: str, name: str, body: dict) -> Path:
-    d = base / ns / "sweeps" / name
+
+def _write_aggregate(
+    base: Path, ns: str, name: str, body: dict, *, epoch: str = _DEFAULT_EPOCH
+) -> Path:
+    from aiperf.operator.results_layout import write_sweep_latest
+
+    d = base / ns / "sweeps" / name / epoch
     d.mkdir(parents=True)
     (d / "aggregate.json").write_text(json.dumps(body))
+    write_sweep_latest(base, ns, name, epoch)
     return d
 
 
@@ -142,10 +149,12 @@ async def test_list_all_sweeps_both(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_find_any_sweep_archived_corrupt_aggregate(tmp_path: Path) -> None:
     from aiperf.operator import sweep_union
+    from aiperf.operator.results_layout import write_sweep_latest
 
-    d = tmp_path / "bench" / "sweeps" / "s1"
+    d = tmp_path / "bench" / "sweeps" / "s1" / _DEFAULT_EPOCH
     d.mkdir(parents=True)
     (d / "aggregate.json").write_text("not json")
+    write_sweep_latest(tmp_path, "bench", "s1", _DEFAULT_EPOCH)
     api = MagicMock()
     with patch(
         "aiperf.operator.sweep_union.find_aiperfsweep",

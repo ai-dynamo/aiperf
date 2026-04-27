@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from aiperf.kubernetes.client import find_aiperfsweep, list_aiperfsweeps
-from aiperf.operator.results_layout import resolve_sweep_dir
+from aiperf.operator.results_layout import resolve_sweep_dir, resolve_sweep_latest
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -115,6 +115,13 @@ def _read_aggregate_doc(path: Path) -> dict[str, Any] | None:
 def _record_from_archive(
     namespace: str, name: str, sweep_dir: Path
 ) -> SweepRecord | None:
+    """Build a SweepRecord from an on-disk archive epoch dir.
+
+    ``sweep_dir`` MUST be the per-epoch dir
+    (``<base>/<ns>/sweeps/<name>/<epoch>/``), not the per-name root.
+    Callers resolve the epoch via :func:`resolve_sweep_dir` (explicit
+    epoch) or :func:`resolve_sweep_latest` (latest pointer).
+    """
     agg_path = sweep_dir / _AGGREGATE_FILE
     if not agg_path.is_file():
         return None
@@ -169,7 +176,15 @@ def _scan_archived(base_dir: Path, namespace: str | None = None) -> list[SweepRe
         for sweep_dir in sorted(sweeps_root.iterdir()):
             if not sweep_dir.is_dir():
                 continue
-            rec = _record_from_archive(ns_dir.name, sweep_dir.name, sweep_dir)
+            # List page is latest-only: skip sweeps without a latest pointer
+            # (cluster operators must run the wipe script first).
+            latest = resolve_sweep_latest(base_dir, ns_dir.name, sweep_dir.name)
+            if latest is None:
+                continue
+            epoch_dir = sweep_dir / latest
+            if not epoch_dir.is_dir():
+                continue
+            rec = _record_from_archive(ns_dir.name, sweep_dir.name, epoch_dir)
             if rec is not None:
                 out.append(rec)
     return out
@@ -226,11 +241,24 @@ async def list_all_sweeps(
 
 
 async def find_any_sweep(
-    api: ApiClient, base_dir: Path, namespace: str, name: str
+    api: ApiClient,
+    base_dir: Path,
+    namespace: str,
+    name: str,
+    *,
+    epoch: str | None = None,
 ) -> SweepRecord | None:
-    """Resolve a single sweep across live and archived state. Returns None if neither."""
+    """Resolve a single sweep across live and archived state.
+
+    When ``epoch`` is given, the historical aggregate at
+    ``<base>/<ns>/sweeps/<name>/<epoch>/aggregate.json`` is returned
+    without mixing in the live CR (a per-epoch view of a finished run).
+    When ``epoch`` is ``None``, ``latest.txt`` is consulted and the
+    archived half (if any) is merged with the live CR. Returns
+    ``None`` when neither half is present.
+    """
     cr = await find_aiperfsweep(api, namespace, name)
-    archive_dir = resolve_sweep_dir(base_dir, namespace, name)
+    archive_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
     archived = (
         _record_from_archive(namespace, name, archive_dir)
         if archive_dir is not None
@@ -238,6 +266,10 @@ async def find_any_sweep(
     )
     if cr is None and archived is None:
         return None
+    if epoch is not None:
+        # Historical lookup: ignore the live half — the CR describes the
+        # current/most-recent run, not the requested epoch.
+        return archived
     if cr is None:
         return archived
     live = _record_from_live(cr)
