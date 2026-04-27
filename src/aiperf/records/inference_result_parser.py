@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from contextlib import suppress
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records import _tokenizer_preload
+from aiperf.workers.worker_pod_tokenizer_download import resolve_tokenizer_load_target
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -83,7 +85,9 @@ class InferenceResultParser(CommunicationMixin):
                     resolve_alias = True
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
-                    tokenizer_name,
+                    await resolve_tokenizer_load_target(
+                        self.run, tokenizer_name, logging.getLogger(__name__)
+                    ),
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
                     else False,
@@ -114,7 +118,9 @@ class InferenceResultParser(CommunicationMixin):
                 )
                 self.tokenizers[model] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
-                    tokenizer_name,
+                    await resolve_tokenizer_load_target(
+                        self.run, tokenizer_name, logging.getLogger(__name__)
+                    ),
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
                     else False,

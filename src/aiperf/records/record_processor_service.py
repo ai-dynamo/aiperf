@@ -6,9 +6,7 @@ import asyncio
 import contextlib
 import logging
 import os
-import tempfile
 import traceback
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -60,11 +58,11 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records import _tokenizer_preload
 from aiperf.records.inference_result_parser import InferenceResultParser
-from aiperf.workers.worker_pod_tokenizer_download import download_tokenizer
+from aiperf.workers.worker_pod_tokenizer_download import resolve_tokenizer_load_target
 
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
@@ -261,35 +259,16 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     async def _resolve_tokenizer_load_target(self, tokenizer_name: str) -> str:
         """Return the argument to pass to ``Tokenizer.from_pretrained``.
 
-        In K8s mode this downloads the operator-served bundle into the shared
-        ``aiperf_tokenizers/{benchmark_id}`` directory and returns the local
-        snapshot path. In every other mode it returns ``tokenizer_name`` so
-        the loader follows its existing HF-cache / alias-resolution path.
+        Thin per-instance wrapper around the shared helper that adds an
+        in-memory result cache so repeat lookups for the same name skip the
+        sentinel-file check.
         """
-        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
-            return tokenizer_name
         cached = self._tokenizer_local_paths.get(tokenizer_name)
         if cached is not None:
             return cached
-        api_base_url = self.run.cfg.runtime.dataset_api_base_url
-        if not api_base_url:
-            # K8s mode without an API URL configured — fall back to name-based
-            # loading so the controller-side validator's HF cache is still hit.
-            return tokenizer_name
-        # dataset_api_base_url is http://{host}:{port}/api/dataset; strip the
-        # /api/dataset suffix so download_tokenizer can append /api/tokenizer/...
-        api_base = api_base_url.rsplit("/api/dataset", 1)[0]
-        base = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
-        dest_root = base / f"aiperf_tokenizers/{self.run.cfg.benchmark_id}"
-        dest_root.mkdir(parents=True, exist_ok=True)
-        local_path = await download_tokenizer(
-            api_base_url=api_base,
-            name=tokenizer_name,
-            dest_root=dest_root,
-            max_retries=Environment.DATASET.DOWNLOAD_MAX_RETRIES,
-            logger=logging.getLogger(self.service_id),
+        resolved = await resolve_tokenizer_load_target(
+            self.run, tokenizer_name, logging.getLogger(self.service_id)
         )
-        resolved = str(local_path)
         self._tokenizer_local_paths[tokenizer_name] = resolved
         return resolved
 
