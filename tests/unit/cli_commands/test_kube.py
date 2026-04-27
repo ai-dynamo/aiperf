@@ -116,6 +116,11 @@ def mock_kube_client():
     async def _strip_api_find_operator_pod(_api, *args, **kwargs):
         return await mock_client.find_operator_pod(*args, **kwargs)
 
+    async def _fake_resolve_operator_namespace(
+        _api, *, explicit, default="aiperf-system"
+    ):
+        return explicit if explicit is not None else default
+
     with (
         patch(
             "aiperf.kubernetes.client.k8s_client",
@@ -172,6 +177,10 @@ def mock_kube_client():
         patch(
             "aiperf.kubernetes.results_operator.find_operator_pod",
             new=_strip_api_find_operator_pod,
+        ),
+        patch(
+            "aiperf.kubernetes.client.resolve_operator_namespace",
+            new=_fake_resolve_operator_namespace,
         ),
     ):
         yield mock_client

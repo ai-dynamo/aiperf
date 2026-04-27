@@ -218,7 +218,11 @@ def _derive_run_meta(artifact_dir: Path) -> RunMeta:
 
     leaf = artifact_dir.name
     namespace = os.environ.get("AIPERF_NAMESPACE", "")
-    if EPOCH_RE.match(leaf):
+    # ``legacy`` is the sentinel run-dir name used by ``aiperf kube results``
+    # / ``results_operator.py`` for runs that predate the operator's
+    # epoch-stamped layout. Treat it the same as a numeric epoch so the run
+    # metadata reflects the historical sentinel, not wall-clock time.
+    if EPOCH_RE.match(leaf) or leaf == "legacy":
         return RunMeta(
             epoch=leaf,
             job_name=artifact_dir.parent.name,

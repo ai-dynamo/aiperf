@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 
-from aiperf.cli_commands.kube.results import _print_runs_table, list_runs
+from aiperf.cli_commands.kube._runs_render import print_runs_table
+from aiperf.cli_commands.kube.results import list_runs
 from aiperf.config.kube import KubeManageOptions
 
 
@@ -47,7 +48,7 @@ def sample_payload() -> dict:
 
 
 # =============================================================================
-# _print_runs_table: renderer-in-isolation tests
+# print_runs_table: renderer-in-isolation tests
 # =============================================================================
 
 
@@ -59,7 +60,7 @@ class TestPrintRunsTable:
 
         _console.width = 200
         try:
-            _print_runs_table(sample_payload)
+            print_runs_table(sample_payload)
         finally:
             _console.width = None
 
@@ -76,7 +77,7 @@ class TestPrintRunsTable:
         assert "2024-04-26" in out
 
     def test_empty_runs_prints_info_message(self, capsys) -> None:
-        _print_runs_table({"namespace": "default", "job_id": "bar", "runs": []})
+        print_runs_table({"namespace": "default", "job_id": "bar", "runs": []})
         out = capsys.readouterr().out
         assert "No runs found for default/bar" in out
 
@@ -85,7 +86,7 @@ class TestPrintRunsTable:
 
         _console.width = 200
         try:
-            _print_runs_table(sample_payload)
+            print_runs_table(sample_payload)
         finally:
             _console.width = None
 
@@ -139,6 +140,9 @@ def mock_resolve_and_pod():
     resolved.namespace = "default"
     resolved.api = MagicMock()
 
+    async def _fake_resolve_op_ns(_api, *, explicit, default="aiperf-system"):
+        return explicit if explicit is not None else default
+
     with (
         patch(
             "aiperf.kubernetes.cli_helpers.resolve_job",
@@ -147,6 +151,10 @@ def mock_resolve_and_pod():
         patch(
             "aiperf.kubernetes.client.find_operator_pod",
             new=AsyncMock(return_value=("operator-pod-x", "Running")),
+        ),
+        patch(
+            "aiperf.kubernetes.client.resolve_operator_namespace",
+            new=_fake_resolve_op_ns,
         ),
         patch(
             "aiperf.kubernetes.port_forward.port_forward_with_status",
@@ -263,22 +271,30 @@ async def test_list_runs_text_output_includes_run_hint(
 
 @pytest.fixture
 def mock_resolve_for_results(tmp_path):
-    """Mock ``resolve_job`` + ``find_jobset`` for the default results flow."""
-    resolved = MagicMock()
-    resolved.job_id = "foo"
-    resolved.namespace = "default"
-    resolved.api = MagicMock()
-    resolved.job_info = MagicMock()
-    resolved.job_info.name = "foo"
+    """Mock ``resolve_target`` + ``find_jobset`` for the default results flow."""
+    from aiperf.kubernetes.cli_helpers import ResolvedJob
+
+    job_info = MagicMock()
+    job_info.namespace = "default"
+    job_info.job_id = "foo"
+    job_info.name = "foo"
+    resolved = ResolvedJob(name="foo", job_info=job_info, api=MagicMock())
+
+    async def _fake_resolve_op_ns(_api, *, explicit, default="aiperf-system"):
+        return explicit if explicit is not None else default
 
     with (
         patch(
-            "aiperf.kubernetes.cli_helpers.resolve_job",
+            "aiperf.kubernetes.cli_helpers.resolve_target",
             new=AsyncMock(return_value=resolved),
         ),
         patch(
             "aiperf.kubernetes.client.find_jobset",
             new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "aiperf.kubernetes.client.resolve_operator_namespace",
+            new=_fake_resolve_op_ns,
         ),
     ):
         yield resolved
