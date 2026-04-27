@@ -13,6 +13,7 @@ import orjson
 
 from aiperf.kubernetes.client import (
     find_controller_pod,
+    find_operator_pod,
     find_retrievable_pod,
 )
 from aiperf.kubernetes.console import (
@@ -66,6 +67,7 @@ __all__ = [
     "retrieve_results_from_api",
     "retrieve_results_from_operator",
     "retrieve_results_from_pod",
+    "retrieve_sweep_results_from_operator",
     "shutdown_api_service",
     "stream_controller_logs",
 ]
@@ -75,7 +77,6 @@ KEY_RESULT_FILES = [
     "metrics.json",
     "profile_export_aiperf.json",
     "profile_export_console.txt",
-    "profile_export_console.ansi",
 ]
 
 
@@ -498,3 +499,164 @@ async def stream_controller_logs(
         raise
     finally:
         await terminate_process(proc)
+
+
+async def _fetch_children_manifest(
+    *,
+    api: ApiClient,
+    sweep_name: str,
+    namespace: str,
+    operator_namespace: str,
+    local_port: int,
+    kubeconfig: str | None,
+    kube_context: str | None,
+) -> dict | None:
+    """Fetch the per-epoch children manifest from the operator results server.
+
+    Port-forwards to the operator pod and GETs
+    ``/api/v1/sweeps/{namespace}/{sweep_name}/children`` (latest epoch). Returns
+    the parsed JSON document, or ``None`` if the operator pod is missing, the
+    endpoint returns 404, or any HTTP error occurs. Errors print actionable
+    messages via the kube console — callers translate ``None`` into a False
+    return on the public helper.
+
+    The response shape (camelCase from the operator) is::
+
+        {"sweepRunEpoch": "1714069323",
+         "children": [
+            {"namespace": "...", "name": "...",
+             "variationIndex": 0, "variationLabel": "c8",
+             "trialIndex": null, "childRunEpoch": "..."}
+         ]}
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    pod_info = await find_operator_pod(api, namespace=operator_namespace)
+    if not pod_info:
+        print_error("Operator pod not found")
+        print_info(f"Looked in namespace: {operator_namespace}")
+        return None
+    pod_name, _phase = pod_info
+
+    try:
+        async with port_forward_with_status(
+            operator_namespace,
+            pod_name,
+            local_port,
+            remote_port=RESULTS_SERVER_PORT,
+            verify_api=False,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        ) as port:
+            url = f"http://localhost:{port}/api/v1/sweeps/{namespace}/{sweep_name}/children"
+            timeout = aiohttp.ClientTimeout(total=30)
+            connector = create_tcp_connector()
+            async with (
+                aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
+                session.get(url) as resp,
+            ):
+                if resp.status == 404:
+                    print_error(
+                        f"Sweep {namespace}/{sweep_name} has no children manifest "
+                        "yet (operator may still be assembling it, or the sweep "
+                        "name is wrong)."
+                    )
+                    return None
+                resp.raise_for_status()
+                return orjson.loads(await resp.read())
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+        print_error(f"Error fetching children manifest: {e!r}")
+        return None
+
+
+def _cell_id(entry: dict) -> str:
+    """Render a child manifest entry as ``v<varidx>-t<trialidx>``.
+
+    ``trialIndex`` is ``None`` for non-multi-trial sweeps; treat as 0 so
+    single-trial sweep children land in ``v<idx>-t0/`` directories rather
+    than ``v<idx>-tNone/``.
+    """
+    var_idx = entry.get("variationIndex", entry.get("variation_index"))
+    trial_idx = entry.get("trialIndex", entry.get("trial_index"))
+    if trial_idx is None:
+        trial_idx = 0
+    return f"v{int(var_idx or 0)}-t{int(trial_idx)}"
+
+
+async def retrieve_sweep_results_from_operator(
+    sweep_name: str,
+    namespace: str,
+    output_dir: Path,
+    api: ApiClient,
+    *,
+    local_port: int = 0,
+    operator_namespace: str = "aiperf-system",
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> bool:
+    """Download sweep parent + per-child results via the operator API.
+
+    For each cell ``(variation_index, trial_index)`` advertised by
+    ``GET /api/v1/sweeps/{ns}/{name}/children`` on the operator results-server,
+    invokes :func:`retrieve_results_from_operator` with the child CR name into
+    ``output_dir/v<variation_index>-t<trial_index>/``. The manifest itself is
+    persisted to ``output_dir/sweep_manifest.json`` to aid downstream tooling.
+
+    Returns True iff the parent manifest fetch and ALL child downloads
+    succeeded. On any child failure, prints which child failed and continues
+    retrieving the rest before returning False — so the user sees as much data
+    as possible from a partially-successful run.
+    """
+    manifest = await _fetch_children_manifest(
+        api=api,
+        sweep_name=sweep_name,
+        namespace=namespace,
+        operator_namespace=operator_namespace,
+        local_port=local_port,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    )
+    if manifest is None:
+        return False
+
+    children: list[dict] = list(manifest.get("children") or [])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "sweep_manifest.json"
+    await asyncio.to_thread(
+        manifest_path.write_bytes, orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
+    )
+
+    if not children:
+        print_warning(
+            f"Sweep {namespace}/{sweep_name} children manifest is empty; "
+            "nothing to download."
+        )
+        return False
+
+    print_step(f"Sweep {sweep_name}: downloading {len(children)} children...")
+
+    all_ok = True
+    for entry in children:
+        cell_id = _cell_id(entry)
+        child_name = entry.get("name") or ""
+        child_ns = entry.get("namespace") or namespace
+        per_child_output = output_dir / cell_id
+        per_child_output.mkdir(parents=True, exist_ok=True)
+
+        ok = await retrieve_results_from_operator(
+            child_name,
+            child_ns,
+            per_child_output,
+            api,
+            local_port=local_port,
+            operator_namespace=operator_namespace,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        )
+        if ok:
+            print_success(f"{cell_id} ({child_name}): OK")
+        else:
+            all_ok = False
+            print_error(f"{cell_id} ({child_name}): FAILED")
+
+    return all_ok

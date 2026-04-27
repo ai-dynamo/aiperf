@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from cyclopts import App, Parameter
 
 from aiperf.config.kube import KubeManageOptions
+
+if TYPE_CHECKING:
+    from aiperf.kubernetes.cli_helpers import ResolvedSweep
 
 app = App(name="results")
 
@@ -24,7 +27,7 @@ async def results(
     all_artifacts: Annotated[bool, Parameter(name=["--all", "-a"], negative="--summary-only", help="Download all artifacts. Use --summary-only to download only summary results.")] = True,
     shutdown: Annotated[bool, Parameter(name="--shutdown", help="Shut down the API service after downloading results. Only takes effect with --from-pods.")] = False,
     port: Annotated[int, Parameter(name="--port", help="Local port for API port-forward (default: 0 = ephemeral).")] = 0,
-    operator_namespace: Annotated[str, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed.")] = "aiperf-system",
+    operator_namespace: Annotated[str | None, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.")] = None,
     run: Annotated[str | None, Parameter(name="--run", help="Pin to a specific historical run (epoch from `aiperf kube results list-runs`). Default: latest.")] = None,
 ) -> None:  # fmt: skip
     """Retrieve results from an AIPerf benchmark.
@@ -101,6 +104,33 @@ def _default_output_dir(
     return Path(f"./artifacts/{job_name}")
 
 
+def _default_sweep_output_dir(namespace: str, sweep_name: str) -> Path:
+    """Default per-sweep output directory.
+
+    Sweeps span many child jobs, so the default path embeds both the namespace
+    and the sweep name to avoid colliding with single-job artifact dirs.
+    """
+    return Path(f"./artifacts/sweep__{namespace}__{sweep_name}")
+
+
+async def _resolve_op_ns(
+    api: object, *, explicit: str | None, quiet: bool = False
+) -> str:
+    """Resolve operator namespace, announcing auto-detected non-default values.
+
+    Used by both ``aiperf kube results`` and ``aiperf kube results list-runs`` to
+    keep the explicit-flag-vs-auto-detect-vs-default policy in one place. The
+    ``quiet`` flag suppresses the announcement when JSON output is enabled.
+    """
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes.client import resolve_operator_namespace
+
+    op_ns = await resolve_operator_namespace(api, explicit=explicit)
+    if explicit is None and op_ns != "aiperf-system" and not quiet:
+        kube_console.print_info(f"Auto-detected operator namespace: {op_ns}")
+    return op_ns
+
+
 async def _run_results(
     *,
     job_id: str | None,
@@ -110,17 +140,17 @@ async def _run_results(
     all_artifacts: bool,
     shutdown: bool,
     port: int,
-    operator_namespace: str,
+    operator_namespace: str | None,
     run: str | None = None,
 ) -> None:
     from aiperf.kubernetes import cli_helpers
-    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes import results as kube_results
+    from aiperf.kubernetes.cli_helpers import ResolvedSweep
     from aiperf.kubernetes.client import find_jobset
 
     _validate_run_arg(run, from_pods=from_pods)
 
-    resolved = await cli_helpers.resolve_job(
+    resolved = await cli_helpers.resolve_target(
         job_id,
         manage_options.namespace,
         kubeconfig=manage_options.kubeconfig,
@@ -129,9 +159,23 @@ async def _run_results(
     if not resolved:
         return
 
+    if isinstance(resolved, ResolvedSweep):
+        await _run_sweep_results(
+            resolved=resolved,
+            output=output,
+            from_pods=from_pods,
+            run=run,
+            manage_options=manage_options,
+            operator_namespace=operator_namespace,
+            port=port,
+        )
+        return
+
     job_id = resolved.job_id
     ns = resolved.namespace
     api = resolved.api
+
+    op_ns = await _resolve_op_ns(api, explicit=operator_namespace)
 
     jobset_info = await find_jobset(api, job_id, ns)
 
@@ -157,30 +201,124 @@ async def _run_results(
             kube_creds=kube_creds,
         )
     else:
-        retrieval_success = await kube_results.retrieve_results_from_operator(
-            job_id,
-            ns,
-            output_dir,
-            api,
-            local_port=port,
-            operator_namespace=operator_namespace,
+        retrieval_success = await _retrieve_from_operator(
+            job_id=job_id,
+            ns=ns,
+            output_dir=output_dir,
+            api=api,
+            port=port,
+            op_ns=op_ns,
             run=run,
-            **kube_creds,
+            kube_creds=kube_creds,
         )
         used_api = False
-        if retrieval_success:
-            kube_console.print_results_summary(str(output_dir))
-        else:
-            kube_console.print_error(
-                f"Could not retrieve results from operator for job: {job_id}"
-            )
-            kube_console.print_info(
-                "The operator may not have fetched results yet. "
-                "Try --from-pods to retrieve directly from the benchmark pods."
-            )
 
     if shutdown and used_api and retrieval_success:
         await kube_results.shutdown_api_service(job_id, ns, api, port, **kube_creds)
+
+
+async def _run_sweep_results(
+    *,
+    resolved: ResolvedSweep,
+    output: Path | None,
+    from_pods: bool,
+    run: str | None,
+    manage_options: KubeManageOptions,
+    operator_namespace: str | None,
+    port: int,
+) -> None:
+    """Sweep counterpart to the job branch of :func:`_run_results`.
+
+    Rejects flags that don't apply to sweeps, resolves the operator
+    namespace, fans out per-child via
+    :func:`retrieve_sweep_results_from_operator`, prints a summary, and
+    closes the resolver's API client.
+    """
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes import results as kube_results
+
+    try:
+        if from_pods:
+            kube_console.print_error(
+                "--from-pods is not supported for AIPerfSweep CRs. "
+                "Sweep child results live on the operator PVC; omit --from-pods."
+            )
+            return
+        if run is not None:
+            kube_console.print_error(
+                "--run is not yet supported for AIPerfSweep. "
+                "Latest sweep epoch is downloaded by default."
+            )
+            return
+
+        op_ns = await _resolve_op_ns(resolved.api, explicit=operator_namespace)
+        output_dir = output or _default_sweep_output_dir(
+            resolved.namespace, resolved.name
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        ok = await kube_results.retrieve_sweep_results_from_operator(
+            resolved.name,
+            resolved.namespace,
+            output_dir,
+            resolved.api,
+            local_port=port,
+            operator_namespace=op_ns,
+            kubeconfig=manage_options.kubeconfig,
+            kube_context=manage_options.kube_context,
+        )
+        if ok:
+            kube_console.print_results_summary(str(output_dir))
+        else:
+            kube_console.print_error(
+                f"Sweep {resolved.namespace}/{resolved.name}: one or more children "
+                "failed to download (see per-child errors above)."
+            )
+    finally:
+        await resolved.aclose()
+
+
+async def _retrieve_from_operator(
+    *,
+    job_id: str,
+    ns: str,
+    output_dir: Path,
+    api: object,
+    port: int,
+    op_ns: str,
+    run: str | None,
+    kube_creds: dict,
+) -> bool:
+    """Pull results via the operator's PVC-backed sidecar; print outcome.
+
+    Split from ``_run_results`` so the parent stays under the 80-line ergonomics
+    ceiling. Mirrors the ``_retrieve_from_pods`` shape: returns the success flag
+    and prints a summary or actionable error to the kube console.
+    """
+    from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes import results as kube_results
+
+    retrieval_success = await kube_results.retrieve_results_from_operator(
+        job_id,
+        ns,
+        output_dir,
+        api,
+        local_port=port,
+        operator_namespace=op_ns,
+        run=run,
+        **kube_creds,
+    )
+    if retrieval_success:
+        kube_console.print_results_summary(str(output_dir))
+    else:
+        kube_console.print_error(
+            f"Could not retrieve results from operator for job: {job_id}"
+        )
+        kube_console.print_info(
+            "The operator may not have fetched results yet. "
+            "Try --from-pods to retrieve directly from the benchmark pods."
+        )
+    return retrieval_success
 
 
 async def _retrieve_from_pods(
@@ -254,7 +392,7 @@ async def list_runs(
     manage_options: KubeManageOptions | None = None,
     output: Annotated[Literal["text", "json"], Parameter(name=["-o", "--output"], help="Output format: 'text' for table, 'json' for machine-parseable.")] = "text",
     preview: Annotated[bool, Parameter(name="--preview", help="Show which runs would be reaped under current retention settings (read-only; no deletion).")] = False,
-    operator_namespace: Annotated[str, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed.")] = "aiperf-system",
+    operator_namespace: Annotated[str | None, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.")] = None,
 ) -> None:  # fmt: skip
     """List all historical runs of a benchmark job.
 
@@ -288,12 +426,13 @@ async def _run_list_runs(
     manage_options: KubeManageOptions,
     output: Literal["text", "json"],
     preview: bool,
-    operator_namespace: str,
+    operator_namespace: str | None,
 ) -> None:
     import logging
 
     import orjson
 
+    from aiperf.cli_commands.kube import _runs_render
     from aiperf.kubernetes import cli_helpers
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.client import find_operator_pod
@@ -319,16 +458,20 @@ async def _run_list_runs(
         namespace = resolved.namespace
         api = resolved.api
 
-        pod_info = await find_operator_pod(api, namespace=operator_namespace)
+        op_ns = await _resolve_op_ns(
+            api, explicit=operator_namespace, quiet=output == "json"
+        )
+
+        pod_info = await find_operator_pod(api, namespace=op_ns)
         if not pod_info:
             raise RuntimeError(
-                f"Operator pod not found in namespace '{operator_namespace}'. "
+                f"Operator pod not found in namespace '{op_ns}'. "
                 "Is the aiperf-operator deployed?"
             )
         pod_name, _phase = pod_info
 
         async with port_forward_with_status(
-            operator_namespace,
+            op_ns,
             pod_name,
             0,
             remote_port=RESULTS_SERVER_PORT,
@@ -346,7 +489,7 @@ async def _run_list_runs(
         kube_logger.setLevel(original_level)
 
     if preview and retention is not None:
-        _annotate_preview(payload, retention)
+        _runs_render.annotate_preview(payload, retention)
 
     if output == "json":
         kube_console.console.print(
@@ -354,7 +497,7 @@ async def _run_list_runs(
             highlight=False,
         )
     else:
-        _print_runs_table(payload, preview=preview)
+        _runs_render.print_runs_table(payload, preview=preview)
 
 
 async def _fetch_runs_and_retention(
@@ -396,98 +539,3 @@ async def _fetch_runs_and_retention(
                 retention = await r2.json(loads=orjson.loads)
 
     return payload, retention
-
-
-def _annotate_preview(payload: dict, retention: dict) -> None:
-    """Stamp each run with ``would_delete`` replicating ``enforce_retention`` dry-run.
-
-    Mirrors the server-side policy: a run is marked for deletion only if it
-    falls outside the count-keepers AND (when retain_days > 0) is older than
-    the cutoff. ``latest_epoch`` is always protected. Also embeds the raw
-    retention config on the payload so JSON consumers get both views.
-    """
-    import time
-
-    runs = payload.get("runs", []) or []
-    retain_runs = int(retention.get("retain_runs", 0))
-    retain_days = int(retention.get("retain_days", 0))
-    latest_epoch = payload.get("latest_epoch")
-
-    sorted_runs = sorted(runs, key=lambda r: int(r.get("mtime_epoch", 0)), reverse=True)
-    count_keepers = {r.get("epoch") for r in sorted_runs[:retain_runs]}
-    age_cutoff = time.time() - retain_days * 86400 if retain_days > 0 else None
-
-    for run in runs:
-        if run.get("epoch") == latest_epoch:
-            run["would_delete"] = False
-            continue
-        count_keep = run.get("epoch") in count_keepers
-        age_keep = age_cutoff is None or int(run.get("mtime_epoch", 0)) >= age_cutoff
-        run["would_delete"] = not (count_keep and age_keep)
-
-    payload["retention"] = {
-        "retain_runs": retain_runs,
-        "retain_days": retain_days,
-    }
-
-
-def _print_runs_table(payload: dict, *, preview: bool = False) -> None:
-    """Render a ``RunHistoryListResponse`` payload as a rich table.
-
-    When ``preview=True``, includes a ``WOULD DELETE`` column driven by the
-    per-run ``would_delete`` flag populated by ``_annotate_preview``, plus a
-    footer line summarizing the active retention policy.
-    """
-    from datetime import datetime, timezone
-
-    from rich.table import Table
-
-    from aiperf.kubernetes import console as kube_console
-    from aiperf.kubernetes.console import _human_size
-
-    runs = payload.get("runs", [])
-    namespace = payload.get("namespace", "")
-    job_id = payload.get("job_id", "")
-
-    if not runs:
-        kube_console.print_info(f"No runs found for {namespace}/{job_id}")
-        return
-
-    table = Table(show_header=True, header_style="bold", box=None)
-    table.add_column("EPOCH", style="cyan")
-    table.add_column("TIMESTAMP", style="dim")
-    table.add_column("FILES", justify="right")
-    table.add_column("SIZE", justify="right")
-    table.add_column("LATEST", justify="center")
-    if preview:
-        table.add_column("WOULD DELETE", justify="center")
-
-    for run in runs:
-        ts = datetime.fromtimestamp(
-            run.get("mtime_epoch", 0), tz=timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S UTC")
-        latest = "[green]✓[/green]" if run.get("is_latest") else ""
-        row = [
-            str(run.get("epoch", "")),
-            ts,
-            str(run.get("file_count", 0)),
-            _human_size(int(run.get("total_size_bytes", 0))),
-            latest,
-        ]
-        if preview:
-            row.append("[red]✓[/red]" if run.get("would_delete") else "")
-        table.add_row(*row)
-
-    kube_console.console.print(table)
-    kube_console.console.print(
-        "Pass --run <epoch> to `aiperf kube results` to pin a historical download."
-    )
-
-    if preview:
-        retention = payload.get("retention") or {}
-        retain_runs = retention.get("retain_runs", 0)
-        retain_days = retention.get("retain_days", 0)
-        age_desc = f"{retain_days}" if retain_days else "0 (age policy disabled)"
-        kube_console.print_info(
-            f"Retention: RETAIN_RUNS={retain_runs}, RETAIN_DAYS={age_desc}"
-        )
