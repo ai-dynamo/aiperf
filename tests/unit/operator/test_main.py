@@ -402,7 +402,12 @@ class TestFetchResultsWithRetry:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=1, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=1,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.metrics == {"metrics": {"throughput": 100}}
@@ -428,7 +433,12 @@ class TestFetchResultsWithRetry:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=2, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=2,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.metrics == {"metrics": {"ok": True}}
@@ -453,7 +463,12 @@ class TestFetchResultsWithRetry:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=1, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=1,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.metrics == {"metrics": {"partial": True}}
@@ -475,7 +490,12 @@ class TestFetchResultsWithRetry:
             ),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=0, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=0,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.downloaded == []
@@ -509,7 +529,12 @@ class TestFetchResultsWithRetry:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=0, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=0,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.downloaded == ["profile_export_aiperf.json"]
@@ -544,7 +569,12 @@ class TestFetchResultsWithRetry:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
         ):
             result = await _fetch_results_with_retry(
-                "controller-host", "default", "job-123", max_retries=0, retry_delay=0.01
+                "controller-host",
+                "default",
+                "job-123",
+                max_retries=0,
+                retry_delay=0.01,
+                body=_FIXTURE_BODY,
             )
 
         assert result.downloaded == []

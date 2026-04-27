@@ -3,14 +3,11 @@
 """On-disk results layout owner for the AIPerf operator.
 
 Encapsulates the ``<base>/<namespace>/<name>/<epoch>/`` directory scheme,
-the ``latest.txt`` pointer file, retention pruning, and a one-shot
-migration that folds pre-layout artifacts under a ``legacy/`` run dir.
+the ``latest.txt`` pointer file, and retention pruning.
 
 Run key is the decimal epoch-seconds string parsed from
 ``metadata.creationTimestamp`` on the AIPerfJob body, matching the
-legacy dynamo ``EPOCH=$(date +%s)`` convention. The sentinel value
-``"legacy"`` identifies pre-migration artifacts with no known creation
-timestamp.
+legacy dynamo ``EPOCH=$(date +%s)`` convention.
 
 Example
 -------
@@ -37,22 +34,19 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 LATEST_POINTER = "latest.txt"
-LEGACY_EPOCH = "legacy"
 # 9-11 digits covers epoch-seconds from 1973 (10^9) through 5138 (10^11),
 # which comfortably brackets any realistic AIPerfJob creation timestamp.
-EPOCH_RE = re.compile(r"^\d{9,11}$|^legacy$")
+EPOCH_RE = re.compile(r"^\d{9,11}$")
 
 __all__ = [
     "EPOCH_RE",
     "LATEST_POINTER",
-    "LEGACY_EPOCH",
     "RunEntry",
     "enforce_retention",
     "epoch_key_from_body",
     "job_dir",
     "list_run_epochs",
     "list_runs",
-    "migrate_legacy_layout",
     "resolve_latest",
     "resolve_run_dir",
     "resolve_sweep_dir",
@@ -214,7 +208,7 @@ def list_run_epochs(base: Path, namespace: str, name: str) -> list[str]:
 
     Example:
         >>> list_run_epochs(Path("/data"), "bench", "warmup-7f2a")
-        ['1714064523', '1714069323', 'legacy']
+        ['1714064523', '1714069323', '1714150923']
     """
     root = job_dir(base, namespace, name)
     if not root.is_dir():
@@ -304,60 +298,6 @@ def enforce_retention(
                 exc,
             )
     return deleted
-
-
-def migrate_legacy_layout(base: Path) -> list[tuple[str, str]]:
-    """Fold pre-layout artifacts into ``<name>/legacy/`` and write pointer.
-
-    For every ``<base>/<ns>/<name>/`` that has neither a ``latest.txt``
-    nor any epoch-shaped subdirectory but does contain files or non-
-    epoch subdirs, relocate all children into ``<name>/legacy/`` and
-    write ``latest.txt=legacy``. Idempotent: a second call is a no-op
-    because the pointer file exists after the first.
-
-    Returns the list of ``(namespace, name)`` tuples that were migrated.
-
-    Example:
-        >>> migrate_legacy_layout(Path("/data"))
-        [('bench', 'warmup-7f2a')]
-    """
-    if not base.is_dir():
-        return []
-
-    migrated: list[tuple[str, str]] = []
-    for ns_dir in sorted(base.iterdir()):
-        if not ns_dir.is_dir():
-            continue
-        for name_dir in sorted(ns_dir.iterdir()):
-            if not name_dir.is_dir():
-                continue
-            if _needs_migration(name_dir):
-                _relocate_into_legacy(name_dir)
-                write_latest(base, ns_dir.name, name_dir.name, LEGACY_EPOCH)
-                migrated.append((ns_dir.name, name_dir.name))
-    return migrated
-
-
-def _needs_migration(name_dir: Path) -> bool:
-    """True iff a job dir has pre-layout content and no pointer/epoch dir."""
-    if (name_dir / LATEST_POINTER).exists():
-        return False
-    has_any_child = False
-    for child in name_dir.iterdir():
-        has_any_child = True
-        if child.is_dir() and EPOCH_RE.match(child.name):
-            return False
-    return has_any_child
-
-
-def _relocate_into_legacy(name_dir: Path) -> None:
-    """Move every non-pointer child of ``name_dir`` into ``name_dir/legacy/``."""
-    legacy = name_dir / LEGACY_EPOCH
-    legacy.mkdir(parents=True, exist_ok=True)
-    for child in list(name_dir.iterdir()):
-        if child == legacy or child.name == LATEST_POINTER:
-            continue
-        shutil.move(str(child), str(legacy / child.name))
 
 
 def epoch_key_from_body(body: dict) -> str:

@@ -4,8 +4,7 @@
 
 Covers the full public API: write_latest/resolve_latest (atomic pointer file),
 resolve_run_dir (latest + explicit epoch + missing-epoch None), enforce_retention
-(mtime ordering, keep count, protect_epoch guarantee), migrate_legacy_layout
-(relocates pre-migration files, idempotent, mixed layouts), epoch_key_from_body.
+(mtime ordering, keep count, protect_epoch guarantee), epoch_key_from_body.
 """
 
 from __future__ import annotations
@@ -15,12 +14,12 @@ import time
 from pathlib import Path
 
 from aiperf.operator.results_layout import (
+    EPOCH_RE,
     LATEST_POINTER,
     enforce_retention,
     epoch_key_from_body,
     job_dir,
     list_run_epochs,
-    migrate_legacy_layout,
     resolve_latest,
     resolve_run_dir,
     resolve_sweep_dir,
@@ -31,11 +30,6 @@ from aiperf.operator.results_layout import (
 EPOCH_A = "1714064523"
 EPOCH_B = "1714064589"
 EPOCH_C = "1714150923"
-
-
-def _touch(path: Path, content: bytes = b"x") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
 
 
 def test_write_latest_atomic(tmp_path: Path) -> None:
@@ -86,9 +80,9 @@ def test_list_run_epochs_lists_only_epoch_shaped_dirs(tmp_path: Path) -> None:
     assert epochs == {EPOCH_A, EPOCH_B}
 
 
-def test_list_run_epochs_includes_legacy(tmp_path: Path) -> None:
-    run_dir(tmp_path, "ns", "job", "legacy").mkdir(parents=True)
-    assert "legacy" in list_run_epochs(tmp_path, "ns", "job")
+def test_epoch_re_no_longer_matches_legacy() -> None:
+    assert EPOCH_RE.match("legacy") is None
+    assert EPOCH_RE.match("1714069323") is not None
 
 
 def test_enforce_retention_keeps_n_newest(tmp_path: Path) -> None:
@@ -124,45 +118,6 @@ def test_enforce_retention_empty_dir_noop(tmp_path: Path) -> None:
     assert (
         enforce_retention(tmp_path, "ns", "job", keep=10, protect_epoch=EPOCH_A) == []
     )
-
-
-def test_migrate_legacy_layout_relocates_files(tmp_path: Path) -> None:
-    _touch(tmp_path / "ns" / "job" / "foo.json", b'{"ok": true}')
-    _touch(tmp_path / "ns" / "job" / "checkpoints" / "chk.json", b"{}")
-    migrated = migrate_legacy_layout(tmp_path)
-    assert migrated == [("ns", "job")]
-    assert (tmp_path / "ns" / "job" / "legacy" / "foo.json").is_file()
-    assert (tmp_path / "ns" / "job" / "legacy" / "checkpoints" / "chk.json").is_file()
-    assert resolve_latest(tmp_path, "ns", "job") == "legacy"
-
-
-def test_migrate_legacy_layout_idempotent(tmp_path: Path) -> None:
-    _touch(tmp_path / "ns" / "job" / "foo.json")
-    migrate_legacy_layout(tmp_path)
-    assert migrate_legacy_layout(tmp_path) == []
-
-
-def test_migrate_legacy_layout_skips_already_migrated(tmp_path: Path) -> None:
-    run_dir(tmp_path, "ns", "job", EPOCH_A).mkdir(parents=True)
-    _touch(run_dir(tmp_path, "ns", "job", EPOCH_A) / "foo.json")
-    write_latest(tmp_path, "ns", "job", EPOCH_A)
-    assert migrate_legacy_layout(tmp_path) == []
-    assert resolve_latest(tmp_path, "ns", "job") == EPOCH_A
-
-
-def test_migrate_legacy_layout_mixed_epoch_and_legacy(tmp_path: Path) -> None:
-    run_dir(tmp_path, "ns", "job", EPOCH_A).mkdir(parents=True)
-    _touch(tmp_path / "ns" / "other" / "bar.json")
-    migrated = migrate_legacy_layout(tmp_path)
-    assert migrated == [("ns", "other")]
-    assert (tmp_path / "ns" / "job" / EPOCH_A).is_dir()
-    assert (tmp_path / "ns" / "other" / "legacy" / "bar.json").is_file()
-
-
-def test_migrate_legacy_layout_empty_name_dir_noop(tmp_path: Path) -> None:
-    (tmp_path / "ns" / "job").mkdir(parents=True)
-    assert migrate_legacy_layout(tmp_path) == []
-    assert resolve_latest(tmp_path, "ns", "job") is None
 
 
 def test_epoch_key_from_body_parses_iso_timestamp() -> None:

@@ -933,25 +933,6 @@ class TestAdversarialInputs:
 # ============================================================
 
 
-def test_lifespan_runs_migration_shim(tmp_path: Path) -> None:
-    """Seed a pre-migration layout, start the app, assert migration fired."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_layout import LATEST_POINTER
-    from aiperf.operator.results_server import create_app
-
-    # Pre-migration layout: files directly under <ns>/<name>/
-    (tmp_path / "ns" / "legacy-job").mkdir(parents=True)
-    (tmp_path / "ns" / "legacy-job" / "foo.json").write_bytes(b'{"ok": true}')
-
-    with TestClient(create_app(results_dir=tmp_path)):
-        # Lifespan ran; migration should have relocated the file
-        assert (tmp_path / "ns" / "legacy-job" / "legacy" / "foo.json").is_file()
-        assert (
-            tmp_path / "ns" / "legacy-job" / LATEST_POINTER
-        ).read_text().strip() == "legacy"
-
-
 # ============================================================
 # Epoch-keyed layout routing
 # ============================================================

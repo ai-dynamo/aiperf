@@ -29,7 +29,6 @@ from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.results_layout import (
-    LEGACY_EPOCH,
     epoch_key_from_body,
     run_dir,
 )
@@ -391,8 +390,8 @@ async def fetch_results_with_retry(
         max_retries: Maximum retry attempts.
         retry_delay: Delay between retries (with exponential backoff).
         dest_dir: Explicit destination directory for results. When None,
-            derives the epoch-keyed path from ``body`` (or falls back to
-            the legacy sentinel directory if ``body`` is also None).
+            derives the epoch-keyed path from ``body``; passing both as None
+            is a programmer error and raises ``ValueError``.
         body: AIPerfJob CR body used to compute the ``<ns>/<name>/<epoch>/``
             run directory. Required in production; tests may omit it when
             the caller explicitly passes ``dest_dir``.
@@ -408,7 +407,12 @@ async def fetch_results_with_retry(
     progress_client = await get_or_create_progress_client(key)
 
     if dest_dir is None:
-        epoch = epoch_key_from_body(body) if body is not None else LEGACY_EPOCH
+        if body is None:
+            raise ValueError(
+                f"fetch_results_with_retry({namespace}/{job_id}): need either "
+                "dest_dir or body to derive the epoch-keyed run directory"
+            )
+        epoch = epoch_key_from_body(body)
         dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
 
     # Mutable state shared across retry attempts so partial progress

@@ -24,6 +24,11 @@ from aiperf.operator.client_cache import (
 )
 from aiperf.operator.status import Phase
 
+# Minimal CR body with a deterministic creationTimestamp so
+# epoch_key_from_body() resolves to a real epoch when fetch_results_with_retry
+# derives the run directory.
+_FIXTURE_BODY: dict = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}}
+
 
 @pytest.fixture(autouse=True)
 def _reset_state():
@@ -170,6 +175,7 @@ async def test_fetch_results_returns_cancellation_error_when_flag_set() -> None:
             controller_host="host",
             namespace="ns",
             job_id="j",
+            body=_FIXTURE_BODY,
         )
 
     assert result.error == "Cancelled by CR deletion"
@@ -226,6 +232,7 @@ async def test_delete_unblocks_concurrent_fetch_loop() -> None:
                 job_id="j",
                 max_retries=50,
                 retry_delay=10.0,
+                body=_FIXTURE_BODY,
             )
         )
 
