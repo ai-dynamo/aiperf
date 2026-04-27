@@ -58,6 +58,7 @@ class EventReason(CaseInsensitiveStrEnum):
     RESULTS_STORED = "ResultsStored"
     RESULTS_FAILED = "ResultsFailed"
     RESULTS_CLEANED = "ResultsCleaned"
+    INDEX_UPDATE_FAILED = "IndexUpdateFailed"
 
     # Reliability events
     JOB_TIMEOUT = "JobTimeout"
@@ -190,6 +191,21 @@ def results_failed(body: dict, error: str) -> None:
         body,
         EventReason.RESULTS_FAILED,
         f"Failed to store results: {error}",
+        EventType.WARNING,
+    )
+
+
+def index_update_failed(body: dict, error: str) -> None:
+    """Emit event when the job index update fails post-results-storage.
+
+    Results are already on disk at this point — this surfaces the gap to
+    cluster operators so they can rebuild the index without losing the
+    underlying artifacts.
+    """
+    post_event(
+        body,
+        EventReason.INDEX_UPDATE_FAILED,
+        f"Job index update failed (results still on disk): {error}",
         EventType.WARNING,
     )
 

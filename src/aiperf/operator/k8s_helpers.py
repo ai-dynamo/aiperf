@@ -10,6 +10,7 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -49,7 +50,13 @@ async def retry_with_backoff(
     for attempt in range(max_retries + 1):
         try:
             return await coro_factory()
-        except Exception:
+        except (
+            ApiException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ConnectionError,
+            OSError,
+        ):
             if attempt >= max_retries:
                 raise
             jittered_delay = delay * random.uniform(0.8, 1.2)

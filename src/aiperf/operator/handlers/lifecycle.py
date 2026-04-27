@@ -8,9 +8,11 @@ Decorators live in ``aiperf.operator.main``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
+import aiohttp
 import kopf
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -22,6 +24,7 @@ from aiperf.operator import events
 from aiperf.operator.client_cache import (
     close_progress_client,
     get_or_create_progress_client,
+    is_cancellation_requested,
     job_key,
     request_cancellation,
     try_claim_completion,
@@ -155,6 +158,19 @@ async def on_benchmark_complete(
         return
 
     key = job_key(namespace, job_id)
+    # Check cancellation BEFORE claiming. try_claim_completion stamps a
+    # durable annotation on the CR; if on_delete fires before the claim
+    # is consumed, the CR is GC'd via ownerRef finalizers before the
+    # monitor's _recover_orphaned_completion_claim path can reach it,
+    # and the claim is silently lost. Pairs with the same check at the
+    # top of monitor.py's _reconcile_aiperfjob_event entry point.
+    if is_cancellation_requested(key):
+        logger.info(
+            f"Cancellation requested for {namespace}/{name}, "
+            "skipping benchmark-complete handling"
+        )
+        return
+
     if not await try_claim_completion(namespace, name, body):
         return
 
@@ -169,7 +185,7 @@ async def on_benchmark_complete(
     try:
         progress_client = await get_or_create_progress_client(key)
         await progress_client.send_shutdown(host)
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(
             body,

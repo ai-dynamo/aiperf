@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import kopf
 import orjson
 import zstandard
 from kubernetes_asyncio import client
@@ -126,10 +125,9 @@ async def handle_completion(
         success=flags.success,
     )
 
-    sb.finalize()
-    if flags.success:
-        events.completed(body, job_id, duration_sec)
-
+    # Index update writes a condition on failure; do it before the single
+    # finalize() so partial-failure paths don't queue a second finalize().
+    # status.py:235 documents finalize() as exactly-once.
     await _update_job_index_safe(
         body=body,
         namespace=namespace,
@@ -138,6 +136,10 @@ async def handle_completion(
         sb=sb,
         success=flags.success,
     )
+
+    sb.finalize()
+    if flags.success:
+        events.completed(body, job_id, duration_sec)
 
     await _maybe_delete_jobset_after_success(namespace, jobset_name, job_id, flags)
 
@@ -383,13 +385,7 @@ async def _update_job_index_safe(
             "IndexUpdateFailed",
             f"Index write failed: {e}",
         )
-        sb.finalize()
-        kopf.event(
-            body,
-            type="Warning",
-            reason="IndexUpdateFailed",
-            message=f"Job index update failed (results still on disk): {e}",
-        )
+        events.index_update_failed(body, str(e))
 
 
 async def _delete_backing_jobset(namespace: str, jobset_name: str) -> None:

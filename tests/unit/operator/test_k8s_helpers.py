@@ -51,7 +51,7 @@ class TestRetryWithBackoff:
             nonlocal calls
             calls += 1
             if calls < 3:
-                raise RuntimeError("transient")
+                raise OSError("transient")
             return 42
 
         with mock_patch("aiperf.operator.k8s_helpers.asyncio.sleep", new=AsyncMock()):
@@ -70,11 +70,11 @@ class TestRetryWithBackoff:
         async def op() -> None:
             nonlocal calls
             calls += 1
-            raise ValueError(f"attempt-{calls}")
+            raise OSError(f"attempt-{calls}")
 
         with (
             mock_patch("aiperf.operator.k8s_helpers.asyncio.sleep", new=AsyncMock()),
-            pytest.raises(ValueError, match="attempt-3"),
+            pytest.raises(OSError, match="attempt-3"),
         ):
             await retry_with_backoff(
                 op, max_retries=2, initial_delay=0.0, max_delay=0.0
@@ -91,12 +91,12 @@ class TestRetryWithBackoff:
         async def op() -> None:
             nonlocal attempts
             attempts += 1
-            raise RuntimeError("no")
+            raise ConnectionError("no")
 
         sleep_mock = AsyncMock()
         with (
             mock_patch("aiperf.operator.k8s_helpers.asyncio.sleep", new=sleep_mock),
-            pytest.raises(RuntimeError),
+            pytest.raises(ConnectionError),
         ):
             await retry_with_backoff(
                 op, max_retries=3, initial_delay=1.0, backoff_multiplier=2.0
@@ -105,6 +105,75 @@ class TestRetryWithBackoff:
         assert attempts == 4
         # One sleep between each of 3 retries.
         assert sleep_mock.await_count == 3
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc_factory",
+        [
+            param(lambda: TypeError("missing argument"), id="type_error"),
+            param(lambda: AttributeError("no such attr"), id="attribute_error"),
+            param(lambda: ValueError("bad input"), id="value_error"),
+            param(lambda: RuntimeError("boom"), id="runtime_error"),
+            param(lambda: KeyError("k"), id="key_error"),
+        ],
+    )  # fmt: skip
+    async def test_propagates_programmer_errors_without_retry(
+        self, exc_factory
+    ) -> None:
+        """Programmer errors (TypeError/AttributeError/etc.) must NOT be
+        retried — retries hide the real cause behind a quiet sleep loop.
+        Only transport/timeout errors are retryable.
+        """
+        attempts = 0
+
+        async def op() -> None:
+            nonlocal attempts
+            attempts += 1
+            raise exc_factory()
+
+        sleep_mock = AsyncMock()
+        with (
+            mock_patch("aiperf.operator.k8s_helpers.asyncio.sleep", new=sleep_mock),
+            pytest.raises(
+                (TypeError, AttributeError, ValueError, RuntimeError, KeyError)
+            ),
+        ):
+            await retry_with_backoff(op, max_retries=5, initial_delay=0.0)
+
+        # First attempt raises and propagates immediately — no retries.
+        assert attempts == 1
+        assert sleep_mock.await_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc_factory",
+        [
+            param(lambda: ApiException(status=500, reason="ServerError"), id="api_exception"),
+            param(lambda: ConnectionError("refused"), id="connection_error"),
+            param(lambda: TimeoutError("slow"), id="timeout_error"),
+            param(lambda: OSError("io"), id="os_error"),
+        ],
+    )  # fmt: skip
+    async def test_retries_transport_errors(self, exc_factory) -> None:
+        """ApiException / aiohttp.ClientError / asyncio.TimeoutError /
+        ConnectionError / OSError are retried.
+        """
+        attempts = 0
+
+        async def op() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 2:
+                raise exc_factory()
+            return "ok"
+
+        with mock_patch("aiperf.operator.k8s_helpers.asyncio.sleep", new=AsyncMock()):
+            result = await retry_with_backoff(
+                op, max_retries=3, initial_delay=0.0, max_delay=0.0
+            )
+
+        assert result == "ok"
+        assert attempts == 2
 
 
 class TestCreateIdempotentHelpers:

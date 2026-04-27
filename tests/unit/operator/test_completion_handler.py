@@ -158,7 +158,7 @@ async def test_handle_completion_index_failure_sets_condition_and_event(
             new=AsyncMock(side_effect=RuntimeError("disk full")),
         ),
         patch(
-            "aiperf.operator.handlers.completion.kopf.event",
+            "aiperf.operator.events.kopf.warn",
             kopf_event_mock,
         ),
         patch(
@@ -198,9 +198,9 @@ async def test_handle_completion_index_failure_sets_condition_and_event(
     assert index_cond is not None
     assert index_cond["status"] == "False"
     assert index_cond["reason"] == "IndexUpdateFailed"
-    # Warning event was emitted
+    # Warning event was emitted via the events.index_update_failed wrapper
+    # (post_event -> kopf.warn for Warning-type events).
     kopf_event_mock.assert_called_once()
-    assert kopf_event_mock.call_args.kwargs["type"] == "Warning"
     assert kopf_event_mock.call_args.kwargs["reason"] == "IndexUpdateFailed"
 
 

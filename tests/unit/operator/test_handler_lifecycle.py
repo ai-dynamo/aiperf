@@ -11,6 +11,7 @@ import pytest
 from pytest import param
 
 from aiperf.operator.client_cache import (
+    _cancellation_events,
     _reset_for_testing,
     _shutdown_sent,
 )
@@ -189,18 +190,166 @@ class TestOnBenchmarkComplete:
         mock_client.send_shutdown.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_shutdown_failure_logs_exception_and_emits_kopf_event(
+    async def test_skips_when_cancellation_requested_before_claim(self) -> None:
+        """If on_delete fired and stamped the cancellation flag, the
+        completion handler MUST NOT call try_claim_completion. Otherwise
+        the durable claim annotation is written to the CR right before
+        ownerRef GC removes it, leaking the claim to no recovery path.
+        Pairs with the same gate at the top of monitor.py's tick.
+        """
+        from aiperf.operator.client_cache import request_cancellation
+        from aiperf.operator.handlers.lifecycle import on_benchmark_complete
+
+        request_cancellation("ns/j")
+        assert "ns/j" in _cancellation_events
+
+        patch = MagicMock()
+        patch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_claim,
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_handle,
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await on_benchmark_complete(
+                body={},
+                status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        # Critical: claim was NEVER attempted.
+        mock_claim.assert_not_called()
+        mock_handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_failure_narrow_exception_propagates_unrelated(
+        self,
+    ) -> None:
+        """The shutdown except clause caught everything; narrow it to
+        (aiohttp.ClientError, asyncio.TimeoutError, OSError) so programmer
+        errors (TypeError/AttributeError/etc.) propagate instead of being
+        silenced as ShutdownSignalFailed.
+        """
+        from aiperf.operator.handlers.lifecycle import on_benchmark_complete
+
+        mock_client = AsyncMock()
+        # AttributeError is a programmer bug — must NOT be silently swallowed.
+        mock_client.send_shutdown = AsyncMock(side_effect=AttributeError("no attr"))
+        patch = MagicMock()
+        patch.status = {}
+        body = {"kind": "AIPerfJob"}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+            pytest.raises(AttributeError, match="no attr"),
+        ):
+            await on_benchmark_complete(
+                body=body,
+                status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc_factory",
+        [
+            param(lambda: TimeoutError("slow"), id="asyncio_timeout"),
+            param(lambda: OSError("io"), id="os_error"),
+        ],
+    )  # fmt: skip
+    async def test_shutdown_failure_narrow_exception_caught_for_transport(
+        self, exc_factory
+    ) -> None:
+        """asyncio.TimeoutError and OSError must still be caught and emit a
+        ShutdownSignalFailed event (the narrowed handler covers transport).
+        """
+        from aiperf.operator.handlers.lifecycle import on_benchmark_complete
+
+        mock_client = AsyncMock()
+        mock_client.send_shutdown = AsyncMock(side_effect=exc_factory())
+        patch = MagicMock()
+        patch.status = {}
+        body = {"kind": "AIPerfJob"}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.kopf.event"
+            ) as mock_kopf_event,
+        ):
+            await on_benchmark_complete(
+                body=body,
+                status={"phase": Phase.RUNNING, "jobId": "j", "jobSetName": "js"},
+                name="j",
+                namespace="ns",
+                patch=patch,
+            )
+
+        mock_kopf_event.assert_called_once()
+        assert mock_kopf_event.call_args.kwargs["reason"] == "ShutdownSignalFailed"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_transport_failure_logs_exception_and_emits_kopf_event(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """When send_shutdown raises, the handler must preserve the traceback
-        via logger.exception and surface the failure to cluster operators
-        via a kopf Warning event."""
+        """When send_shutdown raises a transport error, the handler must
+        preserve the traceback via logger.exception and surface the failure
+        to cluster operators via a kopf Warning event.
+        """
         import logging
 
         from aiperf.operator.handlers.lifecycle import on_benchmark_complete
 
         mock_client = AsyncMock()
-        mock_client.send_shutdown = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_client.send_shutdown = AsyncMock(side_effect=OSError("boom"))
         patch = MagicMock()
         patch.status = {}
         body = {"kind": "AIPerfJob", "metadata": {"name": "j", "namespace": "ns"}}

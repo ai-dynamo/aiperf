@@ -244,32 +244,6 @@ def _update_progress_streak(
     return streak
 
 
-def _validate_namespace_and_job_id(
-    namespace: str,
-    job_id: str,
-) -> ControllerFetchResult | None:
-    """Guard against empty or traversal-y path components.
-
-    Returns a pre-built error ControllerFetchResult if the inputs are unsafe;
-    returns None if both are OK for use under ``OperatorEnvironment.RESULTS.DIR``.
-    """
-    for label, value in (("namespace", namespace), ("job_id", job_id)):
-        if not value or value in (".", ".."):
-            logger.error(f"Invalid {label} for results storage: {value!r}")
-            return ControllerFetchResult(
-                metrics=None, downloaded=[], error=f"Invalid {label}: {value!r}"
-            )
-        try:
-            safe = (OperatorEnvironment.RESULTS.DIR / value).resolve()
-            safe.relative_to(OperatorEnvironment.RESULTS.DIR.resolve())
-        except (ValueError, OSError):
-            logger.error(f"Path traversal detected in {label}: {value!r}")
-            return ControllerFetchResult(
-                metrics=None, downloaded=[], error=f"Path traversal in {label}"
-            )
-    return None
-
-
 def _split_downloaded(paths: list[str] | None) -> tuple[list[str], list[str]]:
     final_files: list[str] = []
     checkpoint_files: list[str] = []
@@ -399,10 +373,6 @@ async def fetch_results_with_retry(
     Returns:
         ControllerFetchResult with metrics dict and list of downloaded files.
     """
-    bad_path = _validate_namespace_and_job_id(namespace, job_id)
-    if bad_path is not None:
-        return bad_path
-
     key = job_key(namespace, job_id)
     progress_client = await get_or_create_progress_client(key)
 

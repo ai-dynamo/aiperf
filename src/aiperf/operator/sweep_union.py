@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("aiperf.operator.sweep_union")
 
 _AGGREGATE_FILE = "aggregate.json"
-_CONDITIONS_FILE = "conditions.json"
 
 
 @dataclass
