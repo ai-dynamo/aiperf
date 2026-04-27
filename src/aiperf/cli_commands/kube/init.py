@@ -124,13 +124,14 @@ def _generate_template(
         strip_spdx_header,
     )
     from aiperf.config.templates_cli import build_overrides
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.init_template import wrap_as_aiperf_job
 
     name = template or "minimal"
     try:
         info = get_template(name)
     except KeyError as e:
-        print(str(e))
+        kube_console.print_error(str(e))
         raise SystemExit(1) from None
 
     body = load_template_content(name)

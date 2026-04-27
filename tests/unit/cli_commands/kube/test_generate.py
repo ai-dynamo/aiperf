@@ -51,9 +51,9 @@ class _StubKubeOptions:
 class TestGenerateMutualExclusion:
     """Tests for --operator / --no-operator required-exactly-one validation."""
 
-    async def test_neither_operator_nor_no_operator_exits(self) -> None:
+    async def test_neither_operator_nor_no_operator_exits(self, capsys) -> None:
         """Must specify one of --operator or --no-operator."""
-        with pytest.raises(SystemExit, match="Specify --operator"):
+        with pytest.raises(SystemExit):
             await generate(
                 user_config=_user_config(),
                 service_config=ServiceConfig(),
@@ -61,10 +61,11 @@ class TestGenerateMutualExclusion:
                 operator=False,
                 no_operator=False,
             )
+        assert "Specify --operator" in capsys.readouterr().out
 
-    async def test_both_operator_and_no_operator_exits(self) -> None:
+    async def test_both_operator_and_no_operator_exits(self, capsys) -> None:
         """Cannot pass both --operator and --no-operator simultaneously."""
-        with pytest.raises(SystemExit, match="Cannot use both"):
+        with pytest.raises(SystemExit):
             await generate(
                 user_config=_user_config(),
                 service_config=ServiceConfig(),
@@ -72,6 +73,7 @@ class TestGenerateMutualExclusion:
                 operator=True,
                 no_operator=True,
             )
+        assert "Cannot use both" in capsys.readouterr().out
 
 
 class TestGenerateOperatorMode:

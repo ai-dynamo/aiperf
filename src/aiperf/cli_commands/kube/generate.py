@@ -95,6 +95,7 @@ def _dump_raw_manifests(
 
 
 def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.memory_estimator import estimate_memory, format_estimate
 
     mem_est = estimate_memory(
@@ -103,7 +104,9 @@ def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
         workers_per_pod=config.runtime.workers_per_pod,
         connections_per_worker=spec.get("connectionsPerWorker", 100),
     )
-    print(f"\n{format_estimate(mem_est)}", file=sys.stderr)
+    # Banner is informational; route through stderr_console so the YAML on
+    # stdout stays a clean kubectl-pipeable stream.
+    kube_console.stderr_console.print(f"\n{format_estimate(mem_est)}", highlight=False)
 
 
 @app.default
@@ -145,15 +148,19 @@ async def generate(
         # Pipe directly to kubectl
         aiperf kube generate --no-operator ... | kubectl apply -f -
     """
+    from aiperf import cli_utils
+
     if not operator and not no_operator:
-        raise SystemExit(
-            "Specify --operator (AIPerfJob CR) or --no-operator (raw manifests)"
+        cli_utils.raise_startup_error_and_exit(
+            "Specify --operator (AIPerfJob CR) or --no-operator (raw manifests)",
+            title="Error Generating Kubernetes Manifests",
         )
     if operator and no_operator:
-        raise SystemExit("Cannot use both --operator and --no-operator")
+        cli_utils.raise_startup_error_and_exit(
+            "Cannot use both --operator and --no-operator",
+            title="Error Generating Kubernetes Manifests",
+        )
     import ruamel.yaml
-
-    from aiperf import cli_utils
 
     if service_config is None:
         service_config = ServiceConfig()

@@ -411,20 +411,15 @@ class TestGetNamespaceEvents:
             _make_event_raw(last_timestamp="2026-03-11T10:00:00Z", reason="Mid"),
         ]
         api = MagicMock()
+        api.sanitize_for_serialization.side_effect = lambda o: o
         mock_core = MagicMock()
         mock_core.list_namespaced_event = AsyncMock(
             return_value=_mock_listing_response(raws)
         )
 
-        with (
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            patch(
-                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
-                side_effect=lambda o: o,
-            ),
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
         ):
             result = await _get_namespace_events(api, "default")
 
@@ -437,20 +432,15 @@ class TestGetNamespaceEvents:
     async def test_events_include_involved_object(self) -> None:
         raws = [_make_event_raw(kind="Pod", obj_name="my-pod")]
         api = MagicMock()
+        api.sanitize_for_serialization.side_effect = lambda o: o
         mock_core = MagicMock()
         mock_core.list_namespaced_event = AsyncMock(
             return_value=_mock_listing_response(raws)
         )
 
-        with (
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            patch(
-                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
-                side_effect=lambda o: o,
-            ),
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
         ):
             result = await _get_namespace_events(api, "default")
 
@@ -485,18 +475,13 @@ class TestGetNodeResources:
     async def test_healthy_node_resources(self) -> None:
         raws = [_make_node_raw("gpu-node-1", gpu_capacity="8", gpu_allocatable="6")]
         api = MagicMock()
+        api.sanitize_for_serialization.side_effect = lambda o: o
         mock_core = MagicMock()
         mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        with (
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            patch(
-                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
-                side_effect=lambda o: o,
-            ),
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
         ):
             result = await _get_node_resources(api)
 
@@ -517,18 +502,13 @@ class TestGetNodeResources:
             )
         ]
         api = MagicMock()
+        api.sanitize_for_serialization.side_effect = lambda o: o
         mock_core = MagicMock()
         mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        with (
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            patch(
-                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
-                side_effect=lambda o: o,
-            ),
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
         ):
             result = await _get_node_resources(api)
 
@@ -538,18 +518,13 @@ class TestGetNodeResources:
     async def test_not_ready_node(self) -> None:
         raws = [_make_node_raw("down-node", ready=False)]
         api = MagicMock()
+        api.sanitize_for_serialization.side_effect = lambda o: o
         mock_core = MagicMock()
         mock_core.list_node = AsyncMock(return_value=_mock_listing_response(raws))
 
-        with (
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            patch(
-                "kubernetes_asyncio.client.ApiClient.sanitize_for_serialization",
-                side_effect=lambda o: o,
-            ),
+        with patch(
+            "kubernetes_asyncio.client.CoreV1Api",
+            return_value=mock_core,
         ):
             result = await _get_node_resources(api)
         assert result[0]["ready"] is False

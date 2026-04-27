@@ -22,7 +22,10 @@ async def list_jobs(
     *,
     all_namespaces: Annotated[
         bool,
-        Parameter(name=["-A", "--all-namespaces"], help="Search in all namespaces."),
+        Parameter(
+            name=["-A", "--all-namespaces"],
+            help="Search in all namespaces (default). Ignored when --namespace is set.",
+        ),
     ] = True,
     running: Annotated[
         bool, Parameter(name=["--running"], help="Show only running jobs.")
@@ -154,7 +157,7 @@ async def _run_list_loop(
         else:
             if watch:
                 # Clear screen for live refresh
-                print("\033[2J\033[H", end="", flush=True)
+                kube_console.console.clear()
             kube_console.print_aiperfjob_table(jobs, wide=wide)
 
         if not watch:

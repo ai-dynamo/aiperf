@@ -10,20 +10,24 @@ from __future__ import annotations
 
 from typing import Any
 
-# Lazy module-scoped ApiClient used only for sanitize_for_serialization.
-# Reused across calls to avoid leaking an aiohttp session per invocation;
-# sanitize_for_serialization does not require the client to be started.
+# Lazy module-scoped ApiClient kept ONLY as a fallback for legacy callers
+# (e.g. tests passing real V1Pod objects without an open ApiClient). Live
+# CLI paths always thread an open `api` from `k8s_client(...)` through.
 _serializer: Any = None
 
 
-def _get_serializer() -> Any:
-    """Return a cached ``ApiClient`` for ``sanitize_for_serialization``.
+def _get_serializer(api: Any | None = None) -> Any:
+    """Return an ``ApiClient`` suitable for ``sanitize_for_serialization``.
 
-    The client is allocated on first use and never explicitly closed --
-    it is only used for synchronous object-to-dict serialization, so no
-    aiohttp session is opened beyond the default one aiohttp lazily
-    creates (which is cleaned up at process exit).
+    Prefer the open ``api`` from a ``k8s_client(...)`` block: that's the only
+    correct way to access kubernetes_asyncio per CLAUDE.md. The cached
+    fallback is retained for legacy entry points (tests, `.raw`-mock callers)
+    that never reach a real V1Pod and therefore never trigger an aiohttp
+    session.
     """
+    if api is not None:
+        return api
+
     global _serializer
     if _serializer is None:
         from kubernetes_asyncio.client import ApiClient
@@ -61,17 +65,16 @@ _PROBLEM_STATES: dict[str, tuple[str, str]] = {
 }
 
 
-def _pod_to_raw(pod: Any) -> tuple[str, dict[str, Any]]:
+def _pod_to_raw(pod: Any, api: Any | None = None) -> tuple[str, dict[str, Any]]:
     """Normalize V1Pod or legacy ``.raw``-style mock to (name, raw_dict)."""
     raw = getattr(pod, "raw", None)
     if raw is not None:
         name = getattr(pod, "name", None) or raw.get("metadata", {}).get("name", "")
         return (name, raw)
     # Real V1Pod from kubernetes_asyncio -- serialize to dict shape.
-    # Use a module-scoped serializer to avoid leaking an aiohttp session per
-    # pod; sanitize_for_serialization only reads class-level attrs so the
-    # singleton is safe to reuse and never needs closing.
-    raw = _get_serializer().sanitize_for_serialization(pod) or {}
+    # Prefer the open ApiClient threaded in from `k8s_client(...)`; the
+    # module-scoped fallback only fires for legacy callers without one.
+    raw = _get_serializer(api).sanitize_for_serialization(pod) or {}
     name = raw.get("metadata", {}).get("name", "")
     return (name, raw)
 
@@ -166,17 +169,21 @@ def _unschedulable_problem(conditions: list[dict[str, Any]]) -> dict[str, str] |
     return None
 
 
-def _extract_pod_info(pod: Any) -> dict[str, Any]:
+def _extract_pod_info(pod: Any, api: Any | None = None) -> dict[str, Any]:
     """Extract diagnostic info from a Pod object.
 
     Args:
         pod: V1Pod (kubernetes_asyncio) or any object exposing ``.name`` and
             a ``.raw`` dict (legacy test mocks).
+        api: Open ``ApiClient`` from ``k8s_client(...)``. Used for
+            ``sanitize_for_serialization`` on real V1Pod objects. ``None``
+            falls back to the module-scoped client (legacy/test callers
+            with ``.raw`` mocks never hit this path).
 
     Returns:
         Dict with pod name, phase, conditions, container statuses, and problems.
     """
-    pod_name, raw = _pod_to_raw(pod)
+    pod_name, raw = _pod_to_raw(pod, api)
     status = raw.get("status", {})
     phase = status.get("phase", "Unknown")
     container_statuses = status.get("containerStatuses", [])

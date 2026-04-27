@@ -55,7 +55,7 @@ async def _get_namespace_events(
     except Exception:  # noqa: BLE001 - diagnostics best-effort; return [] on any API/serializer error
         return []
 
-    serializer = _get_serializer()
+    serializer = _get_serializer(api)
     result = []
     for event in event_list.items:
         raw = serializer.sanitize_for_serialization(event) or {}
@@ -92,7 +92,7 @@ async def _get_node_resources(api: Any) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001 - diagnostics best-effort; return [] on any API/serializer error
         return []
 
-    serializer = _get_serializer()
+    serializer = _get_serializer(api)
     result = []
     for node in node_list.items:
         raw = serializer.sanitize_for_serialization(node) or {}
@@ -306,7 +306,7 @@ async def _debug_namespace(
     )
 
     pods = await kube_client_mod.get_pods(api, ns, label_selector)
-    pod_infos = [_extract_pod_info(pod) for pod in pods]
+    pod_infos = [_extract_pod_info(pod, api) for pod in pods]
     events = await _get_namespace_events(api, ns)
 
     pod_logs: dict[str, dict[str, str]] = {}

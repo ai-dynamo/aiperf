@@ -121,7 +121,8 @@ async def sweep(
             from aiperf.kubernetes import console as kube_console
 
             kube_console.console.print(
-                orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode()
+                orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode(),
+                highlight=False,
             )
             return
         await _submit_sweep(

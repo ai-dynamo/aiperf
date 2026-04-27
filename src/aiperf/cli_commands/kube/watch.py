@@ -32,7 +32,7 @@ async def watch(
         ),
     ] = False,
     output: Annotated[
-        str,
+        Literal["rich", "text", "json"],
         Parameter(
             name=["-o", "--output"],
             help="Output format: rich (TUI), text (plain log lines), or json (NDJSON).",

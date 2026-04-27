@@ -32,14 +32,17 @@ class TestBuildRenderer:
             param("rich", RichRenderer, id="rich"),
             param("text", TextRenderer, id="text"),
             param("json", JsonRenderer, id="json"),
-            param("anything-else", RichRenderer, id="unknown-defaults-to-rich"),
-            param("", RichRenderer, id="empty-defaults-to-rich"),
         ],
     )  # fmt: skip
     def test_factory_maps_output_to_renderer(
         self, output: str, expected_cls: type
     ) -> None:
-        """_build_renderer returns the right concrete renderer by --output."""
+        """_build_renderer returns the right concrete renderer by --output.
+
+        Cyclopts now validates ``output`` against ``Literal["rich","text","json"]``
+        at parse time, so unknown values are rejected before the factory runs;
+        the factory still falls through to RichRenderer for safety.
+        """
         renderer = _build_renderer(output)
         assert isinstance(renderer, expected_cls)
 
