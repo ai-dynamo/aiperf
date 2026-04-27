@@ -121,7 +121,7 @@ class BarePodDeployer:
                                 "name": "aiperf",
                                 "image": self.config.image,
                                 "imagePullPolicy": self.config.image_pull_policy,
-                                "command": ["/bin/sh", "-c"],
+                                "command": ["/bin/bash", "-c"],
                                 "args": [shell_cmd],
                                 "volumeMounts": [
                                     {"name": "output", "mountPath": "/aiperf-output"},
