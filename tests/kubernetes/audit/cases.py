@@ -49,16 +49,16 @@ class AuditCase:
 
     expected_artifacts: tuple[str, ...] = (
         "inputs.json",
-        "profile_export.jsonl",
-        "profile_export_records.csv",
         "profile_export_aiperf.json",
         "profile_export_aiperf.csv",
     )
     """Filenames that MUST exist on both sides for the structural diff.
 
-    Both the bare side (``--export-level records``) and the operator side
-    (``artifacts.records=['jsonl','csv']``) emit this five-file set; the
-    structural bucket fails if any are missing on either side.
+    Both sides emit this summary set by default. Per-record exports
+    (profile_export.jsonl, profile_export_records.csv) are intentionally
+    NOT in this list — enabling records triggers a controller-side race
+    where the readiness marker is not written for sub-second benchmarks,
+    causing the operator to mark the job Failed. Summary-only avoids that.
     """
 
 

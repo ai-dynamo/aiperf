@@ -179,11 +179,6 @@ class AIPerfJobConfig:
                 },
             ],
             "phases": phases,
-            # Force per-request records export so profile_export.jsonl and
-            # profile_export_records.csv are emitted; the audit's structural
-            # bucket and dataset-hash check rely on these. Mirrored on the
-            # bare side via `--export-level records`.
-            "artifacts": {"records": ["jsonl", "csv"]},
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
         }

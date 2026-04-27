@@ -42,13 +42,13 @@ def test_to_flat_spec_omits_warmup_when_count_zero() -> None:
     assert names == ["profiling"]
 
 
-def test_to_flat_spec_enables_records_artifacts_for_audit_parity() -> None:
-    """Operator-side audit runs need profile_export.jsonl + records.csv;
-    those only land when artifacts.records is set, so to_flat_spec must
-    emit both formats unconditionally (mirrors `--export-level records`
-    on the bare side)."""
+def test_to_flat_spec_omits_artifacts_records_for_summary_only_default() -> None:
+    """Per-record records export (jsonl/csv) was previously enabled here,
+    but combining records + a sub-second benchmark hits a controller-side
+    race where the readiness marker is never written and the operator
+    marks the job Failed. Audit-parity uses summary-only; the bare side
+    likewise drops --export-level records."""
     cfg = AIPerfJobConfig(concurrency=4, request_count=64)
     spec = cfg.to_flat_spec()
 
-    assert "artifacts" in spec
-    assert spec["artifacts"]["records"] == ["jsonl", "csv"]
+    assert "artifacts" not in spec or "records" not in spec.get("artifacts", {})

@@ -77,11 +77,6 @@ class BarePodDeployer:
         ]
         if case.num_conversations is not None:
             args += ["--num-conversations", str(case.num_conversations)]
-        # Default --export-level is `summary`, which omits profile_export.jsonl
-        # and profile_export_records.csv. The audit's structural-diff bucket
-        # (and dataset-hash check) require both, so force `records` on the
-        # bare side. Operator side enables the same via artifacts.records.
-        args += ["--export-level", "records"]
         return args
 
     def _build_job_manifest(

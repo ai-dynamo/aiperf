@@ -113,10 +113,6 @@ class SweepAuditRunner:
                 },
             ],
             "phases": phases,
-            # Mirror AIPerfJobConfig.to_flat_spec: force per-request records
-            # export so the audit's structural diff finds profile_export.jsonl
-            # and profile_export_records.csv on the operator side too.
-            "artifacts": {"records": ["jsonl", "csv"]},
             "tokenizer": {"name": self.config.tokenizer_name},
             "runtime": {"ui": "none"},
         }
