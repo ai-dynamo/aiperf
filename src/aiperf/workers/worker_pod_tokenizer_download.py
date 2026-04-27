@@ -110,7 +110,7 @@ def _extract_bundle(compressed: bytes, dest: Path) -> None:
     with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(compressed)) as reader:
         tar_bytes = reader.read()
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tf:
-        tf.extractall(path=dest)
+        tf.extractall(path=dest, filter="data")
 
 
 class _bundle_lock:
