@@ -57,18 +57,8 @@ async def on_child_phase_transition(
             },
         }
     }
-    # Only set phase=Aggregating when all children are terminal AND the parent
-    # has not already reached its own terminal phase (the sweep-controller
-    # owns terminal phase writes; clobbering them is the race documented in
-    # the audit). The list `Aggregating` itself is non-terminal so it is safe
-    # to set repeatedly.
-    parent_phase = (await _read_parent_phase(namespace, sweep_name)) or ""
-    if (
-        counts.get("total_terminal_phase")
-        and parent_phase not in PARENT_TERMINAL_PHASES
-    ):
-        body_patch["status"]["phase"] = counts["total_terminal_phase"]
-
+    # Counts + lastChildEvent are this writer's exclusive top-level fields,
+    # so a plain merge-patch is safe with no atomicity hand-shake.
     await _patch_parent_status(
         group="aiperf.nvidia.com",
         version="v1alpha1",
@@ -76,6 +66,41 @@ async def on_child_phase_transition(
         name=sweep_name,
         namespace=namespace,
         body=body_patch,
+    )
+
+    # ``status.phase`` is co-written by three managers: kopf-default at
+    # create (``Pending``), the sweep-controller (terminal ``Succeeded`` /
+    # ``Failed`` from ``aggregation_complete``), and this rollup
+    # (``Aggregating`` once every child is terminal). Without the
+    # JSON-patch ``test`` op below, a TOCTOU between ``_read_parent_phase``
+    # and the merge-patch would let this rollup clobber a freshly-written
+    # terminal phase back to ``Aggregating``. The ``test`` op makes the
+    # write conditional on the apiserver value still matching what we read.
+    if not counts.get("total_terminal_phase"):
+        return
+    # Currently-listed children are all terminal — but the sweep-controller
+    # creates child CRs lazily as it walks variations × trials, so an empty
+    # in-flight set is NOT proof the sweep is done. The CR's
+    # ``status.maxTotalRuns`` (set at create-time from variations × trials)
+    # is the authoritative completion target; only flip phase to
+    # ``Aggregating`` when ``completedRuns + failedRuns >= maxTotalRuns``.
+    # Without this guard the parent flips to ``Aggregating`` after the very
+    # first child terminates in a multi-cell sweep and stays there for the
+    # rest of the run.
+    parent_cr = await _read_parent_status(namespace, sweep_name)
+    parent_phase = (parent_cr.get("phase") if parent_cr else "") or ""
+    if parent_phase in PARENT_TERMINAL_PHASES:
+        return
+    max_total_runs = (parent_cr or {}).get("maxTotalRuns")
+    if isinstance(max_total_runs, int) and max_total_runs > 0:
+        accounted = counts["completed"] + counts["failed"]
+        if accounted < max_total_runs:
+            return
+    await _conditional_phase_set(
+        namespace=namespace,
+        name=sweep_name,
+        expect_phase=parent_phase,
+        new_phase=counts["total_terminal_phase"],
     )
 
 
@@ -198,8 +223,14 @@ async def _patch_parent_status(
         ) from e
 
 
-async def _read_parent_phase(namespace: str, name: str) -> str | None:
-    """Return parent AIPerfSweep status.phase, or None if missing/unreadable."""
+async def _read_parent_status(namespace: str, name: str) -> dict[str, Any] | None:
+    """Return parent AIPerfSweep ``status`` dict, or None if missing/unreadable.
+
+    The rollup needs both ``phase`` (TOCTOU guard) and ``maxTotalRuns``
+    (the operator-create-handler-set total target the rollup compares
+    completed+failed against before flipping phase to ``Aggregating``).
+    A single read avoids two GETs against the apiserver.
+    """
     from kubernetes_asyncio import client as k8s
 
     from aiperf.kubernetes.client import k8s_client
@@ -216,4 +247,87 @@ async def _read_parent_phase(namespace: str, name: str) -> str | None:
             )
     except Exception:  # noqa: BLE001 - best-effort read; worst case we re-set Aggregating once
         return None
-    return ((cr.get("status") or {}).get("phase")) or None
+    return (cr.get("status") or {}) or None
+
+
+async def _read_parent_phase(namespace: str, name: str) -> str | None:
+    """Return parent AIPerfSweep status.phase, or None if missing/unreadable.
+
+    Thin wrapper around ``_read_parent_status`` retained for backwards
+    compatibility with existing tests that patch this symbol directly.
+    """
+    status = await _read_parent_status(namespace, name)
+    return (status or {}).get("phase") or None
+
+
+async def _conditional_phase_set(
+    *,
+    namespace: str,
+    name: str,
+    expect_phase: str,
+    new_phase: str,
+) -> None:
+    """Atomically write ``status.phase`` only when the apiserver still
+    reflects ``expect_phase``.
+
+    Uses a JSON-patch with a leading ``test`` op so a concurrent terminal
+    write from the sweep-controller (between our read and this patch)
+    flips the apiserver value, the test fails, and the apiserver returns
+    422 — at which point we silently skip. Counts/lastChildEvent already
+    landed via the prior merge-patch, so a skipped phase write is fine.
+
+    When ``expect_phase`` is empty (initial create, before any phase has
+    been written), the test would never match — fall back to a plain
+    merge-patch in that case since the racy peer (sweep-controller) has
+    not yet had a chance to write phase either.
+    """
+    import aiohttp
+    import kopf
+    from kubernetes_asyncio import client as k8s
+    from kubernetes_asyncio.client import ApiException
+
+    from aiperf.kubernetes.client import k8s_client
+
+    if not expect_phase:
+        await _patch_parent_status(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            plural="aiperfsweeps",
+            name=name,
+            namespace=namespace,
+            body={"status": {"phase": new_phase}},
+        )
+        return
+
+    try:
+        async with k8s_client() as api:
+            custom = k8s.CustomObjectsApi(api)
+            await custom.patch_namespaced_custom_object_status(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                plural="aiperfsweeps",
+                namespace=namespace,
+                name=name,
+                body=[
+                    {"op": "test", "path": "/status/phase", "value": expect_phase},
+                    {"op": "replace", "path": "/status/phase", "value": new_phase},
+                ],
+                field_manager=ROLLUP_FIELD_MANAGER,
+                _content_type="application/json-patch+json",
+            )
+    except ApiException as e:
+        # 422 = test op failed; the parent moved to a different phase
+        # between our read and our patch (typically: sweep-controller wrote
+        # a terminal phase). Skip silently — that write is the source of
+        # truth and we should not clobber it.
+        if e.status == 422:
+            return
+        if e.status == 404:
+            return
+        raise kopf.TemporaryError(
+            f"apiserver rejected phase patch ({e.status}): {e.reason}", delay=15
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during phase patch: {e}", delay=15
+        ) from e

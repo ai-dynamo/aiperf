@@ -69,7 +69,8 @@ async def test_child_rollup_skips_unowned_aiperfjob(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch):
-    """When all children terminal, parent transitions to Aggregating.
+    """When all children terminal AND completed+failed >= maxTotalRuns, parent
+    transitions to Aggregating.
 
     Counts/lastChildEvent ride a regular merge-patch via
     ``_patch_parent_status``; ``status.phase`` rides
@@ -89,7 +90,9 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
     monkeypatch.setattr(
-        child_rollup, "_read_parent_phase", AsyncMock(return_value="Running")
+        child_rollup,
+        "_read_parent_status",
+        AsyncMock(return_value={"phase": "Running", "maxTotalRuns": 6}),
     )
     monkeypatch.setattr(
         child_rollup,
@@ -122,6 +125,117 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
     assert body_patch["status"]["completedRuns"] == 5
     assert body_patch["status"]["failedRuns"] == 1
     assert "phase" not in body_patch["status"]
+    assert phase_calls == [{"expect": "Running", "new": "Aggregating"}]
+
+
+@pytest.mark.asyncio
+async def test_child_rollup_does_not_aggregate_mid_run(monkeypatch):
+    """Mid-sweep: only 3 of 15 children created so far (all terminal); the
+    sweep-controller is still walking variations × trials and will lazily
+    create the next child. The currently-listed children are 100% terminal,
+    but ``completedRuns + failedRuns < maxTotalRuns`` — so the rollup must
+    NOT flip the parent phase to ``Aggregating``. Counts/lastChildEvent
+    still ride the merge-patch.
+
+    Regression for the live-DGX bug: a 5-concurrency × 3-trial sweep flipped
+    to ``Aggregating`` after the very first cell terminated and stayed there
+    for the remaining 14 children.
+    """
+    parent_patches: list[dict] = []
+    phase_calls: list[dict] = []
+
+    async def fake_patch(*, group, version, plural, name, namespace, body):
+        parent_patches.append(body)
+
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+        phase_calls.append({"expect": expect_phase, "new": new_phase})
+
+    monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+    monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(
+        child_rollup,
+        "_read_parent_status",
+        AsyncMock(return_value={"phase": "Running", "maxTotalRuns": 15}),
+    )
+    monkeypatch.setattr(
+        child_rollup,
+        "_count_owned_children",
+        AsyncMock(
+            return_value={
+                "completed": 3,
+                "failed": 0,
+                "in_flight": 0,
+                "total_terminal_phase": "Aggregating",
+            }
+        ),
+    )
+
+    body = {
+        "metadata": {
+            "name": "child",
+            "namespace": "ns",
+            "ownerReferences": [{"kind": "AIPerfSweep", "name": "s", "uid": "u"}],
+        },
+    }
+    await child_rollup.on_child_phase_transition(
+        body=body,
+        status={"phase": "Succeeded"},
+        name="child",
+        namespace="ns",
+    )
+    # Counts merge-patch must still happen.
+    assert len(parent_patches) == 1
+    assert parent_patches[0]["status"]["completedRuns"] == 3
+    # Phase write must NOT happen — sweep is mid-run.
+    assert phase_calls == []
+
+
+@pytest.mark.asyncio
+async def test_child_rollup_aggregates_when_all_runs_accounted_for(monkeypatch):
+    """Final child of a 15-cell sweep terminates: completedRuns+failedRuns ==
+    maxTotalRuns, so the rollup advances ``phase=Aggregating``."""
+    parent_patches: list[dict] = []
+    phase_calls: list[dict] = []
+
+    async def fake_patch(*, group, version, plural, name, namespace, body):
+        parent_patches.append(body)
+
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+        phase_calls.append({"expect": expect_phase, "new": new_phase})
+
+    monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+    monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(
+        child_rollup,
+        "_read_parent_status",
+        AsyncMock(return_value={"phase": "Running", "maxTotalRuns": 15}),
+    )
+    monkeypatch.setattr(
+        child_rollup,
+        "_count_owned_children",
+        AsyncMock(
+            return_value={
+                "completed": 14,
+                "failed": 1,
+                "in_flight": 0,
+                "total_terminal_phase": "Aggregating",
+            }
+        ),
+    )
+
+    body = {
+        "metadata": {
+            "name": "child",
+            "namespace": "ns",
+            "ownerReferences": [{"kind": "AIPerfSweep", "name": "s", "uid": "u"}],
+        },
+    }
+    await child_rollup.on_child_phase_transition(
+        body=body,
+        status={"phase": "Succeeded"},
+        name="child",
+        namespace="ns",
+    )
     assert phase_calls == [{"expect": "Running", "new": "Aggregating"}]
 
 

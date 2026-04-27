@@ -147,13 +147,19 @@ async def test_count_owned_children_partially_failed_alone_yields_aggregating(
 async def test_on_child_phase_transition_does_not_clobber_terminal_parent_phase(
     monkeypatch, parent_phase
 ):
-    """If parent is already terminal, body_patch must NOT contain a ``phase`` key."""
+    """If parent is already terminal, NO phase write must be attempted —
+    not on the merge-patch and not via the conditional phase setter."""
     captured: list[dict[str, Any]] = []
+    phase_calls: list[dict[str, Any]] = []
 
     async def fake_patch(*, body, **_kw):
         captured.append(body)
 
+    async def fake_phase_set(**kwargs):
+        phase_calls.append(kwargs)
+
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+    monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",
@@ -167,7 +173,9 @@ async def test_on_child_phase_transition_does_not_clobber_terminal_parent_phase(
         ),
     )
     monkeypatch.setattr(
-        child_rollup, "_read_parent_phase", AsyncMock(return_value=parent_phase)
+        child_rollup,
+        "_read_parent_status",
+        AsyncMock(return_value={"phase": parent_phase, "maxTotalRuns": 3}),
     )
 
     body = {
@@ -186,8 +194,10 @@ async def test_on_child_phase_transition_does_not_clobber_terminal_parent_phase(
     assert "phase" not in captured[0]["status"], (
         f"phase must not be set when parent is terminal ({parent_phase})"
     )
-    # But rollup counts ARE still updated.
+    # Counts ARE still updated.
     assert captured[0]["status"]["completedRuns"] == 3
+    # And the conditional phase setter must not have been invoked.
+    assert phase_calls == []
 
 
 @pytest.mark.asyncio
@@ -203,13 +213,19 @@ async def test_on_child_phase_transition_does_not_clobber_terminal_parent_phase(
 async def test_on_child_phase_transition_writes_aggregating_when_parent_non_terminal(
     monkeypatch, parent_phase
 ):
-    """Non-terminal parent phase → Aggregating is written through (default behavior)."""
+    """Non-terminal parent phase → ``Aggregating`` is written through
+    ``_conditional_phase_set`` with the read-back phase as the test value."""
     captured: list[dict[str, Any]] = []
+    phase_calls: list[dict[str, Any]] = []
 
     async def fake_patch(*, body, **_kw):
         captured.append(body)
 
+    async def fake_phase_set(**kwargs):
+        phase_calls.append(kwargs)
+
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+    monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",
@@ -223,7 +239,9 @@ async def test_on_child_phase_transition_writes_aggregating_when_parent_non_term
         ),
     )
     monkeypatch.setattr(
-        child_rollup, "_read_parent_phase", AsyncMock(return_value=parent_phase)
+        child_rollup,
+        "_read_parent_status",
+        AsyncMock(return_value={"phase": parent_phase, "maxTotalRuns": 1}),
     )
 
     body = {
@@ -235,7 +253,11 @@ async def test_on_child_phase_transition_writes_aggregating_when_parent_non_term
     await child_rollup.on_child_phase_transition(
         body=body, status={"phase": "Succeeded"}, name="c", namespace="ns"
     )
-    assert captured[0]["status"]["phase"] == "Aggregating"
+    # Counts ride the merge-patch; phase rides the conditional setter.
+    assert "phase" not in captured[0]["status"]
+    assert len(phase_calls) == 1
+    assert phase_calls[0]["new_phase"] == "Aggregating"
+    assert phase_calls[0]["expect_phase"] == (parent_phase or "")
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +332,7 @@ async def test_on_child_phase_transition_accepts_kopf_extra_kwargs(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        child_rollup, "_read_parent_phase", AsyncMock(return_value=None)
+        child_rollup, "_read_parent_status", AsyncMock(return_value=None)
     )
 
     body = {
