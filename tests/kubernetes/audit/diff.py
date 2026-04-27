@@ -179,3 +179,91 @@ def diff_exact(
         )
 
     return findings
+
+
+_DEFAULT_BANDS: dict[str, float] = {
+    "avg": 0.10,
+    "mean": 0.10,
+    "p50": 0.10,
+    "median": 0.10,
+    "p90": 0.25,
+    "p95": 0.25,
+    "p99": 0.25,
+    "throughput": 0.10,
+    "min": 0.25,
+    "max": 0.25,
+    "std": 0.50,
+}
+_EPS = 1e-9
+
+
+def _band_for(stat_key: str, case: AuditCase) -> float:
+    if stat_key in case.metric_tolerance_overrides:
+        return case.metric_tolerance_overrides[stat_key]
+    return _DEFAULT_BANDS.get(stat_key, 0.10)
+
+
+def _summary_path(root: Path) -> Path | None:
+    """Return the canonical summary JSON path, if present."""
+    if not root.exists():
+        return None
+    candidates = sorted(root.glob("profile_export_*.json"))
+    for c in candidates:
+        if "_partial" in c.name or "_timeslices" in c.name:
+            continue
+        return c
+    return None
+
+
+def _flatten_metrics(payload: dict[str, Any], prefix: str = "") -> dict[str, float]:
+    """Flatten ``{metric: {stat: value}}`` into ``{metric.stat: value}``."""
+    out: dict[str, float] = {}
+    for k, v in payload.items():
+        if isinstance(v, dict):
+            out.update(_flatten_metrics(v, prefix=f"{prefix}{k}."))
+        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[f"{prefix}{k}"] = float(v)
+    return out
+
+
+def _relative_diff(a: float, b: float) -> float:
+    denom = max(abs(a), abs(b), _EPS)
+    return abs(a - b) / denom
+
+
+def diff_tolerance(
+    *,
+    operator_dir: Path,
+    bare_dir: Path,
+    case: AuditCase,
+) -> list[Finding]:
+    """Bucket 2: numeric stats compared with per-stat-suffix relative bands."""
+    findings: list[Finding] = []
+
+    op_path = _summary_path(operator_dir)
+    bare_path = _summary_path(bare_dir)
+    if op_path is None or bare_path is None:
+        return findings
+
+    op = _flatten_metrics(json.loads(op_path.read_text()))
+    bare = _flatten_metrics(json.loads(bare_path.read_text()))
+
+    for field_name, bare_value in bare.items():
+        if field_name not in op:
+            continue
+        op_value = op[field_name]
+        stat_key = field_name.rsplit(".", 1)[-1].lower()
+        band = _band_for(stat_key, case)
+        rel = _relative_diff(op_value, bare_value)
+        if rel > band:
+            findings.append(
+                Finding(
+                    bucket="tolerance",
+                    field=field_name,
+                    expected=bare_value,
+                    actual=op_value,
+                    reason=f"relative diff {rel:.1%} exceeds band {band:.1%} for stat '{stat_key}'",
+                )
+            )
+
+    return findings

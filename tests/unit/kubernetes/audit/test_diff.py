@@ -113,3 +113,64 @@ def test_audit_findings_empty_property() -> None:
         findings=[Finding(bucket="exact", field="x", expected=1, actual=2, reason="r")],
     )
     assert f2.empty is False
+
+
+from tests.kubernetes.audit.diff import diff_tolerance
+
+
+def _write_summary(
+    root: Path, *, mean: float, p50: float, p99: float, throughput: float
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "profile_export_aiperf.json").write_text(
+        json.dumps(
+            {
+                "request_latency": {"avg": mean, "p50": p50, "p99": p99},
+                "request_throughput": {"avg": throughput},
+            }
+        )
+    )
+
+
+def test_diff_tolerance_within_band_returns_no_findings(
+    tmp_path: Path, case: AuditCase
+) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    _write_summary(op, mean=100.0, p50=95.0, p99=200.0, throughput=50.0)
+    _write_summary(bare, mean=105.0, p50=99.0, p99=220.0, throughput=51.0)
+
+    findings = diff_tolerance(operator_dir=op, bare_dir=bare, case=case)
+
+    assert findings == []
+
+
+def test_diff_tolerance_mean_out_of_band_is_reported(
+    tmp_path: Path, case: AuditCase
+) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    _write_summary(op, mean=200.0, p50=95.0, p99=200.0, throughput=50.0)
+    _write_summary(bare, mean=100.0, p50=95.0, p99=200.0, throughput=50.0)
+
+    findings = diff_tolerance(operator_dir=op, bare_dir=bare, case=case)
+
+    assert any("avg" in f.field and f.bucket == "tolerance" for f in findings)
+
+
+def test_diff_tolerance_per_case_override_relaxes_band(tmp_path: Path) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    _write_summary(op, mean=100.0, p50=95.0, p99=350.0, throughput=50.0)
+    _write_summary(bare, mean=100.0, p50=95.0, p99=222.0, throughput=50.0)
+
+    case = AuditCase(
+        case_id="unit",
+        endpoint_type="chat",
+        concurrency=4,
+        request_count=10,
+        metric_tolerance_overrides={"p99": 0.60},
+    )
+    findings = diff_tolerance(operator_dir=op, bare_dir=bare, case=case)
+
+    assert findings == []
