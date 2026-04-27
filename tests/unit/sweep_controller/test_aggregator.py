@@ -13,6 +13,7 @@ def test_aggregator_writes_aggregate_json(tmp_path: Path) -> None:
         base_dir=tmp_path,
         namespace="bench",
         sweep_name="saturation-sweep",
+        sweep_run_epoch="1714069323",
         doc={
             "phase": "Succeeded",
             "totalVariations": 2,
@@ -29,12 +30,12 @@ def test_aggregator_writes_aggregate_json(tmp_path: Path) -> None:
         },
         conditions=[{"type": "Done", "status": "True"}],
     )
-    sweep_dir = tmp_path / "bench" / "sweeps" / "saturation-sweep"
-    assert (sweep_dir / "aggregate.json").is_file()
-    assert (sweep_dir / "conditions.json").is_file()
-    doc = orjson.loads((sweep_dir / "aggregate.json").read_bytes())
+    epoch_dir = tmp_path / "bench" / "sweeps" / "saturation-sweep" / "1714069323"
+    assert (epoch_dir / "aggregate.json").is_file()
+    assert (epoch_dir / "conditions.json").is_file()
+    doc = orjson.loads((epoch_dir / "aggregate.json").read_bytes())
     assert doc["phase"] == "Succeeded"
-    cond = orjson.loads((sweep_dir / "conditions.json").read_bytes())
+    cond = orjson.loads((epoch_dir / "conditions.json").read_bytes())
     assert cond == {"conditions": [{"type": "Done", "status": "True"}]}
 
 
@@ -45,12 +46,13 @@ def test_aggregator_skips_conditions_when_none(tmp_path: Path) -> None:
         base_dir=tmp_path,
         namespace="bench",
         sweep_name="s1",
+        sweep_run_epoch="1714069323",
         doc={"phase": "Succeeded"},
         conditions=None,
     )
-    sweep_dir = tmp_path / "bench" / "sweeps" / "s1"
-    assert (sweep_dir / "aggregate.json").is_file()
-    assert not (sweep_dir / "conditions.json").exists()
+    epoch_dir = tmp_path / "bench" / "sweeps" / "s1" / "1714069323"
+    assert (epoch_dir / "aggregate.json").is_file()
+    assert not (epoch_dir / "conditions.json").exists()
 
 
 def test_aggregator_atomic_no_tmp_leftover(tmp_path: Path) -> None:
@@ -61,11 +63,12 @@ def test_aggregator_atomic_no_tmp_leftover(tmp_path: Path) -> None:
         base_dir=tmp_path,
         namespace="bench",
         sweep_name="s1",
+        sweep_run_epoch="1714069323",
         doc={"phase": "Succeeded"},
         conditions=[{"type": "Done", "status": "True"}],
     )
-    sweep_dir = tmp_path / "bench" / "sweeps" / "s1"
-    leftovers = [p.name for p in sweep_dir.iterdir() if p.name.endswith(".tmp")]
+    epoch_dir = tmp_path / "bench" / "sweeps" / "s1" / "1714069323"
+    leftovers = [p.name for p in epoch_dir.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
 
 
@@ -77,14 +80,16 @@ def test_aggregator_overwrites_existing(tmp_path: Path) -> None:
         base_dir=tmp_path,
         namespace="bench",
         sweep_name="s1",
+        sweep_run_epoch="1714069323",
         doc={"phase": "Running"},
     )
     write_sweep_aggregate(
         base_dir=tmp_path,
         namespace="bench",
         sweep_name="s1",
+        sweep_run_epoch="1714069323",
         doc={"phase": "Succeeded"},
     )
-    sweep_dir = tmp_path / "bench" / "sweeps" / "s1"
-    doc = orjson.loads((sweep_dir / "aggregate.json").read_bytes())
+    epoch_dir = tmp_path / "bench" / "sweeps" / "s1" / "1714069323"
+    doc = orjson.loads((epoch_dir / "aggregate.json").read_bytes())
     assert doc["phase"] == "Succeeded"

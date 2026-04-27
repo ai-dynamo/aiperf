@@ -111,16 +111,26 @@ def _write_sweep_parent_aggregate(
     spec: Any,
     results: list,
     plan: Any,
+    sweep_run_epoch: str,
+    with_trial_suffix: bool,
 ) -> None:
-    """Persist the durable parent ``aggregate.json`` under ``<base>/<ns>/sweeps/<name>/``.
+    """Persist the durable parent ``aggregate.json`` under ``<base>/<ns>/sweeps/<name>/<epoch>/``.
 
     Anchors the dual-backed sweep API: while the controller pod is alive the
     operator can read live status from the CR; once the pod is gone the
-    operator falls back to this file. Conditions are owned by the operator and
-    not yet collected here, so we pass ``conditions=None`` and the
-    ``conditions.json`` sibling is omitted.
+    operator falls back to this directory. Also writes ``children.json``
+    immediately after — the authoritative back-link from sweep epoch to each
+    child AIPerfJob's name + child epoch, used by ``sweep_union`` to resolve
+    archived sweeps after the parent CR has been TTL-reaped.
+
+    Conditions are owned by the operator and not yet collected here, so we
+    pass ``conditions=None`` and the ``conditions.json`` sibling is omitted.
     """
-    from aiperf.sweep_controller.aggregator import write_sweep_aggregate
+    from aiperf.sweep_controller.aggregator import (
+        write_children_manifest,
+        write_sweep_aggregate,
+    )
+    from aiperf.sweep_controller.k8s_executor import build_child_name
 
     metadata = sweep_cr.get("metadata") or {}
     namespace = metadata["namespace"]
@@ -146,8 +156,45 @@ def _write_sweep_parent_aggregate(
         base_dir=base_dir,
         namespace=namespace,
         sweep_name=name,
+        sweep_run_epoch=sweep_run_epoch,
         doc=doc,
         conditions=None,
+    )
+    # Build children manifest by walking variations x trials in the same order
+    # the orchestrator emits results. plan.trials is the static upper bound;
+    # adaptive strategies may emit fewer or more, so we walk len(results) and
+    # roll variation_index forward as trials saturate.
+    children: list[dict[str, Any]] = []
+    trials_per_variation = max(int(getattr(plan, "trials", 1) or 1), 1)
+    for idx, r in enumerate(results):
+        var_idx = min(idx // trials_per_variation, len(plan.variations) - 1)
+        trial_idx = idx % trials_per_variation
+        variation = plan.variations[var_idx]
+        trial_for_name = trial_idx if with_trial_suffix else None
+        child_name = build_child_name(
+            sweep_name=name,
+            sweep_run_epoch=sweep_run_epoch,
+            variation_index=var_idx,
+            trial_index=trial_for_name,
+        )
+        children.append(
+            {
+                "namespace": namespace,
+                "name": child_name,
+                "variation_index": var_idx,
+                "variation_label": getattr(variation, "label", ""),
+                "trial_index": trial_idx if with_trial_suffix else None,
+                "child_run_epoch": sweep_run_epoch,
+                "label": r.label,
+                "status": "Succeeded" if r.success else "Failed",
+            }
+        )
+    write_children_manifest(
+        base_dir=base_dir,
+        namespace=namespace,
+        sweep_name=name,
+        sweep_run_epoch=sweep_run_epoch,
+        children=children,
     )
 
 
@@ -261,6 +308,13 @@ async def main() -> int:
                     spec=spec,
                     results=all_results,
                     plan=plan,
+                    sweep_run_epoch=sweep_run_epoch,
+                    with_trial_suffix=needs_trial_suffix(
+                        multi_run_trials=(
+                            spec.multi_run.trials if spec.multi_run else None
+                        ),
+                        has_convergence=spec.convergence is not None,
+                    ),
                 )
                 write_aggregate_marker(RESULTS_DIR)
                 controller_host = os.environ.get("HOSTNAME", "")
