@@ -68,21 +68,18 @@ AUDIT_CASES: tuple[AuditCase, ...] = (
         endpoint_type="chat",
         concurrency=4,
         request_count=64,
-        num_conversations=32,
     ),
     AuditCase(
         case_id="baseline-completions",
         endpoint_type="completions",
         concurrency=4,
         request_count=64,
-        num_conversations=32,
     ),
     AuditCase(
         case_id="concurrency-scale",
         endpoint_type="chat",
         concurrency=16,
         request_count=128,
-        num_conversations=64,
         # Higher concurrency on operator side spreads across worker pods;
         # tail latency is structurally noisier than a single bare process.
         metric_tolerance_overrides={
