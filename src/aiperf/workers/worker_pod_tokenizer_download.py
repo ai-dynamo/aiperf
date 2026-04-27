@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import sys
 import tarfile
 from pathlib import Path
 from urllib.parse import quote
@@ -110,7 +111,12 @@ def _extract_bundle(compressed: bytes, dest: Path) -> None:
     with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(compressed)) as reader:
         tar_bytes = reader.read()
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tf:
-        tf.extractall(path=dest, filter="data")
+        # ``filter="data"`` was added in Python 3.12 and becomes mandatory in
+        # 3.14 (PEP 706). Pass it conditionally so we still run on 3.10/3.11.
+        if sys.version_info >= (3, 12):
+            tf.extractall(path=dest, filter="data")
+        else:
+            tf.extractall(path=dest)
 
 
 class _bundle_lock:
