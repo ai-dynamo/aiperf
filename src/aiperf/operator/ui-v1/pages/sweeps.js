@@ -94,10 +94,13 @@ export function Sweeps() {
             <th>Model</th>
             <th>Source</th>
             <th>Age</th>
+            <th>Epochs</th>
           </tr>
         </thead>
         <tbody>
-          ${filtered.map(s => html`
+          ${filtered.map(s => {
+            const detailUrl = `/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`;
+            return html`
             <tr key=${`${s.namespace}/${s.name}`} onclick=${() => rowClick(s)} style="cursor: pointer">
               <td>${s.name}</td>
               <td class="text-dim">${s.namespace}</td>
@@ -108,8 +111,14 @@ export function Sweeps() {
               <td class="text-dim">${s.model ?? '—'}</td>
               <td><${SourceChip} source=${s.source} /></td>
               <td class="text-dim">${formatAge(s.age_seconds)}</td>
+              <td><a
+                href=${detailUrl}
+                title="View run history"
+                onclick=${e => { e.stopPropagation(); navigate(detailUrl); e.preventDefault(); }}
+                style=${`color:${palette.overlay0};text-decoration:none`}
+              >↻</a></td>
             </tr>
-          `)}
+          `;})}
         </tbody>
       </table>
     </div>
