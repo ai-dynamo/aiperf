@@ -108,6 +108,7 @@ async def test_main_cancels_poll_task_in_finally(monkeypatch, tmp_path):
 
     monkeypatch.setenv("AIPERF_SWEEP_NAME", "s")
     monkeypatch.setenv("AIPERF_SWEEP_NAMESPACE", "ns")
+    monkeypatch.setenv("AIPERF_SWEEP_EPOCH", "1714069323")
 
     main_mod = importlib.import_module("aiperf.sweep_controller.main")
 

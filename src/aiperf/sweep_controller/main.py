@@ -170,6 +170,7 @@ async def main() -> int:
     )
     sweep_name = os.environ["AIPERF_SWEEP_NAME"]
     sweep_namespace = os.environ["AIPERF_SWEEP_NAMESPACE"]
+    sweep_run_epoch = os.environ["AIPERF_SWEEP_EPOCH"]
     logger.info(f"sweep-controller starting for {sweep_namespace}/{sweep_name}")
 
     from kubernetes_asyncio.client import CustomObjectsApi
@@ -222,6 +223,7 @@ async def main() -> int:
             base_dir=RESULTS_DIR,
             status_writer=status_writer,
             cancel_check=lambda: cancel_flag["requested"],
+            sweep_run_epoch=sweep_run_epoch,
         )
 
         orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)

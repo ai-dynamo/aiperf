@@ -61,6 +61,7 @@ __all__ = [
     "ChildNameConflictError",
     "CustomObjectsApi",
     "K8sChildJobExecutor",
+    "build_child_name",
     "derive_child_name",
     "is_my_child",
     "needs_trial_suffix",
@@ -94,6 +95,23 @@ def derive_child_name(
     if with_trial_suffix:
         return f"{base}-t{trial:02d}"
     return base
+
+
+def build_child_name(
+    *,
+    sweep_name: str,
+    sweep_run_epoch: str,
+    variation_index: int,
+    trial_index: int | None,
+) -> str:
+    """Deterministic child AIPerfJob name embedding the sweep epoch.
+
+    Format: ``<sweep>-e<sweep_epoch>-v<vari:04d>-t<trial:02d>`` (or no -t suffix
+    if ``trial_index is None``). Bounded by the 63-char DNS-label limit because
+    the sweep CR name is itself <=40 chars (CRD validation).
+    """
+    suffix = f"-t{trial_index:02d}" if trial_index is not None else ""
+    return f"{sweep_name}-e{sweep_run_epoch}-v{variation_index:04d}{suffix}"
 
 
 def is_my_child(child: dict[str, Any], *, sweep_uid: str, sweep_name: str) -> bool:
@@ -141,6 +159,7 @@ class K8sChildJobExecutor(RunExecutor):
         base_dir: Path | None = None,
         status_writer: Any | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        sweep_run_epoch: str | None = None,
     ) -> None:
         self._api = api
         self.sweep = sweep
@@ -151,8 +170,20 @@ class K8sChildJobExecutor(RunExecutor):
         self.base_dir = Path(base_dir) if base_dir is not None else None
         self._status_writer = status_writer
         self._cancel_check = cancel_check
+        # When None, names use the legacy <sweep>-vNNNN[-tNN] form (kept for
+        # in-process unit tests that don't drive the sweep-controller pod).
+        # In production, main.py reads AIPERF_SWEEP_EPOCH and passes it here so
+        # every rerun lands at a fresh child name + fresh PVC subdir.
+        self.sweep_run_epoch = sweep_run_epoch
 
     def derive_id(self, plan: BenchmarkPlan | None, var_idx: int, trial: int) -> str:
+        if self.sweep_run_epoch is not None:
+            return build_child_name(
+                sweep_name=self.sweep_name,
+                sweep_run_epoch=self.sweep_run_epoch,
+                variation_index=var_idx,
+                trial_index=trial if self.with_trial_suffix else None,
+            )
         return derive_child_name(
             self.sweep_name,
             var_idx,
@@ -288,7 +319,11 @@ class K8sChildJobExecutor(RunExecutor):
             "metadata": self._build_child_metadata(run, name),
             "spec": self._build_child_spec(run),
         }
-        if self.base_dir is not None and run.variation is not None:
+        if (
+            self.base_dir is not None
+            and run.variation is not None
+            and self.sweep_run_epoch is not None
+        ):
             try:
                 write_child_sweep_marker(
                     base_dir=self.base_dir,
@@ -298,6 +333,11 @@ class K8sChildJobExecutor(RunExecutor):
                     variation_index=run.variation.index,
                     variation_label=run.variation.label,
                     trial_index=run.trial if self.with_trial_suffix else None,
+                    sweep_run_epoch=self.sweep_run_epoch,
+                    # Fresh child: child epoch == sweep epoch. On a child rerun
+                    # (Task 6+), the controller derives a new child epoch and
+                    # passes it here so the back-link points at the right run.
+                    child_run_epoch=self.sweep_run_epoch,
                 )
             except OSError as e:
                 logger.warning(
@@ -409,12 +449,19 @@ def write_child_sweep_marker(
     variation_index: int,
     variation_label: str,
     trial_index: int | None,
+    sweep_run_epoch: str,
+    child_run_epoch: str,
 ) -> None:
     """Drop the per-child ``sweep.json`` marker into the child's results directory.
 
     Called by the sweep-controller before each child AIPerfJob CR is created;
     the marker survives parent-CR TTL reap so the operator's job_union can
     populate the back-link on archived children. Atomic write via ``os.replace``.
+
+    ``sweep_run_epoch`` and ``child_run_epoch`` are read by job_union and the
+    dual-backed jobs API for back-link rendering on archived children. For a
+    fresh child, the two epochs are equal; on a child rerun (Task 6+) the child
+    epoch advances independently of the sweep epoch.
 
     Idempotent: overwriting an existing marker is fine, since deterministic
     child names anchor identity to the apiserver, not to the marker.
@@ -426,6 +473,8 @@ def write_child_sweep_marker(
         "variation_index": variation_index,
         "variation_label": variation_label,
         "trial_index": trial_index,
+        "sweep_run_epoch": sweep_run_epoch,
+        "child_run_epoch": child_run_epoch,
     }
     fd, tmp_path = tempfile.mkstemp(prefix=".sweep.", suffix=".json", dir=target_dir)
     try:
