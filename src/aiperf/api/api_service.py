@@ -207,36 +207,43 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         """Populate the shared HF cache for every configured tokenizer.
 
         Runs before uvicorn binds the port so the bundle endpoint never
-        returns 503 due to a cold cache. Failures are logged but not
-        raised: a missing tokenizer surfaces later as a 503/404 on the
-        bundle endpoint, which the WGM downloader retries.
+        returns 503 due to a cold cache. Uses ``AutoTokenizer.from_pretrained``
+        (rather than ``snapshot_download`` with a glob) so HuggingFace's
+        own logic picks the minimal file set — avoids pulling unrelated
+        siblings like ``onnx/`` that would only inflate the bundle and the
+        wire bytes shipped to every worker pod. Failures are logged but
+        not raised: a missing tokenizer surfaces later as a 503/404 on
+        the bundle endpoint, which the WGM downloader retries.
         """
-        from huggingface_hub import snapshot_download
+        from transformers import AutoTokenizer
 
         names = self._tokenizers_to_warm()
         if not names:
             return
+        cfg = self.run.cfg
+        tokenizer_cfg = getattr(cfg, "tokenizer", None)
+        trust_remote_code = bool(
+            getattr(tokenizer_cfg, "trust_remote_code", False)
+            if tokenizer_cfg is not None
+            else False
+        )
+        revision = (
+            getattr(tokenizer_cfg, "revision", "main")
+            if tokenizer_cfg is not None
+            else "main"
+        )
         self.info(f"Pre-warming tokenizers into shared HF cache: {names}")
-        # Tokenizer-only file patterns: tokenizer*.json, vocab.{json,txt},
-        # merges.txt, special_tokens_map.json, added_tokens.json,
-        # chat_template.jinja, sentencepiece *.model, tiktoken *.tiktoken,
-        # plus *.py for trust_remote_code modules. Excludes weights.
-        allow_patterns = [
-            "*.json",
-            "*.txt",
-            "*.model",
-            "*.tiktoken",
-            "*.jinja",
-            "*.py",
-        ]
 
         async def _warm_one(name: str) -> None:
             try:
+                # Loaded into RAM once for cache-population side effect, then
+                # GC'd. AutoTokenizer downloads only the files HF knows the
+                # tokenizer needs (~5 files for gpt2; weights/onnx skipped).
                 await asyncio.to_thread(
-                    snapshot_download,
-                    repo_id=name,
-                    repo_type="model",
-                    allow_patterns=allow_patterns,
+                    AutoTokenizer.from_pretrained,
+                    name,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
                 )
                 self.info(f"Pre-warmed tokenizer '{name}'")
             except Exception as exc:  # noqa: BLE001
