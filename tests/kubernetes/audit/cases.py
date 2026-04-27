@@ -48,11 +48,18 @@ class AuditCase:
     """Per-metric tolerance overrides (relative diff, e.g. 0.30 = 30%)."""
 
     expected_artifacts: tuple[str, ...] = (
+        "inputs.json",
         "profile_export.jsonl",
         "profile_export_records.csv",
-        "inputs.json",
+        "profile_export_aiperf.json",
+        "profile_export_aiperf.csv",
     )
-    """Filenames that MUST exist on both sides for the structural diff."""
+    """Filenames that MUST exist on both sides for the structural diff.
+
+    Both the bare side (``--export-level records``) and the operator side
+    (``artifacts.records=['jsonl','csv']``) emit this five-file set; the
+    structural bucket fails if any are missing on either side.
+    """
 
 
 AUDIT_CASES: tuple[AuditCase, ...] = (

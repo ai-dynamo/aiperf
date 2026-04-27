@@ -166,18 +166,11 @@ def diff_exact(
                 )
             )
 
-    op_files = _file_set(operator_dir)
-    bare_files = _file_set(bare_dir)
-    if op_files != bare_files:
-        findings.append(
-            Finding(
-                bucket="exact",
-                field="file_set",
-                expected=sorted(bare_files),
-                actual=sorted(op_files),
-                reason="exporter file set differs",
-            )
-        )
+    # File-set equality intentionally NOT checked: operator and bare emit
+    # legitimately different supersets (operator wraps in extras like
+    # server_metrics_export.parquet and job_spec.json). The structural bucket
+    # already enforces presence of every file in `case.expected_artifacts` on
+    # both sides — that is the right invariant.
 
     return findings
 
