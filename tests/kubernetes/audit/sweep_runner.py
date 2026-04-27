@@ -99,7 +99,11 @@ class SweepAuditRunner:
                 {
                     "name": "main",
                     "type": "synthetic",
-                    "entries": max(case.request_count, 10),
+                    "entries": (
+                        case.num_conversations
+                        if case.num_conversations is not None
+                        else max(case.request_count, 10)
+                    ),
                     "prompts": {"isl": {"mean": 550}},
                 },
             ],

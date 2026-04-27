@@ -115,6 +115,13 @@ class AIPerfJobConfig:
     priority_class: str | None = None
     """Kubernetes PriorityClass name, or None."""
 
+    num_conversations: int | None = None
+    """Number of unique synthetic conversations (dataset entries). None defaults
+    to ``max(request_count, 10)``. Must match the bare-side ``--num-conversations``
+    for audit parity, since this caps total request count when smaller than
+    ``request_count``.
+    """
+
     def to_flat_spec(self) -> dict[str, Any]:
         """Generate flat CRD spec (config v3 format, no userConfig wrapper).
 
@@ -157,7 +164,11 @@ class AIPerfJobConfig:
                 {
                     "name": "main",
                     "type": "synthetic",
-                    "entries": max(self.request_count or 100, 10),
+                    "entries": (
+                        self.num_conversations
+                        if self.num_conversations is not None
+                        else max(self.request_count or 100, 10)
+                    ),
                     "prompts": {"isl": {"mean": 550}},
                 },
             ],

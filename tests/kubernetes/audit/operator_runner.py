@@ -62,6 +62,7 @@ class OperatorAuditRunner:
             concurrency=concurrency,
             request_count=case.request_count,
             warmup_request_count=0,
+            num_conversations=case.num_conversations,
             tokenizer_name=self.config.tokenizer_name,
             image=self.config.image,
             image_pull_policy=self.config.image_pull_policy,
