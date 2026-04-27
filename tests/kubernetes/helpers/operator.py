@@ -70,26 +70,24 @@ class AIPerfJobConfig:
     """Kubernetes PriorityClass name, or None."""
 
     def to_flat_spec(self) -> dict[str, Any]:
-        """Generate flat CRD spec (config v3 format, no userConfig wrapper)."""
-        load: dict[str, Any] = {
-            "profiling": {
-                "type": "concurrency",
-                "concurrency": self.concurrency,
-            },
+        """Generate flat CRD spec (config v3 format, no userConfig wrapper).
+
+        Uses ``profiling:`` and ``warmup:`` as top-level shorthand siblings
+        under ``spec.benchmark`` (per the AIPerfJob CRD's pre-validator
+        normalization, which rolls them into a ``[warmup, profiling]`` phases
+        list). Mutually exclusive with the ``phases:`` array form, which we
+        do not use here — emitting both is a strict-decoding error.
+        """
+        profiling: dict[str, Any] = {
+            "type": "concurrency",
+            "concurrency": self.concurrency,
         }
         if self.request_count is not None:
-            load["profiling"]["requests"] = self.request_count
+            profiling["requests"] = self.request_count
         if self.benchmark_duration is not None:
-            load["profiling"]["duration"] = self.benchmark_duration
-        if self.warmup_request_count:
-            load["warmup"] = {
-                "type": "concurrency",
-                "concurrency": self.concurrency,
-                "requests": self.warmup_request_count,
-                "exclude_from_results": True,
-            }
+            profiling["duration"] = self.benchmark_duration
 
-        return {
+        spec: dict[str, Any] = {
             "models": {"items": [{"name": self.model_name}]},
             "endpoint": {"urls": [self.endpoint_url]},
             "datasets": [
@@ -100,10 +98,18 @@ class AIPerfJobConfig:
                     "prompts": {"isl": {"mean": 550}},
                 },
             ],
-            "phases": load,
+            "profiling": profiling,
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
         }
+        if self.warmup_request_count:
+            spec["warmup"] = {
+                "type": "concurrency",
+                "concurrency": self.concurrency,
+                "requests": self.warmup_request_count,
+                "exclude_from_results": True,
+            }
+        return spec
 
     def to_cr_manifest(self, name: str, namespace: str) -> str:
         """Generate AIPerfJob CR manifest (flat spec, no userConfig wrapper).

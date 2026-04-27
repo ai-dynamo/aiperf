@@ -85,11 +85,9 @@ class SweepAuditRunner:
             raise ValueError("SweepAuditRunner requires case.sweep to be set")
 
         load: dict[str, Any] = {
-            "profiling": {
-                "type": "concurrency",
-                "concurrency": case.concurrency,
-                "requests": case.request_count,
-            },
+            "type": "concurrency",
+            "concurrency": case.concurrency,
+            "requests": case.request_count,
         }
         benchmark_spec: dict[str, Any] = {
             "models": {"items": [{"name": self.config.model_name}]},
@@ -102,7 +100,7 @@ class SweepAuditRunner:
                     "prompts": {"isl": {"mean": 550}},
                 },
             ],
-            "phases": load,
+            "profiling": load,
             "tokenizer": {"name": self.config.tokenizer_name},
             "runtime": {"ui": "none"},
         }
