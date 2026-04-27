@@ -29,7 +29,7 @@ from aiperf.operator.job_union import (
     list_all_jobs,
     synthesize_status_from_summary,
 )
-from aiperf.operator.results_layout import resolve_run_dir
+from aiperf.operator.results_layout import EPOCH_RE, list_runs, resolve_run_dir
 from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
 from aiperf.operator.routers.jobs_models import (
     ActiveJobListResponse,
@@ -41,6 +41,8 @@ from aiperf.operator.routers.jobs_models import (
     EventInvolvedObject,
     EventSource,
     JobDetailResponse,
+    JobEpochsResponse,
+    JobEpochSummary,
     JobEventsResponse,
     JobPodSummary,
 )
@@ -129,6 +131,8 @@ async def _get_job_impl(
     results_dir: Path,
     namespace: str,
     name: str,
+    *,
+    epoch: str | None = None,
 ) -> JobDetailResponse:
     """Body of GET /api/v1/jobs/{namespace}/{name}: fetch a CR plus its pod roster.
 
@@ -141,24 +145,31 @@ async def _get_job_impl(
     empty ``status`` dict and empty ``pods`` list alongside the archived job
     summary.
 
+    When ``epoch`` is supplied, the archived half is pinned to that historical
+    run directory rather than ``latest.txt``; ``find_any_job`` likewise refuses
+    to merge the live CR onto a historical epoch (see Task 6).
+
     Args:
         api: The kubernetes_asyncio ApiClient.
         results_dir: Base directory on the results PVC.
         namespace: Kubernetes namespace containing the AIPerfJob CR or PVC dir.
         name: Name of the AIPerfJob CR (also the label value matched when
             listing pods, and the PVC subdirectory name).
+        epoch: Optional decimal-seconds epoch (matching :data:`EPOCH_RE`)
+            selecting a historical run directory. Caller must validate the
+            shape; this helper assumes ``epoch`` is well-formed.
 
     Raises:
         HTTPException: 404 if neither a live CR nor a PVC directory exists.
         HTTPException: Other ``kubernetes_asyncio.client.ApiException`` status
             codes propagate (e.g. 401/403 on RBAC denial).
     """
-    job = await find_any_job(api, results_dir, namespace, name)
+    job = await find_any_job(api, results_dir, namespace, name, epoch=epoch)
     if job is None:
         raise HTTPException(404, f"Job {namespace}/{name} not found")
 
     if job.source == "archived":
-        job_dir = resolve_run_dir(results_dir, namespace, name)
+        job_dir = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
         if job_dir is None:
             raise HTTPException(404, f"No persisted run for {namespace}/{name}")
         summary_path = job_dir / "profile_export_aiperf.json"
@@ -193,6 +204,36 @@ async def _get_job_impl(
         job=job.model_dump(by_alias=True),
         status=raw_status or {},
         pods=[_pod_summary(p) for p in pods_raw],
+    )
+
+
+async def _list_job_epochs_impl(
+    base_dir: Path, namespace: str, name: str
+) -> JobEpochsResponse:
+    """Body of GET /api/v1/jobs/{namespace}/{name}/epochs.
+
+    Lists every persisted run directory under
+    ``<base_dir>/<namespace>/<name>/`` and flags the one that ``latest.txt``
+    points at. Order is ascending by mtime so the UI history view reads
+    chronologically; the latest entry sits at the tail.
+
+    Returns an empty list when no run dirs exist (job has never been
+    persisted, or PVC directory was reaped) — callers should treat this
+    identically to "no archived runs".
+    """
+    runs = list_runs(base_dir, namespace, name)
+    # ``list_runs`` returns descending; the API exposes ascending so the
+    # latest entry sits at index -1, matching the UI history strip.
+    return JobEpochsResponse(
+        epochs=[
+            JobEpochSummary(
+                epoch=r.epoch,
+                is_latest=r.is_latest,
+                mtime_epoch=r.mtime_epoch,
+                file_count=r.file_count,
+            )
+            for r in reversed(runs)
+        ]
     )
 
 
@@ -443,8 +484,22 @@ def create_jobs_router(
         return await _create_job_impl(_require_api(), body.manifest)
 
     @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
-    async def get_job(namespace: str, name: str) -> JobDetailResponse:
-        return await _get_job_impl(_require_api(), _results_dir, namespace, name)
+    async def get_job(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> JobDetailResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_job_impl(
+            _require_api(), _results_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/jobs/{namespace}/{name}/epochs",
+        response_model=JobEpochsResponse,
+        response_model_by_alias=True,
+    )
+    async def list_job_epochs(namespace: str, name: str) -> JobEpochsResponse:
+        return await _list_job_epochs_impl(_results_dir, namespace, name)
 
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:

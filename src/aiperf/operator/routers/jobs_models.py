@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.kubernetes.models import AIPerfJobInfo
@@ -144,3 +145,32 @@ class CreateJobResponse(AIPerfBaseModel):
     namespace: str = Field(description="Namespace the CR was created in.")
     name: str = Field(description="CR name (from metadata.name).")
     uid: str | None = Field(default=None, description="K8s-assigned UID.")
+
+
+class JobEpochSummary(AIPerfBaseModel):
+    """One epoch entry in the job-history listing."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="allow",
+        populate_by_name=True,
+        alias_generator=to_camel,
+    )
+
+    epoch: str = Field(description="Decimal-seconds epoch identifier.")
+    is_latest: bool = Field(
+        description="Whether this is the current latest epoch (per latest.txt)."
+    )
+    mtime_epoch: int = Field(description="UNIX seconds of the run dir's mtime.")
+    file_count: int = Field(
+        description="Number of files persisted under this epoch dir."
+    )
+
+
+class JobEpochsResponse(AIPerfBaseModel):
+    """Response for GET /api/v1/jobs/{namespace}/{name}/epochs."""
+
+    epochs: list[JobEpochSummary] = Field(
+        default_factory=list,
+        description="Run epochs for this job, ascending; latest flagged via is_latest.",
+    )
