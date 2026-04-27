@@ -179,3 +179,59 @@ class TestLogsSaveHelper:
         mock_save.assert_awaited_once()
         # success line goes through kube_console
         assert "Logs saved to" in capsys.readouterr().out
+
+
+class TestLogStreamingThroughKubeConsole:
+    """Bug 2: streaming and buffered log paths must go through kube_console."""
+
+    async def test_print_pod_log_routes_through_kube_console(self) -> None:
+        """`_print_pod_log` writes to `kube_console.console`, never raw print."""
+        from aiperf.cli_commands.kube.logs import _print_pod_log
+
+        core = MagicMock()
+        core.read_namespaced_pod_log = AsyncMock(return_value="line one\nline two\n")
+
+        with patch("aiperf.kubernetes.console.console") as mock_console:
+            await _print_pod_log(
+                core, pod_name="p", namespace="ns", container="c", tail=None
+            )
+
+        mock_console.print.assert_called_once_with(
+            "line one\nline two", highlight=False, markup=False
+        )
+
+    async def test_stream_pod_log_routes_through_kube_console(self) -> None:
+        """`_stream_pod_log` streams every chunk via `kube_console.console`."""
+        from aiperf.cli_commands.kube.logs import _stream_pod_log
+
+        class _FakeContent:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._lines = lines
+
+            def __aiter__(self):
+                self._iter = iter(self._lines)
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration from None
+
+        raw = MagicMock()
+        raw.content = _FakeContent([b"hello\n", b"world\n"])
+        raw.release = AsyncMock()
+
+        core = MagicMock()
+        core.read_namespaced_pod_log = AsyncMock(return_value=raw)
+
+        with patch("aiperf.kubernetes.console.console") as mock_console:
+            await _stream_pod_log(
+                core, pod_name="p", namespace="ns", container="c", tail=None
+            )
+
+        printed = [c.args[0] for c in mock_console.print.call_args_list]
+        assert printed == ["hello", "world"]
+        # All calls suppress markup/highlighting (raw log lines may contain `[`)
+        for call in mock_console.print.call_args_list:
+            assert call.kwargs == {"highlight": False, "markup": False}

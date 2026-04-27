@@ -513,3 +513,39 @@ class TestValidateCLI:
             from aiperf.cli_commands.kube.validate import validate
 
             await validate(files=[path], strict=True)
+
+    @pytest.mark.asyncio
+    async def test_validate_json_output_suppresses_kube_logger(
+        self, tmp_path: Path
+    ) -> None:
+        """JSON mode drops aiperf.kube logger to WARNING and restores it after."""
+        import logging
+
+        path = _write_yaml(tmp_path / "aiperfjob.yaml", _minimal_doc())
+
+        kube_logger = logging.getLogger("aiperf.kube")
+        kube_logger.setLevel(logging.INFO)
+        original_level = kube_logger.level
+
+        captured: dict[str, int] = {}
+
+        real_validate_file = None
+        from aiperf.kubernetes import validate as kube_validate
+
+        real_validate_file = kube_validate.validate_file
+
+        def _spy(p: Path, *, strict: bool = False):
+            captured["level_during"] = kube_logger.level
+            return real_validate_file(p, strict=strict)
+
+        with (
+            patch("aiperf.kubernetes.validate.validate_file", side_effect=_spy),
+            patch("aiperf.kubernetes.console.console"),
+        ):
+            from aiperf.cli_commands.kube.validate import validate
+
+            await validate(files=[path], output="json")
+
+        assert captured["level_during"] == logging.WARNING
+        # Restored to whatever it was before the call
+        assert kube_logger.level == original_level

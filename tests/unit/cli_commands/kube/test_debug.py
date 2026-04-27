@@ -28,6 +28,7 @@ from aiperf.cli_commands.kube.debug import (
     _get_problem_pod_logs,
     _print_report,
 )
+from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.models import JobSetInfo
 
 # ============================================================
@@ -837,7 +838,7 @@ class TestDebugCommand:
             ),
             patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
         ):
-            await debug(namespace="my-ns")
+            await debug(manage_options=KubeManageOptions(namespace="my-ns"))
 
             mock_get_pods.assert_called_once()
             call_args = mock_get_pods.call_args
@@ -1007,7 +1008,9 @@ class TestDebugCommand:
             ) as mock_logs,
             patch("aiperf.cli_commands.kube.debug._print_report") as mock_report,
         ):
-            await debug(namespace="test-ns", verbose=True)
+            await debug(
+                manage_options=KubeManageOptions(namespace="test-ns"), verbose=True
+            )
 
             mock_logs.assert_called_once()
             report_kwargs = mock_report.call_args
@@ -1040,7 +1043,9 @@ class TestDebugCommand:
             patch("aiperf.cli_commands.kube.debug._get_problem_pod_logs") as mock_logs,
             patch("aiperf.cli_commands.kube.debug._print_report"),
         ):
-            await debug(namespace="test-ns", verbose=False)
+            await debug(
+                manage_options=KubeManageOptions(namespace="test-ns"), verbose=False
+            )
 
             mock_logs.assert_not_called()
 

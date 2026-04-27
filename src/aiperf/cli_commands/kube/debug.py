@@ -16,6 +16,7 @@ from aiperf.cli_commands.kube._debug_report import (
     _get_event_severity_style,
     _print_report,
 )
+from aiperf.config.kube import KubeManageOptions
 
 # Re-exports for tests/importers that reference these by their historical
 # ``aiperf.cli_commands.kube.debug`` paths.
@@ -227,19 +228,10 @@ async def _resolve_target_namespaces(
 @app.default
 async def debug(
     *,
-    namespace: Annotated[
-        str | None,
-        Parameter(name=["-n", "--namespace"], help="Kubernetes namespace to inspect."),
-    ] = None,
+    manage_options: KubeManageOptions | None = None,
     job_id: Annotated[
         str | None,
         Parameter(name=["-j", "--job-id"], help="Specific AIPerf job ID to diagnose."),
-    ] = None,
-    kubeconfig: Annotated[
-        str | None, Parameter(name="--kubeconfig", help="Path to kubeconfig file.")
-    ] = None,
-    context: Annotated[
-        str | None, Parameter(name="--kube-context", help="Kubernetes context to use.")
     ] = None,
     verbose: Annotated[
         bool,
@@ -267,16 +259,18 @@ async def debug(
     """
     from aiperf import cli_utils
 
+    manage_options = manage_options or KubeManageOptions()
+
     with cli_utils.exit_on_error(title="Error Running Diagnostics"):
         from aiperf.kubernetes import client as kube_client_mod
 
         async with kube_client_mod.k8s_client(
-            kubeconfig=kubeconfig,
-            context=context,
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
         ) as api:
             target_namespaces = await _resolve_target_namespaces(
                 api,
-                namespace=namespace,
+                namespace=manage_options.namespace,
                 job_id=job_id,
                 all_namespaces=all_namespaces,
             )

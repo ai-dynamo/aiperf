@@ -38,6 +38,8 @@ async def _stream_pod_log(
     tail: int | None,
 ) -> None:
     """Follow a single pod/container's log to stdout until the stream ends."""
+    from aiperf.kubernetes import console as kube_console
+
     tail_kwargs = {"tail_lines": tail} if tail is not None else {}
     raw = await core.read_namespaced_pod_log(
         name=pod_name,
@@ -49,7 +51,11 @@ async def _stream_pod_log(
     )
     try:
         async for line in raw.content:
-            print(line.decode("utf-8", errors="replace").rstrip("\n"))
+            kube_console.console.print(
+                line.decode("utf-8", errors="replace").rstrip("\n"),
+                highlight=False,
+                markup=False,
+            )
     finally:
         await raw.release()
 
@@ -63,6 +69,8 @@ async def _print_pod_log(
     tail: int | None,
 ) -> None:
     """Print one pod/container's buffered logs to stdout."""
+    from aiperf.kubernetes import console as kube_console
+
     log_kwargs: dict[str, Any] = {}
     if tail is not None:
         log_kwargs["tail_lines"] = tail
@@ -72,7 +80,11 @@ async def _print_pod_log(
         container=container,
         **log_kwargs,
     )
-    print(log_text.rstrip("\n") if log_text else "")
+    kube_console.console.print(
+        log_text.rstrip("\n") if log_text else "",
+        highlight=False,
+        markup=False,
+    )
 
 
 async def _save_logs_to_directory(

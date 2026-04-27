@@ -25,12 +25,13 @@ async def dashboard(
         ),
     ] = 0,
     operator_namespace: Annotated[
-        str,
+        str | None,
         Parameter(
             name="--operator-namespace",
-            help="Namespace where the operator is deployed.",
+            help="Namespace where the operator is deployed. "
+            "Auto-detected (cluster-wide pod search) when omitted.",
         ),
-    ] = "aiperf-system",
+    ] = None,
     no_browser: Annotated[
         bool,
         Parameter(
@@ -42,7 +43,9 @@ async def dashboard(
     """Open the operator results server UI in your browser.
 
     Port-forwards to the operator's results server and opens the dashboard.
-    The port-forward stays open until you press Ctrl+C.
+    The port-forward stays open until you press Ctrl+C and auto-reconnects
+    (with backoff) on transient failures, pinning the local port across
+    reconnects so the open browser tab keeps working.
 
     Examples:
         # Open dashboard in browser
@@ -59,37 +62,76 @@ async def dashboard(
     manage_options = manage_options or KubeManageOptions()
 
     with cli_utils.exit_on_error(title="Error Opening Dashboard"):
-        pod_name = await _resolve_operator_pod(manage_options, operator_namespace)
-        if pod_name is None:
+        resolved = await _resolve_operator(manage_options, operator_namespace)
+        if resolved is None:
             return
+        ns, pod_name = resolved
         await _serve_dashboard(
             manage_options,
-            operator_namespace,
+            ns,
             pod_name,
             port=port,
             no_browser=no_browser,
         )
 
 
-async def _resolve_operator_pod(
-    manage_options: KubeManageOptions, operator_namespace: str
-) -> str | None:
-    from aiperf.kubernetes.client import find_operator_pod, k8s_client
+async def _resolve_operator(
+    manage_options: KubeManageOptions, operator_namespace: str | None
+) -> tuple[str, str] | None:
+    """Resolve (namespace, pod_name) for the operator. Returns ``None`` if not found."""
+    from aiperf.kubernetes.client import (
+        find_operator_pod,
+        k8s_client,
+        resolve_operator_namespace,
+    )
     from aiperf.kubernetes.console import print_error, print_info
 
     async with k8s_client(
         kubeconfig=manage_options.kubeconfig,
         context=manage_options.kube_context,
     ) as api:
-        pod_info = await find_operator_pod(api, namespace=operator_namespace)
+        ns = await resolve_operator_namespace(api, explicit=operator_namespace)
+        if operator_namespace is None and ns != "aiperf-system":
+            print_info(f"Auto-detected operator namespace: {ns}")
+        pod_info = await find_operator_pod(api, namespace=ns)
         if not pod_info:
             print_error("Operator pod not found")
-            print_info(f"Looked in namespace: {operator_namespace}")
+            print_info(f"Looked in namespace: {ns}")
             return None
 
         pod_name, pod_phase = pod_info
         print_info(f"Found operator pod: {pod_name} (status: {pod_phase})")
-        return pod_name
+        return ns, pod_name
+
+
+async def _refresh_operator_pod(
+    manage_options: KubeManageOptions,
+    operator_namespace: str,
+    *,
+    fallback: str,
+) -> str:
+    """Re-resolve the operator pod name across reconnects.
+
+    The operator runs in a Deployment, so a pod restart yields a new pod name.
+    Falls back to the last-known name on transient apiserver errors so the
+    reconnect loop can keep trying — the next start_port_forward call will
+    surface a clear "pod not found" error if the fallback is also gone.
+    """
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.kubernetes.client import find_operator_pod, k8s_client
+
+    try:
+        async with k8s_client(
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
+        ) as api:
+            pod_info = await find_operator_pod(api, namespace=operator_namespace)
+    except (ApiException, OSError):
+        return fallback
+    if pod_info is None:
+        return fallback
+    return pod_info[0]
 
 
 async def _serve_dashboard(
@@ -103,32 +145,69 @@ async def _serve_dashboard(
     import asyncio
     import webbrowser
 
-    from aiperf.kubernetes.console import print_info, print_success
-    from aiperf.kubernetes.port_forward import port_forward_with_status
+    from aiperf.kubernetes.console import print_info, print_success, print_warning
+    from aiperf.kubernetes.port_forward import (
+        cleanup_port_forward,
+        start_port_forward,
+    )
     from aiperf.kubernetes.results import RESULTS_SERVER_PORT
 
-    async with port_forward_with_status(
-        operator_namespace,
-        pod_name,
-        port,
-        remote_port=RESULTS_SERVER_PORT,
-        verify_api=False,
-        kubeconfig=manage_options.kubeconfig,
-        kube_context=manage_options.kube_context,
-    ) as actual_port:
-        url = f"http://localhost:{actual_port}"
+    initial_backoff = 1.0
+    max_backoff = 30.0
 
-        if no_browser:
-            print_success(f"Dashboard available at: {url}")
-        else:
-            webbrowser.open(url)
-            print_success(f"Dashboard opened at: {url}")
+    bound_port: int | None = None
+    backoff = initial_backoff
 
-        print_info("Press Ctrl+C to stop port-forward")
+    try:
+        while True:
+            try:
+                proc, actual_port = await start_port_forward(
+                    operator_namespace,
+                    pod_name,
+                    port if bound_port is None else bound_port,
+                    RESULTS_SERVER_PORT,
+                    verify_api=True,
+                    kubeconfig=manage_options.kubeconfig,
+                    kube_context=manage_options.kube_context,
+                )
+            except RuntimeError as exc:
+                print_warning(
+                    f"Port-forward failed: {exc}. Retrying in {backoff:.0f}s..."
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+                pod_name = await _refresh_operator_pod(
+                    manage_options, operator_namespace, fallback=pod_name
+                )
+                continue
 
-        try:
-            # Keep alive until interrupted
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            pass
+            if bound_port is None:
+                bound_port = actual_port
+                url = f"http://localhost:{bound_port}"
+                if no_browser:
+                    print_success(f"Dashboard available at: {url}")
+                else:
+                    webbrowser.open(url)
+                    print_success(f"Dashboard opened at: {url}")
+                print_info("Press Ctrl+C to stop. Auto-reconnects on transient errors.")
+            else:
+                print_success(f"Reconnected on localhost:{bound_port}")
+            backoff = initial_backoff
+
+            try:
+                await proc.wait()
+            finally:
+                await cleanup_port_forward(proc)
+            print_warning(
+                f"Port-forward disconnected (kubectl exit {proc.returncode}); "
+                "reconnecting..."
+            )
+
+            pod_name = await _refresh_operator_pod(
+                manage_options, operator_namespace, fallback=pod_name
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass

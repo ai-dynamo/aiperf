@@ -59,24 +59,34 @@ async def validate(
         from aiperf.kubernetes import validate as kube_validate
 
         if output == "json":
+            import logging
+
             import orjson
 
             from aiperf.kubernetes.console import console
 
+            # Suppress text output in JSON mode so only clean JSON goes to stdout
+            kube_logger = logging.getLogger("aiperf.kube")
+            original_level = kube_logger.level
+            kube_logger.setLevel(logging.WARNING)
+
             results = []
             any_failed = False
-            for path in files:
-                result = kube_validate.validate_file(path, strict=strict)
-                if not result.passed:
-                    any_failed = True
-                results.append(
-                    {
-                        "path": str(result.path),
-                        "passed": result.passed,
-                        "errors": result.errors,
-                        "warnings": result.warnings,
-                    }
-                )
+            try:
+                for path in files:
+                    result = kube_validate.validate_file(path, strict=strict)
+                    if not result.passed:
+                        any_failed = True
+                    results.append(
+                        {
+                            "path": str(result.path),
+                            "passed": result.passed,
+                            "errors": result.errors,
+                            "warnings": result.warnings,
+                        }
+                    )
+            finally:
+                kube_logger.setLevel(original_level)
 
             json_output = orjson.dumps(results, option=orjson.OPT_INDENT_2).decode()
             console.print(json_output, highlight=False)
