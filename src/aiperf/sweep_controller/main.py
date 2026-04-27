@@ -142,7 +142,7 @@ def _write_sweep_parent_aggregate(
         "totalVariations": len(plan.configs),
         "completedRuns": completed,
         "failedRuns": failed,
-        "spec_snapshot": spec.model_dump() if hasattr(spec, "model_dump") else {},
+        "spec_snapshot": spec.model_dump(mode="json") if hasattr(spec, "model_dump") else {},
         "child_runs": [
             {
                 "label": r.label,
