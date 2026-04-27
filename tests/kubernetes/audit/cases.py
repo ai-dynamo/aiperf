@@ -35,6 +35,9 @@ class AuditCase:
     epochs: int = 1
     """Number of epochs (1 means a single run on each side)."""
 
+    trials: int = 1
+    """Number of trials per variation (multi_run.trials in AIPerfSweep). 1 means no multi-run."""
+
     sweep: dict[str, list[int | float | str]] | None = None
     """Optional sweep dimension; e.g. {'concurrency': [4, 16]}. None disables."""
 
@@ -85,3 +88,22 @@ AUDIT_CASES: tuple[AuditCase, ...] = (
 #   - multi-epoch: AIPerfJobConfig.epochs + bare-side multi-run loop
 #   - small-sweep: AIPerfSweep runner in tests/kubernetes/helpers/
 # Add to AUDIT_CASES once the helpers land; no harness changes required.
+
+
+SWEEP_AUDIT_CASES: tuple[AuditCase, ...] = (
+    AuditCase(
+        case_id="sweep-3x2",
+        endpoint_type="chat",
+        concurrency=4,  # base value; overridden per-variation by sweep
+        request_count=32,
+        num_conversations=16,
+        sweep={"concurrency": [4, 8, 16]},
+        trials=2,
+        # Multi-pod orchestration + 6 cells = noisier tail latency than
+        # 6 sequential single-process runs. Bands match concurrency-scale.
+        metric_tolerance_overrides={
+            "p99": 0.40,
+            "p95": 0.35,
+        },
+    ),
+)
