@@ -118,11 +118,15 @@ class SweepAuditRunner:
         }
 
         spec: dict[str, Any] = {
-            "image": self.config.image,
-            "imagePullPolicy": self.config.image_pull_policy,
             "sweep": sweep_block,
             "multiRun": {"trials": case.trials},
-            "template": {"spec": {"benchmark": benchmark_spec}},
+            "template": {
+                "spec": {
+                    "image": self.config.image,
+                    "imagePullPolicy": self.config.image_pull_policy,
+                    "benchmark": benchmark_spec,
+                },
+            },
         }
         body = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
