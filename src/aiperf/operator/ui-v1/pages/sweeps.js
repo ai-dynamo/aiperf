@@ -196,7 +196,7 @@ export function Sweeps() {
                       <td class="job-table-td">${renderSource(s.source)}</td>
                       <td class="job-table-td text-dim">${formatAge(s.age_seconds)}</td>
                       <td class="job-table-td">
-                        <a href=${detailUrl}
+                        <a href=${`#${detailUrl}`}
                            title="View run history"
                            onclick=${e => { e.stopPropagation(); navigate(detailUrl); e.preventDefault(); }}
                            style=${`color:${palette.overlay0};text-decoration:none`}>↻</a>

@@ -363,9 +363,7 @@ export function Dashboard() {
                     </div>
                     <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">
                       ${job.model ? html`<span>${job.model}</span>` : null}
-                      ${job.backend ? html`<span>\u00b7 ${job.backend}</span>` : null}
                       ${elapsed ? html`<span>\u00b7 ${elapsed}</span>` : null}
-                      ${job.gpuConfig ? html`<span>\u00b7 ${job.gpuConfig}</span>` : null}
                     </div>
                   </div>
                   <div style="text-align:right">

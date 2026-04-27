@@ -101,6 +101,8 @@ export function SweepDetail({ namespace, name, epoch }) {
     }
     return live;
   }, [detail, epoch, archivedChildren]);
+  const childRowsAreArchived =
+    epoch !== undefined && (detail?.children ?? []).length === 0 && !!archivedChildren;
 
   const metricNames = useMemo(() => {
     const set = new Set();
@@ -246,8 +248,38 @@ export function SweepDetail({ namespace, name, epoch }) {
         <div class="card-title">Children (${childRows.length})</div>
         ${childRows.length === 0
           ? html`<div class="text-dim" style="padding:var(--space-3) 0">No children persisted for this epoch yet.</div>`
-          : html`<${JobTable} jobs=${childRows} onRowClick=${j =>
-              navigate(`/jobs/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)} />`
+          : childRowsAreArchived
+            ? html`
+                <table class="job-table" data-testid="sweep-detail-archived-children">
+                  <thead>
+                    <tr>
+                      <th class="job-table-th">Name</th>
+                      <th class="job-table-th">Namespace</th>
+                      <th class="job-table-th">Variation</th>
+                      <th class="job-table-th">Trial</th>
+                      <th class="job-table-th">Run epoch</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${childRows.map(c => html`
+                      <tr
+                        key=${c.namespace + '/' + c.name + '/' + (c.childRunEpoch ?? '')}
+                        class="job-table-row"
+                        style="cursor:pointer"
+                        onclick=${() => navigate(`/jobs/${encodeURIComponent(c.namespace)}/${encodeURIComponent(c.name)}/runs/${encodeURIComponent(c.childRunEpoch)}`)}
+                      >
+                        <td class="job-table-td">${c.name}</td>
+                        <td class="job-table-td">${c.namespace}</td>
+                        <td class="job-table-td">${c.variationLabel || c.variationIndex}</td>
+                        <td class="job-table-td">${c.trialIndex ?? '---'}</td>
+                        <td class="job-table-td text-dim">${c.childRunEpoch}</td>
+                      </tr>
+                    `)}
+                  </tbody>
+                </table>
+              `
+            : html`<${JobTable} jobs=${childRows} onRowClick=${j =>
+                navigate(`/jobs/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)} />`
         }
       </div>
     </div>

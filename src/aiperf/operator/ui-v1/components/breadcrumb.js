@@ -44,10 +44,10 @@ function buildSegments(currentRoute) {
     const detailPath = `/jobs/${jobRunMatch.ns}/${jobRunMatch.name}`;
     return [
       { label: 'Jobs', path: '/jobs' },
-      { label: decodeURIComponent(jobRunMatch.ns), path: '/jobs' },
-      { label: decodeURIComponent(jobRunMatch.name), path: detailPath },
+      { label: jobRunMatch.ns, path: '/jobs' },
+      { label: jobRunMatch.name, path: detailPath },
       { label: 'runs', path: detailPath },
-      { label: decodeURIComponent(jobRunMatch.epoch), path: currentRoute },
+      { label: jobRunMatch.epoch, path: currentRoute },
     ];
   }
 
@@ -56,10 +56,10 @@ function buildSegments(currentRoute) {
     const detailPath = `/sweeps/${sweepRunMatch.ns}/${sweepRunMatch.name}`;
     return [
       { label: 'Sweeps', path: '/sweeps' },
-      { label: decodeURIComponent(sweepRunMatch.ns), path: '/sweeps' },
-      { label: decodeURIComponent(sweepRunMatch.name), path: detailPath },
+      { label: sweepRunMatch.ns, path: '/sweeps' },
+      { label: sweepRunMatch.name, path: detailPath },
       { label: 'runs', path: detailPath },
-      { label: decodeURIComponent(sweepRunMatch.epoch), path: currentRoute },
+      { label: sweepRunMatch.epoch, path: currentRoute },
     ];
   }
 
@@ -67,8 +67,8 @@ function buildSegments(currentRoute) {
   if (jobMatch) {
     return [
       { label: 'Jobs', path: '/jobs' },
-      { label: decodeURIComponent(jobMatch.ns), path: '/jobs' },
-      { label: decodeURIComponent(jobMatch.name), path: currentRoute },
+      { label: jobMatch.ns, path: '/jobs' },
+      { label: jobMatch.name, path: currentRoute },
     ];
   }
 
@@ -76,8 +76,8 @@ function buildSegments(currentRoute) {
   if (sweepMatch) {
     return [
       { label: 'Sweeps', path: '/sweeps' },
-      { label: decodeURIComponent(sweepMatch.ns), path: '/sweeps' },
-      { label: decodeURIComponent(sweepMatch.name), path: currentRoute },
+      { label: sweepMatch.ns, path: '/sweeps' },
+      { label: sweepMatch.name, path: currentRoute },
     ];
   }
 

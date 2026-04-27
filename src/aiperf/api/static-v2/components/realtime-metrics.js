@@ -253,8 +253,8 @@ function ReliabilityTile({ byT, cfg }) {
         <div class="kpi-tile-sub">
           ${pct != null
             ? html`<span>${fmtPercent(pct, 1)}</span>
-                   <span class="kpi-tile-sub-val">of ${fmtInt(reqVal) ?? '---'}</span>`
-            : html`<span>of ${fmtInt(reqVal) ?? '---'} completed</span>`}
+                   <span class="kpi-tile-sub-val">of ${fmtInt(reqVal)}</span>`
+            : html`<span>of ${fmtInt(reqVal)} completed</span>`}
         </div>
       </div>
     `;

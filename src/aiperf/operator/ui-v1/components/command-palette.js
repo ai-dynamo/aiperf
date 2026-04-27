@@ -6,6 +6,7 @@ import { navigate } from '../lib/router.js';
 const PAGES = [
   { label: 'Dashboard', path: '/' },
   { label: 'Jobs', path: '/jobs' },
+  { label: 'Sweeps', path: '/sweeps' },
   { label: 'Leaderboard', path: '/leaderboard' },
   { label: 'Compare', path: '/compare' },
   { label: 'History', path: '/history' },

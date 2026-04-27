@@ -1746,7 +1746,7 @@ export function JobDetail({ namespace, name, epoch }) {
             ${info.sweepName && html`
               <p class="text-dim" data-testid="job-detail-sweep-link" style="margin: var(--space-1) 0 0 0; font-size: var(--font-size-sm)">
                 Part of sweep
-                <a href=${`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
+                <a href=${`#/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
                    onclick=${e => { e.preventDefault(); navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`); }}>
                   ${info.sweepName}
                 </a>

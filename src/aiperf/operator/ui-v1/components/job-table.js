@@ -182,7 +182,7 @@ export function JobTable({ jobs, onRowClick, filter }) {
                 ${job.name}
                 ${job.sweepName && html`
                   <div class="text-dim" style="font-size:11px;font-style:italic;margin-top:2px">
-                    <a href=${`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`}
+                    <a href=${`#/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`}
                        data-testid="job-row-sweep-link"
                        onclick=${e => { e.stopPropagation(); navigate(`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`); e.preventDefault(); }}>
                       ↳ sweep: ${job.sweepName}
