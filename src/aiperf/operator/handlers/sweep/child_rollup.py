@@ -9,7 +9,13 @@ rollup counts. Standalone AIPerfJobs are no-ops.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from kubernetes_asyncio.client import ApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,26 @@ ROLLUP_FIELD_MANAGER = "aiperf-operator-rollup"
 __all__ = ["on_child_phase_transition"]
 
 
+@asynccontextmanager
+async def _api_or_new(
+    api: ApiClient | None,
+) -> AsyncIterator[ApiClient]:
+    """Yield ``api`` if non-None, else open a fresh ``k8s_client()`` context.
+
+    Lets one ``on_child_phase_transition`` tick share a single ApiClient across
+    its 3-4 helper calls (list, get, patch, conditional patch) instead of
+    opening a separate TCP/TLS handshake per helper. Helpers retain their
+    ``api=None`` default for unit tests that call them in isolation.
+    """
+    from aiperf.kubernetes.client import k8s_client
+
+    if api is not None:
+        yield api
+        return
+    async with k8s_client() as fresh:
+        yield fresh
+
+
 async def on_child_phase_transition(
     *,
     body: dict[str, Any],
@@ -40,68 +66,78 @@ async def on_child_phase_transition(
     **_: Any,
 ) -> None:
     """For each AIPerfJob.status.phase change, if the child has an AIPerfSweep
-    ownerReference, recompute the parent's rollup counts."""
+    ownerReference, recompute the parent's rollup counts.
+
+    Holds one ``k8s_client()`` context for the whole tick — under a 100-cell
+    sweep with overlapping child terminations, this collapses 3-4 TCP/TLS
+    handshakes per child phase change into one.
+    """
+    from aiperf.kubernetes.client import k8s_client
+
     parent = _find_sweep_owner(body)
     if parent is None:
         return
     sweep_name, sweep_uid = parent
 
-    counts = await _count_owned_children(namespace, sweep_uid, sweep_name)
-    body_patch: dict[str, Any] = {
-        "status": {
-            "completedRuns": counts["completed"],
-            "failedRuns": counts["failed"],
-            "lastChildEvent": {
-                "name": name,
-                "phase": status.get("phase", "Unknown"),
-            },
+    async with k8s_client() as api:
+        counts = await _count_owned_children(namespace, sweep_uid, sweep_name, api=api)
+        body_patch: dict[str, Any] = {
+            "status": {
+                "completedRuns": counts["completed"],
+                "failedRuns": counts["failed"],
+                "lastChildEvent": {
+                    "name": name,
+                    "phase": status.get("phase", "Unknown"),
+                },
+            }
         }
-    }
-    # Counts + lastChildEvent are this writer's exclusive top-level fields,
-    # so a plain merge-patch is safe with no atomicity hand-shake.
-    await _patch_parent_status(
-        group="aiperf.nvidia.com",
-        version="v1alpha1",
-        plural="aiperfsweeps",
-        name=sweep_name,
-        namespace=namespace,
-        body=body_patch,
-    )
+        # Counts + lastChildEvent are this writer's exclusive top-level fields,
+        # so a plain merge-patch is safe with no atomicity hand-shake.
+        await _patch_parent_status(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            plural="aiperfsweeps",
+            name=sweep_name,
+            namespace=namespace,
+            body=body_patch,
+            api=api,
+        )
 
-    # ``status.phase`` is co-written by three managers: kopf-default at
-    # create (``Pending``), the sweep-controller (terminal ``Succeeded`` /
-    # ``Failed`` from ``aggregation_complete``), and this rollup
-    # (``Aggregating`` once every child is terminal). Without the
-    # JSON-patch ``test`` op below, a TOCTOU between ``_read_parent_phase``
-    # and the merge-patch would let this rollup clobber a freshly-written
-    # terminal phase back to ``Aggregating``. The ``test`` op makes the
-    # write conditional on the apiserver value still matching what we read.
-    if not counts.get("total_terminal_phase"):
-        return
-    # Currently-listed children are all terminal — but the sweep-controller
-    # creates child CRs lazily as it walks variations × trials, so an empty
-    # in-flight set is NOT proof the sweep is done. The CR's
-    # ``status.maxTotalRuns`` (set at create-time from variations × trials)
-    # is the authoritative completion target; only flip phase to
-    # ``Aggregating`` when ``completedRuns + failedRuns >= maxTotalRuns``.
-    # Without this guard the parent flips to ``Aggregating`` after the very
-    # first child terminates in a multi-cell sweep and stays there for the
-    # rest of the run.
-    parent_cr = await _read_parent_status(namespace, sweep_name)
-    parent_phase = (parent_cr.get("phase") if parent_cr else "") or ""
-    if parent_phase in PARENT_TERMINAL_PHASES:
-        return
-    max_total_runs = (parent_cr or {}).get("maxTotalRuns")
-    if isinstance(max_total_runs, int) and max_total_runs > 0:
-        accounted = counts["completed"] + counts["failed"]
-        if accounted < max_total_runs:
+        # ``status.phase`` is co-written by three managers: kopf-default at
+        # create (``Pending``), the sweep-controller (terminal ``Succeeded`` /
+        # ``Failed`` from ``aggregation_complete``), and this rollup
+        # (``Aggregating`` once every child is terminal). Without the
+        # JSON-patch ``test`` op below, a TOCTOU between ``_read_parent_phase``
+        # and the merge-patch would let this rollup clobber a freshly-written
+        # terminal phase back to ``Aggregating``. The ``test`` op makes the
+        # write conditional on the apiserver value still matching what we read.
+        if not counts.get("total_terminal_phase"):
             return
-    await _conditional_phase_set(
-        namespace=namespace,
-        name=sweep_name,
-        expect_phase=parent_phase,
-        new_phase=counts["total_terminal_phase"],
-    )
+        # Currently-listed children are all terminal — but the sweep-controller
+        # creates child CRs lazily as it walks variations × trials, so an empty
+        # in-flight set is NOT proof the sweep is done. The CR's
+        # ``status.maxTotalRuns`` (set at create-time from variations × trials)
+        # is the authoritative completion target; only flip phase to
+        # ``Aggregating`` when ``completedRuns + failedRuns >= maxTotalRuns``.
+        # Without this guard the parent flips to ``Aggregating`` after the very
+        # first child terminates in a multi-cell sweep and stays there for the
+        # rest of the run.
+        parent_cr = await _read_parent_status(namespace, sweep_name, api=api)
+        parent_phase = (parent_cr.get("phase") if parent_cr else "") or ""
+        if parent_phase in PARENT_TERMINAL_PHASES:
+            return
+        max_total_runs = (parent_cr or {}).get("maxTotalRuns")
+        if isinstance(max_total_runs, int) and max_total_runs > 0:
+            accounted = counts["completed"] + counts["failed"]
+            if accounted < max_total_runs:
+                return
+        await _conditional_phase_set(
+            namespace=namespace,
+            name=sweep_name,
+            expect_phase=parent_phase,
+            new_phase=counts["total_terminal_phase"],
+            api=api,
+        )
 
 
 def _find_sweep_owner(child_body: dict[str, Any]) -> tuple[str, str] | None:
@@ -113,20 +149,27 @@ def _find_sweep_owner(child_body: dict[str, Any]) -> tuple[str, str] | None:
 
 
 async def _count_owned_children(
-    namespace: str, sweep_uid: str, sweep_name: str
+    namespace: str,
+    sweep_uid: str,
+    sweep_name: str,
+    *,
+    api: ApiClient | None = None,
 ) -> dict[str, Any]:
-    """List children with the sweep label and count by terminal phase."""
+    """List children with the sweep label and count by terminal phase.
+
+    When called from the kopf entry point, ``api`` is the shared client for
+    this tick. Standalone test callers can pass ``api=None`` and a fresh
+    client is opened transparently.
+    """
     import aiohttp
     import kopf
     from kubernetes_asyncio import client as k8s
     from kubernetes_asyncio.client import ApiException
 
-    from aiperf.kubernetes.client import k8s_client
-
     completed = failed = in_flight = 0
     try:
-        async with k8s_client() as api:
-            custom = k8s.CustomObjectsApi(api)
+        async with _api_or_new(api) as client:
+            custom = k8s.CustomObjectsApi(client)
             resp = await custom.list_namespaced_custom_object(
                 group="aiperf.nvidia.com",
                 version="v1alpha1",
@@ -175,6 +218,7 @@ async def _patch_parent_status(
     name: str,
     namespace: str,
     body: dict[str, Any],
+    api: ApiClient | None = None,
 ) -> None:
     """Merge-patch operator-owned rollup fields on AIPerfSweep.status.
 
@@ -195,11 +239,9 @@ async def _patch_parent_status(
     from kubernetes_asyncio import client as k8s
     from kubernetes_asyncio.client import ApiException
 
-    from aiperf.kubernetes.client import k8s_client
-
     try:
-        async with k8s_client() as api:
-            custom = k8s.CustomObjectsApi(api)
+        async with _api_or_new(api) as client:
+            custom = k8s.CustomObjectsApi(client)
             await custom.patch_namespaced_custom_object_status(
                 group=group,
                 version=version,
@@ -223,7 +265,9 @@ async def _patch_parent_status(
         ) from e
 
 
-async def _read_parent_status(namespace: str, name: str) -> dict[str, Any] | None:
+async def _read_parent_status(
+    namespace: str, name: str, *, api: ApiClient | None = None
+) -> dict[str, Any] | None:
     """Return parent AIPerfSweep ``status`` dict, or None if missing/unreadable.
 
     The rollup needs both ``phase`` (TOCTOU guard) and ``maxTotalRuns``
@@ -233,11 +277,9 @@ async def _read_parent_status(namespace: str, name: str) -> dict[str, Any] | Non
     """
     from kubernetes_asyncio import client as k8s
 
-    from aiperf.kubernetes.client import k8s_client
-
     try:
-        async with k8s_client() as api:
-            custom = k8s.CustomObjectsApi(api)
+        async with _api_or_new(api) as client:
+            custom = k8s.CustomObjectsApi(client)
             cr = await custom.get_namespaced_custom_object(
                 group="aiperf.nvidia.com",
                 version="v1alpha1",
@@ -250,13 +292,15 @@ async def _read_parent_status(namespace: str, name: str) -> dict[str, Any] | Non
     return (cr.get("status") or {}) or None
 
 
-async def _read_parent_phase(namespace: str, name: str) -> str | None:
+async def _read_parent_phase(
+    namespace: str, name: str, *, api: ApiClient | None = None
+) -> str | None:
     """Return parent AIPerfSweep status.phase, or None if missing/unreadable.
 
     Thin wrapper around ``_read_parent_status`` retained for backwards
     compatibility with existing tests that patch this symbol directly.
     """
-    status = await _read_parent_status(namespace, name)
+    status = await _read_parent_status(namespace, name, api=api)
     return (status or {}).get("phase") or None
 
 
@@ -266,6 +310,7 @@ async def _conditional_phase_set(
     name: str,
     expect_phase: str,
     new_phase: str,
+    api: ApiClient | None = None,
 ) -> None:
     """Atomically write ``status.phase`` only when the apiserver still
     reflects ``expect_phase``.
@@ -286,8 +331,6 @@ async def _conditional_phase_set(
     from kubernetes_asyncio import client as k8s
     from kubernetes_asyncio.client import ApiException
 
-    from aiperf.kubernetes.client import k8s_client
-
     if not expect_phase:
         await _patch_parent_status(
             group="aiperf.nvidia.com",
@@ -296,12 +339,13 @@ async def _conditional_phase_set(
             name=name,
             namespace=namespace,
             body={"status": {"phase": new_phase}},
+            api=api,
         )
         return
 
     try:
-        async with k8s_client() as api:
-            custom = k8s.CustomObjectsApi(api)
+        async with _api_or_new(api) as client:
+            custom = k8s.CustomObjectsApi(client)
             await custom.patch_namespaced_custom_object_status(
                 group="aiperf.nvidia.com",
                 version="v1alpha1",
