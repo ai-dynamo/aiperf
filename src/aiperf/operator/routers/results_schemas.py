@@ -77,6 +77,10 @@ class LeaderboardEntry(AIPerfBaseModel):
 
     namespace: str = Field(description="Kubernetes namespace")
     job_id: str = Field(description="Job identifier")
+    epoch: str | None = Field(
+        default=None,
+        description="Run epoch (decimal seconds) the row was sourced from.",
+    )
     value: float | None = Field(description="Metric value")
     unit: str | None = Field(description="Metric unit")
     start_time: str | None = Field(description="Benchmark start time (ISO)")
@@ -101,6 +105,10 @@ class HistoryEntry(AIPerfBaseModel):
 
     namespace: str = Field(description="Kubernetes namespace")
     job_id: str = Field(description="Job identifier")
+    epoch: str | None = Field(
+        default=None,
+        description="Run epoch (decimal seconds) the row was sourced from.",
+    )
     value: float | None = Field(description="Metric value")
     unit: str | None = Field(description="Metric unit")
     start_time: str | None = Field(description="Benchmark start time (ISO)")

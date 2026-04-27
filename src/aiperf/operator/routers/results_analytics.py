@@ -89,10 +89,14 @@ def _register_leaderboard_route(
             description="Sort order (asc or desc)",
         ),
         limit: int = Query(default=20, ge=1, le=1000, description="Max results"),
+        epoch: str | None = Query(
+            default=None,
+            description="Restrict to one run epoch. None = latest per (ns, job).",
+        ),
     ) -> LeaderboardResponse:
         """Rank all benchmark runs by a metric."""
         rows = await get_db().leaderboard(
-            metric=metric, stat=stat, order=order, limit=limit
+            metric=metric, stat=stat, order=order, limit=limit, epoch=epoch
         )
         return LeaderboardResponse(
             metric=metric,
@@ -120,6 +124,10 @@ def _register_history_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
             default=None, description="Filter by endpoint URL (substring)"
         ),
         limit: int = Query(default=100, ge=1, le=10000, description="Max results"),
+        epoch: str | None = Query(
+            default=None,
+            description="Restrict to one run epoch. None = latest per (ns, job).",
+        ),
     ) -> HistoryResponse:
         """Get metric values over time, optionally filtered."""
         rows = await get_db().history(
@@ -128,6 +136,7 @@ def _register_history_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
             model=model,
             endpoint=endpoint,
             limit=limit,
+            epoch=epoch,
         )
         return HistoryResponse(
             metric=metric,
@@ -148,9 +157,13 @@ def _register_compare_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
             default=None,
             description="Metrics to include (default: key performance metrics)",
         ),
+        epoch: str | None = Query(
+            default=None,
+            description="Restrict every job to one run epoch. None = latest per job.",
+        ),
     ) -> CompareResponse:
         """Compare specific jobs side-by-side."""
-        rows = await get_db().compare(job_ids=jobs, metrics=metrics)
+        rows = await get_db().compare(job_ids=jobs, metrics=metrics, epoch=epoch)
         metric_list = metrics or list(DEFAULT_COMPARE_METRICS)
         entries = _pivot_compare_rows(rows, metric_list)
         return CompareResponse(
@@ -164,9 +177,16 @@ def _register_summary_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
     """Register the ``/analytics/summary/{namespace}/{job_id}`` endpoint."""
 
     @router.get("/analytics/summary/{namespace}/{job_id}")
-    async def summary(namespace: str, job_id: str) -> dict[str, Any]:
+    async def summary(
+        namespace: str,
+        job_id: str,
+        epoch: str | None = Query(
+            default=None,
+            description="Run epoch to load. None = follow latest.txt.",
+        ),
+    ) -> dict[str, Any]:
         """Get the full aggregated summary for a single job."""
-        result = await get_db().summary(namespace, job_id)
+        result = await get_db().summary(namespace, job_id, epoch=epoch)
         if result is None:
             raise HTTPException(404, f"No summary for {namespace}/{job_id}")
         return result

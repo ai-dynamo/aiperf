@@ -72,15 +72,52 @@ class ResultsDB:
         return "''"
 
     def _extract_job_path_parts(self) -> str:
-        """SQL expression to extract namespace and job_id from the filename path.
+        """SQL expression to extract namespace, job_id, and epoch from the filename path.
 
         Filename shape is ``<base>/<namespace>/<job>/<epoch>/<filename>``,
-        so namespace is the 4th-from-last segment and job_id is the 3rd.
+        so namespace is the 4th-from-last segment, job_id the 3rd, and
+        epoch the 2nd. Epoch is the per-run subdirectory introduced by
+        ``results_layout`` and matches ``epoch_key_from_body(body)``.
         """
         return (
             "string_split(filename, '/')[-4] AS namespace, "
-            "string_split(filename, '/')[-3] AS job_id"
+            "string_split(filename, '/')[-3] AS job_id, "
+            "string_split(filename, '/')[-2] AS epoch"
         )
+
+    @staticmethod
+    def _latest_epoch_filter() -> str:
+        """SQL fragment selecting only the MAX(epoch) per (namespace, job_id).
+
+        Used when no explicit epoch filter is supplied so today's "one row
+        per job" contract is preserved when a job has been re-run multiple
+        times. Epoch values are zero-padded decimal-second strings, so
+        lexicographic MAX is equivalent to numeric MAX.
+        """
+        return (
+            "string_split(filename, '/')[-2] = ("
+            "  SELECT MAX(string_split(f2.filename, '/')[-2]) FROM ("
+            "    SELECT filename FROM read_json({files}, "
+            "      compression='auto_detect', union_by_name=true)"
+            "  ) f2 "
+            "  WHERE string_split(f2.filename, '/')[-4] = "
+            "        string_split(t.filename, '/')[-4] "
+            "    AND string_split(f2.filename, '/')[-3] = "
+            "        string_split(t.filename, '/')[-3]"
+            ")"
+        )
+
+    def _epoch_clause(self, epoch: str | None, files: str) -> str:
+        """Build the WHERE-clause fragment for epoch filtering.
+
+        Returns ``string_split(filename, '/')[-2] = '<escaped>'`` when
+        ``epoch`` is given, otherwise the latest-epoch correlated subquery
+        keyed against the same ``read_json(files, ...)`` source.
+        """
+        if epoch is not None:
+            esc = epoch.replace("'", "''")
+            return f"string_split(filename, '/')[-2] = '{esc}'"
+        return self._latest_epoch_filter().format(files=files)
 
     async def leaderboard(
         self,
@@ -88,6 +125,8 @@ class ResultsDB:
         stat: str = "avg",
         order: str = "desc",
         limit: int = 20,
+        *,
+        epoch: str | None = None,
     ) -> list[dict[str, Any]]:
         """Rank all benchmark runs by a metric.
 
@@ -96,6 +135,10 @@ class ResultsDB:
             stat: Statistic to rank by (avg, p50, p99, min, max).
             order: Sort order (asc or desc).
             limit: Maximum results to return.
+            epoch: When provided, restrict to that exact run epoch. When
+                ``None`` (default), each (namespace, job_id) contributes only
+                its newest epoch — preserves the "one row per job" contract
+                used by the dashboard before multi-epoch re-runs landed.
         """
         files = self._find_summary_files()
         if files == "''":
@@ -104,6 +147,7 @@ class ResultsDB:
         _validate_identifier(metric)
         _validate_identifier(stat)
         order_dir = "DESC" if order.lower() == "desc" else "ASC"
+        epoch_where = self._epoch_clause(epoch, files)
 
         sql = f"""
             SELECT
@@ -121,6 +165,7 @@ class ResultsDB:
                     union_by_name=true)
             ) t
             WHERE t.{metric}.{stat} IS NOT NULL
+              AND {epoch_where}
             ORDER BY value {order_dir}
             LIMIT {int(limit)}
         """  # noqa: S608
@@ -135,6 +180,7 @@ class ResultsDB:
         metric: str = "request_throughput",
         stat: str = "avg",
         limit: int = 100,
+        epoch: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get metric values over time, optionally filtered by model or endpoint.
 
@@ -144,6 +190,9 @@ class ResultsDB:
             metric: Metric to track.
             stat: Statistic to return.
             limit: Maximum results.
+            epoch: When provided, restrict to that exact run epoch. When
+                ``None`` (default), each (namespace, job_id) contributes only
+                its newest epoch.
         """
         files = self._find_summary_files()
         if files == "''":
@@ -152,7 +201,10 @@ class ResultsDB:
         _validate_identifier(metric)
         _validate_identifier(stat)
 
-        where_clauses = [f"t.{metric}.{stat} IS NOT NULL"]
+        where_clauses = [
+            f"t.{metric}.{stat} IS NOT NULL",
+            self._epoch_clause(epoch, files),
+        ]
         if model:
             where_clauses.append(
                 f"t.input_config.models.items[1].name ILIKE '%{_escape_like(model)}%' ESCAPE '\\'"
@@ -189,12 +241,19 @@ class ResultsDB:
         self,
         job_ids: list[str],
         metrics: list[str] | None = None,
+        *,
+        epoch: str | None = None,
     ) -> list[dict[str, Any]]:
         """Compare specific jobs side-by-side across multiple metrics.
 
         Args:
             job_ids: List of job IDs to compare.
             metrics: Metrics to include (default: key performance metrics).
+            epoch: When provided, restrict every job to that exact run epoch
+                (e.g. for cross-job comparison from the same sweep). When
+                ``None`` (default), each job is represented by its latest
+                epoch only — preserves the one-row-per-job pivot the UI
+                builds in ``_pivot_compare_rows``.
         """
         if not job_ids:
             return []
@@ -212,38 +271,51 @@ class ResultsDB:
         # Build job ID filter. IN uses literal equality, so only escape quotes
         # (LIKE-style %/_ escaping would corrupt job_ids containing underscores).
         job_id_list = ", ".join("'" + j.replace("'", "''") + "'" for j in job_ids)
+        epoch_where = self._epoch_clause(epoch, files)
 
-        base_rows = await self._query(self._compare_base_sql(files, job_id_list))
+        base_rows = await self._query(
+            self._compare_base_sql(files, job_id_list, epoch_where)
+        )
         if not base_rows:
             return []
 
-        # Key by (namespace, job_id) — two jobs with the same job_id in
-        # different namespaces must not overwrite each other.
-        job_data: dict[tuple[str, str], dict[str, Any]] = {
-            (row.get("namespace", ""), row.get("job_id", "")): row for row in base_rows
+        # Key by (namespace, job_id, epoch) — two jobs with the same job_id
+        # in different namespaces (or two epochs of the same job, when an
+        # explicit epoch is passed) must not overwrite each other.
+        job_data: dict[tuple[str, str, str], dict[str, Any]] = {
+            (
+                row.get("namespace", ""),
+                row.get("job_id", ""),
+                row.get("epoch", ""),
+            ): row
+            for row in base_rows
         }
 
         # Query each metric separately to handle missing columns gracefully
         # (e.g., non-streaming has no TTFT).
         for m in metrics:
             metric_rows = await self._query(
-                self._compare_metric_sql(files, job_id_list, m)
+                self._compare_metric_sql(files, job_id_list, m, epoch_where)
             )
             for row in metric_rows:
-                key = (row.get("namespace", ""), row.get("job_id", ""))
+                key = (
+                    row.get("namespace", ""),
+                    row.get("job_id", ""),
+                    row.get("epoch", ""),
+                )
                 if key in job_data:
                     job_data[key].update(
                         {
                             k: v
                             for k, v in row.items()
-                            if k not in ("job_id", "namespace")
+                            if k not in ("job_id", "namespace", "epoch")
                         }
                     )
 
         return list(job_data.values())
 
-    def _compare_base_sql(self, files: str, job_id_list: str) -> str:
-        """Base SELECT for compare(): job identity and run metadata only."""
+    def _compare_base_sql(self, files: str, job_id_list: str, epoch_where: str) -> str:
+        """Base SELECT for compare(): job identity, epoch, and run metadata."""
         return f"""
             SELECT
                 {self._extract_job_path_parts()},
@@ -257,9 +329,12 @@ class ResultsDB:
                     union_by_name=true)
             ) t
             WHERE string_split(filename, '/')[-3] IN ({job_id_list})
+              AND {epoch_where}
         """  # noqa: S608
 
-    def _compare_metric_sql(self, files: str, job_id_list: str, metric: str) -> str:
+    def _compare_metric_sql(
+        self, files: str, job_id_list: str, metric: str, epoch_where: str
+    ) -> str:
         """Per-metric SELECT for compare(): extracts avg/p50/p99/unit via JSON."""
         _validate_identifier(metric)
         json_expr = f"to_json(t.{metric})"
@@ -267,6 +342,7 @@ class ResultsDB:
             SELECT
                 string_split(filename, '/')[-4] AS namespace,
                 string_split(filename, '/')[-3] AS job_id,
+                string_split(filename, '/')[-2] AS epoch,
                 TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {metric}_avg,
                 TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {metric}_p50,
                 TRY_CAST({json_expr}->>'p99' AS DOUBLE) AS {metric}_p99,
@@ -278,16 +354,24 @@ class ResultsDB:
                     union_by_name=true)
             ) t
             WHERE string_split(filename, '/')[-3] IN ({job_id_list})
+              AND {epoch_where}
         """  # noqa: S608
 
-    async def summary(self, namespace: str, job_id: str) -> dict[str, Any] | None:
+    async def summary(
+        self,
+        namespace: str,
+        job_id: str,
+        *,
+        epoch: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get the full aggregated summary for a single job.
 
         Args:
             namespace: Kubernetes namespace.
             job_id: Job identifier.
+            epoch: Optional run epoch. ``None`` follows ``latest.txt``.
         """
-        job_dir = resolve_run_dir(self._results_dir, namespace, job_id)
+        job_dir = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
         if job_dir is None:
             return None
 
