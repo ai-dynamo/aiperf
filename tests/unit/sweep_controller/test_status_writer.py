@@ -233,3 +233,86 @@ async def test_aggregation_failed_writes_error_and_completed_at(monkeypatch):
     assert aggregation["phase"] == "Failed"
     assert aggregation["error"] == "export blew up at row 17"
     assert aggregation["completedAt"]  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# Regression: top-level `status.completionTime` (CRD-declared name) MUST be
+# written by both terminal writers. Without it, the operator's TTL reaper
+# (`operator/handlers/sweep/lifecycle.maybe_reap_finished`) falls back to
+# `metadata.creationTimestamp` and reaps long-running sweeps mid-flight.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_aggregation_complete_writes_top_level_completion_time(monkeypatch):
+    """`aggregation_complete` writes top-level `status.completionTime` (CRD name).
+
+    The TTL reaper reads exactly this field — `status.completedAt` is the
+    nested aggregation timestamp (present too, but in `aggregation`), not
+    the top-level field the CRD declares.
+    """
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.aggregation_complete(
+        aggregate_path="/api/v1/results/ns/s/aggregate",
+        controller_host="ctrl-host",
+        port=19090,
+    )
+    body = _patch_call_kwargs(custom)["body"]
+    assert body["status"]["completionTime"]
+    # Top-level completionTime equals nested aggregation.completedAt: same
+    # event, two field-paths (CRD vs. internal aggregation phase tracking).
+    assert (
+        body["status"]["completionTime"] == body["status"]["aggregation"]["completedAt"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_aggregation_failed_writes_top_level_completion_time(monkeypatch):
+    """`aggregation_failed` writes top-level `status.completionTime` (CRD name)."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.aggregation_failed(error="boom")
+    body = _patch_call_kwargs(custom)["body"]
+    assert body["status"]["completionTime"]
+    assert (
+        body["status"]["completionTime"] == body["status"]["aggregation"]["completedAt"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_aggregation_failed_promotes_top_level_phase_to_failed(monkeypatch):
+    """`aggregation_failed` MUST also write top-level `status.phase=Failed`.
+
+    Otherwise, after an aggregation exception, only `status.aggregation.phase`
+    becomes `Failed` while top-level `status.phase` is stuck at `Aggregating`
+    forever (the rollup advanced it out of `Running` and refuses to clobber
+    its own non-terminal write back to a terminal value).
+
+    The rollup's `_conditional_phase_set` skips writes when `parent_phase`
+    is already in `PARENT_TERMINAL_PHASES`, so this merge-patch wins races
+    with concurrent rollup ticks.
+    """
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.aggregation_failed(error="boom")
+    body = _patch_call_kwargs(custom)["body"]
+    assert body["status"]["phase"] == "Failed"

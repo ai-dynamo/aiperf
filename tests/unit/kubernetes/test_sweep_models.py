@@ -166,6 +166,35 @@ def test_convergence_config_min_runs_eq_max_runs_accepted():
 
 
 @pytest.mark.parametrize(
+    "max_runs, ok",
+    [
+        param(2, True, id="max-runs-min-bound-accepted"),
+        param(20, True, id="max-runs-upper-bound-accepted"),
+        param(21, False, id="max-runs-21-rejected"),
+        param(50, False, id="max-runs-50-rejected"),
+        param(1, False, id="max-runs-below-min-rejected"),
+    ],
+)  # fmt: skip
+def test_convergence_config_max_runs_bounds(max_runs: int, ok: bool) -> None:
+    """``ConvergenceConfig.max_runs`` must be ``2 <= n <= 20``.
+
+    Regression-lock: previously had only ``ge=2`` (no upper bound). A
+    sweep with ``maxRuns=21`` would pass apiserver/Pydantic validation,
+    flow through ``build_plan_from_sweep`` to ``BenchmarkPlan(trials=21)``,
+    and crash the sweep-controller pod with a Pydantic ValidationError
+    (``BenchmarkPlan.trials`` is bounded ``le=20``). The three bounds —
+    CRD ``maxRuns.maximum=20``, ``ConvergenceConfig.max_runs.le=20``,
+    and ``BenchmarkPlan.trials.le=20`` — must stay aligned.
+    """
+    if ok:
+        cfg = ConvergenceConfig(metric="ttft_p99", min_runs=2, max_runs=max_runs)
+        assert cfg.max_runs == max_runs
+    else:
+        with pytest.raises(ValidationError):
+            ConvergenceConfig(metric="ttft_p99", min_runs=2, max_runs=max_runs)
+
+
+@pytest.mark.parametrize(
     "ttl, ok",
     [
         param(-1, False, id="ttl-minus-one-rejected"),

@@ -108,6 +108,7 @@ spec:
                     description: Maximum trials per variation; hard cap regardless of convergence.
                     default: 10
                     minimum: 2
+                    maximum: 20
                   threshold:
                     type: number
                     description: Criterion threshold. For cv_threshold, the coefficient-of-variation cap.

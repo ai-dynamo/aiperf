@@ -38,7 +38,7 @@ class BenchmarkPlan(BaseModel):
         int,
         Field(
             ge=1,
-            le=10,
+            le=20,
             default=1,
             description="Number of trials per config (from multi_run.num_runs).",
         ),

@@ -128,9 +128,12 @@ async def maybe_reap_finished(
     """If the sweep is terminal AND ttlSecondsAfterFinished has elapsed, delete the CR.
 
     The TTL is computed from the most recent transition into a terminal
-    phase (status.completedAt if present, else metadata.creationTimestamp
-    as a conservative fallback). Children's own ttlSecondsAfterFinished
-    governs their cleanup; the parent only reaps itself.
+    phase (status.completionTime if present, else metadata.creationTimestamp
+    as a conservative fallback). ``completionTime`` is the CRD-declared
+    field name and is written by the sweep-controller's
+    ``aggregation_complete`` / ``aggregation_failed`` writers. Children's
+    own ttlSecondsAfterFinished governs their cleanup; the parent only
+    reaps itself.
     """
     spec = body.get("spec") or {}
     ttl = spec.get("ttlSecondsAfterFinished")
@@ -139,7 +142,7 @@ async def maybe_reap_finished(
     phase = status.get("phase") or ""
     if phase not in TERMINAL_PHASES:
         return
-    completed_at = status.get("completedAt") or (body.get("metadata") or {}).get(
+    completed_at = status.get("completionTime") or (body.get("metadata") or {}).get(
         "creationTimestamp"
     )
     if not completed_at:

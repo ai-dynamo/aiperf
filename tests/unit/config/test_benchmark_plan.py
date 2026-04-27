@@ -88,6 +88,35 @@ class TestBenchmarkPlan:
         assert plan.set_consistent_seed is True
         assert plan.disable_warmup_after_first is True
 
+    @pytest.mark.parametrize(
+        "trials, ok",
+        [
+            param(1, True, id="trials-min-bound-accepted"),
+            param(20, True, id="trials-upper-bound-accepted"),
+            param(11, True, id="trials-eleven-accepted-after-bump"),
+            param(21, False, id="trials-21-rejected"),
+            param(0, False, id="trials-zero-rejected"),
+        ],
+    )  # fmt: skip
+    def test_trials_bounds(self, trials: int, ok: bool) -> None:
+        """``BenchmarkPlan.trials`` must accept ``1..20``.
+
+        Regression-lock: previously ``le=10``. A sweep with
+        ``convergence.maxRuns=11`` (or ``multiRun.trials=11..20``) would
+        pass apiserver/Pydantic validation on the AIPerfSweep CRD and
+        only crash the sweep-controller pod here, with no kopf-level
+        rejection. The three bounds — CRD ``maxRuns.maximum=20``,
+        ``ConvergenceConfig.max_runs.le=20``, and
+        ``BenchmarkPlan.trials.le=20`` — must stay aligned.
+        """
+        config = _make_benchmark_config()
+        if ok:
+            plan = BenchmarkPlan(configs=[config], trials=trials)
+            assert plan.trials == trials
+        else:
+            with pytest.raises(ValidationError):
+                BenchmarkPlan(configs=[config], trials=trials)
+
     def test_requires_at_least_one_config(self) -> None:
         with pytest.raises(ValidationError):
             BenchmarkPlan(configs=[])

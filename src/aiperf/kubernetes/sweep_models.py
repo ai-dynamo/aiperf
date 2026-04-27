@@ -95,6 +95,7 @@ class ConvergenceConfig(BaseConfig):
     max_runs: int = Field(
         default=10,
         ge=2,
+        le=20,
         description="Maximum trials per variation; hard cap regardless of convergence.",
     )
     threshold: float = Field(

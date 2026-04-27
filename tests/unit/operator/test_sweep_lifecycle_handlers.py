@@ -69,13 +69,28 @@ async def test_child_rollup_skips_unowned_aiperfjob(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch):
-    """When all children terminal, parent transitions to Aggregating."""
+    """When all children terminal, parent transitions to Aggregating.
+
+    Counts/lastChildEvent ride a regular merge-patch via
+    ``_patch_parent_status``; ``status.phase`` rides
+    ``_conditional_phase_set`` (JSON-patch with a ``test`` op so a
+    concurrent terminal write from the sweep-controller can't be
+    clobbered).
+    """
     parent_patches: list[dict] = []
+    phase_calls: list[dict] = []
 
     async def fake_patch(*, group, version, plural, name, namespace, body):
         parent_patches.append(body)
 
+    async def fake_phase_set(*, namespace, name, expect_phase, new_phase):
+        phase_calls.append({"expect": expect_phase, "new": new_phase})
+
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+    monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(
+        child_rollup, "_read_parent_phase", AsyncMock(return_value="Running")
+    )
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",
@@ -106,7 +121,8 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
     body_patch = parent_patches[0]
     assert body_patch["status"]["completedRuns"] == 5
     assert body_patch["status"]["failedRuns"] == 1
-    assert body_patch["status"]["phase"] == "Aggregating"
+    assert "phase" not in body_patch["status"]
+    assert phase_calls == [{"expect": "Running", "new": "Aggregating"}]
 
 
 # ===========================================================================
@@ -315,7 +331,7 @@ async def test_on_delete_swallows_apiexception_during_list(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch):
-    """Succeeded sweep, completedAt 1h ago, ttl=1800: delete is invoked."""
+    """Succeeded sweep, completionTime 1h ago, ttl=1800: delete is invoked."""
     from datetime import datetime, timedelta, timezone
 
     one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
@@ -326,7 +342,7 @@ async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch)
         "metadata": {"name": "s", "namespace": "ns"},
         "spec": {"ttlSecondsAfterFinished": 1800},
     }
-    status = {"phase": "Succeeded", "completedAt": one_hour_ago}
+    status = {"phase": "Succeeded", "completionTime": one_hour_ago}
     await lifecycle.maybe_reap_finished(
         body=body, status=status, name="s", namespace="ns"
     )
@@ -339,7 +355,7 @@ async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_maybe_reap_finished_terminal_age_below_ttl_does_not_delete(monkeypatch):
-    """Succeeded sweep, completedAt 1h ago, ttl=7200: NOT yet eligible."""
+    """Succeeded sweep, completionTime 1h ago, ttl=7200: NOT yet eligible."""
     from datetime import datetime, timedelta, timezone
 
     one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
@@ -350,7 +366,7 @@ async def test_maybe_reap_finished_terminal_age_below_ttl_does_not_delete(monkey
         "metadata": {"name": "s", "namespace": "ns"},
         "spec": {"ttlSecondsAfterFinished": 7200},
     }
-    status = {"phase": "Succeeded", "completedAt": one_hour_ago}
+    status = {"phase": "Succeeded", "completionTime": one_hour_ago}
     await lifecycle.maybe_reap_finished(
         body=body, status=status, name="s", namespace="ns"
     )
@@ -365,7 +381,7 @@ async def test_maybe_reap_finished_non_terminal_phase_never_deletes(monkeypatch)
         "metadata": {"name": "s", "namespace": "ns"},
         "spec": {"ttlSecondsAfterFinished": 1},
     }
-    status = {"phase": "Pending", "completedAt": "2020-01-01T00:00:00Z"}
+    status = {"phase": "Pending", "completionTime": "2020-01-01T00:00:00Z"}
     await lifecycle.maybe_reap_finished(
         body=body, status=status, name="s", namespace="ns"
     )
@@ -377,8 +393,72 @@ async def test_maybe_reap_finished_ttl_none_never_deletes(monkeypatch):
     """ttlSecondsAfterFinished unset: handler is a no-op."""
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
     body = {"metadata": {"name": "s", "namespace": "ns"}, "spec": {}}
-    status = {"phase": "Succeeded", "completedAt": "2020-01-01T00:00:00Z"}
+    status = {"phase": "Succeeded", "completionTime": "2020-01-01T00:00:00Z"}
     await lifecycle.maybe_reap_finished(
         body=body, status=status, name="s", namespace="ns"
     )
     delete_mock.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Regression: TTL reaper must read CRD-declared `status.completionTime`,
+# NOT the legacy/typo `status.completedAt`. Earlier code read `completedAt`
+# but no writer ever populated it — TTL silently fell back to
+# `metadata.creationTimestamp`, reaping long-running sweeps mid-flight when
+# the user set a small ttlSecondsAfterFinished.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_reads_completion_time_not_completed_at(monkeypatch):
+    """`status.completionTime` (CRD-declared) is the authoritative TTL anchor.
+
+    With completionTime=1h-ago and ttl=1800, we MUST reap. If the reader
+    were still looking at `status.completedAt`, the field would be missing,
+    fall back to creationTimestamp=now, and never reap.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    now_iso = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {
+            "name": "s",
+            "namespace": "ns",
+            "creationTimestamp": now_iso,
+        },
+        "spec": {"ttlSecondsAfterFinished": 1800},
+    }
+    status = {
+        "phase": "Succeeded",
+        "completionTime": one_hour_ago,
+        # Stale legacy field; must be ignored.
+        "completedAt": now_iso,
+    }
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_maybe_reap_finished_falls_back_to_creation_timestamp(monkeypatch):
+    """No completionTime present: fall back to metadata.creationTimestamp."""
+    from datetime import datetime, timedelta, timezone
+
+    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {"name": "s", "namespace": "ns", "creationTimestamp": one_hour_ago},
+        "spec": {"ttlSecondsAfterFinished": 1800},
+    }
+    status = {"phase": "Succeeded"}  # no completionTime
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_awaited_once()
