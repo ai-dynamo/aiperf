@@ -107,6 +107,7 @@ async def _run_watch(
     follow_logs: bool,
 ) -> None:
     from aiperf import cli_utils
+    from aiperf.kubernetes import console as kube_console
 
     with cli_utils.exit_on_error(title="Error Watching Benchmark"):
         from aiperf.kubernetes.watch_orchestrator import WatchOrchestrator
@@ -121,4 +122,9 @@ async def _run_watch(
             interval=interval,
             follow_logs=follow_logs,
         )
-        await orchestrator.run()
+        try:
+            await orchestrator.run()
+        except KeyboardInterrupt:
+            # Clean Ctrl-C exit (mirrors dashboard.py); exit_on_error excludes
+            # KeyboardInterrupt so we'd otherwise leak a bare traceback.
+            kube_console.print_info("Stopped watching.")

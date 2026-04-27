@@ -154,3 +154,24 @@ class TestWatchCommandErrorSurface:
             pytest.raises(SystemExit),
         ):
             await watch(manage_options=KubeManageOptions(), output="text")
+
+    async def test_keyboard_interrupt_prints_clean_exit_message(
+        self, capsys: Any
+    ) -> None:
+        """Ctrl-C during ``orchestrator.run()`` prints a clean info line, exits 0.
+
+        ``cli_utils.exit_on_error`` deliberately ignores ``KeyboardInterrupt``,
+        so without the dedicated try/except in ``_run_watch`` we'd leak a bare
+        traceback to the user. Mirrors the behaviour in ``dashboard.py``.
+        """
+        instance = MagicMock()
+        instance.run = AsyncMock(side_effect=KeyboardInterrupt)
+        with patch(
+            "aiperf.kubernetes.watch_orchestrator.WatchOrchestrator",
+            return_value=instance,
+        ):
+            # No SystemExit, no traceback re-raised — clean return.
+            await watch(manage_options=KubeManageOptions(), output="text")
+
+        captured = capsys.readouterr()
+        assert "Stopped watching" in (captured.out + captured.err)
