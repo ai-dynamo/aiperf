@@ -7,15 +7,18 @@ import { Conditions } from '../components/conditions.js';
 import { JobTable } from '../components/job-table.js';
 import { CellsChart } from '../components/cells-chart.js';
 import { CellsTable } from '../components/cells-table.js';
+import { EpochSelector } from '../components/epoch-selector.js';
 import { navigate } from '../lib/router.js';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
 const DEFAULT_METRIC = 'request_throughput';
 const DEFAULT_STAT = 'avg';
 
-export function SweepDetail({ namespace, name }) {
+export function SweepDetail({ namespace, name, epoch }) {
   const [detail, setDetail] = useState(null);
   const [cells, setCells] = useState(null);
+  const [epochs, setEpochs] = useState([]);
+  const [archivedChildren, setArchivedChildren] = useState(null);
   const [view, setView] = useState('chart');
   const [metric, setMetric] = useState(DEFAULT_METRIC);
   const [stat, setStat] = useState(DEFAULT_STAT);
@@ -26,7 +29,7 @@ export function SweepDetail({ namespace, name }) {
     let stopped = false;
     async function tick() {
       try {
-        const d = await api.getSweep(namespace, name);
+        const d = await api.getSweep(namespace, name, epoch);
         if (!stopped) setDetail(d);
         const phase = (d?.sweep?.phase ?? '').toLowerCase();
         if (TERMINAL.has(phase)) ac.abort();
@@ -36,17 +39,55 @@ export function SweepDetail({ namespace, name }) {
     }
     poll(tick, 5000, ac.signal);
     return () => { stopped = true; ac.abort(); };
-  }, [namespace, name]);
+  }, [namespace, name, epoch]);
 
   useEffect(() => {
     let cancelled = false;
-    api.getSweepCells(namespace, name)
+    api.getSweepCells(namespace, name, epoch)
       .then(d => { if (!cancelled) setCells(d); })
       .catch(e => { if (!cancelled) setError(String(e)); });
     return () => { cancelled = true; };
+  }, [namespace, name, epoch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getSweepEpochs(namespace, name)
+      .then(d => { if (!cancelled) setEpochs(d.epochs ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [namespace, name]);
 
-  const childRows = useMemo(() => detail?.children ?? [], [detail]);
+  useEffect(() => {
+    if (epoch === undefined) {
+      setArchivedChildren(null);
+      return;
+    }
+    if (detail?.children && detail.children.length > 0) {
+      setArchivedChildren(null);
+      return;
+    }
+    let cancelled = false;
+    api.getSweepChildren(namespace, name, epoch)
+      .then(d => { if (!cancelled) setArchivedChildren(d?.children ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [namespace, name, epoch, detail]);
+
+  function pickEpoch(next) {
+    if (next === undefined) {
+      navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+    } else {
+      navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(next)}`);
+    }
+  }
+
+  const childRows = useMemo(() => {
+    const live = detail?.children ?? [];
+    if (epoch !== undefined && live.length === 0 && archivedChildren) {
+      return archivedChildren;
+    }
+    return live;
+  }, [detail, epoch, archivedChildren]);
   const metricNames = useMemo(() => {
     const set = new Set();
     for (const c of (cells?.cells ?? [])) {
@@ -75,6 +116,7 @@ export function SweepDetail({ namespace, name }) {
           <span style=${`background:${pillColor(s.phase)};color:white;padding:2px 10px;border-radius:8px;font-size:12px`}>${s.phase}</span>
           <span class="text-dim">model: ${s.model ?? '—'}</span>
           <span class="text-dim">${s.source}</span>
+          <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
         </div>
         ${currentCell && html`
           <p class="text-dim">running variation ${currentCell.variationIndex ?? '?'}/${s.total_variations} ${currentCell.trial != null ? `trial ${currentCell.trial}` : ''}</p>
