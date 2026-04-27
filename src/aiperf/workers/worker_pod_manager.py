@@ -396,21 +396,25 @@ class WorkerGroupManagerBase(BaseComponentService):
     async def _publish_group_message(self, message: GroupTokenizerReady) -> None:
         """Fan out a tokenizer-ready struct to registered worker peers.
 
-        Sibling workers that have not registered yet by this point will pick up
-        the bundles via a future state query (parallel to how late workers
+        Targets both ``ServiceType.WORKER`` (in-process workers) and
+        ``ServiceType.RECORD_PROCESSOR`` (sibling-container RPs) — both
+        block on ``_tokenizer_ready`` until they see this message. Sibling
+        peers that have not registered yet by this point will pick up the
+        bundles via a future state query (parallel to how late workers
         recover dataset state via ``GroupDatasetStateQuery``).
         """
-        worker_identities = [
+        target_types = {str(ServiceType.WORKER), str(ServiceType.RECORD_PROCESSOR)}
+        peer_identities = [
             self._pod_peer_identities[sid]
             for sid, stype in self._pod_peer_types.items()
-            if stype == str(ServiceType.WORKER) and sid in self._pod_peer_identities
+            if stype in target_types and sid in self._pod_peer_identities
         ]
-        if not worker_identities:
+        if not peer_identities:
             return
         await asyncio.gather(
             *(
                 self.pod_lifecycle_router.send_to(identity, message)
-                for identity in worker_identities
+                for identity in peer_identities
             )
         )
 
