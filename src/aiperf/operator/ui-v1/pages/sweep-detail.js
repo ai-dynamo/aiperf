@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
-import { palette } from '../lib/theme.js';
+import { palette, phaseColor } from '../lib/theme.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { Conditions } from '../components/conditions.js';
 import { JobTable } from '../components/job-table.js';
@@ -11,8 +11,21 @@ import { EpochSelector } from '../components/epoch-selector.js';
 import { navigate } from '../lib/router.js';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
+const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
 const DEFAULT_METRIC = 'request_throughput';
 const DEFAULT_STAT = 'avg';
+const STATS = ['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'];
+
+function formatAge(s) {
+  if (s == null) return null;
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    return `${h}h ${Math.floor((s % 3600) / 60)}m`;
+  }
+  return `${Math.floor(s / 86400)}d`;
+}
 
 export function SweepDetail({ namespace, name, epoch }) {
   const [detail, setDetail] = useState(null);
@@ -88,6 +101,7 @@ export function SweepDetail({ namespace, name, epoch }) {
     }
     return live;
   }, [detail, epoch, archivedChildren]);
+
   const metricNames = useMemo(() => {
     const set = new Set();
     for (const c of (cells?.cells ?? [])) {
@@ -97,60 +111,120 @@ export function SweepDetail({ namespace, name, epoch }) {
   }, [cells]);
 
   if (error) {
-    return html`<div data-testid="page-sweep-detail" class="error-banner">${error}</div>`;
+    return html`
+      <div data-testid="page-sweep-detail">
+        <div class="card" style=${`border-color:${palette.red}44;color:${palette.red}`}>
+          <strong>Error:</strong> ${error}
+        </div>
+      </div>
+    `;
   }
   if (!detail) {
-    return html`<div data-testid="page-sweep-detail" class="text-dim">Loading…</div>`;
+    return html`<div data-testid="page-sweep-detail" class="text-dim" style="padding:var(--space-6)">Loading…</div>`;
   }
 
   const s = detail.sweep;
   const status = detail.status ?? {};
   const conditions = status.conditions ?? [];
   const currentCell = status.currentCell;
+  const phase = s.phase ?? 'Unknown';
+  const phaseClr = phaseColor(phase);
+  const isRunning = RUNNING_PHASES.has(phase.toLowerCase());
 
   return html`
     <div class="sweep-detail" data-testid="page-sweep-detail">
-      <header class="page-header">
-        <h2>${s.name} <span class="text-dim">${s.namespace}</span></h2>
-        <div style="display:flex;gap:var(--space-3);align-items:center">
-          <span style=${`background:${pillColor(s.phase)};color:white;padding:2px 10px;border-radius:8px;font-size:12px`}>${s.phase}</span>
-          <span class="text-dim">model: ${s.model ?? '—'}</span>
-          <span class="text-dim">${s.source}</span>
-          <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
+      <!-- Header -->
+      <div class="card" style="margin-bottom: var(--space-4)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:var(--space-3)">
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+              <h2 style="margin:0;font-size:var(--font-size-lg)">${s.name}</h2>
+              <span class="phase-badge" style=${'background: ' + phaseClr + '22; color: ' + phaseClr + '; border-color: ' + phaseClr + '44'}>
+                ${phase}
+              </span>
+              ${formatAge(s.age_seconds) && html`<span class="text-dim" style="font-size:var(--font-size-sm)">${formatAge(s.age_seconds)}</span>`}
+              ${isRunning && html`
+                <span style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}>
+                  <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
+                  Live
+                </span>
+              `}
+              <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
+            </div>
+            <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:var(--space-1)">
+              ${s.namespace}${s.model ? ' · ' + s.model : ''}
+              ${html` · <span style=${`color:${palette.overlay1};font-size:var(--font-size-xs);padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${s.source}</span>`}
+            </div>
+            ${currentCell && html`
+              <p class="text-dim" style="margin:var(--space-1) 0 0 0;font-size:var(--font-size-sm)">
+                running variation ${currentCell.variationIndex ?? '?'}/${s.total_variations}${currentCell.trial != null ? ` · trial ${currentCell.trial}` : ''}
+              </p>
+            `}
+          </div>
         </div>
-        ${currentCell && html`
-          <p class="text-dim">running variation ${currentCell.variationIndex ?? '?'}/${s.total_variations} ${currentCell.trial != null ? `trial ${currentCell.trial}` : ''}</p>
-        `}
-      </header>
+      </div>
 
-      <section class="kpi-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3)">
-        <${KpiCard} label="Variations" value=${s.total_variations} />
-        <${KpiCard} label="Completed" value=${s.completed_runs} />
-        <${KpiCard} label="Failed" value=${s.failed_runs} />
-        <${KpiCard} label="Total runs" value=${s.completed_runs + s.failed_runs} />
-      </section>
+      ${conditions.length > 0 && html`
+        <div style="margin-bottom: var(--space-4)">
+          <${Conditions} conditions=${conditions} />
+        </div>
+      `}
 
-      <section style="margin-top:var(--space-4)">
-        <${Conditions} conditions=${conditions} />
-      </section>
+      <!-- KPI row -->
+      <div class="kpi-row" style="margin-bottom: var(--space-6)">
+        <${KpiCard}
+          label="Variations"
+          value=${s.total_variations}
+          color=${palette.blue}
+        />
+        <${KpiCard}
+          label="Completed"
+          value=${s.completed_runs}
+          color=${palette.green}
+        />
+        <${KpiCard}
+          label="Failed"
+          value=${s.failed_runs}
+          color=${s.failed_runs > 0 ? palette.red : palette.overlay1}
+        />
+        <${KpiCard}
+          label="Total runs"
+          value=${(s.completed_runs ?? 0) + (s.failed_runs ?? 0)}
+          color=${palette.mauve}
+        />
+      </div>
 
-      <section style="margin-top:var(--space-4)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
-          <h3>Cells</h3>
-          <div style="display:flex;gap:var(--space-2);align-items:center">
-            <select value=${metric} onchange=${e => setMetric(e.target.value)}>
+      <!-- Cells panel -->
+      <div class="card" style="margin-bottom: var(--space-4)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
+          <div class="card-title" style="margin:0">Cells</div>
+          <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+            <select
+              value=${metric}
+              onchange=${e => setMetric(e.target.value)}
+              style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
+            >
               ${metricNames.length === 0
                 ? html`<option value=${DEFAULT_METRIC}>${DEFAULT_METRIC}</option>`
                 : metricNames.map(m => html`<option key=${m} value=${m}>${m}</option>`)}
             </select>
-            <select value=${stat} onchange=${e => setStat(e.target.value)}>
-              ${['avg','p50','p90','p95','p99','min','max'].map(s2 =>
-                html`<option key=${s2} value=${s2}>${s2}</option>`)}
+            <select
+              value=${stat}
+              onchange=${e => setStat(e.target.value)}
+              style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
+            >
+              ${STATS.map(s2 => html`<option key=${s2} value=${s2}>${s2}</option>`)}
             </select>
-            <button class=${'filter-tab' + (view === 'chart' ? ' filter-tab--active' : '')}
-                    onclick=${() => setView('chart')}>Chart</button>
-            <button class=${'filter-tab' + (view === 'table' ? ' filter-tab--active' : '')}
-                    onclick=${() => setView('table')}>Table</button>
+            <div class="filter-tabs" style="margin:0">
+              <button
+                class=${'filter-tab' + (view === 'chart' ? ' filter-tab--active' : '')}
+                onclick=${() => setView('chart')}
+              >Chart</button>
+              <button
+                class=${'filter-tab' + (view === 'table' ? ' filter-tab--active' : '')}
+                onclick=${() => setView('table')}
+              >Table</button>
+            </div>
           </div>
         </div>
         ${view === 'chart'
@@ -165,21 +239,17 @@ export function SweepDetail({ namespace, name, epoch }) {
               metric=${metric}
               stat=${stat}
               onCellClick=${c => c.children?.[0] && navigate(`/jobs/${encodeURIComponent(c.children[0].namespace)}/${encodeURIComponent(c.children[0].name)}`)} />`}
-      </section>
+      </div>
 
-      <section style="margin-top:var(--space-4)">
-        <h3>Children</h3>
-        <${JobTable} jobs=${childRows} onRowClick=${j =>
-          navigate(`/jobs/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)} />
-      </section>
+      <!-- Children -->
+      <div class="card" data-testid="sweep-detail-children">
+        <div class="card-title">Children (${childRows.length})</div>
+        ${childRows.length === 0
+          ? html`<div class="text-dim" style="padding:var(--space-3) 0">No children persisted for this epoch yet.</div>`
+          : html`<${JobTable} jobs=${childRows} onRowClick=${j =>
+              navigate(`/jobs/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)} />`
+        }
+      </div>
     </div>
   `;
-}
-
-function pillColor(phase) {
-  const p = (phase ?? '').toLowerCase();
-  if (['running', 'aggregating'].includes(p)) return palette.blue ?? '#4ea1ff';
-  if (p === 'succeeded') return palette.green ?? '#4caf50';
-  if (['failed', 'cancelled', 'partiallyfailed'].includes(p)) return palette.red ?? '#e53935';
-  return palette.surface0;
 }
