@@ -120,6 +120,8 @@ class OperatorAuditRunner:
         job_name = f"audit-op-{case.case_id}-{suffix}"
         cfg = self._build_job_config(case, swept_value=swept_value)
 
+        await self.deployer.kubectl.run("create", "namespace", namespace, check=False)
+
         result = await self.deployer.run_job(
             config=cfg,
             name=job_name,
