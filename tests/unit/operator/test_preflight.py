@@ -361,7 +361,13 @@ class TestCheckRBACPermissions:
         assert "namespace" in result.message.lower()
 
     @pytest.mark.asyncio
-    async def test_rbac_check_exception_treated_as_missing(self) -> None:
+    async def test_rbac_check_exception_treated_as_transient_warn(self) -> None:
+        """A RuntimeError from the apiserver is transient — WARN, not FAIL.
+
+        ``RuntimeError`` is in ``_CLUSTER_API_ERRORS`` (network/aiohttp glue
+        sometimes wraps connection issues as RuntimeError). We can't say the
+        permission is missing because we never got an answer.
+        """
         checker = _make_checker()
         mock_auth = MagicMock(
             create_self_subject_access_review=AsyncMock(
@@ -370,8 +376,8 @@ class TestCheckRBACPermissions:
         )
         with _patch_auth_v1(mock_auth):
             result = await checker._check_rbac_permissions()
-        assert result.status == CheckStatus.FAIL
-        assert "check failed" in result.message
+        assert result.status == CheckStatus.WARN
+        assert "transient" in result.message.lower()
 
 
 # =============================================================================
@@ -888,7 +894,10 @@ class TestCheckPodSecurityAdmission:
         assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
-    async def test_restricted_psa_compatible(self) -> None:
+    async def test_restricted_psa_warns(self) -> None:
+        """PSA enforce=restricted is now WARN, not PASS — workload not yet
+        verified against full restricted constraints. See Bug 4.
+        """
         checker = _make_checker()
         ns = MagicMock()
         ns.metadata = MagicMock()
@@ -896,7 +905,7 @@ class TestCheckPodSecurityAdmission:
         mock_core = MagicMock(read_namespace=AsyncMock(return_value=ns))
         with _patch_core_v1(mock_core):
             result = await checker._check_pod_security_admission()
-        assert result.status == CheckStatus.PASS
+        assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
     async def test_ns_not_found_warns(self) -> None:
@@ -1042,3 +1051,203 @@ class TestRunAll:
         assert not results.passed
         timeout_check = [c for c in results.checks if c.name == "Preflight Timeout"]
         assert len(timeout_check) == 1
+
+
+# =============================================================================
+# _run_check exception handling (Bugs 1 + 2)
+# =============================================================================
+
+
+class TestRunCheckExceptionHandling:
+    """Cover the operator-side _run_check fail-closed + transient-classification.
+
+    Bug 1: ``_run_check`` previously caught only a narrow tuple
+    (``ApiException`` + ``aiohttp.ClientError`` + ``asyncio.TimeoutError`` +
+    ``OSError``). A ``RuntimeError`` from a misbehaving check propagated and
+    aborted the tier 3+ ``asyncio.gather``, swallowing every other check's
+    result.
+
+    Bug 2: Transient classification used ``"connect" in str(e).lower()``,
+    so an admission-webhook FAIL message containing the word "connect"
+    silently downgraded to a WARN. Classification is now exception-type-based.
+    """
+
+    @pytest.mark.asyncio
+    async def test_runtime_error_caught_and_reported_as_fail(self) -> None:
+        """A RuntimeError raised inside a check must NOT abort preflight."""
+        checker = _make_checker()
+
+        async def _broken_check():
+            raise RuntimeError("unexpected null pointer in foo")
+
+        result = await checker._run_check(_broken_check)
+        assert result.status == CheckStatus.FAIL
+        assert "unexpected null pointer" in result.message
+
+    @pytest.mark.asyncio
+    async def test_connect_string_in_runtime_error_does_not_warn(self) -> None:
+        """The substring 'connect' must not downgrade a RuntimeError to WARN.
+
+        A real cluster admission webhook may say 'cannot connect to validation
+        service'; previously this was misread as a transient network blip.
+        """
+        checker = _make_checker()
+
+        async def _bad_check():
+            raise RuntimeError("admission webhook cannot connect to validator")
+
+        result = await checker._run_check(_bad_check)
+        assert result.status == CheckStatus.FAIL
+        assert "connect" in result.message  # message preserved
+
+    @pytest.mark.asyncio
+    async def test_asyncio_timeout_classified_as_transient_warn(self) -> None:
+        """asyncio.TimeoutError -> WARN (transient)."""
+        import asyncio
+
+        checker = _make_checker()
+
+        async def _timed_out():
+            raise asyncio.TimeoutError("api timed out")
+
+        result = await checker._run_check(_timed_out)
+        assert result.status == CheckStatus.WARN
+
+    @pytest.mark.asyncio
+    async def test_5xx_api_exception_classified_as_transient_warn(self) -> None:
+        """ApiException with HTTP 5xx -> WARN (transient apiserver error)."""
+        checker = _make_checker()
+
+        async def _five_hundred():
+            raise ApiException(status=503, reason="ServiceUnavailable")
+
+        result = await checker._run_check(_five_hundred)
+        assert result.status == CheckStatus.WARN
+
+    @pytest.mark.asyncio
+    async def test_4xx_api_exception_classified_as_permanent_fail(self) -> None:
+        """ApiException with HTTP 4xx -> FAIL (permanent — bad request, forbidden)."""
+        checker = _make_checker()
+
+        async def _forbidden():
+            raise ApiException(status=403, reason="Forbidden")
+
+        result = await checker._run_check(_forbidden)
+        assert result.status == CheckStatus.FAIL
+
+
+# =============================================================================
+# Node resources taint awareness (Bug 3)
+# =============================================================================
+
+
+class TestCheckNodeResourcesTaintAwareness:
+    """A 50-node cluster of NoSchedule-tainted GPU nodes must NOT be reported
+    as 'sufficient resources' for a CPU-only workload that has no matching
+    toleration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_untolerated_tainted_nodes_excluded(self) -> None:
+        checker = _make_checker()
+        big_tainted = _node(
+            "gpu-node",
+            "64",
+            "256Gi",
+            taints=[
+                {"key": "nvidia.com/gpu", "value": "", "effect": "NoSchedule"},
+            ],
+        )
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([big_tainted])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        # No usable nodes -> WARN, not PASS.
+        assert result.status == CheckStatus.WARN
+        assert (
+            "tainted" in result.message.lower()
+            or "schedulable" in result.message.lower()
+        )
+
+    @pytest.mark.asyncio
+    async def test_tolerated_tainted_nodes_included(self) -> None:
+        dc = DeploymentConfig(
+            pod_template=PodTemplateConfig(
+                tolerations=[
+                    {
+                        "key": "nvidia.com/gpu",
+                        "operator": "Exists",
+                        "effect": "NoSchedule",
+                    }
+                ]
+            )
+        )
+        checker = _make_checker(deploy_config=dc)
+        big_tainted = _node(
+            "gpu-node",
+            "64",
+            "256Gi",
+            taints=[
+                {"key": "nvidia.com/gpu", "value": "", "effect": "NoSchedule"},
+            ],
+        )
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([big_tainted])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_prefer_no_schedule_taint_does_not_exclude(self) -> None:
+        """PreferNoSchedule is a soft preference — node is still schedulable."""
+        checker = _make_checker()
+        node = _node(
+            "soft-tainted",
+            "64",
+            "256Gi",
+            taints=[
+                {
+                    "key": "some.taint",
+                    "value": "",
+                    "effect": "PreferNoSchedule",
+                }
+            ],
+        )
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([node])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
+
+
+# =============================================================================
+# PSA restricted should WARN, not PASS (Bug 4)
+# =============================================================================
+
+
+class TestCheckPodSecurityAdmissionRestricted:
+    """The previous code rubber-stamped every standard PSA level. 'restricted'
+    enforces constraints (runAsNonRoot, allowPrivilegeEscalation=false, ...)
+    that the AIPerf pod template has not been audited against — surface as
+    WARN until that audit lands.
+    """
+
+    @pytest.mark.asyncio
+    async def test_restricted_warns(self) -> None:
+        checker = _make_checker()
+        ns = MagicMock()
+        ns.metadata = MagicMock()
+        ns.metadata.labels = {"pod-security.kubernetes.io/enforce": "restricted"}
+        mock_core = MagicMock(read_namespace=AsyncMock(return_value=ns))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_pod_security_admission()
+        assert result.status == CheckStatus.WARN
+        assert "restricted" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_baseline_still_passes(self) -> None:
+        checker = _make_checker()
+        ns = MagicMock()
+        ns.metadata = MagicMock()
+        ns.metadata.labels = {"pod-security.kubernetes.io/enforce": "baseline"}
+        mock_core = MagicMock(read_namespace=AsyncMock(return_value=ns))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_pod_security_admission()
+        assert result.status == CheckStatus.PASS

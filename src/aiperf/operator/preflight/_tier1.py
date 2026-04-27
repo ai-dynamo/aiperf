@@ -78,9 +78,15 @@ class _Tier1ChecksMixin:
             )
 
     async def _check_rbac_permissions(self) -> CheckResult:
-        """Verify the operator has all required RBAC permissions."""
-        missing = []
+        """Verify the operator has all required RBAC permissions.
+
+        Distinguishes explicit denials (FAIL) from transient apiserver errors
+        (WARN) — see ``check_rbac_access`` docstring.
+        """
+        missing: list[str] = []
+        transient: list[str] = []
         for verb, resource, group in OPERATOR_RBAC_PERMISSIONS:
+            display = f"{group}/{resource}" if group else resource
             try:
                 allowed = await check_rbac_access(
                     self.api,
@@ -90,7 +96,6 @@ class _Tier1ChecksMixin:
                     namespace=self.namespace,
                 )
                 if not allowed:
-                    display = f"{group}/{resource}" if group else resource
                     missing.append(f"{verb} {display}")
             except (
                 ApiException,
@@ -98,11 +103,9 @@ class _Tier1ChecksMixin:
                 asyncio.TimeoutError,
                 OSError,
             ) as e:
-                display = f"{group}/{resource}" if group else resource
-                missing.append(f"{verb} {display} (check failed: {e})")
-            except Exception as e:  # noqa: BLE001 - defensive: any per-permission probe error falls through to 'assume missing' rather than abort the tier
-                display = f"{group}/{resource}" if group else resource
-                missing.append(f"{verb} {display} (check failed: {e})")
+                transient.append(f"{verb} {display} (check failed: {e})")
+            except Exception as e:  # noqa: BLE001 - defensive: any per-permission probe error degrades to WARN rather than FAIL
+                transient.append(f"{verb} {display} (check failed: {e})")
 
         if missing:
             return CheckResult(
@@ -112,6 +115,15 @@ class _Tier1ChecksMixin:
                     f"Missing {len(missing)} RBAC permission(s): "
                     f"{', '.join(missing)}. "
                     f"Grant permissions in namespace '{self.namespace}'."
+                ),
+            )
+        if transient:
+            return CheckResult(
+                name="RBAC Permissions",
+                status=CheckStatus.WARN,
+                message=(
+                    f"Could not verify {len(transient)} permission(s) due to "
+                    f"transient apiserver errors: {', '.join(transient)}"
                 ),
             )
         return CheckResult(

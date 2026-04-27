@@ -322,13 +322,34 @@ class _InfraChecksMixin:
                 )
 
             # Our pods run as non-root (UID 1000) with seccomp=RuntimeDefault
-            # and drop all capabilities — compatible with "restricted"
-            compatible_levels = {"privileged", "baseline", "restricted"}
+            # and drop all capabilities — compatible with "baseline".
+            # "restricted" adds further constraints (runAsNonRoot=true,
+            # allowPrivilegeEscalation=false, fully-locked seccomp/capabilities,
+            # no host paths, etc.) that the operator's pod template has not
+            # been audited against — surface as WARN until that audit lands.
+            compatible_levels = {"privileged", "baseline"}
             if psa_enforce in compatible_levels:
                 return CheckResult(
                     name="Pod Security Admission",
                     status=CheckStatus.PASS,
                     message=f"PSA enforce level '{psa_enforce}' is compatible",
+                )
+            if psa_enforce == "restricted":
+                return CheckResult(
+                    name="Pod Security Admission",
+                    status=CheckStatus.WARN,
+                    message=(
+                        "PSA enforce level 'restricted' is set; the AIPerf "
+                        "pod template has not been verified against all "
+                        "restricted constraints (runAsNonRoot, "
+                        "allowPrivilegeEscalation, seccompProfile, host paths)."
+                    ),
+                    hints=[
+                        "Confirm the controller/worker pod templates set "
+                        "runAsNonRoot=true, allowPrivilegeEscalation=false, "
+                        "seccompProfile.type=RuntimeDefault, and drop ALL "
+                        "capabilities, or relax the namespace PSA level.",
+                    ],
                 )
             return CheckResult(
                 name="Pod Security Admission",

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.client.models import (
     V1ResourceAttributes,
     V1SelfSubjectAccessReview,
@@ -37,7 +38,15 @@ async def check_rbac_access(
         namespace: Namespace to check the permission in.
 
     Returns:
-        True if the access is allowed.
+        True if the access is allowed, False if explicitly denied
+        (``status.allowed`` is False or None).
+
+    Raises:
+        ApiException: When the API server returns a malformed response with
+            ``status=None``. The caller should treat this as a transient
+            error (WARN/SKIP), not a definitive denial — a missing ``status``
+            block means the request didn't successfully complete review,
+            distinct from an explicit ``allowed=False``.
     """
     body = V1SelfSubjectAccessReview(
         spec=V1SelfSubjectAccessReviewSpec(
@@ -52,7 +61,15 @@ async def check_rbac_access(
     review = await client.AuthorizationV1Api(api).create_self_subject_access_review(
         body=body,
     )
-    return bool(review.status and review.status.allowed)
+    if review.status is None:
+        raise ApiException(
+            status=500,
+            reason=(
+                f"SelfSubjectAccessReview for {verb} {resource} returned no "
+                f"status block; treating as transient apiserver error."
+            ),
+        )
+    return bool(review.status.allowed)
 
 
 def parse_image_ref(image: str) -> tuple[str, str, str]:

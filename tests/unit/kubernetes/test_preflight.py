@@ -609,7 +609,13 @@ class TestCheckRBACPermissions:
         assert "Missing" in result.message
 
     @pytest.mark.asyncio
-    async def test_rbac_check_exception_treated_as_missing(self) -> None:
+    async def test_rbac_check_exception_treated_as_transient_warn(self) -> None:
+        """RuntimeError from apiserver -> WARN, not FAIL.
+
+        We can't say a permission is missing when we never got an answer; the
+        loop now distinguishes explicit denials (FAIL) from transient errors
+        (WARN). See ``check_rbac_access`` and ``check_rbac_permissions``.
+        """
         checker = _make_checker()
         checker._api = _mock_api()
         authz = MagicMock()
@@ -620,7 +626,8 @@ class TestCheckRBACPermissions:
         with _patch_authz(authz):
             result = await checker._check_rbac_permissions()
 
-        assert result.status == CheckStatus.FAIL
+        assert result.status == CheckStatus.WARN
+        assert "transient" in result.message.lower()
         assert "check failed" in str(result.details)
 
 

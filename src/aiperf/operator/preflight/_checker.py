@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import time
 from dataclasses import dataclass
@@ -167,15 +168,20 @@ class OperatorPreflightChecker(
         self,
         check_fn: Callable[[], Awaitable[CheckResult]],
     ) -> CheckResult:
-        """Run a single check with timing and error handling."""
+        """Run a single check with timing and error handling.
+
+        Fail-closed: any unexpected exception type is treated as a permanent
+        FAIL so a single broken check cannot abort the rest of preflight.
+        Transient classification (-> WARN) is gated on exception **type**, not
+        message text — a permanent admission-webhook rejection that happens
+        to mention "connect" must not be downgraded to a warning.
+        """
         start = time.perf_counter()
         try:
             result = await check_fn()
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-            # Transient errors (empty message, connection errors) should warn,
-            # not fail permanently - the operator can retry on the next reconcile.
+        except Exception as e:  # noqa: BLE001 — preflight dispatcher must never die on a single check failure
             error_str = str(e).strip()
-            is_transient = not error_str or "connect" in error_str.lower()
+            is_transient = _is_transient_error(e)
             result = CheckResult(
                 name=check_fn.__name__.removeprefix("_check_")
                 .replace("_", " ")
@@ -187,3 +193,27 @@ class OperatorPreflightChecker(
             )
         result.duration_ms = (time.perf_counter() - start) * 1000
         return result
+
+
+_TRANSIENT_OS_ERRNOS: frozenset[int] = frozenset(
+    {errno.ECONNREFUSED, errno.ECONNRESET, errno.ETIMEDOUT, errno.EHOSTUNREACH}
+)
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Classify whether ``exc`` is a transient cluster-API error worth retrying.
+
+    Transient errors degrade a check to WARN (the operator will retry on the
+    next reconcile). Everything else is a permanent FAIL.
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    # aiohttp connector errors (ClientConnectorError, ServerConnectionError, etc.)
+    if isinstance(exc, aiohttp.ClientConnectionError):
+        return True
+    if isinstance(exc, ApiException):
+        status = getattr(exc, "status", None)
+        return bool(status and status >= 500)
+    if isinstance(exc, OSError):
+        return exc.errno in _TRANSIENT_OS_ERRNOS
+    return False

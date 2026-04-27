@@ -84,15 +84,24 @@ class TestCheckRbacAccess:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_status_missing(self) -> None:
-        """Verify False is returned when the review has no status field."""
+    async def test_raises_when_status_missing(self) -> None:
+        """Verify ApiException is raised when the review has no status field.
+
+        ``status=None`` is distinct from ``status.allowed=False`` — the apiserver
+        didn't actually evaluate the request. The caller surfaces this as a
+        transient WARN/SKIP via ``_CLUSTER_API_ERRORS``, never as a definitive
+        denial.
+        """
+        from kubernetes_asyncio.client.exceptions import ApiException
+
         api = MagicMock(spec=ApiClient)
-        with _patch_authz(_make_authz(_mock_review(None))):
-            result = await check_rbac_access(
+        with (
+            _patch_authz(_make_authz(_mock_review(None))),
+            pytest.raises(ApiException, match="no status block"),
+        ):
+            await check_rbac_access(
                 api, verb="get", resource="pods", group="", namespace="test-ns"
             )
-
-        assert result is False
 
     @pytest.mark.asyncio
     async def test_returns_false_when_allowed_missing(self) -> None:

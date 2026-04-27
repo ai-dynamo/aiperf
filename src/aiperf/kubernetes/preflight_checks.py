@@ -192,11 +192,19 @@ async def _namespace_missing_result(api: ApiClient, namespace: str) -> CheckResu
 
 
 async def check_rbac_permissions(api: ApiClient, *, namespace: str) -> CheckResult:
-    """Check required RBAC permissions."""
+    """Check required RBAC permissions.
+
+    Distinguishes three outcomes per permission:
+      - explicitly allowed -> ``passed``
+      - explicitly denied -> ``missing`` (drives a FAIL)
+      - transient apiserver error (timeout / 5xx / no status block) -> ``transient``
+        (drives a WARN, never a FAIL — we couldn't tell)
+    """
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
     missing: list[str] = []
     passed: list[str] = []
+    transient: list[str] = []
 
     for verb, resource, group in REQUIRED_RBAC_PERMISSIONS:
         display = f"{group}/{resource}" if group else resource
@@ -209,18 +217,29 @@ async def check_rbac_permissions(api: ApiClient, *, namespace: str) -> CheckResu
             else:
                 missing.append(f"{verb} {display}")
         except _CLUSTER_API_ERRORS as e:
-            missing.append(f"{verb} {display} (check failed: {e})")
+            transient.append(f"{verb} {display} (check failed: {e})")
 
     if missing:
         return CheckResult(
             name="RBAC Permissions",
             status=CheckStatus.FAIL,
             message=f"Missing {len(missing)} required permission(s)",
-            details=[f"  ✗ {p}" for p in missing],
+            details=[f"  ✗ {p}" for p in missing] + [f"  ? {p}" for p in transient],
             hints=[
                 "Contact your cluster admin to grant the required permissions",
                 f"Permissions needed in namespace '{namespace}'",
             ],
+        )
+    if transient:
+        return CheckResult(
+            name="RBAC Permissions",
+            status=CheckStatus.WARN,
+            message=(
+                f"Could not verify {len(transient)} permission(s) due to "
+                "transient apiserver errors"
+            ),
+            details=[f"  ✓ {p}" for p in passed] + [f"  ? {p}" for p in transient],
+            hints=["Re-run preflight; check apiserver health"],
         )
     return CheckResult(
         name="RBAC Permissions",

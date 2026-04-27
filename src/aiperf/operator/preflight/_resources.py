@@ -23,11 +23,66 @@ from aiperf.operator.preflight._common import (
 )
 
 
+def _toleration_matches_taint(
+    toleration: dict[str, object], taint_key: str, taint_effect: str
+) -> bool:
+    """Return True if a single toleration tolerates a (key, effect) taint.
+
+    Implements the K8s toleration matching rules used by the scheduler:
+      - operator=Exists with empty key tolerates all taints (and may further
+        scope by effect).
+      - operator=Exists with a key tolerates any taint with that key.
+      - operator=Equal (or unset, the default) requires key match.
+      - empty effect on the toleration matches any effect.
+
+    Value matching is intentionally loose — capacity-planning preflight only
+    needs to know whether the *node* is potentially usable, not whether a
+    specific pod will actually land. Conservative on the FAIL side.
+    """
+    op = toleration.get("operator") or "Equal"
+    tol_key = toleration.get("key") or ""
+    tol_effect = toleration.get("effect") or ""
+
+    if op == "Exists" and not tol_key:
+        # Tolerates all taints (optionally scoped by effect).
+        return not tol_effect or tol_effect == taint_effect
+
+    if tol_key != taint_key:
+        return False
+
+    return not tol_effect or tol_effect == taint_effect
+
+
+def _node_is_schedulable_for(
+    node: object, tolerations: list[dict[str, object]]
+) -> bool:
+    """Return True if ``node``'s NoSchedule/NoExecute taints are all tolerated.
+
+    PreferNoSchedule is treated as schedulable (it's a soft preference).
+    """
+    spec = getattr(node, "spec", None)
+    taints = (getattr(spec, "taints", None) or []) if spec else []
+    for taint in taints:
+        effect = getattr(taint, "effect", None) or ""
+        if effect not in ("NoSchedule", "NoExecute"):
+            continue
+        key = getattr(taint, "key", None) or ""
+        if not any(_toleration_matches_taint(t, key, effect) for t in tolerations):
+            return False
+    return True
+
+
 class _ResourceChecksMixin:
     """Checks related to cluster/node resources, quotas, memory, and tolerations."""
 
     async def _check_node_resources(self) -> CheckResult:
-        """Check aggregate allocatable CPU/mem across Ready nodes."""
+        """Check aggregate allocatable CPU/mem across schedulable Ready nodes.
+
+        Nodes carrying NoSchedule/NoExecute taints that aren't tolerated by
+        ``deploy_config.pod_template.tolerations`` are excluded from the
+        capacity sum — otherwise a 50-node cluster of all-tainted GPU nodes
+        would falsely report "sufficient resources" for a CPU-only workload.
+        """
         from aiperf.kubernetes.environment import K8sEnvironment
 
         if skip := self._resource_mode_skip("Node Resources"):
@@ -50,12 +105,17 @@ class _ResourceChecksMixin:
                 message="No nodes found in cluster",
             )
 
+        tolerations = self.deploy_config.pod_template.tolerations or []
         total_cpu = 0.0
         total_memory = 0.0
         ready_nodes = 0
+        skipped_tainted = 0
 
         for node in nodes:
             if not _is_node_ready_typed(node):
+                continue
+            if not _node_is_schedulable_for(node, tolerations):
+                skipped_tainted += 1
                 continue
             ready_nodes += 1
             alloc = (node.status.allocatable or {}) if node.status else {}
@@ -68,6 +128,21 @@ class _ResourceChecksMixin:
         required_cpu = ctrl_cpu + (worker_cpu * self.num_pods)
         required_mem = ctrl_mem + (worker_mem * self.num_pods)
 
+        tainted_suffix = (
+            f" ({skipped_tainted} tainted node(s) excluded)" if skipped_tainted else ""
+        )
+
+        if ready_nodes == 0:
+            return CheckResult(
+                name="Node Resources",
+                status=CheckStatus.WARN,
+                message=(f"No Ready, schedulable nodes available{tainted_suffix}"),
+                hints=[
+                    "Add tolerations or untaint nodes",
+                    "Check node Ready condition",
+                ],
+            )
+
         if required_cpu > total_cpu or required_mem > total_memory:
             return CheckResult(
                 name="Node Resources",
@@ -76,7 +151,7 @@ class _ResourceChecksMixin:
                     f"Cluster may not have enough resources. "
                     f"Need {format_cpu(required_cpu)} CPU, {format_memory(required_mem)} mem "
                     f"but only {format_cpu(total_cpu)} CPU, {format_memory(total_memory)} mem "
-                    f"available across {ready_nodes} ready node(s)."
+                    f"available across {ready_nodes} schedulable node(s){tainted_suffix}."
                 ),
                 hints=["Reduce worker count or add cluster capacity"],
             )
@@ -86,8 +161,8 @@ class _ResourceChecksMixin:
             status=CheckStatus.PASS,
             message=(
                 f"Cluster has sufficient resources "
-                f"({ready_nodes} ready nodes, {format_cpu(total_cpu)} CPU, "
-                f"{format_memory(total_memory)} mem)"
+                f"({ready_nodes} schedulable nodes, {format_cpu(total_cpu)} CPU, "
+                f"{format_memory(total_memory)} mem){tainted_suffix}"
             ),
         )
 
@@ -160,9 +235,12 @@ class _ResourceChecksMixin:
         max_pod_mem = max(ctrl_mem, worker_mem)
 
         node_selector = self.deploy_config.pod_template.node_selector
+        tolerations = self.deploy_config.pod_template.tolerations or []
 
         for node in nodes:
             if not _is_node_ready_typed(node):
+                continue
+            if not _node_is_schedulable_for(node, tolerations):
                 continue
             if node_selector:
                 labels = (node.metadata.labels or {}) if node.metadata else {}
