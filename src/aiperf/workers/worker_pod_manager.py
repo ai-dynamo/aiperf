@@ -315,9 +315,14 @@ class WorkerGroupManagerBase(BaseComponentService):
         exception is re-raised so the WGM lifecycle fails the pod.
         """
         self.info("Tokenizer prefetch task starting")
-        api_base = self.run.cfg.runtime.dataset_api_base_url
-        if not api_base:
+        api_base_full = self.run.cfg.runtime.dataset_api_base_url
+        if not api_base_full:
             raise RuntimeError("dataset_api_base_url required for tokenizer download")
+        # ``runtime.dataset_api_base_url`` ends in ``/api/dataset``; strip
+        # that suffix so ``download_tokenizer`` can append
+        # ``/api/tokenizer/{name}/bundle`` to the same host:port without
+        # producing a ``/api/dataset/api/tokenizer/...`` URL.
+        api_base = api_base_full.rsplit("/api/dataset", 1)[0]
         names = self._unique_tokenizer_names()
         self.info(f"Tokenizers to fetch: {names}")
         if not names:
