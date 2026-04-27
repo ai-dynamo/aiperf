@@ -46,6 +46,8 @@ async def download_tokenizer(
         RuntimeError: 404 from server, or retries exhausted.
     """
     base = api_base_url.rstrip("/")
+    url = f"{base}/api/tokenizer/{name}/bundle"
+    logger.info(f"download_tokenizer: starting for '{name}' from {url}")
     slug = slug_for_tokenizer(name)
     dest = dest_root / slug
     dest.mkdir(parents=True, exist_ok=True)
@@ -54,17 +56,25 @@ async def download_tokenizer(
     lock_path = dest_root / f"{slug}.lock"
     sentinel = dest / ".ready"
     if sentinel.exists():
+        logger.info(f"download_tokenizer: '{name}' already extracted at {dest}")
         return dest
 
     # Cooperative async lock; cross-container coordination uses fcntl below.
+    logger.info(f"download_tokenizer: acquiring bundle lock at {lock_path}")
     async with _bundle_lock(lock_path):
+        logger.info(f"download_tokenizer: lock acquired for '{name}'")
         if sentinel.exists():
             return dest
 
-        url = f"{base}/api/tokenizer/{name}/bundle"
         backoff = _INITIAL_BACKOFF_S
         last_exc: Exception | None = None
-        async with aiohttp.ClientSession(connector=create_tcp_connector()) as session:
+        # 5-minute hard ceiling per request so we never hang forever on a
+        # broken connection — backoff loop still handles 503/transient
+        # failures with retries.
+        request_timeout = aiohttp.ClientTimeout(total=300.0)
+        async with aiohttp.ClientSession(
+            connector=create_tcp_connector(), timeout=request_timeout
+        ) as session:
             for attempt in range(1, max_retries + 1):
                 try:
                     async with session.get(url) as resp:
@@ -83,10 +93,15 @@ async def download_tokenizer(
                             continue
                         resp.raise_for_status()
                         compressed = await resp.read()
+                    logger.info(
+                        f"download_tokenizer: '{name}' fetched "
+                        f"({len(compressed)} bytes), extracting to {dest}"
+                    )
                     _extract_bundle(compressed, dest)
                     sentinel.write_text("ok")
+                    logger.info(f"download_tokenizer: '{name}' ready at {dest}")
                     return dest
-                except aiohttp.ClientError as exc:
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     last_exc = exc
                     logger.warning(
                         f"transient error downloading tokenizer '{name}' "

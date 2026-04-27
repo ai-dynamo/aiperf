@@ -314,10 +314,12 @@ class WorkerGroupManagerBase(BaseComponentService):
         On failure the same struct is published with ``success=False`` and the
         exception is re-raised so the WGM lifecycle fails the pod.
         """
+        self.info("Tokenizer prefetch task starting")
         api_base = self.run.cfg.runtime.dataset_api_base_url
         if not api_base:
             raise RuntimeError("dataset_api_base_url required for tokenizer download")
         names = self._unique_tokenizer_names()
+        self.info(f"Tokenizers to fetch: {names}")
         if not names:
             # Nothing to fetch (server token counting, tiktoken-only, etc.).
             # Still emit ready so downstream waiters do not hang.
@@ -348,6 +350,7 @@ class WorkerGroupManagerBase(BaseComponentService):
                 )
             )
         except Exception as exc:
+            self.exception(f"Tokenizer prefetch failed: {exc!r}")
             await self._publish_group_message(
                 GroupTokenizerReady(
                     service_id=self.service_id,
@@ -358,6 +361,7 @@ class WorkerGroupManagerBase(BaseComponentService):
             )
             raise
         bundles = {name: str(path) for name, path in zip(names, results, strict=True)}
+        self.info(f"Tokenizer prefetch complete; bundles: {bundles}")
         await self._publish_group_message(
             GroupTokenizerReady(service_id=self.service_id, bundles=bundles)
         )
