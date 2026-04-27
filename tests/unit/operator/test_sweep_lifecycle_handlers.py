@@ -374,6 +374,33 @@ async def test_maybe_reap_finished_terminal_age_below_ttl_does_not_delete(monkey
 
 
 @pytest.mark.asyncio
+async def test_maybe_reap_finished_handles_subsecond_completion_time(monkeypatch):
+    """Sub-second RFC3339 `completionTime` must parse — not silently disable TTL.
+
+    Pre-fix used `strptime("%Y-%m-%dT%H:%M:%SZ")` which rejected fractional
+    seconds and `return`-ed silently from the reaper. The non-apiserver
+    writers (sweep-controller `_now_iso` is whole-second today, but kopf
+    bodies and JSON-patches may carry sub-second precision) would never
+    reap.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    one_hour_ago_subsec = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%S.123456Z"
+    )
+    _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
+    body = {
+        "metadata": {"name": "s", "namespace": "ns"},
+        "spec": {"ttlSecondsAfterFinished": 1800},
+    }
+    status = {"phase": "Succeeded", "completionTime": one_hour_ago_subsec}
+    await lifecycle.maybe_reap_finished(
+        body=body, status=status, name="s", namespace="ns"
+    )
+    delete_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_maybe_reap_finished_non_terminal_phase_never_deletes(monkeypatch):
     """Pending phase + ttl=1: never reap, regardless of TTL."""
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)

@@ -113,6 +113,31 @@ async def test_epoch_from_creation_timestamp():
 
 
 @pytest.mark.asyncio
+async def test_epoch_from_creation_timestamp_subsecond_precision():
+    """RFC3339 timestamps with sub-second precision must parse, not return '0'.
+
+    K8s metadata.creationTimestamp is whole-second by convention, but other
+    RFC3339 sources (kopf event payloads, JSON-patched fields from non-
+    apiserver writers) may include fractional seconds. `strptime` with the
+    bare ``%Y-%m-%dT%H:%M:%SZ`` format string rejects them and falls
+    through to ``"0"`` — collapsing every child name onto epoch 0 across
+    reruns.
+    """
+    from datetime import datetime, timezone
+
+    # Whole-second baseline.
+    whole = int(datetime(2024, 4, 25, 18, 22, 3, tzinfo=timezone.utc).timestamp())
+    # Sub-second precision must still parse to the same whole-second epoch.
+    assert sweep_create._epoch_from_creation_ts("2024-04-25T18:22:03.123456Z") == str(
+        whole
+    )
+    assert sweep_create._epoch_from_creation_ts("2024-04-25T18:22:03.5Z") == str(whole)
+    # Garbage still falls through to "0".
+    assert sweep_create._epoch_from_creation_ts("not-a-timestamp") == "0"
+    assert sweep_create._epoch_from_creation_ts("") == "0"
+
+
+@pytest.mark.asyncio
 async def test_handle_computes_max_total_runs_grid_x_trials(monkeypatch):
     body = _valid_body()
     body["spec"]["sweep"] = {

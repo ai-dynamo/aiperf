@@ -162,7 +162,13 @@ def _is_named_dict_list(obj: list[Any]) -> bool:
 def _expand_grid_sweep(
     base_data: dict[str, Any], variables: dict[str, list[Any]]
 ) -> list[tuple[dict[str, Any], SweepVariation]]:
-    field_names = list(variables.keys())
+    # Sort field names alphabetically so variation order is stable across
+    # writes / reads of the CR. The K8s apiserver alphabetizes object-typed
+    # map keys at storage (CRD `additionalProperties` schemas), so a Python
+    # dict's insertion order on submit does not survive a re-read. Without
+    # this sort, child names shift between submit and resume — defeating
+    # idempotent reconcile. See `gotcha_k8s_crd_object_map_keys_alphabetized`.
+    field_names = sorted(variables.keys())
     value_lists = [variables[f] for f in field_names]
     combinations = list(itertools.product(*value_lists))
 

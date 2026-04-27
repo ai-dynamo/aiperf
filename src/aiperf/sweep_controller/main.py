@@ -29,6 +29,14 @@ RESULTS_DIR = Path("/results")
 AGGREGATE_SUBDIR = "aggregate"
 RESULTS_SERVER_PORT = 19090
 CANCEL_POLL_INTERVAL_SECONDS = 10.0
+# K8s rejects CR patches > ~1 MiB with HTTP 413. Bound the in-CR aggregate
+# mirror so big sweeps (many cells x metrics x percentiles) don't strand the
+# parent at `Aggregating`. The disk-backed results sidecar still serves the
+# full document via `status.aggregateRef.apiPath`. 600 KiB leaves headroom
+# for status fields and apiserver framing under the 1 MiB ceiling.
+# TODO(slice-3-followup): migrate to `_JobSetSettings` once the working-tree
+# environment.py changes are committed (avoids cross-slice diff bleed here).
+_AGGREGATE_INLINE_MAX_BYTES = 600_000
 
 
 def aggregate_marker_exists(base_dir: Path) -> bool:
@@ -142,8 +150,10 @@ def _write_sweep_parent_aggregate(
         "totalVariations": len(plan.configs),
         "completedRuns": completed,
         "failedRuns": failed,
-        "spec_snapshot": spec.model_dump(mode="json") if hasattr(spec, "model_dump") else {},
-        "child_runs": [
+        "specSnapshot": spec.model_dump(mode="json")
+        if hasattr(spec, "model_dump")
+        else {},
+        "childRuns": [
             {
                 "label": r.label,
                 "status": "Succeeded" if r.success else "Failed",
@@ -198,10 +208,64 @@ def _write_sweep_parent_aggregate(
     )
 
 
-async def _idle_until_terminated() -> None:
-    """Sleep forever; SIGTERM from K8s ends us cleanly."""
-    while True:
-        await asyncio.sleep(3600)
+def _load_aggregate_for_cr(
+    base_dir: Path,
+    namespace: str,
+    sweep_name: str,
+    sweep_run_epoch: str,
+) -> dict[str, Any]:
+    """Read the on-disk aggregate JSON files and bundle them for the CR patch.
+
+    The sweep-controller writes aggregate artifacts under
+    ``<base>/<ns>/sweeps/<name>/<epoch>/`` (parent ``aggregate.json``,
+    ``children.json``) and the strategy-owned aggregate dir (typically
+    ``<base>/aggregate/profile_export_aiperf_aggregate.json``). On small
+    sweeps the bundle is ~50 KB and we embed everything inline on the CR
+    to close the live half of the dual-backed sweep API contract
+    documented in ``aggregator.py``.
+
+    On large sweeps (many cells x metrics x percentiles) the strategy
+    ``confidence`` payload grows linearly and the patch can exceed the
+    apiserver's 1 MB CR size cap, returning 413 and stranding the parent
+    at ``Aggregating``. We bound the inlined size: if the encoded bundle
+    exceeds ``_AGGREGATE_INLINE_MAX_BYTES`` we drop ``confidence`` (the
+    largest contributor) and emit only ``parent`` + ``children``. The
+    disk-backed path served by the results sidecar still has the full
+    document, so consumers fetching ``status.aggregateRef.apiPath`` see
+    no loss; only the in-CR mirror is reduced.
+
+    Missing files are silently skipped: this loader is best-effort and the
+    primary signal (``aggregation.phase=Complete`` and ``terminal_phase``)
+    is set by the caller regardless of which sub-files made it to disk.
+    """
+    sweep_dir = Path(base_dir) / namespace / "sweeps" / sweep_name / sweep_run_epoch
+    bundle: dict[str, Any] = {}
+    parent_path = sweep_dir / "aggregate.json"
+    children_path = sweep_dir / "children.json"
+    confidence_path = (
+        Path(base_dir) / "aggregate" / "profile_export_aiperf_aggregate.json"
+    )
+    for key, path in (
+        ("parent", parent_path),
+        ("children", children_path),
+        ("confidence", confidence_path),
+    ):
+        try:
+            bundle[key] = orjson.loads(path.read_bytes())
+        except FileNotFoundError:
+            continue
+
+    if "confidence" in bundle:
+        encoded_size = len(orjson.dumps(bundle))
+        if encoded_size > _AGGREGATE_INLINE_MAX_BYTES:
+            logger.warning(
+                "aggregate bundle is %d bytes (> %d cap); dropping `confidence` "
+                "from CR mirror — full document remains at the disk-backed path",
+                encoded_size,
+                _AGGREGATE_INLINE_MAX_BYTES,
+            )
+            bundle.pop("confidence", None)
+    return bundle
 
 
 async def main() -> int:
@@ -260,6 +324,12 @@ async def main() -> int:
         status_writer = SweepStatusWriter(
             api, name=sweep_name, namespace=sweep_namespace
         )
+        # Promote `status.phase` from `Pending` to `Running` before the
+        # orchestrator loop begins. The CRD declares Running but no other
+        # writer ever set it, so parents jumped Pending -> Aggregating
+        # directly. Atomic test/replace skips silently on pod restart or
+        # if the rollup already advanced phase.
+        await status_writer.parent_running()
         executor = K8sChildJobExecutor(
             api=api,
             sweep=sweep_cr,
@@ -317,14 +387,6 @@ async def main() -> int:
                     ),
                 )
                 write_aggregate_marker(RESULTS_DIR)
-                controller_host = os.environ.get("HOSTNAME", "")
-                await status_writer.aggregation_complete(
-                    aggregate_path=(
-                        f"/api/v1/results/{sweep_namespace}/{sweep_name}/aggregate"
-                    ),
-                    controller_host=controller_host,
-                    port=RESULTS_SERVER_PORT,
-                )
             except Exception as e:  # noqa: BLE001
                 logger.exception("aggregation failed")
                 await status_writer.aggregation_failed(error=str(e))
@@ -332,8 +394,41 @@ async def main() -> int:
         else:
             logger.info("aggregation already complete (marker present)")
 
-        await _idle_until_terminated()
+        # Idempotent across pod restarts: load disk artifacts and patch the CR
+        # every time main() reaches this point. Without this, a sweep-controller
+        # pod that aggregates once but fails to patch (apiserver hiccup, OOM,
+        # crash before the patch) would never advance the parent CR — and the
+        # restart path skips re-aggregation via aggregate_marker_exists, so
+        # there is no second chance.
+        controller_host = os.environ.get("HOSTNAME", "")
+        try:
+            aggregate_doc = _load_aggregate_for_cr(
+                RESULTS_DIR, sweep_namespace, sweep_name, sweep_run_epoch
+            )
+            failed_count = sum(1 for r in all_results if not r.success)
+            terminal_phase = "Failed" if failed_count > 0 else "Succeeded"
+            await status_writer.aggregation_complete(
+                aggregate_path=(
+                    f"/api/v1/results/{sweep_namespace}/{sweep_name}/aggregate"
+                ),
+                controller_host=controller_host,
+                port=RESULTS_SERVER_PORT,
+                aggregate_doc=aggregate_doc,
+                terminal_phase=terminal_phase,
+            )
+        except Exception:  # noqa: BLE001 - apiserver/disk failure path: log + exit non-zero so restartPolicy retries
+            # Non-zero exit so the pod's `restartPolicy: OnFailure` restarts
+            # us; the aggregate marker means re-aggregation is skipped, but
+            # the CR-patch is retried fresh on next boot. Idling forever
+            # leaks the pod (JobSet `completions=1` requires a clean exit
+            # for the parent Job to complete and the CR-side TTL to fire).
+            logger.exception("CR aggregate patch failed; exiting non-zero for restart")
+            return 1
 
+    # Clean exit so the JobSet (`completions=1`, `restartPolicy: OnFailure`)
+    # marks the controller Job complete; the parent CR's
+    # `ttlSecondsAfterFinished` reaper can now run without the pod hanging
+    # around on `while True: sleep(3600)`.
     return 0
 
 

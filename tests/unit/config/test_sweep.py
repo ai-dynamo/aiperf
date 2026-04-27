@@ -239,6 +239,49 @@ class TestExpandSweep:
         result = expand_sweep(data)
         assert len(result) == 1
 
+    def test_grid_sweep_field_order_is_alphabetical_not_insertion(self):
+        """Grid sweep variation order must be deterministic across CR storage.
+
+        K8s apiserver alphabetizes object-typed map keys at storage (CRD
+        `additionalProperties` schemas), so a Python dict's insertion order
+        on submit does not survive a re-read. We sort field names so child
+        names line up between submit and resume — letting the operator
+        idempotently reconcile after a restart. This test pins that
+        contract: insertion order `(z, a)` must produce variations whose
+        `values` dicts iterate `(a=…, z=…)`.
+        """
+        data = self._base_config(
+            sweep={
+                "type": "grid",
+                "variables": {
+                    "phases.default.concurrency": [4, 8],
+                    "phases.default.requests": [10, 20],
+                },
+            }
+        )
+        # insertion-order keys deliberately reversed; expansion must still
+        # produce alphabetical-key combinations.
+        result_a = expand_sweep(data)
+
+        data_reversed = self._base_config(
+            sweep={
+                "type": "grid",
+                "variables": {
+                    "phases.default.requests": [10, 20],
+                    "phases.default.concurrency": [4, 8],
+                },
+            }
+        )
+        result_b = expand_sweep(data_reversed)
+
+        # Same expansions regardless of submit-time dict order.
+        assert [v.values for _, v in result_a] == [v.values for _, v in result_b]
+        # And the first variation's keys iterate alphabetically.
+        first_keys = list(result_a[0][1].values.keys())
+        assert first_keys == sorted(first_keys)
+        # Specifically: concurrency before requests.
+        assert first_keys[0] == "phases.default.concurrency"
+
 
 class TestHelpers:
     """Tests for helper functions."""

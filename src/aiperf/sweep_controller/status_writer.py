@@ -71,6 +71,49 @@ class SweepStatusWriter:
     async def aggregation_running(self) -> None:
         await self._patch({"status": {"aggregation": {"phase": "Running"}}})
 
+    async def parent_running(self) -> None:
+        """Promote top-level ``status.phase`` to ``Running`` once child execution begins.
+
+        The CRD enum (``crd-aiperfsweep.yaml``) declares ``Running`` as a phase,
+        but no other writer set it — parents jumped straight ``Pending →
+        Aggregating``. The rollup's ``_conditional_phase_set`` JSON-patch
+        ``test`` op compares against ``Pending``, so this writer uses the same
+        atomic primitive: if a peer (the rollup itself) already advanced phase,
+        the apiserver returns 422 and we silently skip.
+
+        Called once from sweep-controller ``main.py`` before the orchestrator
+        loop begins; idempotent on pod restart (test op fails if already
+        ``Running`` / a later phase).
+        """
+        import aiohttp
+        from kubernetes_asyncio.client import ApiException
+
+        custom = CustomObjectsApi(self._api)
+        try:
+            await custom.patch_namespaced_custom_object_status(
+                group="aiperf.nvidia.com",
+                version="v1alpha1",
+                plural="aiperfsweeps",
+                namespace=self.namespace,
+                name=self.name,
+                body=[
+                    {"op": "test", "path": "/status/phase", "value": "Pending"},
+                    {"op": "replace", "path": "/status/phase", "value": "Running"},
+                ],
+                field_manager=SWEEP_CONTROLLER_FIELD_MANAGER,
+                _content_type="application/json-patch+json",
+            )
+        except ApiException as e:
+            # 422 = test op failed (peer wrote phase already); 404 = CR gone.
+            # Both are silent no-ops.
+            if e.status in (404, 422):
+                return
+            raise
+        except (aiohttp.ClientError, ConnectionError, TimeoutError):
+            # Transient apiserver failure — skip; the next status write
+            # (currentCell, aggregation_*) will surface a real error.
+            return
+
     async def aggregation_complete(
         self,
         *,

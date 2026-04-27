@@ -316,3 +316,70 @@ async def test_aggregation_failed_promotes_top_level_phase_to_failed(monkeypatch
     await writer.aggregation_failed(error="boom")
     body = _patch_call_kwargs(custom)["body"]
     assert body["status"]["phase"] == "Failed"
+
+
+# ---------------------------------------------------------------------------
+# parent_running — Pending -> Running phase promotion (new in this slice).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_parent_running_uses_json_patch_test_op(monkeypatch):
+    """`parent_running` issues a json-patch `test`+`replace` (atomic vs. peers).
+
+    Without the test op, a concurrent terminal write from the rollup or
+    aggregation-complete path could be clobbered back to ``Running``.
+    """
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.parent_running()
+
+    kwargs = custom.patch_namespaced_custom_object_status.call_args.kwargs
+    body = kwargs["body"]
+    assert isinstance(body, list), "must use json-patch (list of ops), not merge-patch"
+    assert body[0] == {"op": "test", "path": "/status/phase", "value": "Pending"}
+    assert body[1] == {"op": "replace", "path": "/status/phase", "value": "Running"}
+    assert kwargs["_content_type"] == "application/json-patch+json"
+
+
+@pytest.mark.asyncio
+async def test_parent_running_swallows_422_test_failed(monkeypatch):
+    """422 from the json-patch `test` op (peer already advanced phase) is silent."""
+    from kubernetes_asyncio.client import ApiException
+
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock(
+        side_effect=ApiException(status=422, reason="Unprocessable Entity")
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    # Must not raise.
+    await writer.parent_running()
+
+
+@pytest.mark.asyncio
+async def test_parent_running_swallows_404_cr_gone(monkeypatch):
+    """404 (CR deleted while patching) is also a silent no-op."""
+    from kubernetes_asyncio.client import ApiException
+
+    api = MagicMock()
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock(
+        side_effect=ApiException(status=404, reason="Not Found")
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns")
+    await writer.parent_running()

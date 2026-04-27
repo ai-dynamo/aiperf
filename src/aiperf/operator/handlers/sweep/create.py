@@ -10,7 +10,7 @@ schedules it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import kopf
@@ -97,12 +97,21 @@ async def handle(
 
 
 def _epoch_from_creation_ts(ts: str) -> str:
-    """Decimal epoch-seconds string from an RFC3339 creationTimestamp."""
+    """Decimal epoch-seconds string from an RFC3339 creationTimestamp.
+
+    K8s `metadata.creationTimestamp` is whole-second by convention, but
+    other RFC3339 sources (kopf event payloads with sub-second precision,
+    JSON-patched timestamps from non-apiserver writers) may include
+    fractional seconds. ``strptime("%Y-%m-%dT%H:%M:%SZ")`` rejects those
+    and returns ``"0"`` — collapsing every child name onto epoch 0 and
+    defeating across-rerun isolation. ``fromisoformat`` accepts both
+    forms by normalizing the trailing ``Z`` to ``+00:00``.
+    """
     if not ts:
         return "0"
     try:
-        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
-        return str(int(dt.replace(tzinfo=timezone.utc).timestamp()))
+        dt = datetime.fromisoformat(ts.rstrip("Z") + "+00:00")
+        return str(int(dt.timestamp()))
     except ValueError:
         return "0"
 

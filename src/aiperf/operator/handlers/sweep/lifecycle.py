@@ -148,9 +148,12 @@ async def maybe_reap_finished(
     if not completed_at:
         return
     try:
-        finished = datetime.strptime(completed_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        # ``fromisoformat`` accepts both whole-second (K8s convention) and
+        # sub-second RFC3339 timestamps; ``strptime("%Y-%m-%dT%H:%M:%SZ")``
+        # rejects the sub-second form and would silently disable the TTL
+        # reaper for any controller-written ``completionTime`` carrying
+        # fractional seconds.
+        finished = datetime.fromisoformat(completed_at.rstrip("Z") + "+00:00")
     except ValueError:
         return
     age_seconds = (datetime.now(tz=timezone.utc) - finished).total_seconds()
