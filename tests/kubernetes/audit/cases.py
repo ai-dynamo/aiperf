@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Audit case definitions — one per workflow shape exercised by the suite."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class AuditCase:
+    """One workflow audited by ``test_audit.py``.
+
+    ``profile_args`` is the canonical CLI form. Both deployers translate it:
+    the bare deployer passes the args verbatim to ``aiperf profile``; the
+    operator runner translates them to an ``AIPerfJobConfig`` (see
+    ``operator_runner.py``).
+    """
+
+    case_id: str
+    """Stable id used for parametrize ids and artifact directory names."""
+
+    endpoint_type: str
+    """chat, completions, embeddings, etc."""
+
+    concurrency: int
+    """--concurrency value passed to both sides."""
+
+    request_count: int
+    """--request-count value passed to both sides."""
+
+    num_conversations: int | None = None
+    """--num-conversations override; None lets aiperf pick its default."""
+
+    epochs: int = 1
+    """Number of epochs (1 means a single run on each side)."""
+
+    sweep: dict[str, list[int | float | str]] | None = None
+    """Optional sweep dimension; e.g. {'concurrency': [4, 16]}. None disables."""
+
+    seed: int = 42
+    """--random-seed value pinned for determinism."""
+
+    metric_tolerance_overrides: dict[str, float] = field(default_factory=dict)
+    """Per-metric tolerance overrides (relative diff, e.g. 0.30 = 30%)."""
+
+    expected_artifacts: tuple[str, ...] = (
+        "profile_export.jsonl",
+        "profile_export_records.csv",
+        "inputs.json",
+    )
+    """Filenames that MUST exist on both sides for the structural diff."""
+
+
+AUDIT_CASES: tuple[AuditCase, ...] = (
+    AuditCase(
+        case_id="baseline-chat",
+        endpoint_type="chat",
+        concurrency=4,
+        request_count=64,
+        num_conversations=32,
+    ),
+    AuditCase(
+        case_id="baseline-completions",
+        endpoint_type="completions",
+        concurrency=4,
+        request_count=64,
+        num_conversations=32,
+    ),
+    AuditCase(
+        case_id="concurrency-scale",
+        endpoint_type="chat",
+        concurrency=16,
+        request_count=128,
+        num_conversations=64,
+        # Higher concurrency on operator side spreads across worker pods;
+        # tail latency is structurally noisier than a single bare process.
+        metric_tolerance_overrides={
+            "p99": 0.40,
+            "p95": 0.35,
+        },
+    ),
+)
+# Deferred cases (need operator-side helper extensions before they can audit):
+#   - multi-epoch: AIPerfJobConfig.epochs + bare-side multi-run loop
+#   - small-sweep: AIPerfSweep runner in tests/kubernetes/helpers/
+# Add to AUDIT_CASES once the helpers land; no harness changes required.
