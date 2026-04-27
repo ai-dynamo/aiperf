@@ -39,6 +39,30 @@ function buildSegments(currentRoute) {
     return [{ label: 'Dashboard', path: '/' }];
   }
 
+  const jobRunMatch = matchRoute('/jobs/:ns/:name/runs/:epoch', currentRoute);
+  if (jobRunMatch) {
+    const detailPath = `/jobs/${jobRunMatch.ns}/${jobRunMatch.name}`;
+    return [
+      { label: 'Jobs', path: '/jobs' },
+      { label: decodeURIComponent(jobRunMatch.ns), path: '/jobs' },
+      { label: decodeURIComponent(jobRunMatch.name), path: detailPath },
+      { label: 'runs', path: detailPath },
+      { label: decodeURIComponent(jobRunMatch.epoch), path: currentRoute },
+    ];
+  }
+
+  const sweepRunMatch = matchRoute('/sweeps/:ns/:name/runs/:epoch', currentRoute);
+  if (sweepRunMatch) {
+    const detailPath = `/sweeps/${sweepRunMatch.ns}/${sweepRunMatch.name}`;
+    return [
+      { label: 'Sweeps', path: '/sweeps' },
+      { label: decodeURIComponent(sweepRunMatch.ns), path: '/sweeps' },
+      { label: decodeURIComponent(sweepRunMatch.name), path: detailPath },
+      { label: 'runs', path: detailPath },
+      { label: decodeURIComponent(sweepRunMatch.epoch), path: currentRoute },
+    ];
+  }
+
   const jobMatch = matchRoute('/jobs/:ns/:name', currentRoute);
   if (jobMatch) {
     return [
@@ -48,9 +72,19 @@ function buildSegments(currentRoute) {
     ];
   }
 
+  const sweepMatch = matchRoute('/sweeps/:ns/:name', currentRoute);
+  if (sweepMatch) {
+    return [
+      { label: 'Sweeps', path: '/sweeps' },
+      { label: decodeURIComponent(sweepMatch.ns), path: '/sweeps' },
+      { label: decodeURIComponent(sweepMatch.name), path: currentRoute },
+    ];
+  }
+
   // Simple pages
   const PAGE_LABELS = {
     '/jobs': 'Jobs',
+    '/sweeps': 'Sweeps',
     '/leaderboard': 'Leaderboard',
     '/compare': 'Compare',
     '/history': 'History',
