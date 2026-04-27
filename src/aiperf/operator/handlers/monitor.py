@@ -564,6 +564,41 @@ async def _run_worker_and_progress_phase(
     sb.finalize()
 
 
+async def _jobset_has_terminal_condition(
+    api: ApiClient,
+    namespace: str,
+    jobset_name: str,
+) -> bool:
+    """Return True if the JobSet is in a terminal state or has been deleted.
+
+    A 404 on JobSet lookup means the prior completion handler reached
+    ``_maybe_delete_jobset_after_success`` (which only fires on a successful
+    fetch+store). Either way — Completed condition, Failed condition, or
+    deleted entirely — the benchmark is done and orphan-claim recovery
+    is safe to run.
+    """
+    try:
+        custom = CustomObjectsApi(api)
+        jobset = await custom.get_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+        )
+    except ApiException as e:
+        return e.status == 404
+    except Exception:  # noqa: BLE001 - gate is best-effort; transient errors fall through to "no evidence yet"
+        return False
+    for cond in (jobset.get("status") or {}).get("conditions", []) or []:
+        if cond.get("status") == "True" and cond.get("type") in (
+            "Completed",
+            "Failed",
+        ):
+            return True
+    return False
+
+
 async def _benchmark_appears_complete(
     *,
     api: ApiClient,
@@ -604,7 +639,18 @@ async def _benchmark_appears_complete(
 
     pod = await _get_controller_pod(api, namespace, jobset_name)
     if pod is None:
-        return False
+        # No controller pod. Two scenarios put us here:
+        #
+        # 1. The benchmark finished, _maybe_delete_jobset_after_success
+        #    deleted the JobSet (success-only path), and pods went with it.
+        #    Recovery should fire — the previous handler must have crashed
+        #    after side effects but before sb.finalize() flushed.
+        # 2. The JobSet still exists but its pods reached terminal state
+        #    and were reaped (TTL or kubelet GC). The JobSet's own
+        #    Completed/Failed condition is then authoritative.
+        #
+        # Both are detectable by looking at the JobSet itself.
+        return await _jobset_has_terminal_condition(api, namespace, jobset_name)
     statuses = (pod.status.container_statuses or []) if pod.status else []
     controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
     if controller_status is None:
