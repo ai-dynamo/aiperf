@@ -118,22 +118,39 @@ class AIPerfJobConfig:
     def to_flat_spec(self) -> dict[str, Any]:
         """Generate flat CRD spec (config v3 format, no userConfig wrapper).
 
-        Uses ``profiling:`` and ``warmup:`` as top-level shorthand siblings
-        under ``spec.benchmark`` (per the AIPerfJob CRD's pre-validator
-        normalization, which rolls them into a ``[warmup, profiling]`` phases
-        list). Mutually exclusive with the ``phases:`` array form, which we
-        do not use here — emitting both is a strict-decoding error.
+        Emits ``phases:`` as an ordered array. The CRD's apiserver schema
+        explicitly requires ``spec.benchmark.phases`` (see ``required:`` in
+        ``deploy/helm/aiperf-operator/templates/crd.yaml``); the ``profiling:``
+        / ``warmup:`` top-level shorthand siblings are normalized into
+        ``phases:`` only by an operator Pydantic before-validator that runs
+        AFTER apiserver validation, so they cannot replace ``phases:`` from
+        the client side. Order in the list IS execution order: warmup (when
+        configured) precedes profiling.
         """
-        profiling: dict[str, Any] = {
+        profiling_phase: dict[str, Any] = {
+            "name": "profiling",
             "type": "concurrency",
             "concurrency": self.concurrency,
         }
         if self.request_count is not None:
-            profiling["requests"] = self.request_count
+            profiling_phase["requests"] = self.request_count
         if self.benchmark_duration is not None:
-            profiling["duration"] = self.benchmark_duration
+            profiling_phase["duration"] = self.benchmark_duration
 
-        spec: dict[str, Any] = {
+        phases: list[dict[str, Any]] = []
+        if self.warmup_request_count:
+            phases.append(
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "concurrency": self.concurrency,
+                    "requests": self.warmup_request_count,
+                    "exclude_from_results": True,
+                }
+            )
+        phases.append(profiling_phase)
+
+        return {
             "models": {"items": [{"name": self.model_name}]},
             "endpoint": {"urls": [self.endpoint_url]},
             "datasets": [
@@ -144,18 +161,10 @@ class AIPerfJobConfig:
                     "prompts": {"isl": {"mean": 550}},
                 },
             ],
-            "profiling": profiling,
+            "phases": phases,
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
         }
-        if self.warmup_request_count:
-            spec["warmup"] = {
-                "type": "concurrency",
-                "concurrency": self.concurrency,
-                "requests": self.warmup_request_count,
-                "exclude_from_results": True,
-            }
-        return spec
 
     def to_cr_manifest(self, name: str, namespace: str) -> str:
         """Generate AIPerfJob CR manifest (flat spec, no userConfig wrapper).
