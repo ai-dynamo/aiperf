@@ -193,6 +193,7 @@ markers = [
     "dynamo: marks tests requiring a Dynamo deployment (deselected by default)",
     "k8s: marks tests requiring a Kubernetes cluster",
     "k8s_slow: marks k8s tests that are known to be slow",
+    "k8s_audit: marks Kubernetes operator-vs-bare-pod correctness audit tests",
     "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
     "sglang: marks tests requiring an SGLang server (deselected by default)",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
@@ -207,7 +208,7 @@ verbosity_assertions = 2
 # Deselect slow/infra test suites by default - opt in explicitly:
 #   pytest -m k8s, pytest -m gpu, pytest -m performance, pytest -m integration, etc.
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not gpu and not vllm and not dynamo and not trtllm and not sglang and not k8s and not fern and not e2e'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not gpu and not vllm and not dynamo and not trtllm and not sglang and not k8s and not fern and not e2e and not k8s_audit'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
