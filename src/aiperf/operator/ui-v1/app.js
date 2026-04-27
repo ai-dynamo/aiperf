@@ -33,6 +33,8 @@ function App() {
 
   // Route matching
   let page;
+  const jobRunMatch = matchRoute('/jobs/:ns/:name/runs/:epoch', currentRoute);
+  const sweepRunMatch = matchRoute('/sweeps/:ns/:name/runs/:epoch', currentRoute);
   const jobDetailMatch = matchRoute('/jobs/:ns/:name', currentRoute);
   const sweepDetailMatch = matchRoute('/sweeps/:ns/:name', currentRoute);
 
@@ -40,10 +42,14 @@ function App() {
     page = html`<${Dashboard} />`;
   } else if (currentRoute === '/jobs') {
     page = html`<${Jobs} />`;
+  } else if (jobRunMatch) {
+    page = html`<${JobDetail} namespace=${jobRunMatch.ns} name=${jobRunMatch.name} epoch=${jobRunMatch.epoch} />`;
   } else if (jobDetailMatch) {
     page = html`<${JobDetail} namespace=${jobDetailMatch.ns} name=${jobDetailMatch.name} />`;
   } else if (currentRoute === '/sweeps') {
     page = html`<${Sweeps} />`;
+  } else if (sweepRunMatch) {
+    page = html`<${SweepDetail} namespace=${sweepRunMatch.ns} name=${sweepRunMatch.name} epoch=${sweepRunMatch.epoch} />`;
   } else if (sweepDetailMatch) {
     page = html`<${SweepDetail} namespace=${sweepDetailMatch.ns} name=${sweepDetailMatch.name} />`;
   } else if (currentRoute === '/leaderboard') {
