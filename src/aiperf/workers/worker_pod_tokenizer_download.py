@@ -15,18 +15,13 @@ import io
 import logging
 import sys
 import tarfile
-import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import aiohttp
 import zstandard
 
 from aiperf.transports.aiohttp_client import create_tcp_connector
-
-if TYPE_CHECKING:
-    from aiperf.config import BenchmarkRun
 
 _INITIAL_BACKOFF_S = 0.5
 _MAX_BACKOFF_S = 8.0
@@ -35,44 +30,6 @@ _MAX_BACKOFF_S = 8.0
 def slug_for_tokenizer(name: str) -> str:
     """URL-quote a tokenizer name into a single safe path segment."""
     return quote(name, safe="")
-
-
-async def resolve_tokenizer_load_target(
-    run: BenchmarkRun, tokenizer_name: str, logger: logging.Logger
-) -> str:
-    """Return the argument to pass to ``Tokenizer.from_pretrained``.
-
-    In K8s mode, download the operator-served bundle into the shared
-    ``aiperf_tokenizers/{benchmark_id}`` directory and return its local
-    snapshot path. In every other mode, return ``tokenizer_name`` so the
-    loader follows its existing HF-cache / alias-resolution path.
-
-    Used by both ``RecordProcessor.get_tokenizer`` and
-    ``InferenceResultParser.{configure,get_tokenizer}`` so neither path
-    reaches huggingface.co from a worker pod.
-    """
-    from aiperf.common.environment import Environment
-    from aiperf.plugin.enums import ServiceRunType
-
-    if run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
-        return tokenizer_name
-    api_base_url = run.cfg.runtime.dataset_api_base_url
-    if not api_base_url:
-        return tokenizer_name
-    # dataset_api_base_url ends in /api/dataset; strip so the helper appends
-    # /api/tokenizer/... to the same host:port.
-    api_base = api_base_url.rsplit("/api/dataset", 1)[0]
-    base = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
-    dest_root = base / f"aiperf_tokenizers/{run.cfg.benchmark_id}"
-    dest_root.mkdir(parents=True, exist_ok=True)
-    local_path = await download_tokenizer(
-        api_base_url=api_base,
-        name=tokenizer_name,
-        dest_root=dest_root,
-        max_retries=Environment.DATASET.DOWNLOAD_MAX_RETRIES,
-        logger=logger,
-    )
-    return str(local_path)
 
 
 async def download_tokenizer(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from contextlib import suppress
 from typing import TYPE_CHECKING
@@ -25,7 +24,6 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records import _tokenizer_preload
-from aiperf.workers.worker_pod_tokenizer_download import resolve_tokenizer_load_target
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -35,11 +33,25 @@ class InferenceResultParser(CommunicationMixin):
     def __init__(
         self,
         run: BenchmarkRun,
+        tokenizer_bundles: dict[str, str] | None = None,
+        tokenizer_ready: asyncio.Event | None = None,
     ) -> None:
         super().__init__(run=run)
         self.tokenizers: dict[str, Tokenizer] = {}
         config: BenchmarkConfig = run.cfg
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
+        # In K8s the owning RecordProcessor passes a shared bundles dict +
+        # readiness event so this parser blocks on WGM-published paths
+        # before loading. In local mode the caller leaves both unset; we
+        # default to empty bundles + a pre-set event so the existing
+        # name-based load path runs unchanged.
+        self._tokenizer_bundles: dict[str, str] = (
+            tokenizer_bundles if tokenizer_bundles is not None else {}
+        )
+        if tokenizer_ready is None:
+            tokenizer_ready = asyncio.Event()
+            tokenizer_ready.set()
+        self._tokenizer_ready = tokenizer_ready
         EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
         self.endpoint = EndpointClass(run=run)
         endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
@@ -58,6 +70,21 @@ class InferenceResultParser(CommunicationMixin):
         """Initialize inference result parser-specific components."""
         self.debug("Initializing inference result parser")
 
+    def _select_load_target(
+        self, tokenizer_name: str, resolve_alias: bool
+    ) -> tuple[str, bool]:
+        """Pick the argument to pass to ``Tokenizer.from_pretrained``.
+
+        K8s: WGM published a bundle path; use it and skip alias resolution
+        (the path is a local dir; HF aliasing doesn't apply).
+        Local: return the name unchanged with the caller's resolve_alias flag.
+        """
+        if self._tokenizer_bundles:
+            local_path = self._tokenizer_bundles.get(tokenizer_name)
+            if local_path is not None:
+                return local_path, False
+        return tokenizer_name, resolve_alias
+
     async def configure(self) -> None:
         """Configure the tokenizers."""
         if self.disable_tokenization:
@@ -69,6 +96,7 @@ class InferenceResultParser(CommunicationMixin):
         self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
 
+        await self._tokenizer_ready.wait()
         async with self.tokenizer_lock:
             self.tokenizers = {}
             resolved_names = self.run.resolved.tokenizer_names
@@ -83,18 +111,19 @@ class InferenceResultParser(CommunicationMixin):
                         else model.name
                     )
                     resolve_alias = True
+                load_target, alias_flag = self._select_load_target(
+                    tokenizer_name, resolve_alias
+                )
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
-                    await resolve_tokenizer_load_target(
-                        self.run, tokenizer_name, logging.getLogger(__name__)
-                    ),
+                    load_target,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
                     else False,
                     revision=self.run.cfg.tokenizer.revision
                     if self.run.cfg.tokenizer
                     else "main",
-                    resolve_alias=resolve_alias,
+                    resolve_alias=alias_flag,
                 )
 
         duration = time.perf_counter() - begin
@@ -111,22 +140,25 @@ class InferenceResultParser(CommunicationMixin):
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
+                await self._tokenizer_ready.wait()
                 tokenizer_name = (
                     self.run.cfg.tokenizer.name or model
                     if self.run.cfg.tokenizer
                     else model
                 )
+                load_target, alias_flag = self._select_load_target(
+                    tokenizer_name, resolve_alias=True
+                )
                 self.tokenizers[model] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
-                    await resolve_tokenizer_load_target(
-                        self.run, tokenizer_name, logging.getLogger(__name__)
-                    ),
+                    load_target,
                     trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
                     if self.run.cfg.tokenizer
                     else False,
                     revision=self.run.cfg.tokenizer.revision
                     if self.run.cfg.tokenizer
                     else "main",
+                    resolve_alias=alias_flag,
                 )
             return self.tokenizers[model]
 

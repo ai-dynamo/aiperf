@@ -104,6 +104,12 @@ def build_volume_mounts(pod_template: PodTemplateConfig) -> list[dict[str, Any]]
         {"name": "results", "mountPath": "/results"},
         # Shared dataset volume: dataset-manager writes, API serves to workers
         {"name": "datasets", "mountPath": datasets_path},
+        # Shared HF tokenizer cache: control-plane warmer writes here, the
+        # API container reads via snapshot_download(local_files_only=True),
+        # and dataset-manager picks up its tokenizer from the same cache.
+        # On worker pods the same mount exists but is unused — workers get
+        # their tokenizer bundle from the operator API via the WGM, not HF.
+        {"name": "tokenizer-cache", "mountPath": "/aiperf/hf_home"},
         {"name": "tmp", "mountPath": "/tmp"},
     ]
     mounts.extend(pod_template.volume_mounts)
@@ -120,6 +126,8 @@ def build_shared_volumes(
         {"name": "results", "emptyDir": {}},
         # Shared dataset volume for controller containers (dataset-manager creates, API serves)
         {"name": "datasets", "emptyDir": {}},
+        # Shared HF cache for the controller pod's warmer + API + dataset-manager.
+        {"name": "tokenizer-cache", "emptyDir": {}},
         {"name": "tmp", "emptyDir": {}},
     ]
     volumes.extend(pod_template.volumes)
@@ -201,9 +209,12 @@ def build_env_vars(
         },
     ]
 
-    # HF cache must be writable (readOnlyRootFilesystem)
+    # HF cache lives on the shared `tokenizer-cache` emptyDir so the
+    # controller pod's warmer, dataset-manager, and api containers all see
+    # the same on-disk snapshots. Worker pods carry the mount too but never
+    # write to it — they receive bundles from the operator API instead.
     if not has_hf_home:
-        env.append({"name": "HF_HOME", "value": "/tmp/hf_home"})
+        env.append({"name": "HF_HOME", "value": "/aiperf/hf_home"})
 
     if include_pod_index:
         # Expose the JobSet job-index as a unique pod identifier for

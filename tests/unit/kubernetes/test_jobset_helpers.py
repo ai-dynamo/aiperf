@@ -156,16 +156,24 @@ class TestBuildVolumeMounts:
     """Volume mounts include the standard set plus any custom pod-template mounts."""
 
     def test_default_mount_names_and_paths(self) -> None:
-        """All five baseline mounts must appear with expected mountPath values."""
+        """All baseline mounts appear, including the shared tokenizer-cache."""
         mounts = build_volume_mounts(PodTemplateConfig())
         names = [m["name"] for m in mounts]
-        assert names == ["config", "ipc", "results", "datasets", "tmp"]
+        assert names == [
+            "config",
+            "ipc",
+            "results",
+            "datasets",
+            "tokenizer-cache",
+            "tmp",
+        ]
 
         by_name = {m["name"]: m for m in mounts}
         assert by_name["config"]["mountPath"] == K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
         assert by_name["ipc"]["mountPath"] == K8sEnvironment.ZMQ.IPC_PATH
         assert by_name["results"]["mountPath"] == "/results"
         assert by_name["datasets"]["mountPath"] == K8sEnvironment.JOBSET.DATASETS_PATH
+        assert by_name["tokenizer-cache"]["mountPath"] == "/aiperf/hf_home"
         assert by_name["tmp"]["mountPath"] == "/tmp"
 
     def test_config_mount_is_readonly(self) -> None:
@@ -199,12 +207,13 @@ class TestBuildSharedVolumes:
         assert config["configMap"] == {"name": "my-bench-config"}
 
     def test_default_volume_kinds(self) -> None:
-        """ipc/results/datasets/tmp are all emptyDir; only config is ConfigMap-backed."""
+        """All baseline shared volumes are emptyDir except the ConfigMap-backed config."""
         volumes = build_shared_volumes("bench", PodTemplateConfig())
         by_name = {v["name"]: v for v in volumes}
         assert "emptyDir" in by_name["ipc"]
         assert "emptyDir" in by_name["results"]
         assert "emptyDir" in by_name["datasets"]
+        assert "emptyDir" in by_name["tokenizer-cache"]
         assert "emptyDir" in by_name["tmp"]
 
     def test_pod_template_volumes_appended(self) -> None:
@@ -302,13 +311,13 @@ class TestBuildEnvVars:
         assert by_name["AIPERF_NAMESPACE"]["value"] == "ns-7"
 
     def test_hf_home_default_added_when_missing(self) -> None:
-        """Default HF_HOME points at /tmp/hf_home so read-only root FS still works."""
+        """Default HF_HOME points at /aiperf/hf_home, the shared tokenizer-cache mount."""
         env = build_env_vars(
             job_id="j", namespace="n", pod_template=PodTemplateConfig()
         )
         hf = [item for item in env if item["name"] == "HF_HOME"]
         assert len(hf) == 1
-        assert hf[0]["value"] == "/tmp/hf_home"
+        assert hf[0]["value"] == "/aiperf/hf_home"
 
     def test_hf_home_not_added_when_pod_template_sets_it(self) -> None:
         """User-supplied HF_HOME must not be duplicated by the default injection."""

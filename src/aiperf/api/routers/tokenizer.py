@@ -1,19 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tokenizer router -- on-demand HF snapshot fetch + tar+zstd streaming.
+"""Tokenizer router -- serves tar+zstd of HF snapshot dirs from the shared cache.
 
-The api container is the only network egress for tokenizers; worker pods
-must never hit huggingface.co. When a worker requests a bundle, this router
-calls ``snapshot_download`` with a tokenizer-only ``allow_patterns`` filter,
-tars the resulting snapshot directory, and streams it back as
-``application/zstd``.
-
-We do NOT coordinate with the controller-pod warmer. The api container
-runs in its own process and would not see a module-level registry that the
-control-plane container populated. Going straight to HF on demand keeps the
-two halves decoupled and avoids cross-container synchronization. The HF
-on-disk cache amortizes repeat requests within a single api-container
-lifetime.
+The api container has zero HF egress. Snapshots are populated by the
+controller-pod warmer (``tokenizer_validator._prefetch_tokenizers``) writing
+to the shared ``tokenizer-cache`` emptyDir volume mounted at ``HF_HOME``.
+This router calls ``snapshot_download(local_files_only=True)`` against that
+shared cache and streams the resulting directory back as a single
+``application/zstd`` payload. Worker pods retry through 503s while the
+warmer is still running.
 """
 
 from __future__ import annotations
@@ -31,19 +26,6 @@ from fastapi.responses import StreamingResponse
 from aiperf.common.environment import Environment
 
 _CHUNK_SIZE = 1 << 16  # 64 KiB
-
-# Tokenizer-only file patterns: tokenizer.json, vocab.{json,txt}, merges.txt,
-# special_tokens_map.json, added_tokens.json, tokenizer_config.json,
-# chat_template.jinja, sentencepiece *.model, tiktoken *.tiktoken, and *.py
-# for trust_remote_code modules. Excludes weights.
-_TOKENIZER_ALLOW_PATTERNS: list[str] = [
-    "*.json",
-    "*.txt",
-    "*.model",
-    "*.tiktoken",
-    "*.jinja",
-    "*.py",
-]
 
 
 def _stream_tar_zstd(snapshot_dir: Path) -> AsyncIterator[bytes]:
@@ -76,13 +58,16 @@ def _stream_tar_zstd(snapshot_dir: Path) -> AsyncIterator[bytes]:
 
 
 async def _resolve_snapshot_dir(name: str) -> Path:
-    """Return a local snapshot dir for ``name``, downloading from HF if needed.
+    """Return the local snapshot dir for ``name`` from the shared HF cache.
 
-    Runs the blocking ``snapshot_download`` in a worker thread.
+    Returns 503 when the warmer hasn't populated the cache yet (worker pods
+    retry through this) and 404 when the warmer asked for a name HF doesn't
+    know about. Never reaches the network.
     """
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import (
         EntryNotFoundError,
+        LocalEntryNotFoundError,
         RepositoryNotFoundError,
         RevisionNotFoundError,
     )
@@ -92,8 +77,14 @@ async def _resolve_snapshot_dir(name: str) -> Path:
             snapshot_download,
             repo_id=name,
             repo_type="model",
-            allow_patterns=_TOKENIZER_ALLOW_PATTERNS,
+            local_files_only=True,
         )
+    except LocalEntryNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"tokenizer '{name}' not yet warmed in shared HF cache",
+            headers={"Retry-After": "1"},
+        ) from exc
     except (RepositoryNotFoundError, RevisionNotFoundError, EntryNotFoundError) as exc:
         raise HTTPException(
             status_code=404,

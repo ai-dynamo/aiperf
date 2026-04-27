@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import os
 import traceback
 from typing import TYPE_CHECKING
@@ -25,6 +24,7 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupPeerCommand,
     GroupPeerCommandAck,
     GroupPeerShutdown,
+    GroupTokenizerReady,
     _send_group_peer_hello_with_retry,
 )
 
@@ -58,11 +58,10 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records import _tokenizer_preload
 from aiperf.records.inference_result_parser import InferenceResultParser
-from aiperf.workers.worker_pod_tokenizer_download import resolve_tokenizer_load_target
 
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
@@ -93,9 +92,19 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self._pending_metric_records: list[MetricRecordsData] = []
         self._ingest_batch_size = Environment.RECORD.INGEST_BATCH_SIZE
         self.tokenizers: dict[str, Tokenizer] = {}
-        self._tokenizer_local_paths: dict[str, str] = {}
+        # Bundle paths advertised by WGM via GroupTokenizerReady. Empty when
+        # not running with a worker-group manager (local mode); the readiness
+        # event is pre-set in that case so configure() doesn't block.
+        self._tokenizer_bundles: dict[str, str] = {}
+        self._tokenizer_ready: asyncio.Event = asyncio.Event()
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            self._tokenizer_ready.set()
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.inference_result_parser = InferenceResultParser(run=self.run)
+        self.inference_result_parser = InferenceResultParser(
+            run=self.run,
+            tokenizer_bundles=self._tokenizer_bundles,
+            tokenizer_ready=self._tokenizer_ready,
+        )
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
         self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
         if self.run.cfg.runtime.uses_worker_group_manager:
@@ -142,6 +151,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self, message: GroupManagerToPeerMessage
     ) -> None:
         """Handle group-local lifecycle messages from WorkerGroupManager."""
+        if isinstance(message, GroupTokenizerReady):
+            await self._on_tokenizer_ready(message)
+            return
         if not isinstance(message, GroupPeerCommand):
             return
         if self.pod_lifecycle_dealer_client is None:
@@ -225,9 +237,16 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self._configure_for_profiling()
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
-        """Get the tokenizer for a given model."""
+        """Get the tokenizer for a given model.
+
+        In K8s mode, blocks until ``GroupTokenizerReady`` arrives and then
+        loads the tokenizer from the WGM-advertised local snapshot path.
+        In local mode the readiness event is pre-set and the existing
+        name-based load path is used unchanged.
+        """
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
+                await self._tokenizer_ready.wait()
                 resolved_names = self.run.resolved.tokenizer_names
                 if resolved_names and model in resolved_names:
                     tokenizer_name = resolved_names[model]
@@ -237,12 +256,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                         self.run.cfg.tokenizer.name if self.run.cfg.tokenizer else None
                     ) or model
                     resolve_alias = True
-                # In K8s, fetch the tokenizer bundle from the operator API and
-                # load from the on-disk snapshot; pods never reach huggingface.co.
-                # The download helper's per-bundle file lock + .ready sentinel
-                # makes the second-arriving sibling container reuse the WGM's
-                # extracted directory rather than re-downloading.
-                load_target = await self._resolve_tokenizer_load_target(tokenizer_name)
+                load_target, alias_flag = self._select_load_target(
+                    tokenizer_name, resolve_alias
+                )
                 self.tokenizers[model] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
                     load_target,
@@ -252,25 +268,39 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     revision=self.run.cfg.tokenizer.revision
                     if self.run.cfg.tokenizer
                     else "main",
-                    resolve_alias=resolve_alias,
+                    resolve_alias=alias_flag,
                 )
             return self.tokenizers[model]
 
-    async def _resolve_tokenizer_load_target(self, tokenizer_name: str) -> str:
-        """Return the argument to pass to ``Tokenizer.from_pretrained``.
+    def _select_load_target(
+        self, tokenizer_name: str, resolve_alias: bool
+    ) -> tuple[str, bool]:
+        """Pick the argument to pass to ``Tokenizer.from_pretrained``.
 
-        Thin per-instance wrapper around the shared helper that adds an
-        in-memory result cache so repeat lookups for the same name skip the
-        sentinel-file check.
+        K8s: WGM published a bundle path; use it and skip alias resolution
+        (the path is a local dir; HF aliasing doesn't apply).
+        Local: return the name unchanged with the caller's resolve_alias flag.
         """
-        cached = self._tokenizer_local_paths.get(tokenizer_name)
-        if cached is not None:
-            return cached
-        resolved = await resolve_tokenizer_load_target(
-            self.run, tokenizer_name, logging.getLogger(self.service_id)
+        if self._tokenizer_bundles:
+            local_path = self._tokenizer_bundles.get(tokenizer_name)
+            if local_path is not None:
+                return local_path, False
+        return tokenizer_name, resolve_alias
+
+    async def _on_tokenizer_ready(self, message: GroupTokenizerReady) -> None:
+        """Record bundles published by WGM and unblock waiters."""
+        if not message.success:
+            self.error(
+                f"Tokenizer download failed in WGM: {message.error_message}; "
+                f"force-exiting RP so kubelet restarts the pod"
+            )
+            os._exit(1)
+        self._tokenizer_bundles.update(message.bundles)
+        self._tokenizer_ready.set()
+        self.info(
+            f"Tokenizer bundles ready: {sorted(self._tokenizer_bundles)} "
+            f"(advertised by {message.service_id})"
         )
-        self._tokenizer_local_paths[tokenizer_name] = resolved
-        return resolved
 
     def _create_metric_record_metadata(
         self,
