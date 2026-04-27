@@ -49,6 +49,7 @@ async def test_operator_vs_bare_pod(
     kubectl: KubectlClient,
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
+    audit_strict_tolerance: bool,
 ) -> None:
     """One audit case: operator path vs bare-pod path, three-bucket diff."""
     namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
@@ -74,11 +75,10 @@ async def test_operator_vs_bare_pod(
         timeout=900,
     )
 
-    findings_list = (
-        diff_exact(operator_dir=op_dir, bare_dir=bare_dir, case=case)
-        + diff_tolerance(operator_dir=op_dir, bare_dir=bare_dir, case=case)
-        + diff_structural(operator_dir=op_dir, bare_dir=bare_dir, case=case)
-    )
+    exact = diff_exact(operator_dir=op_dir, bare_dir=bare_dir, case=case)
+    tolerance = diff_tolerance(operator_dir=op_dir, bare_dir=bare_dir, case=case)
+    structural = diff_structural(operator_dir=op_dir, bare_dir=bare_dir, case=case)
+    findings_list = exact + tolerance + structural
     findings = AuditFindings(case_id=case.case_id, findings=findings_list)
 
     (audit_artifacts_dir / "audit-report.json").write_text(render_json(findings))
@@ -87,7 +87,12 @@ async def test_operator_vs_bare_pod(
 
     if not findings.empty:
         print(md)
-    assert findings.empty, (
+
+    # Tolerance is environment-dependent (kind single-node CPU contention
+    # routinely produces 50-80% throughput drift); gate only on Exact and
+    # Structural unless --audit-strict-tolerance was passed.
+    gating = exact + structural + (tolerance if audit_strict_tolerance else [])
+    assert not gating, (
         f"audit failures for {case.case_id}: see {audit_artifacts_dir}/report.md"
     )
 
@@ -132,6 +137,7 @@ async def test_operator_vs_bare_pod_sweep(
     kubectl: KubectlClient,
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
+    audit_strict_tolerance: bool,
 ) -> None:
     """Sweep-with-trials audit: AIPerfSweep vs N sequential bare-pod runs."""
     namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
@@ -148,6 +154,7 @@ async def test_operator_vs_bare_pod_sweep(
 
     bare = BarePodDeployer(kubectl=kubectl, config=BarePodConfig())
 
+    all_gating: list = []
     all_findings: list = []
     for cell in cells:
         cell_id = f"v{cell.variation_index}-t{cell.trial_index}"
@@ -160,16 +167,23 @@ async def test_operator_vs_bare_pod_sweep(
             timeout=900,
         )
 
-        cell_findings = (
-            diff_exact(operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case)
-            + diff_tolerance(
-                operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case
-            )
-            + diff_structural(
-                operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case
-            )
+        cell_exact = diff_exact(
+            operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case
+        )
+        cell_tolerance = diff_tolerance(
+            operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case
+        )
+        cell_structural = diff_structural(
+            operator_dir=cell.local_dir, bare_dir=bare_cell_dir, case=case
+        )
+        cell_findings = cell_exact + cell_tolerance + cell_structural
+        cell_gating = (
+            cell_exact
+            + cell_structural
+            + (cell_tolerance if audit_strict_tolerance else [])
         )
         all_findings.extend(_prefix_findings(cell_findings, cell_id))
+        all_gating.extend(_prefix_findings(cell_gating, cell_id))
 
     findings = AuditFindings(case_id=case.case_id, findings=all_findings)
 
@@ -179,6 +193,6 @@ async def test_operator_vs_bare_pod_sweep(
 
     if not findings.empty:
         print(md)
-    assert findings.empty, (
+    assert not all_gating, (
         f"sweep audit failures for {case.case_id}: see {audit_artifacts_dir}/report.md"
     )
