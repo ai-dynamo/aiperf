@@ -21,7 +21,6 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketState
 
 from aiperf.api.api_service import FastAPIService
-from aiperf.api.routers.api import api_router
 from aiperf.api.routers.core import core_router
 from aiperf.api.routers.static import static_router
 from aiperf.api.routers.websocket import WebSocketManager, ws_router
@@ -244,7 +243,6 @@ def create_test_app(service: FastAPIService | None = None) -> FastAPI:
     """
     app = FastAPI(default_response_class=ORJSONResponse)
     app.state.service = service
-    app.include_router(api_router)
     app.include_router(core_router)
     return app
 
