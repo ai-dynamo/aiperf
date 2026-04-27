@@ -115,7 +115,7 @@ def test_audit_findings_empty_property() -> None:
     assert f2.empty is False
 
 
-from tests.kubernetes.audit.diff import diff_tolerance
+from tests.kubernetes.audit.diff import diff_tolerance  # noqa: E402
 
 
 def _write_summary(
@@ -174,3 +174,74 @@ def test_diff_tolerance_per_case_override_relaxes_band(tmp_path: Path) -> None:
     findings = diff_tolerance(operator_dir=op, bare_dir=bare, case=case)
 
     assert findings == []
+
+
+from tests.kubernetes.audit.diff import diff_structural  # noqa: E402
+
+
+def test_diff_structural_missing_expected_artifact_is_reported(tmp_path: Path) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    op.mkdir()
+    bare.mkdir()
+    (bare / "profile_export.jsonl").write_text("")
+    case = AuditCase(
+        case_id="unit",
+        endpoint_type="chat",
+        concurrency=4,
+        request_count=10,
+        expected_artifacts=("profile_export.jsonl",),
+    )
+
+    findings = diff_structural(operator_dir=op, bare_dir=bare, case=case)
+
+    assert any(
+        f.field == "profile_export.jsonl" and "operator" in f.reason for f in findings
+    )
+
+
+def test_diff_structural_csv_header_mismatch_is_reported(tmp_path: Path) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    op.mkdir()
+    bare.mkdir()
+    (op / "profile_export_records.csv").write_text("a,b,c\n1,2,3\n")
+    (bare / "profile_export_records.csv").write_text("a,b\n1,2\n")
+    case = AuditCase(
+        case_id="unit",
+        endpoint_type="chat",
+        concurrency=4,
+        request_count=10,
+        expected_artifacts=("profile_export_records.csv",),
+    )
+
+    findings = diff_structural(operator_dir=op, bare_dir=bare, case=case)
+
+    assert any(
+        f.field.endswith("profile_export_records.csv") and "header" in f.reason
+        for f in findings
+    )
+
+
+def test_diff_structural_json_top_level_keyset_mismatch_is_reported(
+    tmp_path: Path,
+) -> None:
+    op = tmp_path / "operator"
+    bare = tmp_path / "bare"
+    op.mkdir()
+    bare.mkdir()
+    (op / "inputs.json").write_text(json.dumps({"a": 1, "b": 2}))
+    (bare / "inputs.json").write_text(json.dumps({"a": 1, "b": 2, "c": 3}))
+    case = AuditCase(
+        case_id="unit",
+        endpoint_type="chat",
+        concurrency=4,
+        request_count=10,
+        expected_artifacts=("inputs.json",),
+    )
+
+    findings = diff_structural(operator_dir=op, bare_dir=bare, case=case)
+
+    assert any(
+        f.field.endswith("inputs.json") and "key" in f.reason.lower() for f in findings
+    )

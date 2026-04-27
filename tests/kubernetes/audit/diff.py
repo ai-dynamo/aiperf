@@ -9,6 +9,7 @@ no divergence.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 from dataclasses import dataclass
@@ -265,5 +266,101 @@ def diff_tolerance(
                     reason=f"relative diff {rel:.1%} exceeds band {band:.1%} for stat '{stat_key}'",
                 )
             )
+
+    return findings
+
+
+def _csv_header(path: Path) -> list[str] | None:
+    if not path.exists():
+        return None
+    with path.open() as f:
+        reader = csv.reader(f)
+        try:
+            return next(reader)
+        except StopIteration:
+            return []
+
+
+def _json_keyset_depth2(path: Path) -> set[str] | None:
+    """Top-level + depth-1 keys, joined with '.'. Returns None on read failure."""
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return set()
+    keys: set[str] = set(payload.keys())
+    for k, v in payload.items():
+        if isinstance(v, dict):
+            keys.update(f"{k}.{kk}" for kk in v)
+    return keys
+
+
+def diff_structural(
+    *,
+    operator_dir: Path,
+    bare_dir: Path,
+    case: AuditCase,
+) -> list[Finding]:
+    """Bucket 3: file presence + per-file schema (CSV header / JSON key set)."""
+    findings: list[Finding] = []
+
+    for filename in case.expected_artifacts:
+        op_path = operator_dir / filename
+        bare_path = bare_dir / filename
+
+        op_present = op_path.exists()
+        bare_present = bare_path.exists()
+        if not op_present:
+            findings.append(
+                Finding(
+                    bucket="structural",
+                    field=filename,
+                    expected="present",
+                    actual="missing",
+                    reason=f"expected artifact missing on operator side: {filename}",
+                )
+            )
+        if not bare_present:
+            findings.append(
+                Finding(
+                    bucket="structural",
+                    field=filename,
+                    expected="present",
+                    actual="missing",
+                    reason=f"expected artifact missing on bare side: {filename}",
+                )
+            )
+        if not (op_present and bare_present):
+            continue
+
+        if filename.endswith(".csv"):
+            op_header = _csv_header(op_path)
+            bare_header = _csv_header(bare_path)
+            if op_header != bare_header:
+                findings.append(
+                    Finding(
+                        bucket="structural",
+                        field=f"schema:{filename}",
+                        expected=bare_header,
+                        actual=op_header,
+                        reason=f"CSV header set differs in {filename}",
+                    )
+                )
+        elif filename.endswith(".json"):
+            op_keys = _json_keyset_depth2(op_path)
+            bare_keys = _json_keyset_depth2(bare_path)
+            if op_keys is not None and bare_keys is not None and op_keys != bare_keys:
+                findings.append(
+                    Finding(
+                        bucket="structural",
+                        field=f"schema:{filename}",
+                        expected=sorted(bare_keys),
+                        actual=sorted(op_keys),
+                        reason=f"JSON depth-2 key set differs in {filename}",
+                    )
+                )
 
     return findings
