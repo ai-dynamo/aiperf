@@ -357,31 +357,6 @@ def build_pod_summary(
     )
 
 
-async def prefetch_tokenizers(run, logger: _PodLogger) -> None:
-    """Warm the shared HF tokenizer cache so sibling containers load from disk.
-
-    Runs ``validate_tokenizer_early`` in a thread to avoid blocking the event
-    loop. Skipped when ``use_server_token_count`` is True because worker pods
-    only need the tokenizer for counting response tokens.
-    """
-    if run.cfg.endpoint.use_server_token_count:
-        logger.debug("Tokenizer prefetch skipped (using server token counts)")
-        return
-
-    from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.tokenizer_validator import validate_tokenizer_early
-
-    prefetch_logger = AIPerfLogger(f"{__name__}.tokenizer_prefetch")
-    resolved = await asyncio.to_thread(
-        validate_tokenizer_early, run.cfg, prefetch_logger
-    )
-    if resolved:
-        run.resolved.tokenizer_names = resolved
-        logger.info(f"Tokenizer cache warmed: {len(resolved)} model(s)")
-    else:
-        logger.debug("Tokenizer prefetch skipped (not required)")
-
-
 async def wait_for_record_processor_shutdowns(
     *,
     record_processors_per_pod: int,
