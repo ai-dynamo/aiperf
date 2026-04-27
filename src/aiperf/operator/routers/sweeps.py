@@ -18,13 +18,22 @@ from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio.client import ApiClient
 
 from aiperf.operator.job_union import list_all_jobs
+from aiperf.operator.results_layout import (
+    EPOCH_RE,
+    list_sweep_epochs,
+    resolve_sweep_dir,
+)
 from aiperf.operator.routers.sweeps_models import (
     CellAggregatesResponse,
     CellEntry,
     ChildJobRef,
+    ChildrenManifestEntry,
+    ChildrenManifestResponse,
     DimensionInfo,
     SpecSummary,
     SweepDetailResponse,
+    SweepEpochsResponse,
+    SweepEpochSummary,
     SweepListResponse,
     SweepSummary,
 )
@@ -119,9 +128,14 @@ async def _list_sweeps_impl(api: ApiClient, base_dir: Path) -> SweepListResponse
 
 
 async def _get_sweep_impl(
-    api: ApiClient, base_dir: Path, namespace: str, name: str
+    api: ApiClient,
+    base_dir: Path,
+    namespace: str,
+    name: str,
+    *,
+    epoch: str | None = None,
 ) -> SweepDetailResponse:
-    rec = await find_any_sweep(api, base_dir, namespace, name)
+    rec = await find_any_sweep(api, base_dir, namespace, name, epoch=epoch)
     if rec is None:
         raise HTTPException(404, f"Sweep {namespace}/{name} not found")
 
@@ -262,9 +276,14 @@ async def _cells_from_live_children(
 
 
 async def _get_cells_impl(
-    api: ApiClient, base_dir: Path, namespace: str, name: str
+    api: ApiClient,
+    base_dir: Path,
+    namespace: str,
+    name: str,
+    *,
+    epoch: str | None = None,
 ) -> CellAggregatesResponse:
-    rec = await find_any_sweep(api, base_dir, namespace, name)
+    rec = await find_any_sweep(api, base_dir, namespace, name, epoch=epoch)
     if rec is None:
         raise HTTPException(404, f"Sweep {namespace}/{name} not found")
     spec_summary = _spec_summary_from_record(rec)
@@ -278,6 +297,57 @@ async def _get_cells_impl(
         dimensions=spec_summary.dimensions,
         cells=cells,
         source=source,  # type: ignore[arg-type]
+    )
+
+
+def _list_sweep_epochs_impl(
+    base_dir: Path, namespace: str, name: str
+) -> SweepEpochsResponse:
+    runs = list_sweep_epochs(base_dir, namespace, name)
+    return SweepEpochsResponse(
+        epochs=[
+            SweepEpochSummary(
+                epoch=r.epoch,
+                is_latest=r.is_latest,
+                mtime_epoch=r.mtime_epoch,
+                file_count=r.file_count,
+            )
+            for r in runs
+        ]
+    )
+
+
+def _get_children_impl(
+    base_dir: Path, namespace: str, name: str, epoch: str | None
+) -> ChildrenManifestResponse:
+    sweep_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
+    if sweep_dir is None:
+        raise HTTPException(
+            404, f"Sweep epoch not found: {namespace}/{name} epoch={epoch}"
+        )
+    p = sweep_dir / "children.json"
+    if not p.is_file():
+        raise HTTPException(
+            404, f"children.json missing for {namespace}/{name} epoch={epoch}"
+        )
+    try:
+        doc = orjson.loads(p.read_bytes())
+    except (OSError, orjson.JSONDecodeError) as e:
+        raise HTTPException(503, f"children.json unreadable: {e}") from e
+    return ChildrenManifestResponse(
+        sweep_run_epoch=str(doc.get("sweep_run_epoch") or epoch or ""),
+        children=[
+            ChildrenManifestEntry(
+                namespace=c.get("namespace", ""),
+                name=c.get("name", ""),
+                variation_index=int(c.get("variation_index") or 0),
+                variation_label=c.get("variation_label") or "",
+                trial_index=c.get("trial_index"),
+                child_run_epoch=str(c.get("child_run_epoch") or ""),
+            )
+            for c in (doc.get("children") or [])
+            if isinstance(c, dict)
+        ],
     )
 
 
@@ -305,14 +375,48 @@ def create_sweeps_router(
         return await _list_sweeps_impl(_require_api(), _base_dir)
 
     @router.get("/sweeps/{namespace}/{name}", response_model=SweepDetailResponse)
-    async def get_sweep(namespace: str, name: str) -> SweepDetailResponse:
-        return await _get_sweep_impl(_require_api(), _base_dir, namespace, name)
+    async def get_sweep(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> SweepDetailResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_sweep_impl(
+            _require_api(), _base_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/epochs",
+        response_model=SweepEpochsResponse,
+        response_model_by_alias=True,
+    )
+    async def list_sweep_epochs_endpoint(
+        namespace: str, name: str
+    ) -> SweepEpochsResponse:
+        return _list_sweep_epochs_impl(_base_dir, namespace, name)
 
     @router.get(
         "/sweeps/{namespace}/{name}/cells",
         response_model=CellAggregatesResponse,
     )
-    async def get_sweep_cells(namespace: str, name: str) -> CellAggregatesResponse:
-        return await _get_cells_impl(_require_api(), _base_dir, namespace, name)
+    async def get_sweep_cells(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> CellAggregatesResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_cells_impl(
+            _require_api(), _base_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/children",
+        response_model=ChildrenManifestResponse,
+        response_model_by_alias=True,
+    )
+    async def get_sweep_children(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> ChildrenManifestResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return _get_children_impl(_base_dir, namespace, name, epoch)
 
     return router

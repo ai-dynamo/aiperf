@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 class DimensionInfo(BaseModel):
@@ -124,3 +125,55 @@ class SweepDetailResponse(BaseModel):
         default_factory=list,
         description="ActiveJobSummary dicts (alias-keyed) for the sweep's children.",
     )
+
+
+class SweepEpochSummary(BaseModel):
+    """One epoch entry in a sweep's history listing."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    epoch: str = Field(description="Sweep run epoch, decimal seconds.")
+    is_latest: bool = Field(
+        description="True iff this epoch matches the sweep's latest.txt pointer."
+    )
+    mtime_epoch: int = Field(
+        description="Filesystem mtime of the epoch dir, seconds since epoch."
+    )
+    file_count: int = Field(
+        description="Number of immediate children under the epoch dir."
+    )
+
+
+class SweepEpochsResponse(BaseModel):
+    """Body of GET /api/v1/sweeps/{ns}/{name}/epochs."""
+
+    model_config = ConfigDict(extra="forbid")
+    epochs: list[SweepEpochSummary] = Field(default_factory=list)
+
+
+class ChildrenManifestEntry(BaseModel):
+    """One row in the per-epoch children manifest."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    namespace: str = Field(description="Child AIPerfJob namespace.")
+    name: str = Field(description="Child AIPerfJob CR name.")
+    variation_index: int = Field(description="Variation index from expand_sweep().")
+    variation_label: str = Field(
+        default="", description="Human-readable variation label."
+    )
+    trial_index: int | None = Field(
+        default=None, description="Trial index within the variation, if multi-trial."
+    )
+    child_run_epoch: str = Field(
+        description="Child job run epoch on disk (decimal seconds)."
+    )
+
+
+class ChildrenManifestResponse(BaseModel):
+    """Body of GET /api/v1/sweeps/{ns}/{name}/children."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    sweep_run_epoch: str = Field(description="Sweep epoch this manifest belongs to.")
+    children: list[ChildrenManifestEntry] = Field(default_factory=list)
