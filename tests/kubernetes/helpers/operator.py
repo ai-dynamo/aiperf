@@ -187,7 +187,7 @@ class AIPerfJobConfig:
             "tokenizer": {"name": self.tokenizer_name},
             "runtime": {"ui": "none"},
             **(
-                {"random_seed": self.random_seed}
+                {"randomSeed": self.random_seed}
                 if self.random_seed is not None
                 else {}
             ),
