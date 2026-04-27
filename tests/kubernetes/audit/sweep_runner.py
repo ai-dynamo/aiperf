@@ -90,6 +90,11 @@ class SweepAuditRunner:
                 "type": "concurrency",
                 "concurrency": case.concurrency,
                 "requests": case.request_count,
+                **(
+                    {"sessions": case.num_conversations}
+                    if case.num_conversations is not None
+                    else {}
+                ),
             },
         ]
         benchmark_spec: dict[str, Any] = {

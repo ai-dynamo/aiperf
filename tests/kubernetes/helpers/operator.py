@@ -143,6 +143,12 @@ class AIPerfJobConfig:
             profiling_phase["requests"] = self.request_count
         if self.benchmark_duration is not None:
             profiling_phase["duration"] = self.benchmark_duration
+        if self.num_conversations is not None:
+            # Local CLI's --num-conversations N maps to phases[].sessions=N,
+            # which caps total requests in the phase. Without this, the phase
+            # runs the full request_count regardless of dataset size, and the
+            # audit's bare/operator counts diverge.
+            profiling_phase["sessions"] = self.num_conversations
 
         phases: list[dict[str, Any]] = []
         if self.warmup_request_count:
