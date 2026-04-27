@@ -47,8 +47,7 @@ from tests.kubernetes.helpers.operator import OperatorDeployer
 async def test_operator_vs_bare_pod(
     case: AuditCase,
     kubectl: KubectlClient,
-    operator_deployer: OperatorDeployer,
-    mock_server: None,
+    operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
 ) -> None:
     """One audit case: operator path vs bare-pod path, three-bucket diff."""
@@ -57,7 +56,7 @@ async def test_operator_vs_bare_pod(
     bare_dir = audit_artifacts_dir / "bare"
 
     operator_runner = OperatorAuditRunner(
-        deployer=operator_deployer,
+        deployer=operator_ready,
         config=OperatorAuditConfig(),
     )
     await operator_runner.run(
@@ -131,7 +130,7 @@ def _prefix_findings(findings: list, prefix: str) -> list:
 async def test_operator_vs_bare_pod_sweep(
     case: AuditCase,
     kubectl: KubectlClient,
-    mock_server: None,
+    operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
 ) -> None:
     """Sweep-with-trials audit: AIPerfSweep vs N sequential bare-pod runs."""
