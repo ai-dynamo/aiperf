@@ -21,6 +21,7 @@ from tests.kubernetes.helpers.operator import (
     AIPerfJobConfig,
     AIPerfJobStatus,
     OperatorJobResult,
+    wait_for_aiperf_crds_established,
 )
 
 logger = AIPerfLogger(__name__)
@@ -526,22 +527,8 @@ class HelmDeployer:
         await self._wait_for_crd_established()
 
     async def _wait_for_crd_established(self, timeout: int = 60) -> None:
-        """Wait for CRD to be established."""
-        start_time = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start_time < timeout:
-            result = await self.kubectl.run(
-                "get",
-                "crd",
-                self.CRD_NAME,
-                "-o",
-                "jsonpath={.status.conditions[?(@.type=='Established')].status}",
-                check=False,
-            )
-            if result.stdout.strip() == "True":
-                logger.info("CRD established")
-                return
-            await asyncio.sleep(1)
-        raise TimeoutError(f"CRD {self.CRD_NAME} not established within {timeout}s")
+        """Wait for both AIPerf CRDs (AIPerfJob, AIPerfSweep) to be Established."""
+        await wait_for_aiperf_crds_established(self.kubectl, timeout=timeout)
 
     async def upgrade_chart(
         self,

@@ -26,6 +26,52 @@ from tests.kubernetes.helpers.watchdog import BenchmarkWatchdog, make_watchdog_s
 logger = AIPerfLogger(__name__)
 
 
+AIPERF_CRD_NAMES: tuple[str, ...] = (
+    "aiperfjobs.aiperf.nvidia.com",
+    "aiperfsweeps.aiperf.nvidia.com",
+)
+"""All AIPerf CRDs the chart installs. Both must be Established before any
+CR (AIPerfJob or AIPerfSweep) is applied — kubectl apply returns when the
+apiserver accepts the CRD object, not when ``Established=True`` is set."""
+
+
+async def wait_for_aiperf_crds_established(
+    kubectl: KubectlClient, timeout: int = 60
+) -> None:
+    """Poll until every AIPerf CRD reports ``Established=True``.
+
+    kubectl apply returns after the apiserver accepts the CRD object,
+    not after ``Established`` is set. CRs created on the heels of apply
+    can race the apiserver's CRD registration and fail with
+    ``no matches for kind``. This helper closes that gap, covering both
+    AIPerfJob and AIPerfSweep CRDs.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    pending = list(AIPERF_CRD_NAMES)
+    while pending and asyncio.get_event_loop().time() < deadline:
+        still_pending: list[str] = []
+        for crd_name in pending:
+            result = await kubectl.run(
+                "get",
+                "crd",
+                crd_name,
+                "-o",
+                "jsonpath={.status.conditions[?(@.type=='Established')].status}",
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "True":
+                logger.info(f"CRD {crd_name} established")
+                continue
+            still_pending.append(crd_name)
+        pending = still_pending
+        if pending:
+            await asyncio.sleep(1)
+    if pending:
+        raise TimeoutError(
+            f"CRDs not Established within {timeout}s: {', '.join(pending)}"
+        )
+
+
 @dataclass
 class AIPerfJobConfig:
     """Configuration for an AIPerfJob CR."""
@@ -385,22 +431,8 @@ class OperatorDeployer:
         await self._wait_for_crd_established()
 
     async def _wait_for_crd_established(self, timeout: int = 60) -> None:
-        """Wait for CRD to be established."""
-        start_time = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start_time < timeout:
-            result = await self.kubectl.run(
-                "get",
-                "crd",
-                self.CRD_NAME,
-                "-o",
-                "jsonpath={.status.conditions[?(@.type=='Established')].status}",
-                check=False,
-            )
-            if result.stdout.strip() == "True":
-                logger.info("CRD established")
-                return
-            await asyncio.sleep(1)
-        raise TimeoutError(f"CRD {self.CRD_NAME} not established within {timeout}s")
+        """Wait for both AIPerf CRDs (AIPerfJob, AIPerfSweep) to be Established."""
+        await wait_for_aiperf_crds_established(self.kubectl, timeout=timeout)
 
     async def is_operator_healthy(self) -> bool:
         """Return True if the operator Deployment + RBAC are fully present.
@@ -496,6 +528,12 @@ class OperatorDeployer:
         manifest = result.stdout
 
         await self.kubectl.apply(manifest)
+
+        # kubectl apply returns when the apiserver accepts the CRD object,
+        # not when Established=True is set. CRs (AIPerfJob/AIPerfSweep)
+        # applied on the heels of deploy_operator can race CRD registration
+        # and fail with 'no matches for kind'. Wait for both CRDs.
+        await self._wait_for_crd_established()
 
         # Use defaults that match production; Kind node has enough memory
         env_pairs = [
