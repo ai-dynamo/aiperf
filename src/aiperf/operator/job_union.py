@@ -334,10 +334,19 @@ async def find_any_job(
     results_dir: Path,
     namespace: str,
     name: str,
+    *,
+    epoch: str | None = None,
 ) -> AIPerfJobInfo | None:
     """Return the unified view of a single job or None if neither source has it.
 
     If both sources have it, CR wins on live fields and ``source="both"``.
+
+    When ``epoch`` is supplied, the archived half is pinned to
+    ``<results_dir>/<ns>/<name>/<epoch>/profile_export_aiperf.json`` rather
+    than the ``latest.txt`` pointer, and the live CR half is dropped — the
+    live CR always reflects the *current* run, so merging it into a request
+    for a historical epoch would conflate epochs. ``epoch`` of ``"latest"``
+    or ``None`` falls through to ``latest.txt`` (legacy behavior).
     """
     cr: AIPerfJobInfo | None = None
     try:
@@ -348,7 +357,7 @@ async def find_any_job(
     if cr is not None:
         cr.source = "live"
 
-    run = resolve_run_dir(results_dir, namespace, name)
+    run = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
     summary_path = run / _SUMMARY_FILE if run is not None else None
     pvc: AIPerfJobInfo | None = None
     if summary_path is not None and summary_path.is_file():
@@ -364,13 +373,21 @@ async def find_any_job(
                 .isoformat()
                 .replace("+00:00", "Z")
             )
+            # ``run`` is the epoch-specific dir; the sweep marker lives at the
+            # per-name root one level up since sweep linkage is fixed for a
+            # given child name (not per-epoch). ``run.parent`` resolves to
+            # ``<results_dir>/<ns>/<name>`` for any epoch, latest or pinned.
             pvc = _archived_from_summary(
                 namespace,
                 name,
                 data,
                 mtime_iso=mtime_iso,
-                name_dir=results_dir / namespace / name,
+                name_dir=run.parent,
             )
+
+    # Caller asked for a specific historical epoch: never merge the live CR.
+    if epoch is not None and epoch != "latest":
+        return pvc
 
     if cr is None and pvc is None:
         return None
