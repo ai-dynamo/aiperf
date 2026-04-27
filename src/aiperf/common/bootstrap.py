@@ -34,12 +34,10 @@ warnings.filterwarnings(
 def _enable_hf_offline_mode() -> None:
     """Force HuggingFace libraries to use local cache only.
 
-    The cache is warmed before child spawn in every deployment shape:
-    locally by ``tokenizer_validator._prefetch_tokenizers`` in the parent,
-    and in Kubernetes by ``download_tokenizer`` fetching bundles from the
-    operator API into each pod's local cache. Setting these env vars
-    ensures child processes never hit the network, avoiding the
-    thundering-herd problem when many workers start concurrently.
+    The parent process warms the disk cache before spawning children
+    (see ``tokenizer_validator._prefetch_tokenizers``). Setting these
+    env vars ensures child processes never hit the network, avoiding
+    the thundering-herd problem when many workers start concurrently.
     """
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -61,7 +59,12 @@ def _configure_child_process() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    _enable_hf_offline_mode()
+    # Skip HF offline mode in Kubernetes pods: the parent process may not
+    # have warmed the cache (e.g. controller pod), so children need network
+    # access.  Worker pods prefetch via WorkerGroupManager before spawning
+    # subprocesses, but the controller pod does not.
+    if not os.environ.get("AIPERF_JOB_ID"):
+        _enable_hf_offline_mode()
 
 
 def _resolve_service_id(
