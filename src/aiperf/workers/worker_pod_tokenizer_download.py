@@ -100,8 +100,15 @@ async def download_tokenizer(
 
 
 def _extract_bundle(compressed: bytes, dest: Path) -> None:
-    """Decompress zstd, untar in-memory into ``dest``."""
-    tar_bytes = zstandard.ZstdDecompressor().decompress(compressed)
+    """Decompress zstd, untar in-memory into ``dest``.
+
+    Uses ``stream_reader`` rather than ``decompress(buf)`` because the
+    server-side compressor (``ZstdCompressor.stream_writer``) does not
+    embed a content size in the frame header; ``decompress(buf)`` then
+    raises "could not determine content size in frame header".
+    """
+    with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(compressed)) as reader:
+        tar_bytes = reader.read()
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tf:
         tf.extractall(path=dest)
 
