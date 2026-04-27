@@ -339,3 +339,107 @@ Modified files:
 - **Local mode unification.** Eventually the same registry abstraction
   could let local mode skip its forkserver path, but the CoW savings are
   real and there is no reason to disrupt that for this change.
+
+---
+
+## 9. Post-deploy amendment (2026-04-26)
+
+The first DGX deploy (`5cf3cc175`) failed; three real bugs surfaced that
+the unit + same-process component-integration tests had missed. The
+revised shipped design differs from §3 in two material ways. This
+section documents what actually shipped and the lesson behind each
+change.
+
+### 9.1 The controller pod is multi-container
+
+§3.1 / §3.2 assumed the warmer (in `tokenizer_validator._prefetch_tokenizers`)
+and the router (in `aiperf.api.routers.tokenizer`) could share an
+in-memory `TokenizerBundleRegistry` because both run "on the controller."
+**They don't.** The K8s controller pod has eight separate containers —
+`api`, `control-plane`, `dataset-manager`, `records-manager`,
+`server-metrics-manager`, `timing-manager`, `event-bus-proxy`,
+`gpu-telemetry-manager`, `results-sidecar` — each its own process with
+its own Python interpreter and module-level globals. The warmer runs in
+`control-plane`/`dataset-manager`; the router runs in `api`. Module-level
+state never crossed the boundary, so every bundle request returned 404.
+
+**What shipped instead** (commit `956cd5920`): the router calls
+`huggingface_hub.snapshot_download(name, allow_patterns=[*.json, *.txt,
+*.model, *.tiktoken, *.jinja, *.py])` on demand inside a worker thread.
+The api container has network access (it always did — health probes,
+metrics scraping, etc.), and the on-disk HF cache amortises repeats
+within an api-container lifetime. `TokenizerBundleRegistry`,
+`set_default_registry`, and the registry-mounted-on-FastAPI plumbing are
+no longer used by the router; the registry class still exists but is
+load-bearing on nothing.
+
+This trades the §3.1 "eager warm + 503-until-ready" contract for "first
+request per tokenizer pays HF latency (~1-2s for `gpt2`)." Worker pods
+retry through transient failures via the existing backoff in
+`download_tokenizer`; ready-state coordination is no longer needed.
+
+### 9.2 The controller pod still needs HF egress and a writable HF cache
+
+§3.5 deleted `HF_HOME=/tmp/hf_home` from `kubernetes/jobset_helpers.py`
+and force-set `HF_HUB_OFFLINE=1` in `bootstrap.py` for **all** pods,
+on the assumption that "pods no longer need HF." That assumption only
+holds for **worker pods**. The controller pod's `dataset_manager`
+container still loads the tokenizer for prompt-token counting and
+synthetic dataset generation via `Tokenizer.from_pretrained(name)`; it
+**must** be able to write to its HF cache and **must** be able to reach
+the HF Hub. With both env settings dropped/forced, the controller died
+with `OSError: [Errno 30] Read-only file system: '/app/.cache/huggingface'`
+during `dataset_manager._configure_tokenizer`.
+
+**What shipped instead:** D2 and D3 reverted (commits `7bec45c49`,
+`b29dec486`). `HF_HOME=/tmp/hf_home` is back on every pod (harmless on
+workers, required on controller), and `HF_HUB_OFFLINE=1` is again
+skipped in K8s pods via the `AIPERF_JOB_ID` guard in `bootstrap.py`.
+Worker air-gap is enforced by the **application code** (`download_tokenizer`
++ `from_pretrained(local_path)`) rather than by env-var policy — proven
+by the smoke test which recorded zero `huggingface.co` hits across all
+worker-pod containers.
+
+### 9.3 There are two parallel tokenizer-load sites in `records/`
+
+§3.3 said the RP "loads via `AutoTokenizer.from_pretrained(local_path,
+trust_remote_code=...)` against the extracted dir." Plan task C4 asked
+the agent to grep for `AutoTokenizer.from_pretrained` calls inside
+`src/aiperf/records/` and patched the only hit it found,
+`RecordProcessor.get_tokenizer` (`record_processor_service.py:230-260`).
+But `records/inference_result_parser.py:84,115` has **two more
+tokenizer-load sites** that go through `_tokenizer_preload.get_or_load(name)`
+— an indirect call that the grep missed. Those sites bypassed the
+bundle download entirely and went straight to HF.
+
+**What shipped instead** (commit `be954904f`): extracted a free-function
+`resolve_tokenizer_load_target(run, tokenizer_name, logger)` into
+`workers/worker_pod_tokenizer_download.py` and called it from
+`record_processor_service.py` (one site) **and**
+`inference_result_parser.py` (both sites). The K8s/non-K8s gate and the
+download invocation now live in one place. This is the single canonical
+boundary between "tokenizer name as the user supplied it" and "local
+path the loader actually consumes."
+
+### 9.4 Lessons that should change how we test the next K8s feature
+
+- **One same-pod different-container round-trip.** All unit tests and
+  the existing component-integration test exercise warmer + router in
+  one process. The actual production topology is two processes inside
+  one pod sharing a Linux namespace. We need a test that imports the
+  router into one Python process, the warmer into another, and verifies
+  the contract. The component-integration suite is the natural home;
+  spawning a child process via `multiprocessing.spawn` is enough to
+  catch §9.1 next time.
+- **Grep for indirect callers.** Plan tasks that say "find all call
+  sites of `from_pretrained`" must also grep for project-internal
+  wrappers (`_tokenizer_preload.get_or_load`, `Tokenizer.from_pretrained`,
+  `tokenizer_loader.load_tokenizer_for_run`, `parallel_decode`-style
+  per-worker reloads) — any function whose body calls the thing we care
+  about. §9.3 was a generic-enough miss that future tasks should
+  routinely list internal wrappers in the brief.
+- **"Pods no longer need X" needs a controller-pod check.** The
+  controller pod is a pod. Any spec section that drops a per-pod env
+  var or capability must explicitly justify it for both
+  *worker* pods and the *controller* pod, not just "K8s pods." §9.2
+  came from conflating those two pod roles.

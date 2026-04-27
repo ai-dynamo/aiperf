@@ -1303,3 +1303,106 @@ git commit -s -m "test(tokenizer): component-integration round-trip via operator
 - Explicit revision pinning in the URL path.
 - Local-mode unification with the registry — local stays on its forkserver-CoW path.
 - **K8s chaos test** (spec §7) — covered by a follow-up branch that extends `tests/kubernetes/chaos/k8s_slow` once this lands. Requires kind+toxiproxy infra not part of this implementation cycle.
+
+---
+
+## Post-deploy revisions (2026-04-26)
+
+The plan above shipped end-to-end on `ajc/k8s` and was deployed to DGX as
+image `k8s-multi-20260427-002709-5cf3cc175`. The first smoke benchmark
+(`smoke-tokenizer` against `aiperf-mock-server`, model `mock`, tokenizer
+`gpt2`) failed during controller startup, then on the second deploy
+returned 404 from the bundle endpoint, then on the third succeeded.
+Every fix maps to a real implementation gap; recording them here so the
+next plan in the same problem space starts from accurate prior art.
+**See spec §9 for the architectural lessons.**
+
+### R1 — Revert D2 + D3 (`7bec45c49`, `b29dec486`)
+
+D2 ("drop `HF_HOME=/tmp/hf_home` injection") and D3 ("force HF offline
+mode unconditionally") removed the controller pod's ability to load a
+tokenizer for synthetic-dataset prompt generation. The
+`dataset_manager` container died with `OSError: [Errno 30] Read-only
+file system: '/app/.cache/huggingface'` during `_configure_tokenizer`.
+
+**Net effect on the merged history:** D2 and D3 are reverted. `HF_HOME=/tmp/hf_home`
+is back on every controller-pod / worker-pod env list (harmless on
+workers, required on controller); the `if not
+os.environ.get("AIPERF_JOB_ID"):` guard in
+`src/aiperf/common/bootstrap.py` is restored. **Worker air-gap is now
+enforced by application code** (`download_tokenizer` +
+`from_pretrained(local_path)`), not by env-var policy. The smoke test
+verifies this directly: zero `huggingface.co` hits in any worker-pod
+container.
+
+If a future plan wants to harden the worker air-gap with a belt-and-
+suspenders env override, it must inject a *worker-pod-only* env var
+(e.g. `AIPERF_FORCE_HF_OFFLINE=1` set by the operator on worker pods
+but not controller pods) and gate `bootstrap.py` on that — not on
+`AIPERF_JOB_ID` which is set on every pod.
+
+### R2 — `InferenceResultParser` had a parallel tokenizer-load path (`be954904f`)
+
+C4 patched only `RecordProcessor.get_tokenizer`. The actual hot-path
+loader is `InferenceResultParser.configure()` (eager, at startup) and
+`InferenceResultParser.get_tokenizer()` (lazy, per-record), both at
+`src/aiperf/records/inference_result_parser.py:84,115`. Both call
+`_tokenizer_preload.get_or_load(name, ...)` and bypassed C4's K8s
+detection.
+
+**Net effect on the merged history:** the K8s "name → local path"
+resolution moved from a private method on `RecordProcessor` into a free
+function `resolve_tokenizer_load_target(run, tokenizer_name, logger)`
+in `src/aiperf/workers/worker_pod_tokenizer_download.py`. Three
+call sites use it: `RecordProcessor.get_tokenizer`,
+`InferenceResultParser.configure` (eager), and
+`InferenceResultParser.get_tokenizer` (lazy). This is the single
+canonical boundary between user-facing tokenizer names and local
+snapshot paths.
+
+**For future plans in this area:** the brief must list every
+project-internal wrapper around `from_pretrained`, not just
+`AutoTokenizer.from_pretrained` itself. Today those wrappers are
+`Tokenizer.from_pretrained`, `_tokenizer_preload.get_or_load`,
+`load_tokenizer_for_run`, and the per-worker reload in
+`dataset/generator/parallel_decode.py`.
+
+### R3 — Cross-container registry was always going to be empty (`956cd5920`)
+
+The largest design flaw: `TokenizerBundleRegistry` lives in
+`src/aiperf/common/tokenizer_bundle_registry.py` as module-level state.
+Tasks A1, B1, B2, B3 all assumed warmer + router shared the registry.
+**They don't** — the controller pod has eight containers, each its own
+process. The warmer populates the registry in the
+`control-plane`/`dataset-manager` container; the router serves from the
+`api` container. Module globals don't span container boundaries.
+
+**Net effect on the merged history:** the router (`src/aiperf/api/routers/tokenizer.py`)
+calls `huggingface_hub.snapshot_download(name, allow_patterns=[*.json,
+*.txt, *.model, *.tiktoken, *.jinja, *.py])` on demand inside
+`asyncio.to_thread`. The api container's HF cache amortises repeats
+within a single api-container lifetime. `TokenizerBundleRegistry`,
+`set_default_registry`, and the registry plumbing in
+`src/aiperf/api/api_service.py` are no longer load-bearing — kept as
+dead code only because removing them would balloon the diff; a separate
+cleanup pass can excise them if desired.
+
+The `503 Retry-After: 1` ready-state contract from spec §3.2 is no
+longer needed. Worker pods retry through transient HF failures via the
+existing backoff in `download_tokenizer`. If a future air-gap mode wants
+to fully eliminate egress from the api container, the eager-warm
++ shared-volume topology described in spec §9.1 is the natural
+extension; this plan deliberately did not pursue it.
+
+### Test gaps the post-deploy walk surfaced
+
+- **Same-process round-trip is not enough.** Every unit test and the
+  E1 component-integration test ran warmer and router in the same
+  Python process. The next plan in this area must include at least one
+  multi-process round-trip — spawn the router in a child process, run
+  the warmer in the parent, verify the contract — to catch the spec §9.1
+  class of failures before deploy.
+- **No K8s smoke before merge.** A 1-minute mock-server smoke benchmark
+  on a kind cluster would have caught R1 and R3. Worth adding as a
+  guarded `make smoke-k8s` target that the writing-plans skill can
+  reference for future K8s-shaped specs.
