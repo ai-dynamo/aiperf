@@ -8,9 +8,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.kubernetes.cli_helpers import ResolvedJob, format_age, resolve_job
+from aiperf.kubernetes.cli_helpers import (
+    ResolvedJob,
+    ResolvedSweep,
+    format_age,
+    resolve_job,
+    resolve_target,
+)
 from aiperf.kubernetes.constants import AIPerfLabels
-from aiperf.kubernetes.models import AIPerfJobInfo, JobSetInfo
+from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo, JobSetInfo
 
 
 def _raw_jobset(status_obj: dict | None = None) -> dict[str, Any]:
@@ -392,3 +398,215 @@ class TestResolveJob:
 
         captured = capsys.readouterr()
         assert "aiperf-benchmarks" in captured.out
+
+
+# ============================================================
+# ResolvedSweep
+# ============================================================
+
+
+def _make_sweep_info(**overrides: Any) -> AIPerfSweepInfo:
+    """Build an AIPerfSweepInfo with sensible defaults, overridden by kwargs."""
+    defaults: dict[str, Any] = {
+        "name": "my-sweep",
+        "namespace": "bench-ns",
+        "phase": "Running",
+        "run_epoch": 1700000000,
+        "total_variations": 4,
+        "max_total_runs": 12,
+        "completed_runs": 2,
+        "failed_runs": 0,
+        "created": "2026-01-15T10:30:00Z",
+    }
+    defaults.update(overrides)
+    return AIPerfSweepInfo(**defaults)
+
+
+class TestResolvedSweep:
+    """Tests for the ResolvedSweep wrapper class."""
+
+    def test_resolved_sweep_namespace_and_phase_properties(self) -> None:
+        """namespace and phase delegate to sweep_info."""
+        info = _make_sweep_info(namespace="prod", phase="Succeeded")
+        resolved = ResolvedSweep(name="n", sweep_info=info, api=MagicMock())
+        assert resolved.namespace == "prod"
+        assert resolved.phase == "Succeeded"
+
+    def test_resolved_sweep_name_and_api_stored_directly(self) -> None:
+        """name and api attributes are stored directly on ResolvedSweep."""
+        api = MagicMock()
+        resolved = ResolvedSweep(
+            name="lookup-name", sweep_info=_make_sweep_info(), api=api
+        )
+        assert resolved.name == "lookup-name"
+        assert resolved.api is api
+
+    async def test_resolved_sweep_aclose_idempotent(self) -> None:
+        """Calling aclose twice is safe (close is itself idempotent)."""
+        api = MagicMock()
+        api.close = AsyncMock()
+        resolved = ResolvedSweep(name="n", sweep_info=_make_sweep_info(), api=api)
+        await resolved.aclose()
+        await resolved.aclose()
+        assert api.close.await_count == 2
+
+
+# ============================================================
+# resolve_target
+# ============================================================
+
+
+class TestResolveTarget:
+    """Tests for the resolve_target async helper."""
+
+    async def test_resolve_target_returns_resolved_job_when_aiperf_job_found(
+        self,
+    ) -> None:
+        """If find_aiperf_job hits, resolve_target returns a ResolvedJob."""
+        api = MagicMock()
+        job_info = _make_job_info(name="bench-1", namespace="ns-1", job_id="bench-1")
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers._open_api_client",
+                new=AsyncMock(return_value=api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=job_info),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(),
+            ) as mock_find_sweep,
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(),
+            ) as mock_find_jobset,
+        ):
+            result = await resolve_target("bench-1", namespace="ns-1")
+
+        assert isinstance(result, ResolvedJob)
+        assert result.name == "bench-1"
+        assert result.job_info is job_info
+        assert result.api is api
+        mock_find_sweep.assert_not_awaited()
+        mock_find_jobset.assert_not_awaited()
+
+    async def test_resolve_target_returns_resolved_sweep_when_aiperfsweep_found(
+        self,
+    ) -> None:
+        """If only the sweep CR exists, resolve_target returns a ResolvedSweep."""
+        api = MagicMock()
+        sweep_info = _make_sweep_info(name="bench-sweep", namespace="ns-1")
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers._open_api_client",
+                new=AsyncMock(return_value=api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=sweep_info),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(),
+            ) as mock_find_jobset,
+        ):
+            result = await resolve_target("bench-sweep", namespace="ns-1")
+
+        assert isinstance(result, ResolvedSweep)
+        assert result.name == "bench-sweep"
+        assert result.sweep_info is sweep_info
+        assert result.api is api
+        mock_find_jobset.assert_not_awaited()
+
+    async def test_resolve_target_falls_back_to_jobset_when_neither_cr_found(
+        self,
+    ) -> None:
+        """When job + sweep both miss, resolve_target falls back to JobSet."""
+        api = MagicMock()
+        jobset_info = JobSetInfo(
+            name="aiperf-fallback",
+            namespace="default",
+            jobset={
+                "metadata": {
+                    "name": "aiperf-fallback",
+                    "namespace": "default",
+                    "creationTimestamp": "2026-01-10T08:00:00Z",
+                    "labels": {"aiperf.nvidia.com/job-id": "fallback-id"},
+                    "annotations": {},
+                },
+                "status": {},
+            },
+            status="Running",
+            model="llama-3",
+            endpoint="http://llm:8000",
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers._open_api_client",
+                new=AsyncMock(return_value=api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=jobset_info),
+            ),
+        ):
+            result = await resolve_target("fallback-id", namespace="default")
+
+        assert isinstance(result, ResolvedJob)
+        assert result.job_info.namespace == "default"
+        assert result.job_info.model == "llama-3"
+        assert result.job_info.jobset_name == "aiperf-fallback"
+        assert result.api is api
+
+    async def test_resolve_target_returns_none_when_nothing_found(self, capsys) -> None:
+        """When all three lookups miss, resolve_target returns None.
+
+        The error message names BOTH AIPerfJob and AIPerfSweep so the user
+        can pick the right follow-up command.
+        """
+        api = MagicMock()
+        api.close = AsyncMock()
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers._open_api_client",
+                new=AsyncMock(return_value=api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_jobset",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            result = await resolve_target("missing", namespace="prod")
+
+        assert result is None
+        api.close.assert_awaited_once()
+        captured = capsys.readouterr()
+        assert "AIPerfJob" in captured.out
+        assert "AIPerfSweep" in captured.out
+        assert "missing" in captured.out

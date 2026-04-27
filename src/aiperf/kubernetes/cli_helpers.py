@@ -27,7 +27,7 @@ from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
-    from aiperf.kubernetes.models import AIPerfJobInfo
+    from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo
 
 
 def format_age(created: str) -> str:
@@ -208,6 +208,127 @@ async def resolve_job(
         endpoint=jobset_info.endpoint,
     )
     return ResolvedJob(name=job_id, job_info=job_info, api=api)
+
+
+class ResolvedSweep:
+    """Result of resolving a name to an AIPerfSweep CR.
+
+    Mirrors :class:`ResolvedJob` semantics: the ``api`` field is an open,
+    short-lived ``ApiClient`` owned by the calling CLI command. Callers
+    with a natural choke point may call ``await resolved.aclose()`` to
+    release the underlying aiohttp session explicitly.
+    """
+
+    __slots__ = ("name", "sweep_info", "api")
+
+    def __init__(self, name: str, sweep_info: AIPerfSweepInfo, api: ApiClient) -> None:
+        self.name = name
+        self.sweep_info = sweep_info
+        self.api = api
+
+    @property
+    def namespace(self) -> str:
+        """Namespace from the CR."""
+        return self.sweep_info.namespace
+
+    @property
+    def phase(self) -> str:
+        """Current lifecycle phase from the CR status."""
+        return self.sweep_info.phase
+
+    async def aclose(self) -> None:
+        """Close the underlying ``ApiClient``. Idempotent.
+
+        Safe to call multiple times; no-ops on an already-closed client.
+        """
+        await self.api.close()
+
+
+async def resolve_target(
+    name: str | None,
+    namespace: str | None = None,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> ResolvedJob | ResolvedSweep | None:
+    """Resolve a name to either an AIPerfJob or AIPerfSweep CR.
+
+    Resolution order:
+      1. AIPerfJob CR (most common; matches today's :func:`resolve_job` behaviour).
+      2. AIPerfSweep CR.
+      3. JobSet fallback (job-shaped, returns :class:`ResolvedJob`).
+      4. ``None`` with helpful error message.
+
+    The returned API client is open and short-lived; treat its lifecycle the
+    way :func:`resolve_job` does — long-running contexts MUST instead use
+    ``async with k8s_client() as api:``.
+
+    Args:
+        name: Either an AIPerfJob/AIPerfSweep resource name or a generated
+            ``status.jobId``. ``None`` falls back to the last benchmark
+            persisted by ``aiperf kube profile``.
+        namespace: Optional namespace to search in.
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+
+    Returns:
+        :class:`ResolvedJob` if a job (or jobset fallback) is found,
+        :class:`ResolvedSweep` if an AIPerfSweep is found, or ``None`` if
+        nothing matches.
+    """
+    from aiperf.kubernetes.client import (
+        find_aiperf_job,
+        find_aiperf_sweep,
+        find_jobset,
+    )
+
+    resolved = resolve_job_id_and_namespace(name, namespace)
+    if not resolved:
+        return None
+    target_name, namespace = resolved
+
+    api = await _open_api_client(kubeconfig=kubeconfig, kube_context=kube_context)
+
+    # 1. AIPerfJob CR — same job-first behaviour as resolve_job.
+    job_info = await find_aiperf_job(api, target_name, namespace)
+    if job_info:
+        return ResolvedJob(name=target_name, job_info=job_info, api=api)
+
+    # 2. AIPerfSweep CR.
+    sweep_info = await find_aiperf_sweep(api, target_name, namespace)
+    if sweep_info:
+        return ResolvedSweep(name=target_name, sweep_info=sweep_info, api=api)
+
+    # 3. JobSet fallback — wrap as a minimal AIPerfJobInfo for callers that
+    # only know how to consume ResolvedJob.
+    jobset_info = await find_jobset(api, target_name, namespace)
+    if jobset_info:
+        from aiperf.kubernetes.models import AIPerfJobInfo
+
+        job_info = AIPerfJobInfo(
+            name=jobset_info.name,
+            namespace=jobset_info.namespace,
+            phase=jobset_info.status,
+            job_id=jobset_info.job_id,
+            jobset_name=jobset_info.name,
+            created=jobset_info.created,
+            model=jobset_info.model,
+            endpoint=jobset_info.endpoint,
+        )
+        return ResolvedJob(name=target_name, job_info=job_info, api=api)
+
+    # 4. Nothing found — name both candidate kinds in the error so the user
+    # can pick the right follow-up command.
+    print_error(f"No AIPerfJob or AIPerfSweep found with name: {target_name}")
+    if namespace:
+        print_info(f"Searched namespace: {namespace}")
+    else:
+        print_info("Searched all namespaces")
+    print_action(
+        "Run 'aiperf kube list' to see available jobs "
+        "(or 'aiperf kube sweeps list' once available) for sweeps"
+    )
+    await api.close()
+    return None
 
 
 async def confirm_action(msg: str) -> bool:

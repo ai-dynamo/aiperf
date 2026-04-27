@@ -272,10 +272,39 @@ class AIPerfJobCR(K8sCamelModel):
         # Summary: operator writes nested metric tags via MetricsSummary.from_metrics(),
         # so request_throughput.avg / request_latency.p99 are the canonical reads.
         s = self.status.live_summary or self.status.summary or {}
-        rt = s.get("request_throughput") if isinstance(s, dict) else None
-        rl = s.get("request_latency") if isinstance(s, dict) else None
-        throughput = rt.get("avg") if isinstance(rt, dict) else None
-        latency = rl.get("p99") if isinstance(rl, dict) else None
+
+        def _stat(tag: str, stat: str) -> float | None:
+            entry = s.get(tag) if isinstance(s, dict) else None
+            if not isinstance(entry, dict):
+                return None
+            val = entry.get(stat)
+            return float(val) if isinstance(val, (int, float)) else None
+
+        throughput = _stat("request_throughput", "avg")
+        latency = _stat("request_latency", "p99")
+        ttft = _stat("time_to_first_token", "avg")
+        out_tok_tps = _stat("output_token_throughput", "avg")
+        itl = _stat("inter_token_latency", "avg")
+
+        # Total requests: prefer the derived ``total_requests`` scalar that
+        # MetricsSummary.from_metrics writes alongside the per-tag entries;
+        # fall back to request_count.avg for older statuses written before
+        # the derived scalar landed.
+        total_requests: int | None = None
+        if isinstance(s, dict):
+            raw_total = s.get("total_requests")
+            if isinstance(raw_total, (int, float)):
+                total_requests = int(raw_total)
+        if total_requests is None:
+            rc = _stat("request_count", "avg")
+            if rc is not None:
+                total_requests = int(rc)
+
+        error_rate: float | None = None
+        if isinstance(s, dict):
+            raw_err = s.get("error_rate")
+            if isinstance(raw_err, (int, float)):
+                error_rate = float(raw_err)
 
         # Sweep linkage labels are stamped on every AIPerfJob created by the
         # sweep-controller; standalone jobs leave all three as None.
@@ -304,6 +333,11 @@ class AIPerfJobCR(K8sCamelModel):
             progress_percent=progress,
             throughput_rps=float(throughput) if throughput is not None else None,
             latency_p99_ms=float(latency) if latency is not None else None,
+            ttft_ms=ttft,
+            output_token_throughput_tps=out_tok_tps,
+            inter_token_latency_ms=itl,
+            total_requests=total_requests,
+            error_rate=error_rate,
             model=model,
             endpoint=endpoint_url,
             sweep_name=sweep_name,
@@ -356,6 +390,44 @@ class AIPerfJobInfo(K8sCamelModel):
     latency_p99_ms: float | None = Field(
         default=None, description="Live or final p99 latency in milliseconds."
     )
+    ttft_ms: float | None = Field(
+        default=None,
+        description=(
+            "Live average time-to-first-token in milliseconds "
+            "(time_to_first_token.avg from status.liveSummary). None for "
+            "non-streaming endpoints or before any responses arrive."
+        ),
+    )
+    output_token_throughput_tps: float | None = Field(
+        default=None,
+        description=(
+            "Live average output token throughput, tokens per second "
+            "(output_token_throughput.avg). None for non-streaming endpoints "
+            "or completion-only benchmarks."
+        ),
+    )
+    inter_token_latency_ms: float | None = Field(
+        default=None,
+        description=(
+            "Live average inter-token latency in milliseconds "
+            "(inter_token_latency.avg). None until at least two tokens have "
+            "been observed on a streaming endpoint."
+        ),
+    )
+    total_requests: int | None = Field(
+        default=None,
+        description=(
+            "Total successful + failed requests issued so far "
+            "(derived ``total_requests``, falling back to request_count.avg)."
+        ),
+    )
+    error_rate: float | None = Field(
+        default=None,
+        description=(
+            "Fraction of requests that errored (0..1). Derived as "
+            "error_count / request_count by ``MetricsSummary.from_metrics``."
+        ),
+    )
     model: str | None = Field(default=None, description="Target model name from spec.")
     endpoint: str | None = Field(
         default=None, description="Target endpoint URL from spec."
@@ -384,6 +456,119 @@ class AIPerfJobInfo(K8sCamelModel):
     def workers_str(self) -> str:
         """Format as 'ready/total'."""
         return f"{self.workers_ready}/{self.workers_total}"
+
+
+# =============================================================================
+# AIPerfSweep CR structure — parsed via AIPerfSweepCR.model_validate(raw_dict)
+#
+# Mirrors the AIPerfJobCR pattern but for the parent AIPerfSweep CR. The CLI
+# resolver builds AIPerfSweepInfo from the raw apiserver response so kube
+# commands can decide whether a name refers to a job or a sweep.
+# =============================================================================
+
+
+class CRSweepStatus(K8sCamelModel):
+    """AIPerfSweep status subresource (subset relevant for CLI display).
+
+    Authoritative writer is the operator's sweep handler chain — see
+    ``operator/handlers/sweep/create.py`` and ``handlers/sweep/child_rollup.py``
+    for the canonical field semantics.
+    """
+
+    phase: str = Field(default="Pending", description="Current lifecycle phase.")
+    run_epoch: int = Field(
+        default=0,
+        description="Epoch-seconds key of the most recent successful run.",
+    )
+    total_variations: int = Field(
+        default=0,
+        description="Total variation cells produced by ``expand_sweep()``.",
+    )
+    max_total_runs: int = Field(
+        default=0,
+        description="Upper bound on total child runs (variations * max_trials).",
+    )
+    completed_runs: int = Field(
+        default=0,
+        description="Sum of children in a terminal-success phase.",
+    )
+    failed_runs: int = Field(
+        default=0,
+        description="Sum of children in a terminal-failure phase.",
+    )
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def coerce_none_phase(cls, v: str | None) -> str:
+        """Coerce None or empty phase to 'Pending'."""
+        return v or "Pending"
+
+
+class AIPerfSweepCR(K8sCamelModel):
+    """Parsed AIPerfSweep custom resource.
+
+    Use ``AIPerfSweepCR.model_validate(raw_dict)`` to parse a raw K8s API
+    response dict, then ``to_info()`` for a flat CLI display model. The
+    spec is intentionally not modeled here — sweep spec validation lives
+    in :mod:`aiperf.kubernetes.sweep_models` (used by the operator on
+    create), and CLI display only needs metadata + status fields.
+    """
+
+    metadata: CRMetadata = Field(
+        default_factory=CRMetadata, description="K8s object metadata."
+    )
+    status: CRSweepStatus = Field(
+        default_factory=CRSweepStatus, description="Sweep status subresource."
+    )
+
+    def to_info(self) -> AIPerfSweepInfo:
+        """Convert to flat AIPerfSweepInfo for CLI display."""
+        return AIPerfSweepInfo(
+            name=self.metadata.name,
+            namespace=self.metadata.namespace,
+            phase=self.status.phase,
+            run_epoch=self.status.run_epoch,
+            total_variations=self.status.total_variations,
+            max_total_runs=self.status.max_total_runs,
+            completed_runs=self.status.completed_runs,
+            failed_runs=self.status.failed_runs,
+            created=self.metadata.creation_timestamp,
+        )
+
+
+class AIPerfSweepInfo(K8sCamelModel):
+    """Flat view of an AIPerfSweep for CLI display.
+
+    Constructed via ``AIPerfSweepCR.model_validate(raw).to_info()`` for
+    data from the K8s API, or directly with kwargs for fallback paths.
+    """
+
+    name: str = Field(description="AIPerfSweep resource name.")
+    namespace: str = Field(
+        description="Kubernetes namespace containing the AIPerfSweep."
+    )
+    phase: str = Field(description="Current lifecycle phase.")
+    run_epoch: int = Field(
+        default=0,
+        description="Epoch-seconds key of the most recent successful run.",
+    )
+    total_variations: int = Field(
+        default=0,
+        description="Total variation cells produced by ``expand_sweep()``.",
+    )
+    max_total_runs: int = Field(
+        default=0,
+        description="Upper bound on total child runs (variations * max_trials).",
+    )
+    completed_runs: int = Field(
+        default=0,
+        description="Sum of children in a terminal-success phase.",
+    )
+    failed_runs: int = Field(
+        default=0,
+        description="Sum of children in a terminal-failure phase.",
+    )
+    created: str = Field(default="", description="Creation timestamp from metadata.")
 
 
 @dataclass

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AIPerfJob CR helpers — list/find/get/cancel free functions."""
+"""AIPerfJob and AIPerfSweep CR helpers — list/find/get/cancel free functions."""
 
 from __future__ import annotations
 
@@ -15,7 +15,19 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_PLURAL,
     AIPERF_JOB_VERSION,
 )
-from aiperf.kubernetes.models import AIPerfJobCR, AIPerfJobInfo
+from aiperf.kubernetes.models import (
+    AIPerfJobCR,
+    AIPerfJobInfo,
+    AIPerfSweepCR,
+    AIPerfSweepInfo,
+)
+
+# AIPerfSweep CR coordinates — parallel to AIPERF_JOB_* in cr_refs.py. Kept
+# inline here (rather than added to cr_refs.py) to keep this PR's blast radius
+# small; promote to cr_refs.py if a second module needs them.
+_AIPERF_SWEEP_GROUP = "aiperf.nvidia.com"
+_AIPERF_SWEEP_VERSION = "v1alpha1"
+_AIPERF_SWEEP_PLURAL = "aiperfsweeps"
 
 
 async def list_aiperf_jobs(
@@ -262,3 +274,73 @@ async def cancel_aiperf_job(api: ApiClient, name: str, namespace: str) -> None:
         name=name,
         body={"spec": {"cancel": True}},
     )
+
+
+async def find_aiperf_sweep(
+    api: ApiClient,
+    name: str,
+    namespace: str | None = None,
+) -> AIPerfSweepInfo | None:
+    """Find an AIPerfSweep by resource name, with cluster-wide fallback.
+
+    Mirrors :func:`find_aiperf_job` resolution order:
+
+    1. If ``namespace`` is given, direct ``get_namespaced_custom_object`` by name.
+    2. Otherwise (or on 404 from step 1), cluster-wide list filtered by
+       ``metadata.name=<name>`` and return the first match.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        name: AIPerfSweep resource name (``metadata.name``).
+        namespace: Namespace to look in. ``None`` scans all namespaces.
+
+    Returns:
+        The matching :class:`AIPerfSweepInfo`, or ``None`` if no match found.
+        404 is suppressed (treated as "not found").
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any non-404
+            failure from either the direct ``get`` or the cluster-wide ``list``.
+
+    Example:
+        >>> async with k8s_client() as api:
+        ...     sweep = await find_aiperf_sweep(api, "my-sweep", namespace="aiperf-bench")
+        ...     if sweep:
+        ...         print(sweep.phase, sweep.completed_runs, "/", sweep.max_total_runs)
+    """
+    custom = client.CustomObjectsApi(api)
+
+    # Direct lookup by name — most common path.
+    if namespace is not None:
+        try:
+            raw = await custom.get_namespaced_custom_object(
+                group=_AIPERF_SWEEP_GROUP,
+                version=_AIPERF_SWEEP_VERSION,
+                plural=_AIPERF_SWEEP_PLURAL,
+                namespace=namespace,
+                name=name,
+            )
+            return AIPerfSweepCR.model_validate(raw).to_info()
+        except ApiException as e:
+            if e.status != 404:
+                raise
+
+    # Fallback: scan all namespaces. Use field_selector when no namespace
+    # was given to avoid pulling every sweep on the cluster.
+    try:
+        result = await custom.list_cluster_custom_object(
+            group=_AIPERF_SWEEP_GROUP,
+            version=_AIPERF_SWEEP_VERSION,
+            plural=_AIPERF_SWEEP_PLURAL,
+            field_selector=f"metadata.name={name}" if namespace is None else None,
+        )
+    except ApiException as e:
+        if e.status == 404:
+            return None
+        raise
+
+    for raw in result.get("items", []):
+        cr = AIPerfSweepCR.model_validate(raw)
+        if cr.metadata.name == name:
+            return cr.to_info()
+    return None

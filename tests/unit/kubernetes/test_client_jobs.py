@@ -26,6 +26,7 @@ from pytest import param
 from aiperf.kubernetes.client_jobs import (
     cancel_aiperf_job,
     find_aiperf_job,
+    find_aiperf_sweep,
     get_raw_aiperfjob_status,
     list_aiperf_jobs,
 )
@@ -269,3 +270,136 @@ class TestCancelAIPerfJobPropagatesErrors:
         ):
             await cancel_aiperf_job(api, "n", "default")
         assert exc_info.value.status == status
+
+
+def _raw_aiperfsweep(
+    name: str = "test-sweep",
+    namespace: str = "default",
+    phase: str = "Running",
+    total_variations: int = 4,
+    max_total_runs: int = 12,
+    completed_runs: int = 1,
+    failed_runs: int = 0,
+    run_epoch: int = 1700000000,
+    created: str = "2026-01-15T10:30:00Z",
+) -> dict[str, Any]:
+    """Build a minimal raw AIPerfSweep CR dict."""
+    return {
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "creationTimestamp": created,
+        },
+        "status": {
+            "phase": phase,
+            "totalVariations": total_variations,
+            "maxTotalRuns": max_total_runs,
+            "completedRuns": completed_runs,
+            "failedRuns": failed_runs,
+            "runEpoch": run_epoch,
+        },
+    }
+
+
+class TestFindAIPerfSweep:
+    """Tests for find_aiperf_sweep — namespaced + cluster-wide fallback."""
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_sweep_namespaced_returns_typed_info(self) -> None:
+        """Direct namespaced lookup returns a populated AIPerfSweepInfo."""
+        api = MagicMock(spec=ApiClient)
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            return_value=_raw_aiperfsweep(
+                name="my-sweep",
+                namespace="bench-ns",
+                phase="Running",
+                total_variations=6,
+                max_total_runs=18,
+                completed_runs=3,
+                failed_runs=1,
+            )
+        )
+        with patch(
+            "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            result = await find_aiperf_sweep(api, "my-sweep", namespace="bench-ns")
+
+        assert result is not None
+        assert result.name == "my-sweep"
+        assert result.namespace == "bench-ns"
+        assert result.phase == "Running"
+        assert result.total_variations == 6
+        assert result.max_total_runs == 18
+        assert result.completed_runs == 3
+        assert result.failed_runs == 1
+        kwargs = mock_custom.get_namespaced_custom_object.call_args.kwargs
+        assert kwargs["plural"] == "aiperfsweeps"
+        assert kwargs["group"] == "aiperf.nvidia.com"
+        assert kwargs["version"] == "v1alpha1"
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_sweep_404_returns_none(self) -> None:
+        """A 404 in both namespaced get and cluster-wide list returns None."""
+        api = MagicMock(spec=ApiClient)
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=_api_exception(404)
+        )
+        mock_custom.list_cluster_custom_object = AsyncMock(
+            side_effect=_api_exception(404)
+        )
+        with patch(
+            "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            result = await find_aiperf_sweep(api, "missing", namespace="ns")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_sweep_cluster_wide_fallback_when_namespace_none(
+        self,
+    ) -> None:
+        """namespace=None skips direct get and uses cluster list with field selector."""
+        api = MagicMock(spec=ApiClient)
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock()
+        mock_custom.list_cluster_custom_object = AsyncMock(
+            return_value={
+                "items": [
+                    _raw_aiperfsweep(name="found-sweep", namespace="other-ns"),
+                ]
+            }
+        )
+        with patch(
+            "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
+            return_value=mock_custom,
+        ):
+            result = await find_aiperf_sweep(api, "found-sweep")
+
+        mock_custom.get_namespaced_custom_object.assert_not_called()
+        kwargs = mock_custom.list_cluster_custom_object.call_args.kwargs
+        assert kwargs["field_selector"] == "metadata.name=found-sweep"
+        assert kwargs["plural"] == "aiperfsweeps"
+        assert result is not None
+        assert result.name == "found-sweep"
+        assert result.namespace == "other-ns"
+
+    @pytest.mark.asyncio
+    async def test_find_aiperf_sweep_other_api_exception_propagates(self) -> None:
+        """A non-404 ApiException on the namespaced get propagates."""
+        api = MagicMock(spec=ApiClient)
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(
+            side_effect=_api_exception(500)
+        )
+        with (
+            patch(
+                "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            pytest.raises(ApiException) as exc_info,
+        ):
+            await find_aiperf_sweep(api, "x", namespace="ns")
+        assert exc_info.value.status == 500

@@ -31,6 +31,7 @@ from aiperf.common.noisy_loggers import suppress_noisy_http_loggers
 from aiperf.kubernetes.client_jobs import (
     cancel_aiperf_job,
     find_aiperf_job,
+    find_aiperf_sweep,
     get_raw_aiperfjob,
     get_raw_aiperfjob_status,
     list_aiperf_jobs,
@@ -51,6 +52,7 @@ from aiperf.kubernetes.client_pods import (
     get_pods,
     list_events_for_object,
     list_nodes,
+    list_pods_all_namespaces,
     resolve_operator_namespace,
     wait_for_controller_pod_ready,
 )
@@ -65,6 +67,7 @@ __all__ = [
     "delete_jobset",
     "delete_namespace",
     "find_aiperf_job",
+    "find_aiperf_sweep",
     "find_aiperfsweep",
     "find_controller_pod",
     "find_jobset",
@@ -84,6 +87,7 @@ __all__ = [
     "list_events_for_object",
     "list_jobsets",
     "list_nodes",
+    "list_pods_all_namespaces",
     "resolve_operator_namespace",
     "wait_for_controller_pod_ready",
 ]
