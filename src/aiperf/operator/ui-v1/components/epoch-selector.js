@@ -43,7 +43,11 @@ export function EpochSelector({ epochs, current, onPick }) {
       ${!isCurrentLatest && html`
         <span data-testid="epoch-banner-not-latest" class="text-dim" style="font-size:11px">
           viewing ${current} of ${epochs.length} ·
-          <a href="#" onclick=${ev => { ev.preventDefault(); onPick(undefined); }}>jump to latest</a>
+          <button
+            type="button"
+            onclick=${() => onPick(undefined)}
+            style=${`background:none;border:none;padding:0;color:${palette.blue};text-decoration:underline;cursor:pointer;font-size:11px;font-family:inherit`}
+          >jump to latest</button>
         </span>
       `}
     </div>
