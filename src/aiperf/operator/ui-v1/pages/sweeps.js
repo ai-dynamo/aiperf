@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { sweeps } from '../lib/state.js';
 import { navigate } from '../lib/router.js';
-import { palette } from '../lib/theme.js';
+import { palette, phaseColor } from '../lib/theme.js';
 
 const FILTERS = [
   { label: 'All', value: null },
@@ -12,10 +12,61 @@ const FILTERS = [
   { label: 'Failed', value: ['failed', 'partiallyfailed', 'cancelled'] },
 ];
 
+const COLUMNS = [
+  { key: 'name', label: 'Name' },
+  { key: 'namespace', label: 'Namespace' },
+  { key: 'phase', label: 'Phase' },
+  { key: 'progress', label: 'Progress' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'variations', label: 'Variations' },
+  { key: 'model', label: 'Model' },
+  { key: 'source', label: 'Source' },
+  { key: 'age', label: 'Age' },
+  { key: 'epochs', label: '' },
+];
+
+function sweepValue(s, key) {
+  switch (key) {
+    case 'name': return s.name ?? '';
+    case 'namespace': return s.namespace ?? '';
+    case 'phase': return s.phase ?? '';
+    case 'progress': return s.completed_runs ?? 0;
+    case 'failed': return s.failed_runs ?? 0;
+    case 'variations': return s.total_variations ?? 0;
+    case 'model': return s.model ?? '';
+    case 'source': return s.source ?? '';
+    case 'age': return s.age_seconds ?? 0;
+    default: return '';
+  }
+}
+
+function formatAge(s) {
+  if (s == null) return '---';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h`;
+  return `${Math.floor(s/86400)}d`;
+}
+
+function renderPhase(phase) {
+  const color = phaseColor(phase);
+  return html`
+    <span class="phase-badge" style=${'background: ' + color + '22; color: ' + color + '; border-color: ' + color + '44'}>
+      ${phase || 'Unknown'}
+    </span>
+  `;
+}
+
+function renderSource(source) {
+  return html`<span class="text-dim" style=${`font-size:11px;padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${source}</span>`;
+}
+
 export function Sweeps() {
   const [list, setList] = useState(sweeps.value);
   const [activeFilter, setActiveFilter] = useState(null);
   const [searchText, setSearchText] = useState('');
+  const [sortKey, setSortKey] = useState('age');
+  const [sortDir, setSortDir] = useState(-1);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -27,6 +78,20 @@ export function Sweeps() {
     }, 5000, ac.signal);
     return () => ac.abort();
   }, []);
+
+  function toggleSort(key) {
+    if (!key) return;
+    if (sortKey === key) setSortDir(d => -d);
+    else { setSortKey(key); setSortDir(1); }
+  }
+
+  function renderSortIcon(key) {
+    if (!key) return null;
+    if (sortKey !== key) return html`<span class="sort-icon sort-icon--none">↕</span>`;
+    return sortDir === 1
+      ? html`<span class="sort-icon sort-icon--asc">↑</span>`
+      : html`<span class="sort-icon sort-icon--desc">↓</span>`;
+  }
 
   const filtered = useMemo(() => {
     let r = list;
@@ -40,6 +105,16 @@ export function Sweeps() {
     }
     return r;
   }, [list, activeFilter, searchText]);
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const av = sweepValue(a, sortKey);
+      const bv = sweepValue(b, sortKey);
+      if (av < bv) return -sortDir;
+      if (av > bv) return sortDir;
+      return 0;
+    });
+  }, [filtered, sortKey, sortDir]);
 
   function rowClick(s) {
     navigate(`/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`);
@@ -82,66 +157,57 @@ export function Sweeps() {
         />
       </div>
 
-      <table class="data-table" data-testid="sweep-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Namespace</th>
-            <th>Phase</th>
-            <th>Progress</th>
-            <th>Failed</th>
-            <th>Variations</th>
-            <th>Model</th>
-            <th>Source</th>
-            <th>Age</th>
-            <th>Epochs</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${filtered.map(s => {
-            const detailUrl = `/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`;
-            return html`
-            <tr key=${`${s.namespace}/${s.name}`} onclick=${() => rowClick(s)} style="cursor: pointer">
-              <td>${s.name}</td>
-              <td class="text-dim">${s.namespace}</td>
-              <td><${PhasePill} phase=${s.phase} /></td>
-              <td>${s.completed_runs} / ${s.total_variations || '?'}</td>
-              <td style=${`color: ${s.failed_runs > 0 ? palette.red : 'inherit'}`}>${s.failed_runs}</td>
-              <td>${s.total_variations}</td>
-              <td class="text-dim">${s.model ?? '—'}</td>
-              <td><${SourceChip} source=${s.source} /></td>
-              <td class="text-dim">${formatAge(s.age_seconds)}</td>
-              <td><a
-                href=${detailUrl}
-                title="View run history"
-                onclick=${e => { e.stopPropagation(); navigate(detailUrl); e.preventDefault(); }}
-                style=${`color:${palette.overlay0};text-decoration:none`}
-              >↻</a></td>
-            </tr>
-          `;})}
-        </tbody>
-      </table>
+      ${sorted.length === 0
+        ? html`<div class="job-table-empty"><p>No sweeps found</p></div>`
+        : html`
+          <div class="job-table-wrapper">
+            <table class="job-table" data-testid="sweep-table">
+              <thead>
+                <tr>
+                  ${COLUMNS.map(col => html`
+                    <th key=${col.key}
+                        class="job-table-th"
+                        onclick=${() => toggleSort(col.key)}
+                        data-testid=${'col-header-' + col.key}>
+                      ${col.label} ${renderSortIcon(col.key)}
+                    </th>
+                  `)}
+                </tr>
+              </thead>
+              <tbody>
+                ${sorted.map(s => {
+                  const detailUrl = `/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`;
+                  return html`
+                    <tr key=${`${s.namespace}/${s.name}`}
+                        class="job-table-row"
+                        onclick=${() => rowClick(s)}
+                        style="cursor: pointer"
+                        data-testid=${'sweep-row-' + (s.namespace ?? '') + '-' + (s.name ?? '')}>
+                      <td class="job-table-td job-table-name">${s.name}</td>
+                      <td class="job-table-td text-dim">${s.namespace}</td>
+                      <td class="job-table-td">${renderPhase(s.phase)}</td>
+                      <td class="job-table-td">${s.completed_runs} / ${s.total_variations || '?'}</td>
+                      <td class="job-table-td"
+                          style=${s.failed_runs > 0 ? `color:${palette.red}` : ''}>
+                        ${s.failed_runs}
+                      </td>
+                      <td class="job-table-td">${s.total_variations}</td>
+                      <td class="job-table-td text-dim">${s.model ?? '---'}</td>
+                      <td class="job-table-td">${renderSource(s.source)}</td>
+                      <td class="job-table-td text-dim">${formatAge(s.age_seconds)}</td>
+                      <td class="job-table-td">
+                        <a href=${detailUrl}
+                           title="View run history"
+                           onclick=${e => { e.stopPropagation(); navigate(detailUrl); e.preventDefault(); }}
+                           style=${`color:${palette.overlay0};text-decoration:none`}>↻</a>
+                      </td>
+                    </tr>
+                  `;
+                })}
+              </tbody>
+            </table>
+          </div>
+        `}
     </div>
   `;
-}
-
-function PhasePill({ phase }) {
-  const p = (phase ?? '').toLowerCase();
-  let bg = palette.surface0;
-  if (['running', 'aggregating'].includes(p)) bg = palette.blue ?? '#4ea1ff';
-  else if (p === 'succeeded') bg = palette.green ?? '#4caf50';
-  else if (['failed', 'cancelled', 'partiallyfailed'].includes(p)) bg = palette.red ?? '#e53935';
-  return html`<span style=${`background:${bg};color:white;padding:2px 8px;border-radius:8px;font-size:11px`}>${phase ?? 'Unknown'}</span>`;
-}
-
-function SourceChip({ source }) {
-  return html`<span class="text-dim" style="font-size:11px;padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px">${source}</span>`;
-}
-
-function formatAge(s) {
-  if (s == null) return '—';
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s/60)}m`;
-  if (s < 86400) return `${Math.floor(s/3600)}h`;
-  return `${Math.floor(s/86400)}d`;
 }
