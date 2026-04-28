@@ -35,7 +35,10 @@ class TestParallelDecode:
 
         # Should use sequential decoding (Tokenizer.from_pretrained called once)
         mock_tokenizer_class.from_pretrained.assert_called_once_with(
-            "gpt2", trust_remote_code=False, revision="main"
+            "gpt2",
+            trust_remote_code=False,
+            revision="main",
+            resolve_alias=False,
         )
         assert mock_tokenizer.decode.call_count == 2
         assert result == ["decoded", "decoded"]
@@ -313,7 +316,10 @@ class TestParallelDecodeTokenizerArgs:
         )
 
         mock_tokenizer_class.from_pretrained.assert_called_once_with(
-            "kimi-vl", trust_remote_code=True, revision="v1.2"
+            "kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+            resolve_alias=False,
         )
 
     @patch.object(pd_module, "ProcessPoolExecutor")

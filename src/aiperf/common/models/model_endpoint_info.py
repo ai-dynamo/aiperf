@@ -12,7 +12,11 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.config import EndpointDefaults, UserConfig
-from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    ModelSelectionStrategy,
+    RequestContentType,
+)
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.plugin.enums import EndpointType, TransportType
 
@@ -118,6 +122,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.DOWNLOAD_VIDEO_CONTENT,
         description="For video generation endpoints, download the video content after generation completes.",
     )
+    request_content_type: RequestContentType | None = Field(
+        default=EndpointDefaults.REQUEST_CONTENT_TYPE,
+        description="Content type for request body serialization. None means application/json.",
+    )
     collect_trace_chunks: bool = Field(
         default=False,
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
@@ -158,6 +166,7 @@ class EndpointInfo(AIPerfBaseModel):
             use_server_token_count=user_config.endpoint.use_server_token_count,
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
             download_video_content=user_config.endpoint.download_video_content,
+            request_content_type=user_config.endpoint.request_content_type,
             collect_trace_chunks=user_config.output.export_http_trace,
         )
 

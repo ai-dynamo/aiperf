@@ -1,5 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+ci:
+  skip:
+    - add-license
+    - generate-cli-docs
+    - generate-env-vars-docs
+    - generate-plugin-artifacts
+    - validate-plugin-schemas
+    - test-imports
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version

@@ -708,13 +708,9 @@ class TestConvertMediaUrlsToInline:
         with patch(
             "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
         ) as mock_session_cls:
-            mock_content = AsyncMock()
-            mock_content.read = AsyncMock(return_value=_TINY_PNG_BYTES)
-
             mock_resp = AsyncMock()
             mock_resp.status = 200
-            mock_resp.content_length = len(_TINY_PNG_BYTES)
-            mock_resp.content = mock_content
+            mock_resp.read = AsyncMock(return_value=_TINY_PNG_BYTES)
             mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
             mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -762,13 +758,9 @@ class TestConvertMediaUrlsToInline:
         with patch(
             "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
         ) as mock_session_cls:
-            mock_content = AsyncMock()
-            mock_content.read = AsyncMock(return_value=_TINY_PNG_BYTES)
-
             mock_resp = AsyncMock()
             mock_resp.status = 200
-            mock_resp.content_length = len(_TINY_PNG_BYTES)
-            mock_resp.content = mock_content
+            mock_resp.read = AsyncMock(return_value=_TINY_PNG_BYTES)
             mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
             mock_resp.__aexit__ = AsyncMock(return_value=False)
 

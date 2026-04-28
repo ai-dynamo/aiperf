@@ -55,7 +55,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 ### Running Basic Fixed Schedule
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Create a fixed schedule with precise timing
 cat > precise_schedule.jsonl << 'EOF'
@@ -82,7 +82,7 @@ aiperf profile \
     --fixed-schedule \
     --fixed-schedule-auto-offset
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -119,7 +119,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf
 
 Execute only a portion of the schedule using start and end offsets:
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Execute schedule from 2s to 6s window
 aiperf profile \
@@ -134,7 +134,7 @@ aiperf profile \
     --fixed-schedule-start-offset 2000 \
     --fixed-schedule-end-offset 4000
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -170,15 +170,14 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf
 
 ## Use Cases
 
-<Warning>
-**When to Use Fixed Schedule Benchmarking:**
-- **Traffic Replay**: Reproduce exact timing patterns from production logs
-- **Temporal Analysis**: Study how performance varies with request timing
-- **Peak Load Testing**: Test system behavior during known high-traffic periods
-- **SLA Validation**: Verify performance under specific timing constraints
-- **Capacity Planning**: Model future load based on projected growth patterns
-- **Regression Testing**: Ensure temporal performance characteristics remain stable
-</Warning>
+> [!WARNING]
+> **When to Use Fixed Schedule Benchmarking:**
+> - **Traffic Replay**: Reproduce exact timing patterns from production logs
+> - **Temporal Analysis**: Study how performance varies with request timing
+> - **Peak Load Testing**: Test system behavior during known high-traffic periods
+> - **SLA Validation**: Verify performance under specific timing constraints
+> - **Capacity Planning**: Model future load based on projected growth patterns
+> - **Regression Testing**: Ensure temporal performance characteristics remain stable
 
 ## Related Tutorials
 

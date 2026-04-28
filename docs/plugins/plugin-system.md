@@ -204,13 +204,12 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 ## Creating Custom Plugins
 
-<Tip>
-**Contributing directly to AIPerf?** You only need two things:
-1. Add your class under `src/aiperf/`
-2. Register it in `src/aiperf/plugin/plugins.yaml`
-
-The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
-</Tip>
+> [!TIP]
+> **Contributing directly to AIPerf?** You only need two things:
+> 1. Add your class under `src/aiperf/`
+> 2. Register it in `src/aiperf/plugin/plugins.yaml`
+>
+> The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
 
 **Quick Start** (4 steps):
 
@@ -248,9 +247,8 @@ endpoint:
     metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true, metrics_title: My Custom Metrics }
 ```
 
-<Note>
-Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
-</Note>
+> [!NOTE]
+> Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
 
 ## Plugin Configuration
 
@@ -336,9 +334,8 @@ $ aiperf plugins endpoint chat
 | 2 | External packages beat built-in (equal priority) |
 | 3 | First registered wins (with warning) |
 
-<Tip>
-Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
-</Tip>
+> [!TIP]
+> Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
 
 ### API Reference
 

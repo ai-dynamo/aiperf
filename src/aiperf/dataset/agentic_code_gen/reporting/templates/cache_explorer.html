@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Cache Explorer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+     background:#1a1a2e;color:#e0e0e0;padding:20px}
+h1{text-align:center;margin-bottom:8px;color:#76b900;font-size:1.4em}
+h2{font-size:1.1em;margin:12px 0 6px;color:#ccc}
+.legend{display:flex;gap:16px;justify-content:center;margin:8px 0 16px;flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:12px}
+.legend-swatch{width:14px;height:14px;border-radius:2px}
+.stats{text-align:center;font-size:12px;color:#999;margin-bottom:12px}
+#overview,#detail{background:#16213e;border-radius:8px;padding:12px;margin-bottom:16px}
+.session-row{cursor:pointer;opacity:0.85}
+.session-row:hover,.session-row.selected{opacity:1}
+.tooltip{position:absolute;background:#0f3460;color:#e0e0e0;padding:6px 10px;
+         border-radius:4px;font-size:11px;pointer-events:none;white-space:pre;
+         box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:100}
+svg text{fill:#ccc;font-size:11px}
+</style>
+</head>
+<body>
+<h1>Cache Explorer</h1>
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:#76b900"></div>L1 (global)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#00bcd4"></div>L1.5 (group)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9"></div>L2 cached</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9;border:2px dashed #fff"></div>L2 new</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#f97316"></div>L3 new</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#9ca3af"></div>Output</div>
+</div>
+<div id="stats" class="stats"></div>
+<h2>Session Overview</h2>
+<div id="overview"></div>
+<h2>Turn Detail <span id="selected-session" style="color:#76b900"></span></h2>
+<div id="detail"></div>
+<script>
+const COLORS={
+  'L1-cached':'#76b900','L1.5-cached':'#00bcd4',
+  'L2-cached':'#4a90d9','L2-new':'#4a90d9',
+  'L3-new':'#f97316','output':'#9ca3af'
+};
+function segColor(s){return COLORS[s.layer+'-'+s.status]||'#555'}
+function segDash(s){return s.layer==='L2'&&s.status==='new'}
+
+let DATA;
+const tooltip=d3.select('body').append('div').attr('class','tooltip').style('display','none');
+
+DATA=__INLINE_DATA__;
+renderOverview(DATA);
+if(DATA.sessions.length>0)selectSession(0);
+
+function renderOverview(data){
+  const margin={top:10,right:20,bottom:30,left:80};
+  const W=Math.min(document.getElementById('overview').clientWidth-24,1200);
+  const rowH=18,gap=2;
+  const bs=data.block_size;
+  const sessions=data.sessions;
+  const H=sessions.length*(rowH+gap)+margin.top+margin.bottom;
+  const maxTok=d3.max(sessions,s=>{
+    const last=s.turns[s.turns.length-1];
+    return last?last.num_blocks*bs:0;
+  })||1;
+  const x=d3.scaleLinear().domain([0,maxTok]).range([margin.left,W-margin.right]);
+  const svg=d3.select('#overview').append('svg').attr('width',W).attr('height',H);
+  sessions.forEach((sess,i)=>{
+    const y=margin.top+i*(rowH+gap);
+    const last=sess.turns[sess.turns.length-1];
+    if(!last)return;
+    const g=svg.append('g').attr('class','session-row').attr('data-idx',i)
+      .on('click',()=>selectSession(i));
+    last.segments.forEach(seg=>{
+      const rect=g.append('rect')
+        .attr('x',x(seg.start*bs)).attr('y',y)
+        .attr('width',Math.max(1,x((seg.start+seg.count)*bs)-x(seg.start*bs)))
+        .attr('height',rowH).attr('fill',segColor(seg)).attr('rx',1);
+      if(segDash(seg))rect.attr('stroke','#fff').attr('stroke-dasharray','3,2').attr('fill-opacity',0.6);
+    });
+    svg.append('text').attr('x',margin.left-4).attr('y',y+rowH/2+4)
+      .attr('text-anchor','end').attr('font-size','10px').text(sess.session_id.slice(0,8));
+  });
+  svg.append('g').attr('transform',`translate(0,${H-margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(8).tickFormat(d=>d>=1000?(d/1000).toFixed(0)+'K':d))
+    .selectAll('text').style('fill','#ccc');
+  svg.append('text').attr('x',W/2).attr('y',H-2).attr('text-anchor','middle')
+    .attr('font-size','11px').text('Tokens');
+}
+
+function selectSession(idx){
+  d3.selectAll('.session-row').classed('selected',false).attr('opacity',0.85);
+  d3.selectAll(`.session-row[data-idx="${idx}"]`).classed('selected',true).attr('opacity',1);
+  const sess=DATA.sessions[idx];
+  d3.select('#selected-session').text(sess.session_id.slice(0,12));
+  renderDetail(sess);
+  renderStats(sess);
+}
+
+function renderStats(sess){
+  const bs=DATA.block_size;
+  const t0=sess.turns[0];
+  if(!t0){d3.select('#stats').text('');return;}
+  const l1Tok=DATA.l1_blocks*bs;
+  const l15Tok=(DATA.l15_blocks||0)*bs;
+  const l2Tok=Math.max(0,(t0.num_blocks-DATA.l1_blocks-(DATA.l15_blocks||0))*bs);
+  const lines=[`Turn 0: L1=${l1Tok.toLocaleString()} tok, L1.5=${l15Tok.toLocaleString()} tok, L2=${l2Tok.toLocaleString()} tok`];
+  sess.turns.forEach((t,i)=>{
+    if(i===0)return;
+    const cached=t.segments.filter(s=>s.status==='cached').reduce((a,s)=>a+s.count,0);
+    const rate=t.num_blocks>0?(cached/t.num_blocks*100).toFixed(1):'0.0';
+    const l3New=t.segments.filter(s=>s.layer==='L3').reduce((a,s)=>a+s.count,0);
+    lines.push(`Turn ${i}: cache hit ${rate}%, L3 new=${(l3New*bs).toLocaleString()} tok`);
+  });
+  d3.select('#stats').html(lines.join(' &middot; '));
+}
+
+function renderDetail(sess){
+  const container=d3.select('#detail');
+  container.selectAll('*').remove();
+  const margin={top:10,right:20,bottom:30,left:60};
+  const W=Math.min(container.node().clientWidth-24,1200);
+  const bs=DATA.block_size;
+  const rowH=22,gap=4;
+  const turns=sess.turns;
+  const H=turns.length*(rowH+gap)+margin.top+margin.bottom;
+  const maxTok=(d3.max(turns,t=>t.num_blocks)||1)*bs;
+  const x=d3.scaleLinear().domain([0,maxTok+d3.max(turns,t=>t.output_length)])
+    .range([margin.left,W-margin.right]);
+  const svg=container.append('svg').attr('width',W).attr('height',H);
+
+  turns.forEach((t,i)=>{
+    const y=margin.top+i*(rowH+gap);
+    const g=svg.append('g');
+    t.segments.forEach(seg=>{
+      const rect=g.append('rect')
+        .attr('x',x(seg.start*bs)).attr('y',y)
+        .attr('width',Math.max(1,x((seg.start+seg.count)*bs)-x(seg.start*bs)))
+        .attr('height',rowH).attr('fill',segColor(seg)).attr('rx',1);
+      if(segDash(seg))rect.attr('stroke','#fff').attr('stroke-dasharray','3,2').attr('fill-opacity',0.6);
+      rect.on('mouseover',(ev)=>{
+        const tokStart=seg.start*bs;
+        const tokEnd=(seg.start+seg.count)*bs;
+        tooltip.style('display','block')
+          .html(`Turn ${t.turn_index} | ${tokStart.toLocaleString()}-${tokEnd.toLocaleString()} tokens\n`+
+                `Layer: ${seg.layer} | Status: ${seg.status}\n`+
+                `${seg.count} blocks (${(seg.count*bs).toLocaleString()} tokens)`);
+      }).on('mousemove',(ev)=>{
+        tooltip.style('left',(ev.pageX+12)+'px').style('top',(ev.pageY-28)+'px');
+      }).on('mouseout',()=>tooltip.style('display','none'));
+    });
+    // Output indicator
+    g.append('rect').attr('x',x(t.num_blocks*bs)).attr('y',y+4)
+      .attr('width',Math.max(1,x(t.num_blocks*bs+t.output_length)-x(t.num_blocks*bs)))
+      .attr('height',rowH-8).attr('fill','#9ca3af').attr('rx',1).attr('opacity',0.5);
+    svg.append('text').attr('x',margin.left-4).attr('y',y+rowH/2+4)
+      .attr('text-anchor','end').attr('font-size','10px').text(`T${t.turn_index}`);
+  });
+
+  svg.append('g').attr('transform',`translate(0,${H-margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(8).tickFormat(d=>d>=1000?(d/1000).toFixed(0)+'K':d))
+    .selectAll('text').style('fill','#ccc');
+  svg.append('text').attr('x',W/2).attr('y',H-2).attr('text-anchor','middle')
+    .attr('font-size','11px').text('Token Position');
+}
+</script>
+</body>
+</html>

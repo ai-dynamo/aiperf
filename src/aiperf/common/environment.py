@@ -174,11 +174,6 @@ class _DatasetSettings(BaseSettings):
         default=60.0,
         description="Timeout in seconds per media URL download when inline encoding is required",
     )
-    MEDIA_DOWNLOAD_MAX_BYTES: int = Field(
-        ge=1,
-        default=100 * 1024 * 1024,
-        description="Maximum size in bytes for a single downloaded media file (default 100 MB)",
-    )
     MEDIA_DOWNLOAD_MAX_CONCURRENCY: int = Field(
         ge=1,
         le=100,

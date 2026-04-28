@@ -453,6 +453,16 @@ class SystemState(CaseInsensitiveStrEnum):
     """The system is shutting down. This is the final state."""
 
 
+class RequestContentType(CaseInsensitiveStrEnum):
+    """Content type for HTTP request body serialization."""
+
+    APPLICATION_JSON = "application/json"
+    """Standard JSON encoding. Default for all endpoints."""
+
+    MULTIPART_FORM_DATA = "multipart/form-data"
+    """Multipart form encoding. Required by some video generation servers (e.g., vLLM)."""
+
+
 class VideoFormat(CaseInsensitiveStrEnum):
     """Video container formats for synthetic video generation."""
 

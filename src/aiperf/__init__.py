@@ -8,3 +8,10 @@ try:
     __version__ = version("aiperf")
 except PackageNotFoundError:
     __version__ = "unknown"
+
+# _build_info is generated at wheel-build time by the CI pipeline. Source
+# installs and dev checkouts won't have it — fall back to "unknown".
+try:
+    from aiperf._build_info import COMMIT_SHA as __commit_sha__
+except ImportError:
+    __commit_sha__ = "unknown"

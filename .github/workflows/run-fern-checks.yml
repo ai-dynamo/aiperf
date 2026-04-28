@@ -4,9 +4,15 @@ name: "Fern Docs Checks"
 
 on:
   pull_request:
+    paths:
+      - 'docs/**'
+      - 'fern/**'
   push:
     branches:
       - main
+    paths:
+      - 'docs/**'
+      - 'fern/**'
 
 jobs:
   fern-checks:

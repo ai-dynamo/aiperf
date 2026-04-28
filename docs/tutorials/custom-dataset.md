@@ -66,7 +66,7 @@ Use single_turn when you need **deterministic, sequential execution** where requ
 
 ### Basic Text Example
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > prompts.jsonl << 'EOF'
 {"text": "What is machine learning?"}
@@ -85,7 +85,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 2
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Output:**
 ```
@@ -131,6 +131,32 @@ artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/profile_export_aiperf.json
 Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 ```
 
+### Per-Request Output Length
+
+Control the maximum output tokens per request using the `output_length` field:
+
+```bash
+cat > prompts_with_osl.jsonl << 'EOF'
+{"text": "Write a haiku about mountains.", "output_length": 50}
+{"text": "Explain quantum computing in detail.", "output_length": 500}
+{"text": "What is 2+2?", "output_length": 10}
+{"text": "Summarize machine learning."}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --input-file prompts_with_osl.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --osl 200
+```
+
+**Precedence:** Per-line `output_length` takes priority over the global `--osl` flag. Lines without `output_length` fall back to `--osl` if set (200 in this example), or let the server decide the output length.
+
+The `output_length` field also works per-turn in multi_turn datasets.
+
 ---
 
 ## Multi-Turn Datasets
@@ -150,7 +176,7 @@ Use multi_turn when you need **conversations with context** where each turn buil
 
 ### Basic Conversation
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > conversations.jsonl << 'EOF'
 {"session_id": "chat_1", "turns": [{"text": "What is machine learning?"}, {"text": "Can you give me an example?"}]}
@@ -166,7 +192,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 2
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Output:**
 ```
@@ -236,7 +262,7 @@ Use random_pool when you need **random sampling with replacement** for unpredict
 
 ### Basic Single-File Sampling
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > pool.jsonl << 'EOF'
 {"text": "What is machine learning?"}
@@ -260,7 +286,7 @@ aiperf profile \
     --random-seed 42 \
     --url localhost:8000
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Output:**
 ```

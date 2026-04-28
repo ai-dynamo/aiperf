@@ -158,11 +158,45 @@ This document provides attribution information for public domain assets used in 
 >     party to this document and has no duty or obligation with respect to
 >     this CC0 or use of the Work.
 
+## Tokenizer Data
+
+### OpenAI tiktoken Encoding Data
+
+**Asset Information:**
+- **File(s)**: `o200k_base.tiktoken` (pre-cached in Docker image at `/opt/tiktoken_cache/`)
+- **Source**: [openai/tiktoken](https://github.com/openai/tiktoken) via `https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken`
+- **Author**: OpenAI and Shantanu Jain
+- **License**: MIT License
+
+**License Text:**
+
+> MIT License
+>
+> Copyright (c) 2022 OpenAI, Shantanu Jain
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ## Usage Summary
 
-- **All assets are public domain** - no legal restrictions on use
-- **No attribution legally required** but recommended as good practice
-- **Compatible with Apache 2.0** license used by this project
+- **Public domain assets** (ShareGPT conversation data) - no legal restrictions on use
+- **MIT-licensed assets** (tiktoken encoding data) - permissive, requires copyright notice retention
+- **All assets compatible with Apache 2.0** license used by this project
 - **No endorsement implied** by original sources
 
 ---

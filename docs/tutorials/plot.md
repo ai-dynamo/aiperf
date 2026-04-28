@@ -18,15 +18,13 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 - Timeslice support (performance evolution across time windows)
 - Configurable plots via `~/.aiperf/plot_config.yaml`
 
-<Warning>
-**Multi-Run Profile Incompatibility**: The plot CLI is not compatible with the `--num-profile-runs > 1` option. When using multi-run confidence profiling, the directory structure includes `profile_runs/` subdirectories which the plot command does not recognize. To visualize individual profile runs, navigate into the specific run directory (e.g., `artifacts/my_run/profile_runs/run_0001/`) and run the plot command from there.
-</Warning>
+> [!WARNING]
+> **Multi-Run Profile Incompatibility**: The plot CLI is not compatible with the `--num-profile-runs > 1` option. When using multi-run confidence profiling, the directory structure includes `profile_runs/` subdirectories which the plot command does not recognize. To visualize individual profile runs, navigate into the specific run directory (e.g., `artifacts/my_run/profile_runs/run_0001/`) and run the plot command from there.
 
 ## Quick Start
 
-<Warning>
-**Custom export filenames not supported:** The plot command expects default export filenames (`profile_export.jsonl`, `profile_export_aiperf.json`). If you ran `aiperf profile` with `--profile-export-file` or a custom `--profile-export-prefix`, the output files will have different names and will not be detected by `aiperf plot`. To use the plot command, re-run profiling without custom export file options, or rename the files to match the default names.
-</Warning>
+> [!WARNING]
+> **Custom export filenames not supported:** The plot command expects default export filenames (`profile_export.jsonl`, `profile_export_aiperf.json`). If you ran `aiperf profile` with `--profile-export-file` or a custom `--profile-export-prefix`, the output files will have different names and will not be detected by `aiperf plot`. To use the plot command, re-run profiling without custom export file options, or rename the files to match the default names.
 
 ```bash
 # Analyze a single profiling run
@@ -132,9 +130,8 @@ artifacts/sweep_qwen/
 2. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (requires GPU telemetry)
 3. **Token Throughput per GPU vs Interactivity** - GPU efficiency vs TTFT (requires GPU telemetry)
 
-<Tip>
-Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) for clearer visual distinction.
-</Tip>
+> [!TIP]
+> Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) for clearer visual distinction.
 
 #### Example Visualizations
 
@@ -255,13 +252,11 @@ multi_run_plots:
     groups: [run_name]
 ```
 
-<Note>
-When experiment classification is enabled, all multi-run plots automatically group by `experiment_group` to preserve treatment variants with semantic colors.
-</Note>
+> [!NOTE]
+> When experiment classification is enabled, all multi-run plots automatically group by `experiment_group` to preserve treatment variants with semantic colors.
 
-<Tip>
-See the CONFIGURATION GUIDE section in `~/.aiperf/plot_config.yaml` for detailed customization options.
-</Tip>
+> [!TIP]
+> See the CONFIGURATION GUIDE section in `~/.aiperf/plot_config.yaml` for detailed customization options.
 
 ### Experiment Classification
 
@@ -284,9 +279,8 @@ experiment_classification:
 - **Treatments**: NVIDIA green shades, listed after baselines
 - **Use case**: Clear visual distinction for A/B testing
 
-<Warning>
-When enabled, **all multi-run plots automatically group by experiment_group** (directory name) to preserve individual treatment variants with semantic baseline/treatment colors.
-</Warning>
+> [!WARNING]
+> When enabled, **all multi-run plots automatically group by experiment_group** (directory name) to preserve individual treatment variants with semantic baseline/treatment colors.
 
 **Pattern notes**: Uses glob syntax (`*` = wildcard), case-sensitive, first match wins.
 
@@ -313,9 +307,8 @@ artifacts/
 group_extraction_pattern: "^(treatment_\d+)"  # Groups treatment_1_varA + treatment_1_varB → "treatment_1"
 ```
 
-<Tip>
-See `src/aiperf/plot/default_plot_config.yaml` for all configuration options.
-</Tip>
+> [!TIP]
+> See `src/aiperf/plot/default_plot_config.yaml` for all configuration options.
 
 ![Pareto Curve with Experiment Classification](../diagrams/plot-examples/multi-run/config-experiment-classification/pareto-curve-throughput-per-gpu-vs-interactivity.png)
 
@@ -378,13 +371,11 @@ aiperf plot path/to/runs --dashboard
 
 The dashboard automatically detects visualization mode (multi-run comparison or single-run analysis) and displays appropriate tabs and controls. Press Ctrl+C in the terminal to stop the server.
 
-<Tip>
-The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8080:localhost:8080 user@remote-host`
-</Tip>
+> [!TIP]
+> The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8080:localhost:8080 user@remote-host`
 
-<Note>
-Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.
-</Note>
+> [!NOTE]
+> Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.
 
 ## Advanced Features
 
@@ -404,9 +395,8 @@ Dashboard mode and PNG mode are separate. To generate both static PNGs and launc
 
 **Correlates compute resources with token generation performance**. High GPU utilization with low throughput may suggest compute-bound workloads (consider optimizing model/batch size). Low utilization with low throughput can indicate bottlenecks elsewhere (KV cache, memory bandwidth, CPU scheduling). Potentially useful for targeting >80% GPU utilization for efficient hardware usage.
 
-<Tip>
-See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.
-</Tip>
+> [!TIP]
+> See the [GPU Telemetry Tutorial](gpu-telemetry.md) for setup and detailed analysis.
 
 ### Timeslice Integration
 
@@ -428,9 +418,8 @@ When timeslice data is available (via `--slice-duration` during profiling), plot
 
 ![Latency Across Timeslices](../diagrams/plot-examples/single-run/timeslices/timeslices-latency.png)
 
-<Tip>
-See the [Timeslices Tutorial](timeslices.md) for configuration and analysis.
-</Tip>
+> [!TIP]
+> See the [Timeslices Tutorial](timeslices.md) for configuration and analysis.
 
 ## Output Files
 
@@ -449,25 +438,20 @@ plots/
 
 ## Best Practices
 
-<Tip>
-**Consistent Configurations**: When comparing runs, vary only one parameter (e.g., concurrency) while keeping others constant. This isolates the impact of that specific parameter.
-</Tip>
+> [!TIP]
+> **Consistent Configurations**: When comparing runs, vary only one parameter (e.g., concurrency) while keeping others constant. This isolates the impact of that specific parameter.
 
-<Tip>
-**Use Experiment Classification**: Configure [experiment classification](#experiment-classification) to distinguish baselines from treatments with semantic colors.
-</Tip>
+> [!TIP]
+> **Use Experiment Classification**: Configure [experiment classification](#experiment-classification) to distinguish baselines from treatments with semantic colors.
 
-<Tip>
-**Include Warmup**: Use `--warmup-request-count` to ensure steady state before measurement, reducing noise in visualizations.
-</Tip>
+> [!TIP]
+> **Include Warmup**: Use `--warmup-request-count` to ensure steady state before measurement, reducing noise in visualizations.
 
-<Warning>
-**Directory Structure**: Ensure consistent naming - runs to compare must be in subdirectories of a common parent.
-</Warning>
+> [!WARNING]
+> **Directory Structure**: Ensure consistent naming - runs to compare must be in subdirectories of a common parent.
 
-<Note>
-**GPU Metrics**: GPU telemetry plots only appear when telemetry data is available. Ensure DCGM is running during profiling. See [GPU Telemetry Tutorial](gpu-telemetry.md).
-</Note>
+> [!NOTE]
+> **GPU Metrics**: GPU telemetry plots only appear when telemetry data is available. Ensure DCGM is running during profiling. See [GPU Telemetry Tutorial](gpu-telemetry.md).
 
 ## Troubleshooting
 

@@ -3,6 +3,7 @@
 
 """Tests for HuggingFace Hub alias resolution in Tokenizer class."""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,13 @@ def _create_mock_response(status_code: int = 404) -> MagicMock:
     mock_response.status_code = status_code
     mock_response.headers = {}
     return mock_response
+
+
+@pytest.fixture(autouse=True)
+def _no_cache_shortcut() -> Iterator[None]:
+    """Disable cache-based shortcut so tests exercise the network path."""
+    with patch("aiperf.common.tokenizer._is_hf_cached", return_value=False):
+        yield
 
 
 @pytest.fixture

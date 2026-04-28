@@ -34,6 +34,18 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
+### [`speed-bench-report`](#aiperf-speed-bench-report)
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report.
+
+### [`synthesize`](#aiperf-synthesize)
+
+Synthesize a dataset workload.
+
+### [`validate`](#aiperf-validate)
+
+Validate a benchmark artifact.
+
 <hr/>
 
 ## `aiperf --install-completion`
@@ -126,7 +138,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -187,6 +199,17 @@ Transport connection reuse strategy. 'pooled' (default): connections are pooled 
 For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled (default), only generation time is measured.
 <br/>_Flag (no value required)_
 
+#### `--request-content-type` `<str>`
+
+Content type for request body serialization. By default, requests are sent as 'application/json'. Set to 'multipart/form-data' for servers that require form-encoded requests (e.g., vLLM video generation endpoints).
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `application/json` |  | Standard JSON encoding. Default for all endpoints. |
+| `multipart/form-data` |  | Multipart form encoding. Required by some video generation servers (e.g., vLLM). |
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -225,13 +248,17 @@ End offset in milliseconds for fixed schedule replay. Stops issuing requests aft
 
 #### `--public-dataset` `<str>`
 
-Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `vision_arena`, `llava_onevision`]_
+Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
+<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`]_
+
+#### `--hf-subset` `<str>`
+
+HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
 
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -651,7 +678,7 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 
 #### `--tokenizer` `<str>`
 
-HuggingFace tokenizer identifier or local path for token counting in prompts and responses. Accepts model names (e.g., `meta-llama/Llama-2-7b-hf`) or filesystem paths to tokenizer files. If not specified, defaults to the value of `--model-names`. Essential for accurate token-based metrics (input/output token counts, token throughput).
+HuggingFace tokenizer identifier, local path, or `builtin` for token counting in prompts and responses. Accepts model names (e.g., `meta-llama/Llama-2-7b-hf`), filesystem paths to tokenizer files, or `builtin` for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). If not specified, defaults to the value of `--model-names`. Essential for accurate token-based metrics (input/output token counts, token throughput).
 
 #### `--tokenizer-revision` `<str>`
 
@@ -1107,3 +1134,97 @@ Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST envi
 #### `--health-port` `<int>`
 
 HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.
+
+<hr/>
+
+## `aiperf speed-bench-report`
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report.
+
+Run ``aiperf profile`` once per SPEED-Bench category, then point this command at the output directories to produce a matrix matching the SPEED-Bench paper format.
+
+**Examples:**
+
+```bash
+# Scan a parent directory for per-category run subdirectories
+aiperf speed-bench-report ./artifacts/
+
+# List run directories explicitly
+aiperf speed-bench-report ./artifacts/run_coding/ ./artifacts/run_math/
+
+# Acceptance rate matrix (accepted / draft tokens)
+aiperf speed-bench-report ./artifacts/ --metric accept_rate
+
+# Throughput matrix (output tokens/sec per category)
+aiperf speed-bench-report ./artifacts/ --metric throughput
+```
+
+#### `--paths`, `--empty-paths` `<list>` _(Required)_
+
+Run directories or parent directories containing run subdirectories.
+
+#### `--output` `<str>`
+
+Output CSV file path. Defaults to ./speed_bench_report.csv.
+<br/>_Default: `speed_bench_report.csv`_
+
+#### `--format` `<str>`
+
+Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
+<br/>_Default: `both`_
+
+#### `--metric` `<str>`
+
+Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
+<br/>_Default: `accept_length`_
+
+<hr/>
+
+## `aiperf synthesize`
+
+Synthesize a dataset workload.
+
+#### `--target` `<str>` _(Required)_
+
+Dataset workload to synthesize.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf validate`
+
+Validate a benchmark artifact.
+
+#### `--target` `<str>` _(Required)_
+
+Artifact format to validate.
+
+#### `--input` `<str>` _(Required)_
+
+Path to the artifact file.

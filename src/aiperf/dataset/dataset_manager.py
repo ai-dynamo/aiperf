@@ -216,7 +216,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             return
 
         dataset_env = Environment.DATASET
-        max_bytes = dataset_env.MEDIA_DOWNLOAD_MAX_BYTES
         timeout = aiohttp.ClientTimeout(total=dataset_env.MEDIA_DOWNLOAD_TIMEOUT)
         max_concurrency = dataset_env.MEDIA_DOWNLOAD_MAX_CONCURRENCY
 
@@ -237,19 +236,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                         raise RuntimeError(
                             f"Failed to download media URL '{url}': HTTP {resp.status}"
                         )
-                    if (
-                        resp.content_length is not None
-                        and resp.content_length > max_bytes
-                    ):
-                        raise RuntimeError(
-                            f"Image at '{url}' exceeds {max_bytes} byte limit "
-                            f"(Content-Length: {resp.content_length})"
-                        )
-                    data = await resp.content.read(max_bytes + 1)
-                    if len(data) > max_bytes:
-                        raise RuntimeError(
-                            f"Image at '{url}' exceeds {max_bytes} byte limit"
-                        )
+                    data = await resp.read()
 
                 img = PILImage.open(BytesIO(data))
                 if img.format is None:
@@ -313,6 +300,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                     x_request_id="",
                     x_correlation_id="",
                     conversation_id=conversation.session_id,
+                    system_message=conversation.system_message,
+                    user_context_message=conversation.user_context_message,
                 )
                 request_info.endpoint_headers = endpoint.get_endpoint_headers(
                     request_info
