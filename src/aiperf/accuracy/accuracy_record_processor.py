@@ -62,7 +62,12 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             return
         async with self._problems_lock:
             if self.problems is None:
-                self.problems = await load_benchmark_problems(self.user_config)
+                problems = await load_benchmark_problems(self.user_config)
+                if not problems:
+                    msg = "Benchmark loaded no problems; check accuracy task configuration"
+                    self.error(msg)
+                    raise ValueError(msg)
+                self.problems = problems
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

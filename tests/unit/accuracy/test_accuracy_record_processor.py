@@ -243,3 +243,37 @@ class TestEnsureProblemsLoadedConcurrency:
 
         assert load_called == 1
         assert processor._problems == [problem]
+
+
+@pytest.mark.asyncio
+class TestEnsureProblemsLoadedEmptyGuard:
+    async def test_record_processor_raises_on_empty_problems(self, monkeypatch) -> None:
+        """_ensure_problems_loaded raises ValueError when load_benchmark_problems returns []."""
+        user_config = _make_user_config()
+        processor = _make_processor(monkeypatch, user_config)
+
+        with (
+            patch(
+                "aiperf.accuracy.accuracy_record_processor.load_benchmark_problems",
+                return_value=[],
+            ),
+            pytest.raises(ValueError, match="no problems"),
+        ):
+            await processor._ensure_problems_loaded()
+
+        assert processor.problems is None
+
+    async def test_results_processor_raises_on_empty_problems(self) -> None:
+        """_ensure_problems_loaded raises ValueError when load_benchmark_problems returns []."""
+        processor = _make_results_processor(None, _make_user_config())
+
+        with (
+            patch(
+                "aiperf.accuracy.accuracy_results_processor.load_benchmark_problems",
+                return_value=[],
+            ),
+            pytest.raises(ValueError, match="no problems"),
+        ):
+            await processor._ensure_problems_loaded()
+
+        assert processor._problems is None
