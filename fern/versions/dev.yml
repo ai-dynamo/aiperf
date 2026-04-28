@@ -112,6 +112,8 @@ navigation:
             path: ../pages-dev/tutorials/goodput.md
           - page: Multi-Run Confidence Reporting
             path: ../pages-dev/tutorials/multi-run-confidence.md
+          - page: Parameter Sweeping
+            path: ../pages-dev/tutorials/parameter-sweeping.md
           - page: Time Slicing for Performance Analysis
             path: ../pages-dev/tutorials/timeslices.md
           - page: HTTP Trace Metrics Guide
@@ -178,6 +180,8 @@ navigation:
     contents:
       - page: Prefix Synthesis API Reference
         path: ../pages-dev/api/synthesis.md
+      - page: Sweep Aggregates API Reference
+        path: ../pages-dev/api/sweep-aggregates.md
   - section: Architecture & Internals
     collapsed: true
     contents:
@@ -189,3 +193,8 @@ navigation:
         path: ../pages-dev/diagrams/mixins.md
       - page: AIPerf Code Patterns
         path: ../pages-dev/dev/patterns.md
+  - section: Troubleshooting
+    collapsed: true
+    contents:
+      - page: Parameter Sweeping Errors
+        path: ../pages-dev/troubleshooting/parameter-sweeping-errors.md
