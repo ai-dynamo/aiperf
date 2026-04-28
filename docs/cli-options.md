@@ -20,7 +20,7 @@ Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Parameter Sweep](#parameter-sweep) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
 
 ### [`plot`](#aiperf-plot)
 
@@ -703,10 +703,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency` `<int>`
+#### `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.
 
 #### `--prefill-concurrency` `<int>`
 
@@ -823,6 +822,24 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br/>_Constraints: > 0_
+
+### Parameter Sweep
+
+#### `--parameter-sweep-mode` `<str>`
+
+Sweep execution mode: 'repeated' (default) runs full sweep N times, 'independent' runs N trials at each sweep value.
+<br/>_Default: `repeated`_
+
+#### `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown duration between sweep values (seconds). Only applies when sweeping parameters (e.g., --concurrency 10,20,30). Allows the system to stabilize between different parameter values. Default is 0 (no cooldown).
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`
+
+Use same random seed across all sweep values (default: derive different seeds). Only applies when sweeping parameters (e.g., --concurrency 10,20,30). When False (default), each sweep value uses a different derived seed (base_seed + sweep_index) to avoid artificial correlation between measurements. When True, all sweep values use the same base seed for correlated workload comparisons.
+<br/>_Flag (no value required)_
 
 ### Multi-Run Confidence Reporting
 

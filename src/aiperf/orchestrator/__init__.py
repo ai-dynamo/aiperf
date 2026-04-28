@@ -22,6 +22,9 @@ from aiperf.orchestrator.orchestrator import (
 from aiperf.orchestrator.strategies import (
     ExecutionStrategy,
     FixedTrialsStrategy,
+    ParameterSweepStrategy,
+    SweepConfidenceStrategy,
+    SweepMode,
 )
 
 __all__ = [
@@ -32,6 +35,9 @@ __all__ = [
     "ExecutionStrategy",
     "FixedTrialsStrategy",
     "MultiRunOrchestrator",
+    "ParameterSweepStrategy",
     "RunConfig",
     "RunResult",
+    "SweepConfidenceStrategy",
+    "SweepMode",
 ]

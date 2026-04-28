@@ -13,7 +13,13 @@ import orjson
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import ExecutionStrategy
+from aiperf.orchestrator.strategies import (
+    ExecutionStrategy,
+    FixedTrialsStrategy,
+    ParameterSweepStrategy,
+    SweepConfidenceStrategy,
+    SweepMode,
+)
 
 if TYPE_CHECKING:
     from aiperf.common.models.export_models import JsonMetricResult
@@ -28,15 +34,18 @@ __all__ = [
 class MultiRunOrchestrator:
     """Orchestrates execution of multiple benchmark runs using a strategy.
 
-    The strategy decides:
-    - What to run next (which config)
-    - When to stop (based on results so far)
-    - How to label runs
-    - Cooldown duration between runs
-    - Artifact path structure
+    The orchestrator is a thin coordinator. Strategy objects own:
+    - Execution iteration (via execute() for custom loops, or should_continue/get_next_config for generic)
+    - Aggregation logic (aggregate())
+    - Export logic (export_aggregates())
+    - Result tagging (tag_result())
+    - Failure collection (collect_failed_values())
 
-    This orchestrator sits above the SystemController and coordinates multiple
-    single-run executions.
+    The orchestrator provides:
+    - Strategy resolution from config (_resolve_strategy)
+    - A generic execution loop for simple strategies (_execute_loop)
+    - Single-run subprocess execution (_execute_single_run)
+    - Metrics extraction from artifacts (_extract_summary_metrics)
     """
 
     def __init__(
@@ -53,41 +62,153 @@ class MultiRunOrchestrator:
         self.base_dir = Path(base_dir)
         self.service_config = service_config
 
-    def execute(
-        self, base_config: UserConfig, strategy: ExecutionStrategy
+    def execute_and_export(
+        self, base_config: UserConfig, strategy: ExecutionStrategy | None = None
     ) -> list[RunResult]:
-        """Execute runs based on strategy.
+        """Execute benchmark, aggregate results, and export aggregates.
+
+        This is the main entry point that handles the complete workflow:
+        1. Resolve strategy (if not provided)
+        2. Execute runs (strategy may own its loop or use generic loop)
+        3. Aggregate results via strategy
+        4. Export aggregates via strategy
 
         Args:
             base_config: Base benchmark configuration
-            strategy: Execution strategy that decides what to run
+            strategy: Optional execution strategy. If None, auto-detected from config.
 
         Returns:
             List of RunResult, one per run executed
         """
-        results = []
+        if strategy is None:
+            strategy = self._resolve_strategy(base_config)
+
+        results = self._execute(base_config, strategy)
+
+        aggregate = strategy.aggregate(results, base_config)
+        if aggregate is not None:
+            strategy.export_aggregates(aggregate, self.base_dir)
+
+        return results
+
+    def execute(
+        self, base_config: UserConfig, strategy: ExecutionStrategy | None = None
+    ) -> list[RunResult]:
+        """Execute benchmark runs without aggregation/export.
+
+        Useful for testing or when callers want to handle aggregation themselves.
+
+        Args:
+            base_config: Base benchmark configuration
+            strategy: Optional execution strategy. If None, auto-detected from config.
+
+        Returns:
+            List of RunResult, one per run executed
+        """
+        if strategy is None:
+            strategy = self._resolve_strategy(base_config)
+
+        return self._execute(base_config, strategy)
+
+    def _resolve_strategy(self, config: UserConfig) -> ExecutionStrategy:
+        """Detect mode from config and return the appropriate strategy.
+
+        Only called from multi-run paths (sweep, confidence, or both).
+        Single-run benchmarks go through _run_single_benchmark() in cli_runner
+        and never reach the orchestrator.
+
+        Args:
+            config: User configuration
+
+        Returns:
+            Appropriate ExecutionStrategy
+
+        Raises:
+            ValueError: If no multi-run mode is detected
+        """
+        has_sweep = config.loadgen.get_sweep_parameter() is not None
+        has_confidence = config.loadgen.num_profile_runs > 1
+
+        if has_sweep and has_confidence:
+            logger.info(
+                f"Executing parameter sweep with confidence trials "
+                f"(mode: {config.loadgen.parameter_sweep_mode})"
+            )
+            return SweepConfidenceStrategy(
+                sweep=self._create_sweep_strategy(config),
+                confidence=self._create_confidence_strategy(config),
+                mode=SweepMode(config.loadgen.parameter_sweep_mode),
+            )
+        if has_sweep:
+            logger.info("Executing parameter sweep (no confidence trials)")
+            return self._create_sweep_strategy(config)
+        if has_confidence:
+            logger.info(
+                f"Executing confidence trials (n={config.loadgen.num_profile_runs})"
+            )
+            return self._create_confidence_strategy(config)
+
+        raise ValueError(
+            "MultiRunOrchestrator requires sweep or confidence mode. "
+            "Single-run benchmarks should use _run_single_benchmark() directly."
+        )
+
+    def _execute(
+        self, config: UserConfig, strategy: ExecutionStrategy
+    ) -> list[RunResult]:
+        """Execute runs using the strategy.
+
+        First checks if the strategy wants to own its loop (execute() returns
+        a list). If not, falls back to the generic loop.
+
+        Args:
+            config: Base benchmark configuration
+            strategy: Execution strategy
+
+        Returns:
+            List of run results
+        """
+        custom_results = strategy.execute(
+            config, self._execute_single_run, self.base_dir
+        )
+        if custom_results is not None:
+            return custom_results
+
+        return self._execute_loop(config, strategy)
+
+    def _execute_loop(
+        self, config: UserConfig, strategy: ExecutionStrategy
+    ) -> list[RunResult]:
+        """Generic execution loop driven entirely by strategy.
+
+        Used by FixedTrialsStrategy and ParameterSweepStrategy which don't
+        need custom iteration.
+
+        Args:
+            config: Base benchmark configuration
+            strategy: Execution strategy
+
+        Returns:
+            List of run results
+        """
+        results: list[RunResult] = []
         run_index = 0
 
         logger.info(
             f"Starting multi-run benchmark with strategy: {strategy.__class__.__name__}"
         )
 
-        # Let strategy validate config before starting
-        strategy.validate_config(base_config)
+        strategy.validate_config(config)
 
-        should_continue = strategy.should_continue(results)
-
-        while should_continue:
-            # Strategy decides next config (including warmup handling)
-            config = strategy.get_next_config(base_config, results)
-
-            # Strategy provides label
+        while strategy.should_continue(results):
+            run_config = strategy.get_next_config(config, results)
             label = strategy.get_run_label(run_index)
+            artifact_path = strategy.get_run_path(self.base_dir, run_index)
 
             logger.info(f"[{run_index + 1}] Executing {label}...")
 
-            # Execute run - strategy determines artifact path
-            result = self._execute_single_run(config, strategy, run_index)
+            result = self._execute_single_run(run_config, label, artifact_path)
+            result = strategy.tag_result(result, run_index)
             results.append(result)
 
             if result.success:
@@ -97,11 +218,7 @@ class MultiRunOrchestrator:
 
             run_index += 1
 
-            # Check if there will be another run (single call to should_continue)
-            should_continue = strategy.should_continue(results)
-
-            # Apply cooldown only if there's another run coming
-            if should_continue:
+            if strategy.should_continue(results):
                 cooldown = strategy.get_cooldown_seconds()
                 if cooldown > 0:
                     logger.info(f"Applying cooldown: {cooldown}s")
@@ -110,10 +227,64 @@ class MultiRunOrchestrator:
         successful = sum(1 for r in results if r.success)
         logger.info(f"All runs complete: {successful}/{len(results)} successful")
 
+        failed_values = strategy.collect_failed_values(results)
+        if failed_values:
+            logger.warning(
+                f"Some sweep values failed: {[fv['value'] for fv in failed_values]}"
+            )
+            for fv in failed_values:
+                logger.warning(f"  {fv['parameter_name']}={fv['value']}: {fv['error']}")
+
         return results
 
+    def _create_sweep_strategy(self, config: UserConfig) -> ParameterSweepStrategy:
+        """Create parameter sweep strategy from config.
+
+        Args:
+            config: User configuration with sweep parameters
+
+        Returns:
+            ParameterSweepStrategy configured from config
+
+        Raises:
+            ValueError: If no sweep parameter is detected in config
+        """
+        sweep_info = config.loadgen.get_sweep_parameter()
+        if not sweep_info:
+            raise ValueError(
+                "No sweep parameter detected in configuration. "
+                "To enable parameter sweep, provide a parameter as a comma-separated list. "
+                "Example: --concurrency 10,20,30"
+            )
+
+        param_name, param_values = sweep_info
+
+        return ParameterSweepStrategy(
+            parameter_name=param_name,
+            parameter_values=param_values,
+            cooldown_seconds=config.loadgen.parameter_sweep_cooldown_seconds,
+            same_seed=config.loadgen.parameter_sweep_same_seed,
+            auto_set_seed=True,
+        )
+
+    def _create_confidence_strategy(self, config: UserConfig) -> FixedTrialsStrategy:
+        """Create confidence/fixed trials strategy from config.
+
+        Args:
+            config: User configuration with confidence parameters
+
+        Returns:
+            FixedTrialsStrategy configured from config
+        """
+        return FixedTrialsStrategy(
+            num_trials=config.loadgen.num_profile_runs,
+            cooldown_seconds=config.loadgen.profile_run_cooldown_seconds,
+            auto_set_seed=config.loadgen.set_consistent_seed,
+            disable_warmup_after_first=config.loadgen.profile_run_disable_warmup_after_first,
+        )
+
     def _execute_single_run(
-        self, config: UserConfig, strategy: ExecutionStrategy, run_index: int
+        self, config: UserConfig, label: str, artifact_path: Path
     ) -> RunResult:
         """Execute a single benchmark run in a subprocess.
 
@@ -122,25 +293,19 @@ class MultiRunOrchestrator:
 
         Args:
             config: Benchmark configuration
-            strategy: Execution strategy (determines artifact path and label)
-            run_index: Zero-based run index
+            label: Label for this run (e.g., "run_0001", "concurrency_10")
+            artifact_path: Path where artifacts should be stored
 
         Returns:
             RunResult with success status and metrics or error
         """
-        # Initialize label and artifacts_path BEFORE try block to ensure they're always defined
-        # This prevents UnboundLocalError in the except block if any operation fails
-        label = None
-        artifacts_path = None
-
         try:
-            # Strategy determines artifact path and label
-            artifacts_path = strategy.get_run_path(self.base_dir, run_index)
-            artifacts_path.mkdir(parents=True, exist_ok=True)
-            label = strategy.get_run_label(run_index)
+            # Ensure artifact directory exists
+            artifact_path = Path(artifact_path)
+            artifact_path.mkdir(parents=True, exist_ok=True)
 
             config = config.model_copy(deep=True)
-            config.output.artifact_directory = artifacts_path
+            config.output.artifact_directory = artifact_path
 
             # Serialize configs to JSON
             # Use exclude_defaults=True to avoid serializing fields that weren't explicitly set
@@ -159,15 +324,12 @@ class MultiRunOrchestrator:
 
             # Write config with secrets for subprocess to read.
             # Overwritten with redacted version after the subprocess finishes.
-            config_file = artifacts_path / "run_config.json"
+            config_file = artifact_path / "run_config.json"
             with open(config_file, "wb") as f:
                 f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
 
             # Run the benchmark in a subprocess using the dedicated runner module
-            # The runner loads the config and calls _run_single_benchmark()
-            # No timeout is set - SystemController handles benchmark duration and grace period internally
-            # stdin/stdout are passed through to terminal so Textual can detect TTY and render live dashboard
-            # stderr is captured for error reporting
+            # stdin/stdout are passed through to terminal so Textual can detect TTY
             # -u flag forces unbuffered output so live dashboard updates are visible immediately
             result = subprocess.run(
                 [
@@ -177,9 +339,9 @@ class MultiRunOrchestrator:
                     "aiperf.orchestrator.subprocess_runner",
                     str(config_file),
                 ],
-                stdin=sys.stdin,  # Pass through stdin so Textual can detect interactive TTY
-                stdout=sys.stdout,  # Pass through stdout for live dashboard rendering
-                stderr=subprocess.PIPE,  # Capture for error reporting
+                stdin=sys.stdin,
+                stdout=sys.stdout,
+                stderr=subprocess.PIPE,
                 text=True,
             )
 
@@ -198,22 +360,18 @@ class MultiRunOrchestrator:
             if result.returncode != 0:
                 error_msg = f"Benchmark failed with exit code {result.returncode}"
                 if result.stderr:
-                    # Get last 2000 chars of stderr for debugging
                     error_msg += f"\nStderr: {result.stderr[-2000:]}"
                 logger.error(error_msg)
                 return RunResult(
                     label=label,
                     success=False,
                     error=error_msg,
-                    artifacts_path=artifacts_path,
+                    artifacts_path=artifact_path,
                 )
 
             # Extract summary metrics from the artifacts
-            # The SystemController writes results to files, so we read them back
-            summary_metrics = self._extract_summary_metrics(config)
+            summary_metrics = self._extract_summary_metrics(artifact_path)
 
-            # Check if the run produced any meaningful results
-            # If no metrics were extracted or request_count is 0, treat as failure
             if not summary_metrics:
                 error_msg = (
                     "No metrics found in artifacts - run may have failed to complete"
@@ -223,19 +381,14 @@ class MultiRunOrchestrator:
                     label=label,
                     success=False,
                     error=error_msg,
-                    artifacts_path=artifacts_path,
+                    artifacts_path=artifact_path,
                 )
 
             # Check if any requests completed successfully
-            # request_count only counts valid (successful) requests
-            # error_request_count counts failed requests
-            # If error_request_count > 0 but request_count is missing or 0, all requests failed
             request_count_metric = summary_metrics.get("request_count")
             error_request_count_metric = summary_metrics.get("error_request_count")
 
-            # If no request_count metric exists or it's 0, check if there were any errors
             if not request_count_metric or request_count_metric.avg == 0:
-                # If there were error requests, all requests failed
                 if error_request_count_metric and error_request_count_metric.avg > 0:
                     error_msg = (
                         f"All {int(error_request_count_metric.avg)} requests failed"
@@ -245,37 +398,34 @@ class MultiRunOrchestrator:
                         label=label,
                         success=False,
                         error=error_msg,
-                        artifacts_path=artifacts_path,
+                        artifacts_path=artifact_path,
                     )
-                # If no errors either, no requests were made at all
                 error_msg = "No requests completed"
                 logger.error(error_msg)
                 return RunResult(
                     label=label,
                     success=False,
                     error=error_msg,
-                    artifacts_path=artifacts_path,
+                    artifacts_path=artifact_path,
                 )
 
             return RunResult(
                 label=label,
                 success=True,
                 summary_metrics=summary_metrics,
-                artifacts_path=artifacts_path,
+                artifacts_path=artifact_path,
             )
         except Exception as e:
-            # Use safe values for label and artifacts_path in case they weren't set
-            safe_label = label if label is not None else f"run_{run_index:04d}"
-            logger.exception(f"Error executing run {safe_label}")
+            logger.exception(f"Error executing run {label}")
             return RunResult(
-                label=safe_label,
+                label=label,
                 success=False,
                 error=str(e),
-                artifacts_path=artifacts_path,
+                artifacts_path=artifact_path,
             )
 
     def _extract_summary_metrics(
-        self, config: UserConfig
+        self, artifacts_path: Path
     ) -> dict[str, "JsonMetricResult"]:
         """Extract run-level summary statistics from artifacts.
 
@@ -283,34 +433,27 @@ class MultiRunOrchestrator:
         and extracts the summary metrics, preserving the full structure with units.
 
         Args:
-            config: Benchmark configuration for this run (used to resolve the actual output path)
+            artifacts_path: Path to run artifacts directory
 
         Returns:
-            Dict mapping metric name to JsonMetricResult (e.g., {"time_to_first_token": JsonMetricResult(unit="ms", avg=150, p99=195)})
+            Dict mapping metric name to JsonMetricResult
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        # Resolve the JSON file path from the config — do not hardcode the default filename
-        # since --profile-export-prefix changes it
-        json_file = config.output.profile_export_json_file
+        json_file = artifacts_path / "profile_export_aiperf.json"
 
         if not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
             return {}
 
         try:
-            # Load JSON as dict directly
             with open(json_file, "rb") as f:
                 data = orjson.loads(f.read())
 
-            # Extract metrics - keep the structure intact, don't flatten
             metrics = {}
-
             for field_name, field_value in data.items():
-                # Check if this field is a metric (has the metric structure with "unit")
                 if isinstance(field_value, dict) and "unit" in field_value:
                     try:
-                        # Parse as JsonMetricResult to preserve full structure
                         metrics[field_name] = JsonMetricResult(**field_value)
                     except Exception as e:
                         logger.debug(f"Skipping field {field_name}: {e}")
