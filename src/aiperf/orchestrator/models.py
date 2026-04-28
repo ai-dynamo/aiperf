@@ -38,3 +38,7 @@ class RunResult(AIPerfBaseModel):
     artifacts_path: Path | None = Field(
         default=None, description="Path to run artifacts directory"
     )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata about this run (e.g., trial_index, value_index, concurrency, sweep_mode)",
+    )

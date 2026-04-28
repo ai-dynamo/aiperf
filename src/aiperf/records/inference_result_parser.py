@@ -15,7 +15,11 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
-from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    TokenCounts,
+    ToolCallResponseData,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -328,6 +332,8 @@ class InferenceResultParser(CommunicationMixin):
                     reasoning_texts.append(response.data.reasoning)
                 if response.data.content:
                     output_texts.append(response.data.content)
+            elif isinstance(response.data, ToolCallResponseData):
+                output_texts.append(response.data.text)
             else:
                 output_texts.append(response.data.get_text())
 

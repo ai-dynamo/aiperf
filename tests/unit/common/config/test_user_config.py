@@ -255,6 +255,28 @@ class TestUserConfigDefaults:
 
         assert config._compute_artifact_directory() == Path(expected_dir)
 
+    def test_compute_artifact_directory_with_concurrency_list(self, monkeypatch):
+        """Test artifact directory uses concurrency_sweep_ prefix for list concurrency.
+
+        Regression test: list concurrency previously rendered as
+        'concurrency[2, 4, 8]' with shell-hostile brackets and spaces.
+        """
+        endpoint = make_endpoint(
+            endpoint_type=EndpointType.CHAT,
+            model_names=["test-model"],
+            streaming=True,
+            url="http://custom-url",
+        )
+        output = OutputConfig(artifact_directory=Path("/tmp/artifacts"))
+        loadgen = LoadGeneratorConfig(concurrency=[2, 4, 8], request_count=100)
+
+        config = UserConfig(endpoint=endpoint, output=output, loadgen=loadgen)
+
+        artifact_dir = str(config._compute_artifact_directory())
+        assert "concurrency_sweep_2_4_8" in artifact_dir
+        assert "[" not in artifact_dir
+        assert "]" not in artifact_dir
+
 
 # =============================================================================
 # GPU Telemetry Configuration Tests
@@ -1383,11 +1405,6 @@ class TestUserCentricRateValidation:
         assert config.loadgen.request_count == 100
 
 
-# =============================================================================
-# Non-tokenizing endpoint validation
-# =============================================================================
-
-
 class TestNonTokenizingEndpointValidation:
     """Tests for default_no_text_for_non_tokenizing_endpoints validator."""
 
@@ -1496,3 +1513,293 @@ class TestNonTokenEndpointTokenizerValidation:
             tokenizer=TokenizerConfig(name="some-tokenizer"),
         )
         assert config.tokenizer.name == "some-tokenizer"
+
+
+class TestSweepIncompatibilitiesValidation:
+    """Tests for parameter sweep incompatibility validation."""
+
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_sweep_with_fixed_schedule_raises_error(self, mock_is_file):
+        """Test that parameter sweep with fixed_schedule raises ValueError."""
+        with pytest.raises(ValidationError) as exc_info:
+            make_config(
+                input_config=InputConfig(
+                    fixed_schedule=True,
+                    file="/tmp/trace.jsonl",
+                ),
+                loadgen=LoadGeneratorConfig(
+                    concurrency=[10, 20, 30],
+                    request_count=100,
+                ),
+            )
+
+        error_msg = str(exc_info.value)
+        assert "Parameter sweeps" in error_msg
+        assert "cannot be used with --fixed-schedule mode" in error_msg
+
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_sweep_with_single_concurrency_and_fixed_schedule_succeeds(
+        self, mock_is_file
+    ):
+        """Test that single concurrency with fixed_schedule succeeds."""
+        config = make_config(
+            input_config=InputConfig(
+                fixed_schedule=True,
+                file="/tmp/trace.jsonl",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=10,
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == 10
+        assert config.input.fixed_schedule is True
+
+    def test_sweep_without_fixed_schedule_succeeds(self):
+        """Test that parameter sweep without fixed_schedule succeeds."""
+        config = make_config(
+            input_config=InputConfig(
+                fixed_schedule=False,
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.input.fixed_schedule is False
+
+    @patch(
+        "builtins.open",
+        new_callable=mock_open,
+        read_data='{"timestamp": 1000, "text_input": "test", "output_length": 10}\n',
+    )
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_sweep_with_mooncake_trace_with_timestamps_raises_error(
+        self, mock_is_file, mock_file
+    ):
+        """Test that parameter sweep with mooncake_trace (with timestamps) raises ValueError."""
+        from aiperf.plugin.enums import CustomDatasetType
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_config(
+                input_config=InputConfig(
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    file="/tmp/trace.jsonl",
+                ),
+                loadgen=LoadGeneratorConfig(
+                    concurrency=[10, 20, 30],
+                    request_count=100,
+                ),
+            )
+
+        error_msg = str(exc_info.value)
+        assert "Parameter sweeps" in error_msg
+        assert "mooncake_trace datasets" in error_msg
+        assert "timestamps" in error_msg
+
+    @patch(
+        "builtins.open",
+        new_callable=mock_open,
+        read_data='{"text_input": "test", "output_length": 10}\n',
+    )
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_sweep_with_mooncake_trace_without_timestamps_succeeds(
+        self, mock_is_file, mock_file
+    ):
+        """Test that parameter sweep with mooncake_trace (without timestamps) succeeds."""
+        from aiperf.plugin.enums import CustomDatasetType
+
+        config = make_config(
+            input_config=InputConfig(
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                file="/tmp/trace.jsonl",
+            ),
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.input.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+
+    def test_sweep_with_multi_run_succeeds(self):
+        """Test that parameter sweep with multi-run configuration succeeds."""
+        config = make_config(
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                num_profile_runs=5,
+                parameter_sweep_mode="repeated",
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.loadgen.num_profile_runs == 5
+        assert config.loadgen.parameter_sweep_mode == "repeated"
+
+    def test_sweep_with_all_sweep_params_succeeds(self):
+        """Test that parameter sweep with all sweep parameters succeeds."""
+        config = make_config(
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                parameter_sweep_mode="independent",
+                parameter_sweep_cooldown_seconds=5.0,
+                parameter_sweep_same_seed=True,
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.loadgen.parameter_sweep_mode == "independent"
+        assert config.loadgen.parameter_sweep_cooldown_seconds == 5.0
+        assert config.loadgen.parameter_sweep_same_seed is True
+
+    def test_sweep_with_request_rate_succeeds(self):
+        """Test that parameter sweep with request_rate succeeds."""
+        config = make_config(
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                request_rate=100.0,
+                request_count=100,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.loadgen.request_rate == 100.0
+
+    def test_sweep_with_user_centric_rate_succeeds(self):
+        """Test that parameter sweep with user_centric_rate succeeds."""
+        config = make_config(
+            input_config=make_multi_turn_input(num=50),
+            loadgen=LoadGeneratorConfig(
+                concurrency=[10, 20, 30],
+                user_centric_rate=5.0,
+                num_users=10,
+            ),
+        )
+        assert config.loadgen.concurrency == [10, 20, 30]
+        assert config.loadgen.user_centric_rate == 5.0
+        assert config.loadgen.num_users == 10
+
+
+class TestConcurrencyListParsing:
+    """Tests for comma-separated concurrency list parsing (Task 2.1)."""
+
+    def test_parse_concurrency_single_integer_string_returns_int(self):
+        """Test parsing single integer string returns int (backward compatibility)."""
+        config = LoadGeneratorConfig.model_validate({"concurrency": "10"})
+        assert config.concurrency == 10
+        assert isinstance(config.concurrency, int)
+
+    def test_parse_concurrency_single_integer_returns_int(self):
+        """Test single integer value remains as int (backward compatibility)."""
+        config = LoadGeneratorConfig(concurrency=10)
+        assert config.concurrency == 10
+        assert isinstance(config.concurrency, int)
+
+    def test_parse_concurrency_comma_separated_list_returns_list(self):
+        """Test parsing comma-separated string returns list of integers."""
+        config = LoadGeneratorConfig.model_validate({"concurrency": "10,20,30"})
+        assert config.concurrency == [10, 20, 30]
+        assert isinstance(config.concurrency, list)
+
+    def test_parse_concurrency_with_spaces_returns_list(self):
+        """Test parsing comma-separated string with spaces."""
+        config = LoadGeneratorConfig.model_validate({"concurrency": "10, 20, 30, 40"})
+        assert config.concurrency == [10, 20, 30, 40]
+
+    def test_parse_concurrency_with_extra_spaces_returns_list(self):
+        """Test parsing comma-separated string with extra whitespace."""
+        config = LoadGeneratorConfig.model_validate({"concurrency": "10,  20,   30"})
+        assert config.concurrency == [10, 20, 30]
+
+    def test_parse_concurrency_list_of_integers_returns_list(self):
+        """Test that list of integers passes through unchanged."""
+        config = LoadGeneratorConfig(concurrency=[10, 20, 30])
+        assert config.concurrency == [10, 20, 30]
+        assert isinstance(config.concurrency, list)
+
+    def test_parse_concurrency_none_value_returns_none(self):
+        """Test that None value is preserved."""
+        config = LoadGeneratorConfig(concurrency=None)
+        assert config.concurrency is None
+
+    def test_parse_concurrency_invalid_string_raises_error(self):
+        """Test that invalid string value raises ValueError."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "abc"})
+        assert "Invalid concurrency value" in str(exc_info.value)
+
+    def test_parse_concurrency_list_with_non_integer_raises_error(self):
+        """Test that comma-separated list with non-integer raises ValueError."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "10,abc,30"})
+        assert "Invalid concurrency list" in str(exc_info.value)
+
+    def test_parse_concurrency_duplicate_values_raises_error(self):
+        """Test that duplicate values in list are rejected."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "10,20,10,30"})
+        assert "Duplicate values" in str(exc_info.value)
+
+    def test_parse_concurrency_empty_string_raises_error(self):
+        """Test that empty string raises ValueError."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": ""})
+        assert "Invalid concurrency value" in str(exc_info.value)
+
+    def test_parse_concurrency_trailing_comma_raises_error(self):
+        """Test parsing single value with trailing comma."""
+        # "10," splits into ["10", ""] - the empty string will cause an error
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "10,"})
+        assert "Invalid concurrency" in str(exc_info.value)
+
+    def test_parse_concurrency_negative_single_value_raises_error(self):
+        """Test that negative single value is rejected by validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "-5"})
+        assert "Invalid concurrency value" in str(
+            exc_info.value
+        ) or "must be >= 1" in str(exc_info.value)
+
+    def test_parse_concurrency_zero_single_value_raises_error(self):
+        """Test that zero single value is rejected by validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "0"})
+        assert "Invalid concurrency value" in str(
+            exc_info.value
+        ) or "must be >= 1" in str(exc_info.value)
+
+    def test_validation_rejects_negative_in_list(self):
+        """Test that negative value in list is rejected by validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "10,-5,30"})
+        assert "Invalid concurrency" in str(
+            exc_info.value
+        ) and "must be positive integers (>= 1)" in str(exc_info.value)
+
+    def test_validation_rejects_zero_in_list(self):
+        """Test that zero value in list is rejected by validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoadGeneratorConfig.model_validate({"concurrency": "10,0,30"})
+        assert "Invalid concurrency" in str(
+            exc_info.value
+        ) and "must be positive integers (>= 1)" in str(exc_info.value)
+
+    def test_parse_concurrency_large_values_returns_list(self):
+        """Test parsing large concurrency values."""
+        config = LoadGeneratorConfig.model_validate({"concurrency": "100,500,1000"})
+        assert config.concurrency == [100, 500, 1000]
+
+    def test_parse_concurrency_many_values_returns_list(self):
+        """Test parsing many concurrency values."""
+        values = ",".join(str(i * 10) for i in range(1, 11))
+        config = LoadGeneratorConfig.model_validate({"concurrency": values})
+        assert config.concurrency == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+    def test_parse_concurrency_integration_with_loadgen_config(self):
+        """Test that concurrency list parsing works in LoadGeneratorConfig."""
+        config = LoadGeneratorConfig.model_validate(
+            {"concurrency": "10,20,30", "request_count": 100}
+        )
+        assert config.concurrency == [10, 20, 30]
+        assert config.request_count == 100

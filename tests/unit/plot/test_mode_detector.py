@@ -241,8 +241,12 @@ class TestDuplicatePaths:
         self, mode_detector: ModeDetector, parent_dir_with_runs: Path
     ) -> None:
         """Test parent directory + explicit child paths."""
-        # Get first child run directory
-        children = [d for d in parent_dir_with_runs.iterdir() if d.is_dir()]
+        # Get first child run directory using proper validation
+        children = [
+            d
+            for d in parent_dir_with_runs.iterdir()
+            if d.is_dir() and mode_detector._is_run_directory(d)
+        ]
         child = children[0]
 
         runs = mode_detector.find_run_directories([parent_dir_with_runs, child])

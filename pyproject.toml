@@ -76,6 +76,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",
+  "hypothesis>=6.0.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
