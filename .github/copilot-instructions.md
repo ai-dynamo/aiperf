@@ -63,7 +63,7 @@ pre-commit run              # Staged files only
 pre-commit run --all-files  # All files (recommended after significant changes)
 ```
 
-Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `ruff` (lint + format).
+Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `check-agent-files-sync`, `check-ergonomics`, `check-ruff-baselined`, `ruff`, `ruff-format`.
 
 ## Adding a New Service
 
