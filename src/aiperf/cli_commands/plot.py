@@ -12,6 +12,7 @@ app = App(name="plot")
 @app.default
 def plot(
     paths: list[str] | None = None,
+    *,
     output: str | None = None,
     theme: Literal["light", "dark"] = "light",
     config: str | None = None,

@@ -466,6 +466,7 @@ class GpuTelemetryData(AIPerfBaseModel):
         tag: str,
         header: str,
         unit: str,
+        *,
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:

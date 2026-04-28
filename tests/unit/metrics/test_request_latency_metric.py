@@ -53,5 +53,5 @@ class TestRequestLatencyMetric:
         record = create_record(start_ns=100, responses=[90])
 
         metric = RequestLatencyMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())

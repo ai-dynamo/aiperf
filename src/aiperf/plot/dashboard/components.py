@@ -288,6 +288,7 @@ def create_collapsible_section(
     title: str,
     children: list,
     theme: PlotTheme,
+    *,
     initially_open: bool = False,
 ) -> html.Div:
     """
@@ -353,6 +354,7 @@ def create_run_selector_checklist(
     selected_indices: list[int],
     theme: PlotTheme,
     runs: list = None,
+    *,
     group_by: str = None,
 ) -> html.Div:
     """
@@ -490,6 +492,7 @@ def create_button(
     text: str,
     theme: PlotTheme,
     variant: str = "primary",
+    *,
     n_clicks: int = 0,
 ) -> html.Button:
     """

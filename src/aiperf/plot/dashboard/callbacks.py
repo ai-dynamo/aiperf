@@ -4856,6 +4856,7 @@ def _render_single_run_plots(
     theme: PlotTheme,
     runs: list[RunData],
     plot_specs: list,
+    *,
     default_plot_order: list[str],
 ):
     """Render plots for single-run mode with caching.

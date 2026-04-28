@@ -1047,7 +1047,7 @@ class UserConfig(BaseConfig):
             "mean" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.mean > 0
         ):
-            raise err("--synthetic-input-tokens-mean")
+            raise err("Synthetic input token mean (--synthetic-input-tokens-mean)")
         else:
             self.input.prompt.input_tokens.mean = 0
 
@@ -1055,7 +1055,7 @@ class UserConfig(BaseConfig):
             "stddev" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.stddev > 0
         ):
-            raise err("--synthetic-input-tokens-stddev")
+            raise err("Synthetic input token stddev (--synthetic-input-tokens-stddev)")
         else:
             self.input.prompt.input_tokens.stddev = 0
 
@@ -1063,12 +1063,12 @@ class UserConfig(BaseConfig):
             "batch_size" in self.input.prompt.model_fields_set
             and self.input.prompt.batch_size > 0
         ):
-            raise err("--batch-size-text")
+            raise err("Text batch size (--batch-size-text)")
         else:
             self.input.prompt.batch_size = 0
 
         if self.input.prompt.sequence_distribution is not None:
-            raise err("--sequence-distribution")
+            raise err("Sequence distribution (--sequence-distribution)")
 
         if self.input.prompt.prefix_prompt.model_fields_set:
             raise err("Prefix prompt options")

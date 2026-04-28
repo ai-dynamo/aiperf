@@ -2,36 +2,6 @@
   "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
-      "exception-message",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--batch-size-text"
-    ],
-    [
-      "exception-message",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--sequence-distribution"
-    ],
-    [
-      "exception-message",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--synthetic-input-tokens-mean"
-    ],
-    [
-      "exception-message",
-      "src/aiperf/common/config/user_config.py",
-      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--synthetic-input-tokens-stddev"
-    ],
-    [
-      "exception-message",
-      "src/aiperf/dataset/memory_map_utils.py",
-      "MemoryMapDatasetBackingStore.finalize::RuntimeError:Already finalized"
-    ],
-    [
-      "exception-message",
-      "src/aiperf/metrics/base_metric.py",
-      "BaseMetric._require_valid_record::NoMetricValue:Invalid Record"
-    ],
-    [
       "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
@@ -450,6 +420,11 @@
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
       "PlotGenerator.create_latency_scatter_with_percentiles"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/core/plot_generator.py",
+      "PlotGenerator.create_multi_run_bar_chart"
     ],
     [
       "function-size",
@@ -943,68 +918,8 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/cli_commands/plot.py",
-      "plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/cli_commands/service.py",
-      "service"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/cli_commands/synthesize.py",
-      "synthesize"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/cli_utils.py",
-      "raise_startup_error_and_exit"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/base_comms.py",
-      "BaseCommunication.create_client"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/base_comms.py",
-      "BaseCommunication.create_pull_client"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/bootstrap.py",
-      "bootstrap_and_run_service"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/config/base_config.py",
-      "BaseConfig._attach_comments"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/mixins/aiperf_lifecycle_mixin.py",
-      "AIPerfLifecycleMixin._execute_state_transition"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/mixins/base_metrics_collector_mixin.py",
-      "BaseMetricsCollectorMixin.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/mixins/pull_client_mixin.py",
-      "PullClientMixin.__init__"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/mixins/task_manager_mixin.py",
-      "TaskManagerMixin.start_background_task"
     ],
     [
       "keyword-only-args",
@@ -1013,43 +928,8 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/common/models/telemetry_models.py",
-      "GpuTelemetryData.get_metric_result"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/protocols.py",
-      "CommunicationProtocol.create_client"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/protocols.py",
-      "CommunicationProtocol.create_pull_client"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/tokenizer_display.py",
-      "display_tokenizer_validation_error"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/credit/callback_handler.py",
       "CreditCallbackHandler._release_slots_for_return"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler.register_phase"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/cli.py",
-      "synthesize"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/distributions.py",
-      "sample_lognormal"
     ],
     [
       "keyword-only-args",
@@ -1058,158 +938,13 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
-      "render_comparison_text"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/reporting/simulation.py",
-      "render_simulation"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
-      "_compute_dedup_tokens"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
-      "SessionSynthesizer._synthesize_continuation"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/agentic_code_gen/writer.py",
-      "write_dataset"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/generator/parallel_decode.py",
-      "parallel_decode"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/base_hf_dataset.py",
-      "BaseHFDatasetLoader.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/base_public_dataset.py",
-      "BasePublicDatasetLoader.is_valid_sequence"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/hf_instruction_response.py",
-      "HFInstructionResponseDatasetLoader.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/exporters/exporter_manager.py",
-      "ExporterManager.__init__"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/exporters/metrics_csv_exporter.py",
       "MetricsCsvExporter._write_gpu_metric_row_from_summary"
     ],
     [
       "keyword-only-args",
-      "src/aiperf/gpu_telemetry/dcgm_collector.py",
-      "DCGMTelemetryCollector.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/orchestrator/convergence/ci_width.py",
-      "CIWidthConvergence.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/orchestrator/strategies.py",
-      "AdaptiveStrategy.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/orchestrator/strategies.py",
-      "ParameterSweepStrategy.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/cli_runner.py",
-      "run_plot_controller"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator._get_base_layout"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_bucket_histogram"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_dual_axis_plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_latency_scatter_with_percentiles"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_multi_run_bar_chart"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_pareto_plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_percentile_bands"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_request_timeline"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_scatter_line_plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_time_series_area"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_time_series_histogram"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_time_series_scatter"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/core/plot_generator.py",
-      "PlotGenerator.create_timeslice_scatter"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
       "detect_directional_outliers"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callback_helpers.py",
-      "build_single_run_plot_config"
     ],
     [
       "keyword-only-args",
@@ -1220,11 +955,6 @@
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
       "_register_multi_run_only_callbacks"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "_render_single_run_plots"
     ],
     [
       "keyword-only-args",
@@ -1303,31 +1033,6 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/plot/dashboard/components.py",
-      "create_button"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/components.py",
-      "create_collapsible_section"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/components.py",
-      "create_run_selector_checklist"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/server.py",
-      "DashboardServer.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/utils.py",
-      "create_plot_container_component"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/plot/dashboard/utils.py",
       "runs_to_dataframe"
     ],
@@ -1343,23 +1048,8 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/plot/plot_controller.py",
-      "PlotController.__init__"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/plot/utils.py",
       "create_series_legend_label"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/server_metrics/data_collector.py",
-      "ServerMetricsDataCollector.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/server_metrics/export_stats.py",
-      "compute_stats"
     ],
     [
       "keyword-only-args",
@@ -1378,11 +1068,6 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/server_metrics/histogram_percentiles.py",
-      "accumulate_bucket_statistics"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/server_metrics/parquet_exporter.py",
       "ServerMetricsParquetExporter._collect_histogram_rows"
     ],
@@ -1390,46 +1075,6 @@
       "keyword-only-args",
       "src/aiperf/server_metrics/parquet_exporter.py",
       "ServerMetricsParquetExporter._collect_scalar_rows"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/transports/aiohttp_client.py",
-      "AioHttpClient._request"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/transports/aiohttp_client.py",
-      "AioHttpClient._request_with_cancellation"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/transports/aiohttp_transport.py",
-      "AioHttpTransport._poll_video_job"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/zmq/pull_client.py",
-      "ZMQPullClient.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/zmq/zmq_base_client.py",
-      "BaseZMQClient.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/zmq/zmq_comms.py",
-      "BaseZMQCommunication.create_client"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/zmq/zmq_proxy_base.py",
-      "BaseZMQProxy.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/zmq/zmq_proxy_base.py",
-      "ProxySocketClient.__init__"
     ],
     [
       "module-state",
