@@ -33,11 +33,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/cli_runner.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -163,6 +158,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/orchestrator/strategies.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/plot/config.py",
       ""
     ],
@@ -259,11 +259,6 @@
     [
       "function-size",
       "src/aiperf/cli_runner.py",
-      "_print_aggregate_summary"
-    ],
-    [
-      "function-size",
-      "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
     [
@@ -275,6 +270,16 @@
       "function-size",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
+    ],
+    [
+      "function-size",
+      "src/aiperf/common/config/loadgen_config.py",
+      "parse_concurrency_list"
+    ],
+    [
+      "function-size",
+      "src/aiperf/common/config/loadgen_config.py",
+      "validate_multi_run_params"
     ],
     [
       "function-size",
@@ -348,6 +353,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "_generate_content"
+    ],
+    [
+      "function-size",
       "src/aiperf/gpu_telemetry/accumulator.py",
       "export_results"
     ],
@@ -363,8 +373,28 @@
     ],
     [
       "function-size",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "compute"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
+    ],
+    [
+      "function-size",
       "src/aiperf/orchestrator/orchestrator.py",
       "_execute_single_run"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/strategies.py",
+      "_execute_sweep_then_trials"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/strategies.py",
+      "aggregate"
     ],
     [
       "function-size",
@@ -1430,6 +1460,11 @@
       "nesting-depth",
       "src/aiperf/endpoints/openai_responses.py",
       "_extract_response_content"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
     ],
     [
       "nesting-depth",

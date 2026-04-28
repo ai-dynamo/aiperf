@@ -810,6 +810,11 @@
     [
       "C901",
       "src/aiperf/common/config/loadgen_config.py",
+      "LoadGeneratorConfig.parse_concurrency_list"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/config/loadgen_config.py",
       "LoadGeneratorConfig.validate_multi_run_params"
     ],
     [
@@ -859,6 +864,11 @@
     ],
     [
       "C901",
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint.extract_chat_response_data"
+    ],
+    [
+      "C901",
       "src/aiperf/endpoints/openai_responses.py",
       "ResponsesEndpoint._extract_response_content"
     ],
@@ -866,6 +876,11 @@
       "C901",
       "src/aiperf/endpoints/openai_responses.py",
       "ResponsesEndpoint._set_item_content"
+    ],
+    [
+      "C901",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
     ],
     [
       "C901",
@@ -879,8 +894,18 @@
     ],
     [
       "C901",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
+    ],
+    [
+      "C901",
       "src/aiperf/orchestrator/jsonl_loader.py",
       "iter_profiling_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/orchestrator/strategies.py",
+      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "C901",
@@ -1184,6 +1209,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/common/config/loadgen_config.py",
+      "LoadGeneratorConfig.parse_concurrency_list"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/common/config/user_config.py",
       "UserConfig._parse_gpu_telemetry_config"
     ],
@@ -1226,6 +1256,16 @@
       "PLR0912",
       "src/aiperf/endpoints/openai_responses.py",
       "ResponsesEndpoint._extract_response_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/orchestrator/aggregation/sweep.py",
+      "identify_pareto_optimal"
     ],
     [
       "PLR0912",
@@ -1350,11 +1390,6 @@
     [
       "PLR0915",
       "src/aiperf/cli_runner.py",
-      "_print_aggregate_summary"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
     [
@@ -1376,6 +1411,16 @@
       "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
+      "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/orchestrator/strategies.py",
+      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "PLR0915",
