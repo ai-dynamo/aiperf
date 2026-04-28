@@ -528,7 +528,7 @@ class TestComputeEfficiencyMetrics:
     def test_multiple_gpus_sums_power_and_energy(
         self, accumulator: GPUTelemetryAccumulator, time_filter: TimeRangeFilter
     ) -> None:
-        """Multiple GPUs across endpoints → power and energy summed, count reflects GPU count."""
+        """Multiple GPUs across endpoints → power and energy summed."""
         gpu0 = self._make_gpu_mock(power_avg=100.0, energy_delta_mj=0.0005)  # 500 J
         gpu1 = self._make_gpu_mock(power_avg=150.0, energy_delta_mj=0.0005)  # 500 J
         accumulator._hierarchy.dcgm_endpoints = {
@@ -542,11 +542,11 @@ class TestComputeEfficiencyMetrics:
 
         power = next(r for r in results if r.tag == "total_gpu_power")
         assert power.avg == pytest.approx(250.0)  # 100 + 150
-        assert power.count == 2
+        assert power.count is None
 
         energy = next(r for r in results if r.tag == "total_gpu_energy")
         assert energy.avg == pytest.approx(1000.0)  # 500 + 500
-        assert energy.count == 2
+        assert energy.count is None
 
         tpj = next(r for r in results if r.tag == "output_tokens_per_joule")
         assert tpj.avg == pytest.approx(1.0)  # 1000 tokens / 1000 J
