@@ -49,7 +49,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -97,12 +96,58 @@ class Violation:
     message: str
 
     def key(self) -> tuple[str, str, str]:
-        """Baseline key: check + file + identifier.
+        """Baseline key: ``(check, file, identifier)``.
 
-        Line numbers are excluded so that unrelated edits above a known
-        violation don't re-trigger the check.
+        Line numbers are deliberately excluded so that unrelated edits
+        above a known violation do not re-trigger the check. The
+        ``identifier`` for AST-backed function/class checks is the
+        qualname (e.g. ``FixedTrialsStrategy.__init__``), so methods
+        on different classes that legitimately share a short name (a
+        Protocol/ABC contract, a dunder, repeated Dash inner-callback
+        names) each get their own baseline entry instead of collapsing.
+
+        For call-site checks (``stdlib-json``, ``exception-message``)
+        the identifier is ``<enclosing-qualname>::<call-or-message>``,
+        so the same call in different functions doesn't collapse. When
+        the same call repeats inside a single function, ``_disambiguate``
+        appends an ``#N`` occurrence suffix so each site is individually
+        baselineable and a baselined site cannot mask a later sibling.
         """
         return (self.check, self.file, self.identifier)
+
+
+def _disambiguate(violations: list[Violation]) -> list[Violation]:
+    """Append ``#N`` to the 2nd+ occurrence of each (check, file, identifier).
+
+    Safety net for the few checks where the qualname-scoped identifier
+    can still legitimately repeat — e.g. two ``json.loads(`` calls in
+    the same function (same ``qualname::json.loads(`` identifier), or
+    two ``raise ValueError("bad")`` sites with the same literal prefix
+    in the same function. Without ``#N``, those collapse to a single
+    baseline key and a freshly added 3rd call would inherit the
+    grandfathering of the existing 2 — defeating the "new violations
+    only" guarantee. Sorting by ``(file, check, line, identifier)``
+    keeps numbering stable across runs given a stable file.
+    """
+    counts: dict[tuple[str, str, str], int] = defaultdict(int)
+    out: list[Violation] = []
+    for v in sorted(violations, key=lambda x: (x.file, x.check, x.line, x.identifier)):
+        base = (v.check, v.file, v.identifier)
+        counts[base] += 1
+        n = counts[base]
+        if n == 1:
+            out.append(v)
+        else:
+            out.append(
+                Violation(
+                    check=v.check,
+                    file=v.file,
+                    line=v.line,
+                    identifier=f"{v.identifier}#{n}",
+                    message=v.message,
+                )
+            )
+    return out
 
 
 def load_baseline() -> set[tuple[str, str, str]]:
@@ -120,8 +165,15 @@ def write_baseline(violations: list[Violation]) -> None:
                 "_comment": (
                     "Pre-existing violations of tools/check_ergonomics.py. "
                     "Regenerate with: python tools/check_ergonomics.py "
-                    "--regenerate-baseline. New entries here should be rare "
-                    "and justified; prefer fixing the underlying violation."
+                    "--regenerate-baseline. Key: (check, file, identifier). "
+                    "Function/class identifiers are qualnames "
+                    "(e.g. 'FixedTrialsStrategy.__init__'); call-site "
+                    "identifiers (stdlib-json, exception-message) are "
+                    "'<enclosing-qualname>::<call-or-message>'. A trailing "
+                    "'#N' (N>=2) marks the Nth occurrence of an identifier "
+                    "that genuinely repeats inside one scope (see "
+                    "_disambiguate). New entries here should be rare and "
+                    "justified; prefer fixing the underlying violation."
                 ),
                 "violations": [list(k) for k in keys],
             },
@@ -136,11 +188,78 @@ def write_baseline(violations: list[Violation]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse(path: Path) -> ast.Module | None:
+def _parse(path: Path) -> ast.Module:
+    """Parse a Python source file. Surface parse failures loudly.
+
+    A swallowed SyntaxError or UnicodeDecodeError used to drop the file
+    from every AST-backed check, which let the runner end with
+    ``ergonomics: OK`` while a changed file silently went unchecked.
+    Now we re-raise so the gate fails and the user sees the path.
+    """
     try:
         return ast.parse(path.read_text())
-    except (SyntaxError, UnicodeDecodeError):
-        return None
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        try:
+            rel = path.relative_to(REPO_ROOT)
+        except ValueError:
+            rel = path
+        raise RuntimeError(f"failed to parse {rel}: {exc}") from exc
+
+
+_DefNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+
+
+def _qualname_walk(tree: ast.AST):
+    """Yield ``(qualname, node)`` for every def in ``tree``.
+
+    ``qualname`` is dot-joined from enclosing classes and functions —
+    e.g. ``FixedTrialsStrategy.__init__`` for an ``__init__`` inside a
+    class, or ``register_callbacks.create_custom_plot`` for an inner
+    function. This is the only stable identifier across files where
+    multiple classes legitimately share a method name (Protocol/ABC
+    implementations, dunders, Dash callback patterns) — the previous
+    short-name identifier collapsed all of those into one baseline key.
+    """
+
+    def walk(node, prefix):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _DefNode):
+                qn = f"{prefix}.{child.name}" if prefix else child.name
+                yield qn, child
+                yield from walk(child, qn)
+            else:
+                yield from walk(child, prefix)
+
+    yield from walk(tree, "")
+
+
+def _enclosing_func_map(tree: ast.Module) -> dict[int, str]:
+    """Map ``id(node) -> enclosing-function-qualname`` for every AST node.
+
+    Used by checks that key on a call site or raise site so the
+    identifier can include the enclosing function scope (so two
+    ``json.loads`` calls in different functions don't collapse to the
+    same baseline key).
+    """
+    result: dict[int, str] = {}
+
+    def walk(node, fn_qualname, prefix):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _DefNode):
+                qn = f"{prefix}.{child.name}" if prefix else child.name
+                child_fn = (
+                    qn
+                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+                    else fn_qualname
+                )
+                result[id(child)] = fn_qualname or "<module>"
+                walk(child, child_fn, qn)
+            else:
+                result[id(child)] = fn_qualname or "<module>"
+                walk(child, fn_qualname, prefix)
+
+    walk(tree, None, "")
+    return result
 
 
 def _max_depth(node: ast.AST, depth: int = 0) -> int:
@@ -224,7 +343,7 @@ def check_file_size(path: Path, rel: str) -> list[Violation]:
 
 def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for node in ast.walk(tree):
+    for qualname, node in _qualname_walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             end = node.end_lineno or node.lineno
             length = end - node.lineno + 1
@@ -234,8 +353,8 @@ def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
                         check="function-size",
                         file=rel,
                         line=node.lineno,
-                        identifier=node.name,
-                        message=f"function '{node.name}' is {length} lines (>{MAX_FUNCTION_LINES})",
+                        identifier=qualname,
+                        message=f"function '{qualname}' is {length} lines (>{MAX_FUNCTION_LINES})",
                     )
                 )
     return out
@@ -243,7 +362,7 @@ def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for node in ast.walk(tree):
+    for qualname, node in _qualname_walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             depth = _max_depth(node)
             if depth > MAX_NESTING_DEPTH:
@@ -252,8 +371,8 @@ def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
                         check="nesting-depth",
                         file=rel,
                         line=node.lineno,
-                        identifier=node.name,
-                        message=f"function '{node.name}' has nesting depth {depth} (>{MAX_NESTING_DEPTH})",
+                        identifier=qualname,
+                        message=f"function '{qualname}' has nesting depth {depth} (>{MAX_NESTING_DEPTH})",
                     )
                 )
     return out
@@ -261,7 +380,7 @@ def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_keyword_only_args(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for node in ast.walk(tree):
+    for qualname, node in _qualname_walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         args = node.args
@@ -275,8 +394,8 @@ def check_keyword_only_args(tree: ast.Module, rel: str) -> list[Violation]:
                     check="keyword-only-args",
                     file=rel,
                     line=node.lineno,
-                    identifier=node.name,
-                    message=f"function '{node.name}' has {pos} positional args without '*,' separator",
+                    identifier=qualname,
+                    message=f"function '{qualname}' has {pos} positional args without '*,' separator",
                 )
             )
     return out
@@ -335,7 +454,7 @@ def check_module_state(tree: ast.Module, rel: str) -> list[Violation]:
 
 def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
     out: list[Violation] = []
-    for node in ast.walk(tree):
+    for qualname, node in _qualname_walk(tree):
         if isinstance(node, ast.ClassDef) and _is_pydantic_model(node):
             n = _pydantic_field_count(node)
             if n > MAX_PYDANTIC_FIELDS:
@@ -344,45 +463,73 @@ def check_pydantic_fields(tree: ast.Module, rel: str) -> list[Violation]:
                         check="pydantic-fields",
                         file=rel,
                         line=node.lineno,
-                        identifier=node.name,
-                        message=f"model '{node.name}' has {n} fields (>{MAX_PYDANTIC_FIELDS}) — split into sub-models",
+                        identifier=qualname,
+                        message=f"model '{qualname}' has {n} fields (>{MAX_PYDANTIC_FIELDS}) — split into sub-models",
                     )
                 )
     return out
 
 
-_JSON_IMPORT_RE = re.compile(
-    r"^\s*(import json(?:\s|$|\s+as\s)|from json\s)", re.MULTILINE
-)
-_JSON_USE_RE = re.compile(r"\bjson\.(dumps|loads)\s*\(")
+_JSON_CALLS = {"dumps", "loads", "dump", "load"}
 
 
-def check_stdlib_json(path: Path, rel: str) -> list[Violation]:
-    txt = path.read_text()
+def check_stdlib_json(tree: ast.Module, rel: str) -> list[Violation]:
+    """AST-walk replacement for the previous regex-based scan.
+
+    The earlier version matched raw source text and so flagged ``json.loads``
+    inside docstrings, comments, and string literals (false positives in
+    docs and examples). Walking the AST inspects only executable nodes:
+    ``import json``, ``from json import ...``, and attribute calls
+    ``json.dumps(...)`` / ``json.loads(...)`` / etc.
+
+    Identifier is namespaced by enclosing function (``<qualname>::call``)
+    so a baselined ``json.loads`` in one function does not mask a new
+    ``json.loads`` added to a sibling function in the same file.
+    """
+    enclosing = _enclosing_func_map(tree)
     out: list[Violation] = []
-    for m in _JSON_IMPORT_RE.finditer(txt):
-        line = txt.count("\n", 0, m.start()) + 1
-        out.append(
-            Violation(
-                check="stdlib-json",
-                file=rel,
-                line=line,
-                identifier=m.group(1).strip(),
-                message="stdlib 'json' is banned; use 'orjson' instead",
+    for node in ast.walk(tree):
+        scope = enclosing.get(id(node), "<module>")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "json":
+                    out.append(
+                        Violation(
+                            check="stdlib-json",
+                            file=rel,
+                            line=node.lineno,
+                            identifier=f"{scope}::import json",
+                            message="stdlib 'json' is banned; use 'orjson' instead",
+                        )
+                    )
+        elif isinstance(node, ast.ImportFrom) and node.module == "json":
+            names = ", ".join(alias.name for alias in node.names)
+            out.append(
+                Violation(
+                    check="stdlib-json",
+                    file=rel,
+                    line=node.lineno,
+                    identifier=f"{scope}::from json import {names}",
+                    message="stdlib 'json' is banned; use 'orjson' instead",
+                )
             )
-        )
-    for m in _JSON_USE_RE.finditer(txt):
-        line = txt.count("\n", 0, m.start()) + 1
-        call = m.group(0)
-        out.append(
-            Violation(
-                check="stdlib-json",
-                file=rel,
-                line=line,
-                identifier=call,
-                message=f"stdlib '{call}' is banned; use orjson.dumps/orjson.loads",
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "json"
+            and node.func.attr in _JSON_CALLS
+        ):
+            call = f"json.{node.func.attr}("
+            out.append(
+                Violation(
+                    check="stdlib-json",
+                    file=rel,
+                    line=node.lineno,
+                    identifier=f"{scope}::{call}",
+                    message=f"stdlib '{call}' is banned; use orjson.dumps/orjson.loads",
+                )
             )
-        )
     return out
 
 
@@ -393,7 +540,12 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
     literal shorter than ``MIN_EXCEPTION_MESSAGE_WORDS`` words. An f-string
     or concatenation is assumed to carry dynamic context and is accepted
     regardless of literal length.
+
+    Identifier is namespaced by enclosing function so a baselined raise
+    in one function does not mask a new short-message raise added to
+    another function in the same file.
     """
+    enclosing = _enclosing_func_map(tree)
     out: list[Violation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Raise):
@@ -413,12 +565,13 @@ def check_exception_message(tree: ast.Module, rel: str) -> list[Violation]:
                 node.exc.func.attr if isinstance(node.exc.func, ast.Attribute) else "?"
             )
         )
+        scope = enclosing.get(id(node), "<module>")
         out.append(
             Violation(
                 check="exception-message",
                 file=rel,
                 line=node.lineno,
-                identifier=f"{exc_name}:{first.value[:40]}",
+                identifier=f"{scope}::{exc_name}:{first.value[:40]}",
                 message=(
                     f"raise {exc_name}({first.value!r}) — message too terse "
                     f"(<{MIN_EXCEPTION_MESSAGE_WORDS} words); include the "
@@ -483,15 +636,13 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
 
 def _run_per_file(
     path: Path, rel: str, enabled: set[str]
-) -> tuple[list[Violation], ast.Module | None]:
+) -> tuple[list[Violation], ast.Module]:
     out: list[Violation] = []
     if "file-size" in enabled:
         out.extend(check_file_size(path, rel))
-    if "stdlib-json" in enabled:
-        out.extend(check_stdlib_json(path, rel))
     tree = _parse(path)
-    if tree is None:
-        return out, None
+    if "stdlib-json" in enabled:
+        out.extend(check_stdlib_json(tree, rel))
     if "function-size" in enabled:
         out.extend(check_function_size(tree, rel))
     if "nesting-depth" in enabled:
@@ -519,11 +670,11 @@ def collect_violations(files: list[Path], enabled: set[str]) -> list[Violation]:
         rels[path] = rel
         per_file, tree = _run_per_file(path, rel, enabled)
         violations.extend(per_file)
-        if "duplicate-classes" in enabled and tree is not None:
+        if "duplicate-classes" in enabled:
             trees[path] = tree
     if "duplicate-classes" in enabled and trees:
         violations.extend(check_duplicate_classes(trees, rels))
-    return violations
+    return _disambiguate(violations)
 
 
 def main() -> int:

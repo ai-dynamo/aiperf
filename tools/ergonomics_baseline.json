@@ -1,35 +1,35 @@
 {
-  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. New entries here should be rare and justified; prefer fixing the underlying violation.",
+  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
       "exception-message",
       "src/aiperf/common/config/user_config.py",
-      "err:--batch-size-text"
+      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--batch-size-text"
     ],
     [
       "exception-message",
       "src/aiperf/common/config/user_config.py",
-      "err:--sequence-distribution"
+      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--sequence-distribution"
     ],
     [
       "exception-message",
       "src/aiperf/common/config/user_config.py",
-      "err:--synthetic-input-tokens-mean"
+      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--synthetic-input-tokens-mean"
     ],
     [
       "exception-message",
       "src/aiperf/common/config/user_config.py",
-      "err:--synthetic-input-tokens-stddev"
+      "UserConfig.default_no_text_for_non_tokenizing_endpoints::err:--synthetic-input-tokens-stddev"
     ],
     [
       "exception-message",
       "src/aiperf/dataset/memory_map_utils.py",
-      "RuntimeError:Already finalized"
+      "MemoryMapDatasetBackingStore.finalize::RuntimeError:Already finalized"
     ],
     [
       "exception-message",
       "src/aiperf/metrics/base_metric.py",
-      "NoMetricValue:Invalid Record"
+      "BaseMetric._require_valid_record::NoMetricValue:Invalid Record"
     ],
     [
       "file-size",
@@ -274,27 +274,27 @@
     [
       "function-size",
       "src/aiperf/common/config/loadgen_config.py",
-      "parse_concurrency_list"
+      "LoadGeneratorConfig.parse_concurrency_list"
     ],
     [
       "function-size",
       "src/aiperf/common/config/loadgen_config.py",
-      "validate_multi_run_params"
+      "LoadGeneratorConfig.validate_multi_run_params"
     ],
     [
       "function-size",
       "src/aiperf/common/config/user_config.py",
-      "validate_timing_mode"
+      "UserConfig.validate_timing_mode"
     ],
     [
       "function-size",
       "src/aiperf/common/logging.py",
-      "render"
+      "CustomRichHandler.render"
     ],
     [
       "function-size",
       "src/aiperf/common/models/telemetry_models.py",
-      "to_metric_result_filtered"
+      "GpuMetricTimeSeries.to_metric_result_filtered"
     ],
     [
       "function-size",
@@ -309,7 +309,7 @@
     [
       "function-size",
       "src/aiperf/controller/system_controller.py",
-      "__init__"
+      "SystemController.__init__"
     ],
     [
       "function-size",
@@ -329,52 +329,52 @@
     [
       "function-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
-      "_synthesize_continuation"
+      "SessionSynthesizer._synthesize_continuation"
     ],
     [
       "function-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
-      "_synthesize_explicit_turn_session"
+      "SessionSynthesizer._synthesize_explicit_turn_session"
     ],
     [
       "function-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
-      "synthesize_session"
+      "SessionSynthesizer.synthesize_session"
     ],
     [
       "function-size",
       "src/aiperf/dataset/loader/base_trace_loader.py",
-      "convert_to_conversations"
+      "BaseTraceDatasetLoader.convert_to_conversations"
     ],
     [
       "function-size",
       "src/aiperf/dataset/synthesis/synthesizer.py",
-      "_apply_multipliers"
+      "Synthesizer._apply_multipliers"
     ],
     [
       "function-size",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
-      "_generate_content"
+      "AggregateSweepCsvExporter._generate_content"
     ],
     [
       "function-size",
       "src/aiperf/gpu_telemetry/accumulator.py",
-      "export_results"
+      "GPUTelemetryAccumulator.export_results"
     ],
     [
       "function-size",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
-      "_parse_metrics_to_records"
+      "DCGMTelemetryCollector._parse_metrics_to_records"
     ],
     [
       "function-size",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
-      "_collect_gpu_metrics"
+      "PyNVMLTelemetryCollector._collect_gpu_metrics"
     ],
     [
       "function-size",
       "src/aiperf/orchestrator/aggregation/sweep.py",
-      "compute"
+      "SweepAnalyzer.compute"
     ],
     [
       "function-size",
@@ -384,42 +384,42 @@
     [
       "function-size",
       "src/aiperf/orchestrator/orchestrator.py",
-      "_execute_single_run"
+      "MultiRunOrchestrator._execute_single_run"
     ],
     [
       "function-size",
       "src/aiperf/orchestrator/strategies.py",
-      "_execute_sweep_then_trials"
+      "SweepConfidenceStrategy._execute_sweep_then_trials"
     ],
     [
       "function-size",
       "src/aiperf/orchestrator/strategies.py",
-      "aggregate"
+      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "function-size",
       "src/aiperf/plot/config.py",
-      "_preset_to_plot_spec"
+      "PlotConfig._preset_to_plot_spec"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/data_loader.py",
-      "_extract_metadata"
+      "DataLoader._extract_metadata"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/data_loader.py",
-      "_load_server_metrics_json"
+      "DataLoader._load_server_metrics_json"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/data_loader.py",
-      "_load_server_metrics_parquet"
+      "DataLoader._load_server_metrics_parquet"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/data_loader.py",
-      "load_run"
+      "DataLoader.load_run"
     ],
     [
       "function-size",
@@ -429,102 +429,102 @@
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "_get_base_layout"
+      "PlotGenerator._get_base_layout"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "_prepare_groups"
+      "PlotGenerator._prepare_groups"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_bucket_histogram"
+      "PlotGenerator.create_bucket_histogram"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_dual_axis_plot"
+      "PlotGenerator.create_dual_axis_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_latency_scatter_with_percentiles"
+      "PlotGenerator.create_latency_scatter_with_percentiles"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_pareto_plot"
+      "PlotGenerator.create_pareto_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_percentile_bands"
+      "PlotGenerator.create_percentile_bands"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_request_timeline"
+      "PlotGenerator.create_request_timeline"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_scatter_line_plot"
+      "PlotGenerator.create_scatter_line_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_time_series_histogram"
+      "PlotGenerator.create_time_series_histogram"
     ],
     [
       "function-size",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_timeslice_scatter"
+      "PlotGenerator.create_timeslice_scatter"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_config_modal"
+      "DashboardBuilder._build_config_modal"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_custom_plot_modal"
+      "DashboardBuilder._build_custom_plot_modal"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_multi_run_tab"
+      "DashboardBuilder._build_multi_run_tab"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_plot_edit_modal"
+      "DashboardBuilder._build_plot_edit_modal"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_run_selector_section"
+      "DashboardBuilder._build_run_selector_section"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_single_run_custom_plot_modal"
+      "DashboardBuilder._build_single_run_custom_plot_modal"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_single_run_edit_modal"
+      "DashboardBuilder._build_single_run_edit_modal"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_build_stores"
+      "DashboardBuilder._build_stores"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/builder.py",
-      "_get_all_available_metrics"
+      "DashboardBuilder._get_all_available_metrics"
     ],
     [
       "function-size",
@@ -549,42 +549,17 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "check_config_version"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "create_custom_plot"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle_parallel"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
       "generate_plot_from_spec"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "handle_url_routing"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "open_plot_edit_modal"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
       "register_config_modal_callback"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_config_modal_callback.toggle_config_modal"
     ],
     [
       "function-size",
@@ -599,7 +574,17 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
+      "register_custom_plot_callbacks.create_custom_plot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
       "register_drill_down_callbacks"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_drill_down_callbacks.handle_url_routing"
     ],
     [
       "function-size",
@@ -609,7 +594,22 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
+      "register_dynamic_grid_callback.update_grid_children"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
       "register_export_png_callback"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_export_png_callback.export_plots_bundle"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_export_png_callback.export_plots_bundle_parallel"
     ],
     [
       "function-size",
@@ -624,12 +624,32 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
+      "register_layout_control_callbacks.reset_layout"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
       "register_modal_theme_callbacks"
     ],
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_multi_run_plot_edit_callbacks"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.open_plot_edit_modal"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.save_as_new_plot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.update_plot_config"
     ],
     [
       "function-size",
@@ -649,6 +669,16 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
+      "register_single_run_plot_edit_callbacks.open_plot_edit_modal"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_single_run_plot_edit_callbacks.save_as_new_single_run_plot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/plot/dashboard/callbacks.py",
       "register_toast_notifications_callbacks"
     ],
     [
@@ -659,32 +689,7 @@
     [
       "function-size",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "reset_layout"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "save_as_new_plot"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "save_as_new_single_run_plot"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "toggle_config_modal"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "update_grid_children"
-    ],
-    [
-      "function-size",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "update_plot_config"
+      "register_version_check_callback.check_config_version"
     ],
     [
       "function-size",
@@ -724,32 +729,32 @@
     [
       "function-size",
       "src/aiperf/plot/exporters/png/multi_run.py",
-      "_runs_to_dataframe"
+      "MultiRunPNGExporter._runs_to_dataframe"
     ],
     [
       "function-size",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_create_multi_series_server_metrics_plot"
+      "HistogramHandler._create_server_metrics_bucket_histogram"
     ],
     [
       "function-size",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_create_server_metrics_bucket_histogram"
+      "PercentileBandsHandler.create_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_create_server_metrics_plot"
+      "TimeSliceHandler._create_multi_series_server_metrics_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_get_server_metric_average"
+      "TimeSliceHandler._create_server_metrics_plot"
     ],
     [
       "function-size",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "create_plot"
+      "TimeSliceHandler._get_server_metric_average"
     ],
     [
       "function-size",
@@ -774,32 +779,32 @@
     [
       "function-size",
       "src/aiperf/records/inference_result_parser.py",
-      "parse_request_record"
+      "InferenceResultParser.parse_request_record"
     ],
     [
       "function-size",
       "src/aiperf/records/records_manager.py",
-      "__init__"
+      "RecordsManager.__init__"
     ],
     [
       "function-size",
       "src/aiperf/records/records_manager.py",
-      "_process_results"
+      "RecordsManager._process_results"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/accumulator.py",
-      "_compute_endpoint_summaries"
+      "ServerMetricsAccumulator._compute_endpoint_summaries"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/csv_exporter.py",
-      "_write_section"
+      "ServerMetricsCsvExporter._write_section"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/data_collector.py",
-      "_parse_metrics_to_records"
+      "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
     [
       "function-size",
@@ -849,57 +854,57 @@
     [
       "function-size",
       "src/aiperf/server_metrics/json_exporter.py",
-      "_build_hybrid_metrics"
+      "ServerMetricsJsonExporter._build_hybrid_metrics"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/manager.py",
-      "_profile_configure_command"
+      "ServerMetricsManager._profile_configure_command"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "_build_parquet_metadata"
+      "ServerMetricsParquetExporter._build_parquet_metadata"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "_collect_histogram_rows"
+      "ServerMetricsParquetExporter._collect_histogram_rows"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "_collect_scalar_rows"
+      "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "export"
+      "ServerMetricsParquetExporter.export"
     ],
     [
       "function-size",
       "src/aiperf/server_metrics/storage.py",
-      "append"
+      "HistogramTimeSeries.append"
     ],
     [
       "function-size",
       "src/aiperf/timing/phase/runner.py",
-      "run"
+      "PhaseRunner.run"
     ],
     [
       "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
-      "execute_phase"
+      "RequestRateStrategy.execute_phase"
     ],
     [
       "function-size",
       "src/aiperf/transports/aiohttp_client.py",
-      "_request"
+      "AioHttpClient._request"
     ],
     [
       "function-size",
       "src/aiperf/transports/aiohttp_client.py",
-      "_request_with_cancellation"
+      "AioHttpClient._request_with_cancellation"
     ],
     [
       "function-size",
@@ -909,32 +914,32 @@
     [
       "function-size",
       "src/aiperf/transports/aiohttp_transport.py",
-      "_send_video_request_with_polling"
+      "AioHttpTransport._send_video_request_with_polling"
     ],
     [
       "function-size",
       "src/aiperf/transports/aiohttp_transport.py",
-      "send_request"
+      "AioHttpTransport.send_request"
     ],
     [
       "function-size",
       "src/aiperf/transports/sse_utils.py",
-      "__aiter__"
+      "AsyncSSEStreamReader.__aiter__"
     ],
     [
       "function-size",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
-      "create_stats_table"
+      "ProgressDashboard.create_stats_table"
     ],
     [
       "function-size",
       "src/aiperf/ui/dashboard/rich_log_viewer.py",
-      "display_log_record"
+      "SelectableRichLog.display_log_record"
     ],
     [
       "function-size",
       "src/aiperf/workers/worker.py",
-      "_process_credit"
+      "Worker._process_credit"
     ],
     [
       "keyword-only-args",
@@ -959,12 +964,12 @@
     [
       "keyword-only-args",
       "src/aiperf/common/base_comms.py",
-      "create_client"
+      "BaseCommunication.create_client"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/base_comms.py",
-      "create_pull_client"
+      "BaseCommunication.create_pull_client"
     ],
     [
       "keyword-only-args",
@@ -974,52 +979,52 @@
     [
       "keyword-only-args",
       "src/aiperf/common/config/base_config.py",
-      "_attach_comments"
+      "BaseConfig._attach_comments"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/mixins/aiperf_lifecycle_mixin.py",
-      "_execute_state_transition"
+      "AIPerfLifecycleMixin._execute_state_transition"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/mixins/base_metrics_collector_mixin.py",
-      "__init__"
+      "BaseMetricsCollectorMixin.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/mixins/pull_client_mixin.py",
-      "__init__"
+      "PullClientMixin.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
-      "_background_task_loop"
+      "TaskManagerMixin._background_task_loop"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
-      "start_background_task"
+      "TaskManagerMixin.start_background_task"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/models/telemetry_models.py",
-      "get_metric_result"
+      "GpuMetricTimeSeries.to_metric_result_filtered"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/models/telemetry_models.py",
-      "to_metric_result_filtered"
+      "GpuTelemetryData.get_metric_result"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/protocols.py",
-      "create_client"
+      "CommunicationProtocol.create_client"
     ],
     [
       "keyword-only-args",
       "src/aiperf/common/protocols.py",
-      "create_pull_client"
+      "CommunicationProtocol.create_pull_client"
     ],
     [
       "keyword-only-args",
@@ -1029,12 +1034,12 @@
     [
       "keyword-only-args",
       "src/aiperf/credit/callback_handler.py",
-      "_release_slots_for_return"
+      "CreditCallbackHandler._release_slots_for_return"
     ],
     [
       "keyword-only-args",
       "src/aiperf/credit/callback_handler.py",
-      "register_phase"
+      "CreditCallbackHandler.register_phase"
     ],
     [
       "keyword-only-args",
@@ -1069,7 +1074,7 @@
     [
       "keyword-only-args",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
-      "_synthesize_continuation"
+      "SessionSynthesizer._synthesize_continuation"
     ],
     [
       "keyword-only-args",
@@ -1084,42 +1089,47 @@
     [
       "keyword-only-args",
       "src/aiperf/dataset/loader/base_hf_dataset.py",
-      "__init__"
+      "BaseHFDatasetLoader.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/dataset/loader/base_public_dataset.py",
-      "is_valid_sequence"
+      "BasePublicDatasetLoader.is_valid_sequence"
     ],
     [
       "keyword-only-args",
       "src/aiperf/dataset/loader/hf_instruction_response.py",
-      "__init__"
+      "HFInstructionResponseDatasetLoader.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/exporters/exporter_manager.py",
-      "__init__"
+      "ExporterManager.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/exporters/metrics_csv_exporter.py",
-      "_write_gpu_metric_row_from_summary"
+      "MetricsCsvExporter._write_gpu_metric_row_from_summary"
     ],
     [
       "keyword-only-args",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
-      "__init__"
+      "DCGMTelemetryCollector.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/orchestrator/convergence/ci_width.py",
-      "__init__"
+      "CIWidthConvergence.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/orchestrator/strategies.py",
-      "__init__"
+      "AdaptiveStrategy.__init__"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/orchestrator/strategies.py",
+      "ParameterSweepStrategy.__init__"
     ],
     [
       "keyword-only-args",
@@ -1129,67 +1139,67 @@
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "_get_base_layout"
+      "PlotGenerator._get_base_layout"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_bucket_histogram"
+      "PlotGenerator.create_bucket_histogram"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_dual_axis_plot"
+      "PlotGenerator.create_dual_axis_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_latency_scatter_with_percentiles"
+      "PlotGenerator.create_latency_scatter_with_percentiles"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_multi_run_bar_chart"
+      "PlotGenerator.create_multi_run_bar_chart"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_pareto_plot"
+      "PlotGenerator.create_pareto_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_percentile_bands"
+      "PlotGenerator.create_percentile_bands"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_request_timeline"
+      "PlotGenerator.create_request_timeline"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_scatter_line_plot"
+      "PlotGenerator.create_scatter_line_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_time_series_area"
+      "PlotGenerator.create_time_series_area"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_time_series_histogram"
+      "PlotGenerator.create_time_series_histogram"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_time_series_scatter"
+      "PlotGenerator.create_time_series_scatter"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/core/plot_generator.py",
-      "create_timeslice_scatter"
+      "PlotGenerator.create_timeslice_scatter"
     ],
     [
       "keyword-only-args",
@@ -1200,16 +1210,6 @@
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callback_helpers.py",
       "build_single_run_plot_config"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "_convert_figure_to_png"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "_export_single_run_default_plot"
     ],
     [
       "keyword-only-args",
@@ -1229,27 +1229,12 @@
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "create_custom_plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "detect_any_modal_button_click"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle_parallel"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/plot/dashboard/callbacks.py",
       "register_all_callbacks"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_custom_plot_callbacks.create_custom_plot"
     ],
     [
       "keyword-only-args",
@@ -1269,22 +1254,52 @@
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "save_as_new_plot"
+      "register_export_png_callback._convert_figure_to_png"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "save_as_new_single_run_plot"
+      "register_export_png_callback._export_single_run_default_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "update_plot_config"
+      "register_export_png_callback.export_plots_bundle"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "update_single_run_plot_config"
+      "register_export_png_callback.export_plots_bundle_parallel"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.detect_any_modal_button_click"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.save_as_new_plot"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_multi_run_plot_edit_callbacks.update_plot_config"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_single_run_custom_plot_callbacks.create_custom_plot"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_single_run_plot_edit_callbacks.save_as_new_single_run_plot"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/plot/dashboard/callbacks.py",
+      "register_single_run_plot_edit_callbacks.update_single_run_plot_config"
     ],
     [
       "keyword-only-args",
@@ -1304,7 +1319,7 @@
     [
       "keyword-only-args",
       "src/aiperf/plot/dashboard/server.py",
-      "__init__"
+      "DashboardServer.__init__"
     ],
     [
       "keyword-only-args",
@@ -1319,17 +1334,17 @@
     [
       "keyword-only-args",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_create_multi_series_server_metrics_plot"
+      "TimeSliceHandler._create_multi_series_server_metrics_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/handlers/single_run_handlers.py",
-      "_create_server_metrics_plot"
+      "TimeSliceHandler._create_server_metrics_plot"
     ],
     [
       "keyword-only-args",
       "src/aiperf/plot/plot_controller.py",
-      "__init__"
+      "PlotController.__init__"
     ],
     [
       "keyword-only-args",
@@ -1339,7 +1354,7 @@
     [
       "keyword-only-args",
       "src/aiperf/server_metrics/data_collector.py",
-      "__init__"
+      "ServerMetricsDataCollector.__init__"
     ],
     [
       "keyword-only-args",
@@ -1369,47 +1384,52 @@
     [
       "keyword-only-args",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "_collect_histogram_rows"
+      "ServerMetricsParquetExporter._collect_histogram_rows"
     ],
     [
       "keyword-only-args",
       "src/aiperf/server_metrics/parquet_exporter.py",
-      "_collect_scalar_rows"
+      "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
       "keyword-only-args",
       "src/aiperf/transports/aiohttp_client.py",
-      "_request"
+      "AioHttpClient._request"
     ],
     [
       "keyword-only-args",
       "src/aiperf/transports/aiohttp_client.py",
-      "_request_with_cancellation"
+      "AioHttpClient._request_with_cancellation"
     ],
     [
       "keyword-only-args",
       "src/aiperf/transports/aiohttp_transport.py",
-      "_poll_video_job"
+      "AioHttpTransport._poll_video_job"
     ],
     [
       "keyword-only-args",
       "src/aiperf/zmq/pull_client.py",
-      "__init__"
+      "ZMQPullClient.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/zmq/zmq_base_client.py",
-      "__init__"
+      "BaseZMQClient.__init__"
     ],
     [
       "keyword-only-args",
       "src/aiperf/zmq/zmq_comms.py",
-      "create_client"
+      "BaseZMQCommunication.create_client"
     ],
     [
       "keyword-only-args",
       "src/aiperf/zmq/zmq_proxy_base.py",
-      "__init__"
+      "BaseZMQProxy.__init__"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/zmq/zmq_proxy_base.py",
+      "ProxySocketClient.__init__"
     ],
     [
       "module-state",
@@ -1459,7 +1479,7 @@
     [
       "nesting-depth",
       "src/aiperf/endpoints/openai_responses.py",
-      "_extract_response_content"
+      "ResponsesEndpoint._extract_response_content"
     ],
     [
       "nesting-depth",
@@ -1469,12 +1489,12 @@
     [
       "nesting-depth",
       "src/aiperf/plot/config.py",
-      "_expand_metric_shortcut"
+      "PlotConfig._expand_metric_shortcut"
     ],
     [
       "nesting-depth",
       "src/aiperf/plot/core/data_loader.py",
-      "_load_server_metrics_json"
+      "DataLoader._load_server_metrics_json"
     ],
     [
       "nesting-depth",
@@ -1489,12 +1509,12 @@
     [
       "nesting-depth",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle"
+      "register_custom_plot_callbacks"
     ],
     [
       "nesting-depth",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "register_custom_plot_callbacks"
+      "register_custom_plot_callbacks.update_custom_stat_options"
     ],
     [
       "nesting-depth",
@@ -1504,7 +1524,7 @@
     [
       "nesting-depth",
       "src/aiperf/plot/dashboard/callbacks.py",
-      "update_custom_stat_options"
+      "register_export_png_callback.export_plots_bundle"
     ],
     [
       "nesting-depth",
@@ -1514,22 +1534,22 @@
     [
       "nesting-depth",
       "src/aiperf/plot/exporters/png/multi_run.py",
-      "_runs_to_dataframe"
+      "MultiRunPNGExporter._runs_to_dataframe"
     ],
     [
       "nesting-depth",
       "src/aiperf/plugin/types.py",
-      "validate"
+      "PluginEntry.validate"
     ],
     [
       "nesting-depth",
       "src/aiperf/transports/aiohttp_client.py",
-      "_request"
+      "AioHttpClient._request"
     ],
     [
       "nesting-depth",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
-      "_get_status"
+      "ProgressDashboard._get_status"
     ],
     [
       "pydantic-fields",

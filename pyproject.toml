@@ -138,7 +138,7 @@ max-complexity = 10
 # enforcement path: its ``stdlib-json`` axis flags the same imports via
 # AST walk, independent of ruff. Both run as pre-commit hooks.
 # Enforce orjson over stdlib json (CLAUDE.md standard).
-"json.dumps".msg = "Use orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode() instead."
+"json.dumps".msg = "Use orjson.dumps(obj).decode() instead. Add option=orjson.OPT_INDENT_2 only when pretty-printed output is required (configs, manifests, debug exports) — the default must stay compact to preserve byte-for-byte equivalence for tests, JSONL, and cache keys."
 "json.loads".msg = "Use orjson.loads instead."
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."

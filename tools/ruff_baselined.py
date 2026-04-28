@@ -16,18 +16,27 @@
 
 """Run ruff with an out-of-band baseline for selected rules.
 
-Enforces ``PLR0915``, ``PLR0912``, ``C901``, and ``TID251`` **without**
-polluting the source tree with ``# noqa`` comments and **without**
-grandfathering entire files. Each violation is matched against
-``tools/ruff_baseline.json`` using a stable key:
+Enforces ``PLR0915``, ``PLR0912``, ``C901``, ``TID251``, ``BLE001``,
+``S110``, ``S112``, ``ANN201``, and ``D103`` (nine rules — see ``RULES``)
+**without** polluting the source tree with ``# noqa`` comments and
+**without** grandfathering entire files. Each violation is matched
+against ``tools/ruff_baseline.json`` using a stable key:
 
     (rule, file, identifier)
 
-where identifier is:
+where identifier comes from ``_resolve_identifier()``:
 
-* the **enclosing function name** for function-scope rules
-  (PLR0915 / PLR0912 / C901), resolved from the file's AST; or
-* the **banned call expression** (e.g. ``json.dumps``) for TID251.
+* For function-scope rules (PLR0915 / PLR0912 / C901 / BLE001 / S110 /
+  S112 / ANN201 / D103), the **enclosing function qualname** resolved
+  from the file's AST (e.g. ``MyClass.do_thing`` for a method, or just
+  ``my_func`` for a module-level function); ``None`` if the violation
+  is outside any function.
+* For TID251, ``<enclosing-function>::<banned call expression>`` (e.g.
+  ``render::json.dumps``), with ``<module>`` substituted when the call
+  is at module scope. Namespacing the banned call by its enclosing
+  function prevents one grandfathered ``json.dumps`` site from masking
+  a brand-new ``json.dumps`` added in a different function in the same
+  file.
 
 Because the key excludes line numbers, unrelated edits above a
 grandfathered site don't re-trigger the check. Because the key is
@@ -50,7 +59,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import json
 import re
 import subprocess
 import sys
@@ -174,13 +182,13 @@ def _enclosing_function(rel: str, line: int) -> str | None:
 def load_baseline() -> set[tuple[str, str, str]]:
     if not BASELINE_PATH.exists():
         return set()
-    data = json.loads(BASELINE_PATH.read_text())
+    data = orjson.loads(BASELINE_PATH.read_bytes())
     return {tuple(entry) for entry in data.get("violations", [])}
 
 
 def write_baseline(keys: set[tuple[str, str, str]]) -> None:
-    BASELINE_PATH.write_text(
-        json.dumps(
+    BASELINE_PATH.write_bytes(
+        orjson.dumps(
             {
                 "_comment": (
                     "Out-of-band ruff baseline for tools/ruff_baselined.py. "
@@ -192,9 +200,9 @@ def write_baseline(keys: set[tuple[str, str, str]]) -> None:
                 "rules": RULES,
                 "violations": [list(k) for k in sorted(keys)],
             },
-            indent=2,
+            option=orjson.OPT_INDENT_2,
         )
-        + "\n"
+        + b"\n"
     )
 
 

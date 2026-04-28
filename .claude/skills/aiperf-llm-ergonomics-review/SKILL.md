@@ -97,13 +97,21 @@ If either mechanical check exits non-zero: **stop, report the failures, instruct
 
 ## Scope
 
-**Default:** files modified on the current branch vs. `origin/main`, restricted to `src/aiperf/`.
+**Default:** all files modified on the current branch vs. `origin/main`. This intentionally includes agent-facing files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, `docs/dev/patterns.md`) so Axes 6 and 7 have something to review when a branch touches them.
+
+**Per-axis applicability:**
+
+- Axes 1-5 apply to `src/aiperf/**.py` (and any other Python under review).
+- Axis 6 applies to the agent-facing convention files listed above.
+- Axis 7 applies to `docs/dev/patterns.md` plus any reference files it cites.
+
+If a given axis has no in-scope files on this branch, record "no in-scope files" under that axis in the report — do not skip it silently.
 
 **Override (the user may specify):**
 
 - `aiperf-llm-ergonomics-review <path>` → scope to a file or subdirectory
 - `aiperf-llm-ergonomics-review PR <number>` → pull the PR diff via `gh pr diff <n>`
-- `aiperf-llm-ergonomics-review full` → all of `src/aiperf/`, not just changed files
+- `aiperf-llm-ergonomics-review full` → all of `src/aiperf/` plus the agent-facing files, not just changed files
 
 Inside the scope, only review code **added or modified on this branch**. Pre-existing issues are not in scope unless the edit touched the line.
 
@@ -402,7 +410,7 @@ Before claiming complete:
 
 Report concisely to the user:
 
-```
+```text
 LLM-ergonomics review complete: <N> findings (H: <h>, M: <m>, L: <l>)
 Report: artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md
 Highest-priority: <one-line summary of the top HIGH finding>
