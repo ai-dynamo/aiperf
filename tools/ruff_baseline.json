@@ -824,6 +824,11 @@
     ],
     [
       "C901",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/agentic_code_gen/reporting/metrics.py",
       "compute_quality_report"
     ],
@@ -1186,6 +1191,11 @@
       "PLR0912",
       "src/aiperf/common/config/user_config.py",
       "UserConfig.validate_timing_mode"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
     ],
     [
       "PLR0912",

@@ -33,6 +33,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/cli_runner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -285,6 +290,11 @@
       "function-size",
       "src/aiperf/common/models/telemetry_models.py",
       "to_metric_result_filtered"
+    ],
+    [
+      "function-size",
+      "src/aiperf/common/tokenizer_validator.py",
+      "preload_tokenizers"
     ],
     [
       "function-size",
