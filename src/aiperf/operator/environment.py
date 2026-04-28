@@ -123,6 +123,33 @@ class _ProgressSettings(BaseSettings):
     )
 
 
+class _SweepControllerSettings(BaseSettings):
+    """Sweep-controller pod settings.
+
+    Used by the sweep-controller pod (`aiperf.sweep_controller.k8s_executor`)
+    when creating child AIPerfJob CRs.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_SWEEP_CONTROLLER_")
+
+    STALE_CHILD_DELETION_TIMEOUT_SECONDS: float = Field(
+        default=60.0,
+        gt=0,
+        le=600,
+        description="Max seconds the sweep-controller will wait for a same-named "
+        "AIPerfJob from a prior sweep run to finish cascade-deletion before "
+        "raising ChildNameConflictError. Hit when a user deletes and recreates "
+        "a sweep with the same name while old children are still terminating.",
+    )
+    STALE_CHILD_POLL_INTERVAL_SECONDS: float = Field(
+        default=2.0,
+        gt=0,
+        le=30,
+        description="Poll interval (seconds) while waiting for a deleting same-named "
+        "AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS.",
+    )
+
+
 class _OperatorEnvironment(BaseSettings):
     """Root operator environment configuration.
 
@@ -184,6 +211,10 @@ class _OperatorEnvironment(BaseSettings):
     PROGRESS: _ProgressSettings = Field(
         default_factory=_ProgressSettings,
         description="Progress-client retry settings (controller HTTP polling).",
+    )
+    SWEEP_CONTROLLER: _SweepControllerSettings = Field(
+        default_factory=_SweepControllerSettings,
+        description="Sweep-controller pod settings (child-create collision handling).",
     )
 
 

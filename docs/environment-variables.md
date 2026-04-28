@@ -59,6 +59,8 @@ Root operator environment configuration. Loads from environment variables. Neste
 | `AIPERF_CONFIGMAP_PROPAGATION_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 60 | Seconds to wait after creating the benchmark ConfigMap before creating the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before pods start mounting it, preventing FailedMount races on first deployment with a freshly pulled image. |
 | `AIPERF_MONITOR` | — | — | Monitor timer settings |
 | `AIPERF_RESULTS` | — | — | Results fetching and storage settings |
+| `AIPERF_PROGRESS` | — | — | Progress-client retry settings (controller HTTP polling). |
+| `AIPERF_SWEEP_CONTROLLER` | — | — | Sweep-controller pod settings (child-create collision handling). |
 
 ## APISERVER
 
@@ -70,6 +72,7 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_PORT` | `None` | ≥ 1, ≤ 65535 | Port to bind the API server to |
 | `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
+| `AIPERF_API_SERVER_GET_POD_STATES_TIMEOUT` | `2.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for the GET_POD_STATES RPC issued by the /api/progress and /api/debug/* routers. Kept short so a slow / unresponsive SystemController falls back to the bus-fed cache rather than hanging the endpoint. |
 
 ## COMPRESSION
 
@@ -172,6 +175,16 @@ Timer settings for the kopf monitor handler.
 | `AIPERF_OPERATOR_MONITOR_INTERVAL` | `10.0` | > 0, ≤ 3600 | Seconds between progress checks |
 | `AIPERF_OPERATOR_MONITOR_INITIAL_DELAY` | `5.0` | ≥ 0, ≤ 300 | Seconds before first progress check after job creation |
 
+## OPERATORPROGRESS
+
+Operator progress-client retry settings. Used by ``aiperf.operator.progress_client.ProgressClient`` when polling the controller pod's HTTP progress API. Retries apply to transient failures (connection errors, retryable HTTP statuses); other errors propagate.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_PROGRESS_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Max retry attempts on transient progress-API failures. |
+| `AIPERF_OPERATOR_PROGRESS_INITIAL_BACKOFF_SEC` | `0.5` | > 0, ≤ 60 | Initial backoff (seconds) between progress-API retries. |
+| `AIPERF_OPERATOR_PROGRESS_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between progress-API retries. |
+
 ## RECORD
 
 Record processing and export configuration. Controls batch sizes, processor scaling, and progress reporting for record processing.
@@ -209,6 +222,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | `2.0` | ≥ 0.0, ≤ 30.0 | Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize before shutting down (default: 2.0s) |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Seconds the records manager waits for the system controller to relay PROFILE_COMPLETE to GPU telemetry, server metrics, and worker group manager. The relay blocks on the slowest scrape (Prometheus query + Parquet write), which can exceed 30s on contended clusters. A timeout here is non-fatal: the records manager logs a warning and continues to _process_results so the operator's results-fetch loop still sees a complete export. |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_EXPORT_FLUSH_INTERVAL` | `2.0` | ≥ 0.1, ≤ 300.0 | Maximum seconds server metrics JSONL records may remain buffered before being flushed to disk |
@@ -250,6 +264,15 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
 | `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
 | `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
+
+## SWEEPCONTROLLER
+
+Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_controller.k8s_executor`) when creating child AIPerfJob CRs.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
+| `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
 
 ## TIMING
 
@@ -312,6 +335,8 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `10` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |
+| `AIPERF_ZMQ_EVENT_BUS_PROXY_FRONTEND_PORT` | `5663` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy frontend (producers connect here). Single source of truth for the non-k8s comm configs (TCP, dual-bind); k8s pod manifests pull the same value via ``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match). |
+| `AIPERF_ZMQ_EVENT_BUS_PROXY_BACKEND_PORT` | `5664` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy backend (subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``. |
 
 ## DEV
 

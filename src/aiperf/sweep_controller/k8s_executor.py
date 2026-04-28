@@ -15,7 +15,6 @@ import contextlib
 import copy
 import logging
 import os
-import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,8 +22,17 @@ from typing import TYPE_CHECKING, Any
 import orjson
 from kubernetes_asyncio.client import ApiException, CustomObjectsApi
 
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
+from aiperf.sweep_controller._naming import (
+    build_child_name,
+    derive_child_name,
+    needs_trial_suffix,
+)
+from aiperf.sweep_controller._naming import (
+    sanitize_for_label as _sanitize_for_label,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 SWEEP_LABEL = "aiperf.nvidia.com/sweep"
 SWEEP_UID_LABEL = "aiperf.nvidia.com/sweep-uid"
+SWEEP_RUN_EPOCH_LABEL = "aiperf.nvidia.com/sweep-run-epoch"
 VARIATION_INDEX_LABEL = "aiperf.nvidia.com/variation-index"
 VARIATION_LABEL_LABEL = "aiperf.nvidia.com/variation-label"
 TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
@@ -52,6 +61,7 @@ __all__ = [
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "RESULTS_SERVER_PORT",
     "SWEEP_LABEL",
+    "SWEEP_RUN_EPOCH_LABEL",
     "SWEEP_UID_LABEL",
     "TERMINAL_PHASES",
     "TRIAL_INDEX_LABEL",
@@ -73,47 +83,6 @@ class ChildNameConflictError(Exception):
     """Raised when a child-name slot is occupied by an AIPerfJob this sweep does not own."""
 
 
-def needs_trial_suffix(
-    multi_run_trials: int | None,
-    has_convergence: bool,
-) -> bool:
-    """Whether child names should include a `-tNN` trial suffix."""
-    if has_convergence:
-        return True
-    return (multi_run_trials or 1) > 1
-
-
-def derive_child_name(
-    sweep_name: str,
-    var_idx: int,
-    trial: int,
-    *,
-    with_trial_suffix: bool,
-) -> str:
-    """Deterministic DNS-safe child name from (sweep, var_idx, trial)."""
-    base = f"{sweep_name}-v{var_idx:04d}"
-    if with_trial_suffix:
-        return f"{base}-t{trial:02d}"
-    return base
-
-
-def build_child_name(
-    *,
-    sweep_name: str,
-    sweep_run_epoch: str,
-    variation_index: int,
-    trial_index: int | None,
-) -> str:
-    """Deterministic child AIPerfJob name embedding the sweep epoch.
-
-    Format: ``<sweep>-e<sweep_epoch>-v<vari:04d>-t<trial:02d>`` (or no -t suffix
-    if ``trial_index is None``). Bounded by the 63-char DNS-label limit because
-    the sweep CR name is itself <=40 chars (CRD validation).
-    """
-    suffix = f"-t{trial_index:02d}" if trial_index is not None else ""
-    return f"{sweep_name}-e{sweep_run_epoch}-v{variation_index:04d}{suffix}"
-
-
 def is_my_child(child: dict[str, Any], *, sweep_uid: str, sweep_name: str) -> bool:
     """True if `child` is owned by the sweep (uid AND sweep label both match)."""
     meta = child.get("metadata", {})
@@ -121,26 +90,6 @@ def is_my_child(child: dict[str, Any], *, sweep_uid: str, sweep_name: str) -> bo
     owner_match = any(ref.get("uid") == sweep_uid for ref in refs)
     label_match = (meta.get("labels") or {}).get(SWEEP_LABEL) == sweep_name
     return owner_match and label_match
-
-
-def _sanitize_for_label(value: str) -> str:
-    """Reduce a free-form string to a valid k8s label value.
-
-    Label values must match ``(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?`` and
-    be at most 63 characters. We:
-
-    1. Lowercase + replace runs of disallowed chars with a single ``-``.
-    2. Strip leading/trailing non-alnum.
-    3. Truncate to 63.
-    4. Re-strip leading/trailing non-alnum (the truncation may have left a
-       trailing ``.``/``_``/``-``, which would re-fail validation).
-    5. Fall back to ``"v"`` when sanitization eats every character.
-    """
-    sanitized = re.sub(r"[^a-z0-9._-]+", "-", value.lower())
-    sanitized = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", sanitized)
-    sanitized = sanitized[:63]
-    sanitized = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", sanitized)
-    return sanitized or "v"
 
 
 class K8sChildJobExecutor(RunExecutor):
@@ -170,20 +119,15 @@ class K8sChildJobExecutor(RunExecutor):
         self.base_dir = Path(base_dir) if base_dir is not None else None
         self._status_writer = status_writer
         self._cancel_check = cancel_check
-        # When None, names use the legacy <sweep>-vNNNN[-tNN] form (kept for
-        # in-process unit tests that don't drive the sweep-controller pod).
-        # In production, main.py reads AIPERF_SWEEP_EPOCH and passes it here so
-        # every rerun lands at a fresh child name + fresh PVC subdir.
+        # Sweep-run epoch is stamped on each child as the
+        # ``aiperf.nvidia.com/sweep-run-epoch`` label and written into the
+        # per-child sweep marker file. It is **not** in the child name —
+        # collisions with cascade-deleting prior-run children are handled by
+        # ``_wait_for_stale_child`` instead. Optional only because in-process
+        # unit tests construct executors without epoch wiring.
         self.sweep_run_epoch = sweep_run_epoch
 
     def derive_id(self, plan: BenchmarkPlan | None, var_idx: int, trial: int) -> str:
-        if self.sweep_run_epoch is not None:
-            return build_child_name(
-                sweep_name=self.sweep_name,
-                sweep_run_epoch=self.sweep_run_epoch,
-                variation_index=var_idx,
-                trial_index=trial if self.with_trial_suffix else None,
-            )
         return derive_child_name(
             self.sweep_name,
             var_idx,
@@ -229,11 +173,13 @@ class K8sChildJobExecutor(RunExecutor):
         labels = dict(template_meta.get("labels") or {})
         labels[SWEEP_LABEL] = self.sweep_name
         labels[SWEEP_UID_LABEL] = self.sweep_uid
+        if self.sweep_run_epoch is not None:
+            labels[SWEEP_RUN_EPOCH_LABEL] = self.sweep_run_epoch
         if run.variation is not None:
-            labels[VARIATION_INDEX_LABEL] = f"{run.variation.index:04d}"
+            labels[VARIATION_INDEX_LABEL] = f"{run.variation.index:02d}"
             labels[VARIATION_LABEL_LABEL] = _sanitize_for_label(run.variation.label)
         if self.with_trial_suffix:
-            labels[TRIAL_INDEX_LABEL] = f"{run.trial:02d}"
+            labels[TRIAL_INDEX_LABEL] = f"{run.trial:01d}"
         return {
             "name": child_name,
             "namespace": self.sweep_namespace,
@@ -300,19 +246,58 @@ class K8sChildJobExecutor(RunExecutor):
                 return None
             raise
 
-    async def _get_or_create(self, name: str, run: BenchmarkRun) -> dict[str, Any]:
-        """Read the child if it exists; otherwise create it from the sweep template."""
-        existing = await self._try_read_child(name)
-        if existing is not None:
+    async def _wait_for_stale_child(self, name: str) -> dict[str, Any] | None:
+        """If a same-named AIPerfJob from a prior sweep run is mid-deletion,
+        wait for cascade-delete to complete before our caller creates a new one.
+
+        Triggered when a user deletes a sweep CR and re-creates one with the
+        same name while old children are still terminating: the new
+        sweep-controller's child-creates would otherwise race with the kube
+        garbage collector.
+
+        Returns:
+          - the existing AIPerfJob if it is owned by *us* (resumable), or
+          - ``None`` if no AIPerfJob with this name exists (free slot, caller may create).
+
+        Raises ChildNameConflictError when:
+          - the existing AIPerfJob is foreign and not deleting (real conflict), or
+          - the existing AIPerfJob is still mid-deletion past
+            ``OperatorEnvironment.SWEEP_CONTROLLER.STALE_CHILD_DELETION_TIMEOUT_SECONDS``
+            (likely a stuck finalizer on the prior sweep).
+        """
+        deadline = (
+            asyncio.get_event_loop().time()
+            + OperatorEnvironment.SWEEP_CONTROLLER.STALE_CHILD_DELETION_TIMEOUT_SECONDS
+        )
+        poll = OperatorEnvironment.SWEEP_CONTROLLER.STALE_CHILD_POLL_INTERVAL_SECONDS
+        while True:
+            existing = await self._try_read_child(name)
+            if existing is None:
+                return None
             if is_my_child(
                 existing, sweep_uid=self.sweep_uid, sweep_name=self.sweep_name
             ):
-                logger.info(f"resuming existing child {name}")
                 return existing
-            raise ChildNameConflictError(
-                f"child name {name!r} exists but is not owned by this sweep "
-                f"(uid={self.sweep_uid})"
-            )
+            if (existing.get("metadata") or {}).get("deletionTimestamp") is None:
+                raise ChildNameConflictError(
+                    f"child name {name!r} exists and is not owned by this sweep "
+                    f"(uid={self.sweep_uid})"
+                )
+            if asyncio.get_event_loop().time() > deadline:
+                raise ChildNameConflictError(
+                    f"child name {name!r} still mid-deletion after "
+                    f"{OperatorEnvironment.SWEEP_CONTROLLER.STALE_CHILD_DELETION_TIMEOUT_SECONDS}s "
+                    f"— prior sweep may have a stuck finalizer"
+                )
+            logger.info(f"waiting for prior child {name!r} to finish cascade-deletion")
+            await asyncio.sleep(poll)
+
+    async def _get_or_create(self, name: str, run: BenchmarkRun) -> dict[str, Any]:
+        """Read the child if it exists; otherwise create it from the sweep template."""
+        existing = await self._wait_for_stale_child(name)
+        if existing is not None:
+            logger.info(f"resuming existing child {name}")
+            return existing
         body = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfJob",

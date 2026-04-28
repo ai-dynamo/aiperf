@@ -123,7 +123,7 @@ def test_get_children_manifest(tmp_path: Path) -> None:
         [
             {
                 "namespace": "bench",
-                "name": "s1-e1714069323-v0000-t00",
+                "name": "s1-v00-t0",
                 "variation_index": 0,
                 "trial_index": 0,
                 "child_run_epoch": "1714069324",

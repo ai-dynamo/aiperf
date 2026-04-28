@@ -85,8 +85,8 @@ def test_build_child_metadata_sets_owner_and_labels():
         label="run_0003",
         artifact_dir=Path("/results"),
     )
-    md = executor._build_child_metadata(run, "test-sweep-v0007-t02")
-    assert md["name"] == "test-sweep-v0007-t02"
+    md = executor._build_child_metadata(run, "test-sweep-v07-t2")
+    assert md["name"] == "test-sweep-v07-t2"
     assert md["namespace"] == "default"
     refs = md["ownerReferences"]
     assert len(refs) == 1
@@ -94,12 +94,12 @@ def test_build_child_metadata_sets_owner_and_labels():
     assert refs[0]["controller"] is True
     assert md["labels"]["aiperf.nvidia.com/sweep"] == "test-sweep"
     assert md["labels"]["aiperf.nvidia.com/sweep-uid"] == "abc-123"
-    assert md["labels"]["aiperf.nvidia.com/variation-index"] == "0007"
-    assert md["labels"]["aiperf.nvidia.com/trial-index"] == "02"
+    assert md["labels"]["aiperf.nvidia.com/variation-index"] == "07"
+    assert md["labels"]["aiperf.nvidia.com/trial-index"] == "2"
     # Template metadata labels are merged
     assert md["labels"]["team"] == "perf"
 
 
 def test_derive_id_uses_deterministic_naming():
     executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
-    assert executor.derive_id(plan=None, var_idx=7, trial=2) == "test-sweep-v0007-t02"
+    assert executor.derive_id(plan=None, var_idx=7, trial=2) == "test-sweep-v07-t2"

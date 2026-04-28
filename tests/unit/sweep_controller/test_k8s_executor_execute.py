@@ -58,7 +58,7 @@ def _benchmark_run(var_idx: int = 7, trial: int = 2) -> BenchmarkRun:
         }
     )
     return BenchmarkRun(
-        benchmark_id=f"s-v{var_idx:04d}-t{trial:02d}",
+        benchmark_id=f"s-v{var_idx:02d}-t{trial:01d}",
         cfg=cfg,
         variation=SweepVariation(
             index=var_idx,
@@ -90,7 +90,7 @@ async def test_execute_creates_child_when_not_exists(monkeypatch):
             _NotFoundException(404),
             {
                 "metadata": {
-                    "name": "s-v0007-t02",
+                    "name": "s-v07-t2",
                     "ownerReferences": [{"uid": "uid"}],
                     "labels": {"aiperf.nvidia.com/sweep": "s"},
                 },
@@ -105,7 +105,7 @@ async def test_execute_creates_child_when_not_exists(monkeypatch):
     custom.create_namespaced_custom_object = AsyncMock(
         return_value={
             "metadata": {
-                "name": "s-v0007-t02",
+                "name": "s-v07-t2",
                 "uid": "child-uid",
                 "ownerReferences": [{"uid": "uid"}],
                 "labels": {"aiperf.nvidia.com/sweep": "s"},
@@ -141,7 +141,7 @@ async def test_execute_resumes_existing_owned_child(monkeypatch):
     """When the child already exists and is owned, executor does NOT create."""
     existing = {
         "metadata": {
-            "name": "s-v0007-t02",
+            "name": "s-v07-t2",
             "ownerReferences": [{"uid": "uid"}],
             "labels": {"aiperf.nvidia.com/sweep": "s"},
         },
@@ -176,7 +176,7 @@ async def test_execute_raises_on_name_conflict_with_unowned_child(monkeypatch):
     """If a child name slot is occupied by an UNOWNED AIPerfJob, raise."""
     foreign = {
         "metadata": {
-            "name": "s-v0007-t02",
+            "name": "s-v07-t2",
             "ownerReferences": [{"uid": "different-uid"}],
             "labels": {},
         },
@@ -201,11 +201,123 @@ async def test_execute_raises_on_name_conflict_with_unowned_child(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_waits_through_stale_child_deletion(monkeypatch):
+    """A same-named child mid-cascade-delete is waited out, then the new one is created.
+
+    Reproduces the delete-then-recreate-with-same-name race: the new
+    sweep-controller polls until the apiserver has removed the foreign
+    deleting child, then creates ours.
+    """
+    foreign_deleting = {
+        "metadata": {
+            "name": "s-v07-t2",
+            "ownerReferences": [{"uid": "old-sweep-uid"}],
+            "labels": {"aiperf.nvidia.com/sweep": "s"},
+            "deletionTimestamp": "2026-04-27T20:00:00Z",
+        },
+    }
+    api = MagicMock()
+    custom = MagicMock()
+    # Reads: foreign-deleting twice (poll), then 404 (gone), then Succeeded post-watch.
+    custom.get_namespaced_custom_object = AsyncMock(
+        side_effect=[
+            foreign_deleting,
+            foreign_deleting,
+            _NotFoundException(404),
+            {
+                "metadata": {
+                    "name": "s-v07-t2",
+                    "ownerReferences": [{"uid": "uid"}],
+                    "labels": {"aiperf.nvidia.com/sweep": "s"},
+                },
+                "status": {
+                    "phase": "Succeeded",
+                    "runEpoch": "1714000000",
+                    "runtimeRef": {"controllerHost": "h"},
+                },
+            },
+        ]
+    )
+    custom.create_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {
+                "name": "s-v07-t2",
+                "ownerReferences": [{"uid": "uid"}],
+                "labels": {"aiperf.nvidia.com/sweep": "s"},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.CustomObjectsApi", lambda _api: custom
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.ApiException",
+        _NotFoundException,
+    )
+
+    executor = K8sChildJobExecutor(api=api, sweep=_sweep_cr(), with_trial_suffix=True)
+    executor._wait_until_terminal = AsyncMock(return_value=None)
+    executor._pull_summary_metrics = AsyncMock(return_value={})
+
+    result = await executor.execute(_benchmark_run())
+
+    custom.create_namespaced_custom_object.assert_awaited_once()
+    assert result.success is True
+    # 4 reads = 2 polls (foreign_deleting) + 1 (404, free slot) + 1 (post-terminal).
+    assert custom.get_namespaced_custom_object.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_execute_raises_when_stale_child_deletion_exceeds_deadline(monkeypatch):
+    """A foreign child with deletionTimestamp that never disappears trips the
+    deadline-exceeded conflict error (stuck-finalizer signal).
+    """
+    from aiperf.operator.environment import OperatorEnvironment
+
+    foreign_deleting = {
+        "metadata": {
+            "name": "s-v07-t2",
+            "ownerReferences": [{"uid": "old-sweep-uid"}],
+            "labels": {"aiperf.nvidia.com/sweep": "s"},
+            "deletionTimestamp": "2026-04-27T20:00:00Z",
+        },
+    }
+    api = MagicMock()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(return_value=foreign_deleting)
+    custom.create_namespaced_custom_object = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.CustomObjectsApi", lambda _api: custom
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.ApiException",
+        _NotFoundException,
+    )
+    # Tighten the deadline so the test runs fast under looptime.
+    monkeypatch.setattr(
+        OperatorEnvironment.SWEEP_CONTROLLER,
+        "STALE_CHILD_DELETION_TIMEOUT_SECONDS",
+        0.001,
+    )
+    monkeypatch.setattr(
+        OperatorEnvironment.SWEEP_CONTROLLER,
+        "STALE_CHILD_POLL_INTERVAL_SECONDS",
+        0.001,
+    )
+
+    executor = K8sChildJobExecutor(api=api, sweep=_sweep_cr(), with_trial_suffix=True)
+
+    with pytest.raises(ChildNameConflictError, match="still mid-deletion"):
+        await executor.execute(_benchmark_run())
+    custom.create_namespaced_custom_object.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_collect_run_result_from_failed_child():
     """Collect path: failed phase -> success=False with reason."""
     executor = K8sChildJobExecutor(api=None, sweep=_sweep_cr(), with_trial_suffix=True)
     failed_child = {
-        "metadata": {"name": "s-v0007-t02"},
+        "metadata": {"name": "s-v07-t2"},
         "status": {"phase": "Failed", "message": "endpoint timeout"},
     }
     result = await executor._collect_run_result(failed_child, _benchmark_run())

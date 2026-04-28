@@ -74,7 +74,7 @@ def test_marker_payload_includes_child_run_epoch(tmp_path: Path) -> None:
     write_child_sweep_marker(
         base_dir=tmp_path,
         namespace="bench",
-        child_name="satsweep-e1714069323-v0007-t04",
+        child_name="satsweep-v07-t4",
         sweep_name="satsweep",
         variation_index=7,
         variation_label="concurrency-128",
@@ -82,7 +82,7 @@ def test_marker_payload_includes_child_run_epoch(tmp_path: Path) -> None:
         sweep_run_epoch="1714069323",
         child_run_epoch="1714069324",
     )
-    p = tmp_path / "bench" / "satsweep-e1714069323-v0007-t04" / "sweep.json"
+    p = tmp_path / "bench" / "satsweep-v07-t4" / "sweep.json"
     doc = json.loads(p.read_text())
     assert doc["sweep_run_epoch"] == "1714069323"
     assert doc["child_run_epoch"] == "1714069324"

@@ -48,7 +48,7 @@ def test_write_children_manifest_atomic(tmp_path: Path) -> None:
         children=[
             {
                 "namespace": "bench",
-                "name": "s1-e1714069323-v0000-t00",
+                "name": "s1-v00-t0",
                 "variation_index": 0,
                 "variation_label": "concurrency-1",
                 "trial_index": 0,

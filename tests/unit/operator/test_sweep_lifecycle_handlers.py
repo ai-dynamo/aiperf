@@ -403,9 +403,9 @@ async def test_on_delete_patches_each_child_with_cancel_true(monkeypatch):
     """`on_delete` lists children with the sweep label and patches each with
     spec.cancel=True for cooperative shutdown."""
     children = [
-        {"metadata": {"name": "s-v0000-t00"}},
-        {"metadata": {"name": "s-v0001-t00"}},
-        {"metadata": {"name": "s-v0002-t00"}},
+        {"metadata": {"name": "s-v00-t0"}},
+        {"metadata": {"name": "s-v01-t0"}},
+        {"metadata": {"name": "s-v02-t0"}},
     ]
     list_mock, patch_mock, _ = _install_fake_k8s_for_lifecycle(
         monkeypatch, list_return={"items": children}
@@ -422,7 +422,7 @@ async def test_on_delete_patches_each_child_with_cancel_true(monkeypatch):
         assert kwargs["body"] == {"spec": {"cancel": True}}
         assert kwargs["plural"] == "aiperfjobs"
         patched_names.append(kwargs["name"])
-    assert sorted(patched_names) == ["s-v0000-t00", "s-v0001-t00", "s-v0002-t00"]
+    assert sorted(patched_names) == ["s-v00-t0", "s-v01-t0", "s-v02-t0"]
 
 
 @pytest.mark.asyncio

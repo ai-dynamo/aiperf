@@ -24,14 +24,14 @@ def test_needs_trial_suffix_logic():
 def test_derive_child_name_no_trial_suffix():
     assert (
         derive_child_name("my-sweep", var_idx=7, trial=0, with_trial_suffix=False)
-        == "my-sweep-v0007"
+        == "my-sweep-v07"
     )
 
 
 def test_derive_child_name_with_trial_suffix():
     assert (
         derive_child_name("my-sweep", var_idx=7, trial=4, with_trial_suffix=True)
-        == "my-sweep-v0007-t04"
+        == "my-sweep-v07-t4"
     )
 
 
