@@ -303,7 +303,7 @@ If you encounter an error not covered in this guide:
 
 2. **Review the documentation**:
    - [Parameter Sweeping Tutorial](../tutorials/parameter-sweeping.md)
-   - [CLI Options Reference](../cli_options.md)
+   - [CLI Options Reference](../cli-options.md)
 
 3. **Report a bug** if:
    - The error message is unclear or unhelpful
