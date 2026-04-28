@@ -697,4 +697,4 @@ print(f"  Score: {best_score:.3f}")
 - [Parameter Sweeping Tutorial](../tutorials/parameter-sweeping.md) - User guide with examples
 - [Multi-Run Confidence Tutorial](../tutorials/multi-run-confidence.md) - Understanding confidence statistics
 - [Working with Profile Exports](../tutorials/working-with-profile-exports.md) - General export analysis
-- [CLI Options Reference](../cli_options.md) - Complete CLI documentation
+- [CLI Options Reference](../cli-options.md) - Complete CLI documentation

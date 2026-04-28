@@ -375,8 +375,8 @@ For each parameter combination, you get:
 - **min, max**: Range of observed values
 
 **What to look for:**
-- **Low CV (<10%)**: Consistent performance at this concurrency level
-- **High CV (>20%)**: High variability, may need more trials or investigation
+- **Low CV (`<10%`)**: Consistent performance at this concurrency level
+- **High CV (`>20%`)**: High variability, may need more trials or investigation
 - **Narrow CI**: High confidence in the mean estimate
 - **Wide CI**: More uncertainty, consider more trials
 
@@ -623,7 +623,7 @@ aiperf profile \
 
 ### High Variance at Some Values
 
-**Symptom:** Some concurrency values show high CV (>20%) while others are stable.
+**Symptom:** Some concurrency values show high CV (`>20%`) while others are stable.
 
 **Possible causes:**
 - That concurrency level is near a system threshold
@@ -906,5 +906,5 @@ aiperf profile --concurrency 10,20,30,40 --num-profile-runs 5 [other options]
 For more details, see:
 - [Sweep Aggregates API Reference](../api/sweep-aggregates.md) - Complete data format documentation
 - [Multi-Run Confidence](./multi-run-confidence.md) - Understanding confidence intervals
-- [CLI Options](../cli_options.md) - Full parameter reference
-- [Metrics Reference](../metrics_reference.md) - Detailed metric descriptions
+- [CLI Options](../cli-options.md) - Full parameter reference
+- [Metrics Reference](../metrics-reference.md) - Detailed metric descriptions
