@@ -11,6 +11,7 @@ from aiperf.common.models import (
     ParsedResponse,
     ReasoningResponseData,
     RequestInfo,
+    ToolCallResponseData,
     Turn,
 )
 from aiperf.common.types import JsonObject
@@ -244,13 +245,25 @@ class ChatEndpoint(BaseEndpoint):
 
         content = data.get("content")
         reasoning = data.get("reasoning_content") or data.get("reasoning")
-        if not content and not reasoning:
-            return None
 
-        if not reasoning:
+        if reasoning:
+            return ReasoningResponseData(content=content, reasoning=reasoning)
+
+        if content:
             return self.make_text_response_data(content)
 
-        return ReasoningResponseData(
-            content=content,
-            reasoning=reasoning,
-        )
+        tool_calls = data.get("tool_calls") or []
+        tool_call_parts: list[str] = []
+        for tc in tool_calls:
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            arguments = func.get("arguments", "")
+            if name:
+                tool_call_parts.append(name)
+            if arguments:
+                tool_call_parts.append(arguments)
+        tool_call_text = "".join(tool_call_parts)
+        if tool_call_text:
+            return ToolCallResponseData(text=tool_call_text)
+
+        return None
