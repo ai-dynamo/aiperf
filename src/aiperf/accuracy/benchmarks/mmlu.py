@@ -176,21 +176,21 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         from collections import defaultdict
         from itertools import cycle
 
-        label_to_indices: dict[int, list[int]] = defaultdict(list)
+        label_to_indices: dict[str, list[int]] = defaultdict(list)
         for i, row in enumerate(source):
             gold_ix = (
                 ascii_uppercase.index(row["answer"])
                 if isinstance(row["answer"], str)
                 else row["answer"]
             )
-            label_to_indices[gold_ix].append(i)
+            label_to_indices[row["choices"][gold_ix]].append(i)
 
-        counts_to_labels: dict[int, list[int]] = defaultdict(list)
-        for answer_slot, indices in sorted(label_to_indices.items()):
-            counts_to_labels[len(indices)].append(answer_slot)
+        counts_to_labels: dict[int, list[str]] = defaultdict(list)
+        for label, indices in sorted(label_to_indices.items()):
+            counts_to_labels[len(indices)].append(label)
 
         rng = _rng.Random(0)
-        sorted_labels: list[int] = []
+        sorted_labels: list[str] = []
         for count in sorted(counts_to_labels, reverse=True):
             labels = counts_to_labels[count]
             rng.shuffle(labels)
