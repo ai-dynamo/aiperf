@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Update pyproject.toml version
+description: >
+  Validates a PEP 440 version string and patches the version field
+  in pyproject.toml using Python regex (safer than sed).
+
+inputs:
+  version:
+    description: >
+      PEP 440 version string to write. Examples: 0.6.0rc0,
+      0.6.0.dev20260424, 0.6.0.dev20260424+g3e3b3b1.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Patch pyproject.toml version
+      shell: bash
+      env:
+        TARGET_VERSION: ${{ inputs.version }}
+      run: |
+        python3 - <<'PYEOF'
+        import os
+        import re
+
+        target = os.environ["TARGET_VERSION"]
+
+        # PEP 440: X.Y.Z[(a|b|rc)N][.postN][.devN][+local]
+        # Local version: [a-zA-Z0-9] segments joined by dots (e.g. "g3e3b3b1").
+        if not re.match(
+            r'^\d+\.\d+\.\d+((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?'
+            r'(\+[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$',
+            target,
+        ):
+            raise SystemExit(f"::error::Invalid PEP 440 version '{target}'")
+
+        path = "pyproject.toml"
+        text = open(path).read()
+        patched, n = re.subn(
+            r'^(version\s*=\s*")[^"]*(")',
+            rf'\g<1>{target}\g<2>',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if n != 1:
+            raise SystemExit(f"::error::Could not find 'version = \"...\"' in {path}")
+        open(path, "w").write(patched)
+        print(f"Patched {path}: version = \"{target}\"")
+        PYEOF

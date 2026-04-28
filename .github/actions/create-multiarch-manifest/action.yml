@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Create multi-arch manifest
+description: >
+  Creates and pushes a Docker multi-arch OCI index from already-pushed
+  platform-specific images using crane. Verifies each source image is
+  reachable before creating the index. Idempotent: deletes any existing
+  manifest at the target tag before recreating.
+
+inputs:
+  registry:
+    description: 'Container registry hostname (e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com)'
+    required: true
+  registry-username:
+    description: 'Registry username. Defaults to AWS (ECR convention).'
+    required: false
+    default: 'AWS'
+  registry-password:
+    description: >
+      Registry password or token. Leave empty and set aws-ecr-region instead
+      for ECR so the token is fetched in-step and never exposed on job
+      outputs or environments.
+    required: false
+    default: ''
+  aws-ecr-region:
+    description: >
+      AWS region for ECR. When set, the action runs
+      `aws ecr get-login-password` internally and pipes the token directly
+      to crane over stdin — the token never leaves this step. Requires the
+      runner to have IAM permissions for ECR. Mutually exclusive with
+      registry-password; one of the two must be provided.
+    required: false
+    default: ''
+  target-image:
+    description: 'Full image reference for the manifest index (e.g. registry/repo:tag)'
+    required: true
+  source-images:
+    description: 'Space-separated list of fully-qualified platform image references to include'
+    required: true
+  crane-version:
+    description: 'crane release version to download'
+    default: 'v0.20.2'
+    required: false
+  crane-sha256:
+    description: >
+      SHA256 checksum of go-containerregistry_Linux_x86_64.tar.gz for the
+      selected crane-version. Leave empty to skip checksum verification
+      (not recommended for production).
+    default: ''
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Install crane
+      shell: bash
+      env:
+        CRANE_VERSION: ${{ inputs.crane-version }}
+        CRANE_SHA256:  ${{ inputs.crane-sha256 }}
+      run: |
+        set -euo pipefail
+        TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+        curl -fsSL \
+          "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
+          -o "${TARBALL}"
+        if [ -n "${CRANE_SHA256}" ]; then
+          echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum --check
+        else
+          echo "::warning::crane-sha256 not provided — skipping checksum verification"
+        fi
+        tar -xzf "${TARBALL}" crane
+        sudo mv crane /usr/local/bin/crane
+        rm "${TARBALL}"
+
+    - name: Log in to registry
+      shell: bash
+      env:
+        REGISTRY:       ${{ inputs.registry }}
+        USERNAME:       ${{ inputs.registry-username }}
+        PASSWORD:       ${{ inputs.registry-password }}
+        AWS_ECR_REGION: ${{ inputs.aws-ecr-region }}
+      run: |
+        set -euo pipefail
+        if [ -n "${AWS_ECR_REGION}" ]; then
+          # Token stays on stdin — never written to env, outputs, or disk.
+          aws ecr get-login-password --region "${AWS_ECR_REGION}" \
+            | crane auth login "${REGISTRY}" \
+                --username "${USERNAME}" --password-stdin
+        elif [ -n "${PASSWORD}" ]; then
+          echo "${PASSWORD}" | crane auth login "${REGISTRY}" \
+            --username "${USERNAME}" --password-stdin
+        else
+          echo "::error::Either aws-ecr-region or registry-password must be provided"
+          exit 1
+        fi
+
+    - name: Verify source images and create manifest index
+      shell: bash
+      env:
+        TARGET_IMAGE:  ${{ inputs.target-image }}
+        SOURCE_IMAGES: ${{ inputs.source-images }}
+      run: |
+        set -euo pipefail
+        read -ra IMAGES <<< "${SOURCE_IMAGES}"
+
+        if [ "${#IMAGES[@]}" -lt 2 ]; then
+          echo "::error::At least two source images are required for a multi-arch manifest"
+          exit 1
+        fi
+
+        # Verify each source image is reachable before creating the index.
+        for IMAGE in "${IMAGES[@]}"; do
+          DIGEST=$(crane digest "${IMAGE}" 2>&1) || {
+            echo "::error::Source image not found or not accessible: ${IMAGE}"
+            exit 1
+          }
+          echo "Verified: ${IMAGE} (${DIGEST})"
+        done
+
+        # Delete stale manifest at target to ensure idempotency on reruns.
+        crane delete "${TARGET_IMAGE}" 2>/dev/null || true
+
+        # Build the --manifest flags dynamically.
+        MANIFEST_FLAGS=()
+        for IMAGE in "${IMAGES[@]}"; do
+          MANIFEST_FLAGS+=(--manifest "${IMAGE}")
+        done
+
+        crane index append "${MANIFEST_FLAGS[@]}" --tag "${TARGET_IMAGE}"
+        echo "Multi-arch manifest created: ${TARGET_IMAGE}"

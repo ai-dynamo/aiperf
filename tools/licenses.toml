@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# License validation configuration shared by generate_python_attributions.py
+# and generate_dpkg_attributions.py.
+#
+# allow: SPDX identifiers approved for use. Compound expressions (AND/OR) are
+#        validated component-by-component — every identifier must be in this list.
+# deny:  SPDX identifiers that are explicitly prohibited. Takes precedence over allow.
+#
+# [[exceptions]]: Per-package overrides for packages whose license cannot be
+#   automatically determined or whose metadata is known to be incorrect.
+#   Required fields: type, name, version, spdx, reason
+#     type:    "python" or "dpkg" — prevents collisions between packages of the
+#              same name across ecosystems and makes the exception self-documenting.
+#   Optional field:  license_text (provide when pip-licenses cannot find the text)
+#
+# Multiple exceptions are supported — repeat [[exceptions]] for each package.
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "MIT-CMU",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "ISC",
+    "0BSD",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MPL-2.0",
+    "Zlib",
+    "CC0-1.0",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "PSF-2.0",
+    "AFL-2.1",
+    "AFL-3.0",
+    "HPND",
+    "Artistic-2.0",
+    "CNRI-Python",
+    "Unicode-3.0",
+    "NCSA",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+    "Unicode-DFS-2016",
+    "WTFPL",
+]
+deny = [
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "CDDL-1.0",
+    "EPL-1.0",
+    "EPL-2.0",
+    "EUPL-1.2",
+]
+
+[[exceptions]]
+type = "python"
+name = "docutils"
+version = "0.22.4"
+spdx = "BSD-2-Clause"
+reason = """PyPI classifiers incorrectly include GPL-2.0-or-later from legacy tooling.
+The installed package is predominantly public domain with BSD-2-Clause covering
+the minority of third-party files. Verified from COPYING.txt in the distribution.
+Dependency chain: cyclopts -> rich-rst -> docutils."""
+
+# Example Python exception (version required):
+#
+# [[exceptions]]
+# type = "python"
+# name = "some-package"
+# version = "1.2.3"
+# spdx = "MIT"
+# reason = "PyPI metadata incorrect; verified MIT from source repository"
+# license_text = """
+# MIT License
+# Copyright (c) ...
+# """
+
+[[exceptions]]
+type = "dpkg"
+name = "bash"
+version = "5.2.15-2+b10"
+spdx = "GPL-3.0-or-later"
+reason = """Redistributed from python:3.13-slim-bookworm@sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc
+as the runtime entrypoint shell. GPL-3.0-or-later is consistent with Debian's
+distribution of the package. Source available at https://ftp.gnu.org/gnu/bash/.
+Update this version pin when the base image digest is updated."""

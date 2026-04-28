@@ -137,12 +137,32 @@ def _find_hf_cache_aliases(name: str) -> list[Path]:
     ]
 
 
-def _is_hf_cached(name: str) -> bool:
+def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
+    """Check if a specific revision snapshot exists in an HF model cache directory.
+
+    Supports both named refs (``main``, ``v1.2``) and direct commit hashes.
+    """
+    snapshots_dir = model_dir / "snapshots"
+    if not snapshots_dir.is_dir():
+        return False
+    # Named ref: refs/<revision> contains the commit hash
+    refs_file = model_dir / "refs" / revision
+    if refs_file.is_file():
+        commit_hash = refs_file.read_text().strip()
+        return (snapshots_dir / commit_hash).is_dir()
+    # Direct commit hash
+    return (snapshots_dir / revision).is_dir()
+
+
+def _is_hf_cached(name: str, revision: str | None = None) -> bool:
     """Check if a HuggingFace model is available in the local cache.
 
     Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
     HF hub cache directory.  Also handles alias-style short names, returning
     True only when a single unambiguous match exists.
+
+    When *revision* is given, also verifies that the specific revision snapshot
+    is present — a model directory from a different revision is not sufficient.
     """
     from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -153,9 +173,16 @@ def _is_hf_cached(name: str) -> bool:
     # Exact match: "meta-llama/Llama-2-7b-hf" -> "models--meta-llama--Llama-2-7b-hf"
     exact = cache_dir / f"models--{name.replace('/', '--')}"
     if exact.is_dir():
-        return True
+        model_dir = exact
+    else:
+        aliases = _find_hf_cache_aliases(name)
+        if len(aliases) != 1:
+            return False
+        model_dir = aliases[0]
 
-    return len(_find_hf_cache_aliases(name)) == 1
+    if revision is None:
+        return True
+    return _is_revision_snapshot_cached(model_dir, revision)
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
@@ -314,7 +341,7 @@ class Tokenizer:
                 from transformers import AutoTokenizer
 
                 # Offline mode or cached: skip network, load from local cache
-                if _is_offline_mode() or _is_hf_cached(name):
+                if _is_offline_mode() or _is_hf_cached(name, revision=revision):
                     tokenizer_instance = cls._from_pretrained_local(
                         AutoTokenizer.from_pretrained,
                         name,
