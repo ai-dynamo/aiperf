@@ -292,7 +292,7 @@ Suggested rewrite:
 ```
 
 <details>
-<summary>🤖 Prompt for AI Agents</summary>
+<summary>Prompt for AI Agents</summary>
 
 ```
 Verify each finding against the current code and only fix it if needed.
@@ -331,7 +331,7 @@ Repeat one section per finding, ordered by severity, then by file.
 - <High-signal positive observation, especially where an axis is clean.>
 ````
 
-Every finding must include severity, axis, file:line, quoted current text, why it matters, a concrete suggested rewrite, and a collapsed `🤖 Prompt for AI Agents` block with a fenced prompt immediately after the suggested rewrite. Every axis must be accounted for either by a finding or by the "Axes With No Findings" section. High-severity findings must include a verbatim suggested rewrite.
+Every finding must include severity, axis, file:line, quoted current text, why it matters, a concrete suggested rewrite, and a collapsed `Prompt for AI Agents` block with a fenced prompt immediately after the suggested rewrite. Every axis must be accounted for either by a finding or by the "Axes With No Findings" section. High-severity findings must include a verbatim suggested rewrite.
 
 ## Anti-Patterns (Self-Check Before Submitting)
 
@@ -352,7 +352,7 @@ Before reporting complete:
 - The report exists at the expected path.
 - All seven axes are accounted for.
 - Counts in the summary match the findings.
-- Every finding ends with a collapsed `🤖 Prompt for AI Agents` block with a fenced prompt after the suggested rewrite.
+- Every finding ends with a collapsed `Prompt for AI Agents` block with a fenced prompt after the suggested rewrite.
 - High-severity findings have concrete rewrites.
 - The action list is ordered by severity and grouped by file when practical.
 - The user gets the report path and the top-priority issue.

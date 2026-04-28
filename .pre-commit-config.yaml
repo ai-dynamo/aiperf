@@ -88,6 +88,20 @@ repos:
         files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
         pass_filenames: false
         args: []
+      - id: check-ergonomics
+        name: check-ergonomics
+        entry: make check-ergonomics
+        language: python
+        files: (\.py$|^tools/(check_ergonomics\.py|ergonomics_baseline\.json)$)
+        pass_filenames: false
+        args: []
+      - id: check-ruff-baselined
+        name: check-ruff-baselined
+        entry: make check-ruff-baselined
+        language: python
+        files: (\.py$|^tools/(ruff_baselined\.py|ruff_baseline\.json)$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.8
     hooks:

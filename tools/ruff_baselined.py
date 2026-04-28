@@ -57,6 +57,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import orjson
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = Path(__file__).resolve().parent / "ruff_baseline.json"
 SRC_ROOT = REPO_ROOT / "src" / "aiperf"
@@ -210,36 +212,35 @@ def run_ruff(paths: list[str]) -> list[Violation]:
         "--select",
         ",".join(RULES),
         "--output-format",
-        "concise",
+        "json",
         "--no-cache",
         *paths,
     ]
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=False)
     if result.returncode not in (0, 1):
-        print(result.stderr, file=sys.stderr)
+        sys.stderr.buffer.write(result.stderr)
         raise RuntimeError(
             f"ruff exited with code {result.returncode} (expected 0 or 1)"
         )
+    if not result.stdout.strip():
+        return []
+    raw = orjson.loads(result.stdout)
     violations: list[Violation] = []
-    pattern = re.compile(r"([^:]+):(\d+):(\d+): (\w+) (.+)")
-    for line in result.stdout.splitlines():
-        m = pattern.match(line)
-        if not m:
-            continue
-        path = m.group(1)
-        # Normalize to repo-relative.
+    for entry in raw:
+        path = entry["filename"]
         abs_path = (REPO_ROOT / path).resolve()
         try:
             rel = str(abs_path.relative_to(REPO_ROOT))
         except ValueError:
             rel = path
+        loc = entry["location"]
         violations.append(
             Violation(
-                rule=m.group(4),
+                rule=entry["code"],
                 path=rel,
-                line=int(m.group(2)),
-                col=int(m.group(3)),
-                message=m.group(5),
+                line=int(loc["row"]),
+                col=int(loc["column"]),
+                message=entry["message"],
             )
         )
     return violations

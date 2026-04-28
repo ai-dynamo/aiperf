@@ -334,7 +334,7 @@ Suggested rewrite:
 ```
 
 <details>
-<summary>🤖 Prompt for AI Agents</summary>
+<summary>Prompt for AI Agents</summary>
 
 ```
 Verify each finding against the current code and only fix it if needed.
@@ -393,7 +393,7 @@ Before claiming complete:
 
 - [ ] Report written to `artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md`
 - [ ] All 7 axes are accounted for by a finding or the "Axes With No Findings" section
-- [ ] Every finding ends with a collapsed `🤖 Prompt for AI Agents` block with a fenced prompt after the suggested rewrite
+- [ ] Every finding ends with a collapsed `Prompt for AI Agents` block with a fenced prompt after the suggested rewrite
 - [ ] Every HIGH-severity finding has a verbatim suggested rewrite
 - [ ] Summary at top has accurate High / Medium / Low counts
 - [ ] Prioritized action list at bottom groups by file

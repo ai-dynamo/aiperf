@@ -130,6 +130,12 @@ max-branches = 12    # nesting proxy (custom tool targets depth 5)
 max-complexity = 10
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Enforced ONLY via the wrapper (``tools/ruff_baselined.py`` passes
+# ``--select TID251`` explicitly) — plain ``ruff check`` / ``make lint``
+# does NOT fire these because TID251 is intentionally absent from
+# ``select`` above. ``tools/check_ergonomics.py`` is the second
+# enforcement path: its ``stdlib-json`` axis flags the same imports via
+# AST walk, independent of ruff. Both run as pre-commit hooks.
 # Enforce orjson over stdlib json (CLAUDE.md standard).
 "json.dumps".msg = "Use orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode() instead."
 "json.loads".msg = "Use orjson.loads instead."

@@ -481,7 +481,9 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
     return [f for f in out if "__pycache__" not in f.parts]
 
 
-def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
+def _run_per_file(
+    path: Path, rel: str, enabled: set[str]
+) -> tuple[list[Violation], ast.Module | None]:
     out: list[Violation] = []
     if "file-size" in enabled:
         out.extend(check_file_size(path, rel))
@@ -489,7 +491,7 @@ def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
         out.extend(check_stdlib_json(path, rel))
     tree = _parse(path)
     if tree is None:
-        return out
+        return out, None
     if "function-size" in enabled:
         out.extend(check_function_size(tree, rel))
     if "nesting-depth" in enabled:
@@ -502,7 +504,7 @@ def _run_per_file(path: Path, rel: str, enabled: set[str]) -> list[Violation]:
         out.extend(check_pydantic_fields(tree, rel))
     if "exception-message" in enabled:
         out.extend(check_exception_message(tree, rel))
-    return out
+    return out, tree
 
 
 def collect_violations(files: list[Path], enabled: set[str]) -> list[Violation]:
@@ -515,11 +517,10 @@ def collect_violations(files: list[Path], enabled: set[str]) -> list[Violation]:
         except ValueError:
             rel = str(path)
         rels[path] = rel
-        violations.extend(_run_per_file(path, rel, enabled))
-        if "duplicate-classes" in enabled:
-            tree = _parse(path)
-            if tree is not None:
-                trees[path] = tree
+        per_file, tree = _run_per_file(path, rel, enabled)
+        violations.extend(per_file)
+        if "duplicate-classes" in enabled and tree is not None:
+            trees[path] = tree
     if "duplicate-classes" in enabled and trees:
         violations.extend(check_duplicate_classes(trees, rels))
     return violations
