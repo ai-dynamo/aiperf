@@ -793,8 +793,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         if self._gpu_telemetry_accumulator:
             time_filter = TimeRangeFilter(
-                start_ns=phase_stats.start_ns,
-                end_ns=phase_stats.requests_end_ns,
+                start_ns=phase_stats.start_ns or time.time_ns(),
+                end_ns=phase_stats.requests_end_ns or time.time_ns(),
             )
             efficiency_metrics = (
                 self._gpu_telemetry_accumulator.compute_efficiency_metrics(
