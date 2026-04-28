@@ -26,7 +26,8 @@
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
 		test-fern-docs internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
-		check-ruff-baselined regenerate-ruff-baseline
+		check-ruff-baselined regenerate-ruff-baseline \
+		check-agent-files-sync
 
 
 # Include user-defined environment variables
@@ -136,6 +137,9 @@ check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (PLR0915/PLR0912/
 
 regenerate-ruff-baseline: #? overwrite tools/ruff_baseline.json with current ruff violations (grandfather them).
 	$(activate_venv) && python tools/ruff_baselined.py --regenerate-baseline
+
+check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, and .cursor/rules/python.mdc share identical bodies.
+	$(activate_venv) && python tools/check_agent_files_sync.py
 
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration' $(args)

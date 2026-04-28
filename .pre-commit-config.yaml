@@ -81,6 +81,13 @@ repos:
         files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
+      - id: check-agent-files-sync
+        name: check-agent-files-sync
+        entry: make check-agent-files-sync
+        language: python
+        files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
+        pass_filenames: false
+        args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.8
     hooks:
