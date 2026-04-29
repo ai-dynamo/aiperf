@@ -107,3 +107,15 @@ class TestTiktokenImportError:
             pytest.raises(TokenizerError, match="tiktoken is required"),
         ):
             Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)
+
+
+class TestHuggingFaceTokenizerLoadErrorHints:
+    def test_unknown_architecture_appends_upgrade_hint(self) -> None:
+        with patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            side_effect=ValueError(
+                "does not recognize this architecture XyzForCausalLM"
+            ),
+        ):
+            with pytest.raises(TokenizerError, match=r"upgrade `transformers`"):
+                Tokenizer.from_pretrained("dummy/model", resolve_alias=False)
