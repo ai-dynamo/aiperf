@@ -46,6 +46,12 @@ def _warmup_pattern_type(
     warmup_concurrency = (
         lg.warmup_concurrency if "warmup_concurrency" in s else lg.concurrency
     ) or 1
+    # If --concurrency was a sweep list (e.g. 10,20,30), the warmup phase must
+    # NOT inherit the list — warmup runs once before the sweep with a scalar
+    # concurrency. Fall back to 1 so the sweep promoter doesn't accidentally
+    # also sweep warmup. Same reasoning applies to other magic-list fallbacks.
+    if isinstance(warmup_concurrency, list):
+        warmup_concurrency = 1
 
     if warmup_rate is not None:
         w["rate"] = warmup_rate

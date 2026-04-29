@@ -46,6 +46,52 @@ def parse_str_or_list(input: Any) -> list[Any] | None:
     return output
 
 
+def parse_int_or_int_list(input: Any) -> int | list[int] | None:
+    """Parse a value into ``int``, ``list[int]``, or ``None`` for polymorphic CLI flags.
+
+    Mirrors :func:`parse_str_or_list` but typed for integer-valued fields like
+    ``--concurrency`` that accept either a scalar (``--concurrency 10``) or a
+    sweep list (``--concurrency 10,20,30``). A single-item list is collapsed
+    to a scalar so the downstream Pydantic schema (which keeps the polymorphic
+    type as ``Annotated[Any, ...]`` per ``gotcha_cyclopts_polymorphic_cli_any``)
+    receives the most natural shape.
+
+    Returns:
+        ``None`` if input is ``None``; ``int`` for a scalar (or single-item list
+        / single-value comma-string); ``list[int]`` for a multi-value list or
+        comma-string.
+
+    Raises:
+        TypeError: If the input cannot be coerced to ``int`` / ``list[int]``.
+    """
+    if input is None:
+        return None
+    if isinstance(input, bool):
+        # bools are ints in Python; reject to avoid `--concurrency true` quietly
+        # becoming concurrency=1.
+        raise TypeError(
+            f"User Config: --concurrency / --request-rate-style flag got bool {input!r}; "
+            "expected an int or comma-separated list of ints (e.g. '10' or '10,20,30')."
+        )
+    if isinstance(input, int):
+        return input
+    if isinstance(input, str):
+        if "," in input:
+            tokens = [tok.strip() for tok in input.split(",") if tok.strip()]
+            if len(tokens) == 1:
+                return int(tokens[0])
+            return [int(tok) for tok in tokens]
+        return int(input)
+    if isinstance(input, list):
+        if len(input) == 1:
+            return int(input[0])
+        return [int(x) for x in input]
+    raise TypeError(
+        f"User Config: {input!r} ({type(input).__name__}) — expected int, "
+        "comma-separated str of ints, list[int], or None."
+    )
+
+
 def parse_str_or_csv_list(input: Any) -> list[Any]:
     """
     Parses the input to ensure it is either a string or a list. If the input is a string,

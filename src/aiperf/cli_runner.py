@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ from uuid import uuid4
 
 from aiperf._cli_runner_helpers import (
     aggregate_and_export,
+    aggregate_sweep_and_export,
     build_strategy,
     log_multi_run_banner,
     validate_convergence_config,
@@ -324,6 +326,8 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
     from aiperf.common.logging import setup_rich_logging
     from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
 
+    _reject_in_process_sweep_under_operator(plan)
+
     first_config = plan.configs[0]
 
     if first_config.ui_type == UIType.DASHBOARD:
@@ -360,6 +364,45 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
         logger.exception("Error executing multi-run benchmark")
         raise
 
+    _summarize_and_export(
+        plan,
+        results,
+        total_runs=total_runs,
+        strategy=strategy,
+        base_dir=base_dir,
+        logger=logger,
+    )
+
+
+def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
+    """Block in-process sweep when running inside an operator-managed pod.
+
+    The k8s operator drives sweeps cluster-wide via the AIPerfSweep CR, which
+    spawns one AIPerfJob (and thus one controller pod) per variation — each
+    pod sees a single-config plan. If a user submits an AIPerfJob with a
+    list-shaped magic-list directly (e.g. inline ``--concurrency 10,20,30``),
+    the controller pod would try to sweep in-process and break the operator's
+    cardinality contract. Hard-fail with a pointer to the CR path.
+    """
+    if os.environ.get("AIPERF_OPERATOR_MANAGED") == "1" and plan.is_sweep:
+        raise SystemExit(
+            "operator-managed runs cannot sweep in-process; "
+            "use AIPerfSweep CR (cluster-scope) instead."
+        )
+
+
+def _summarize_and_export(
+    plan: BenchmarkPlan,
+    results: list,  # noqa: ANN001
+    *,
+    total_runs: int,
+    strategy,  # noqa: ANN001
+    base_dir: Path,
+    logger: AIPerfLogger,
+) -> None:
+    """Log success/failure summary and run confidence + sweep aggregation."""
+    import asyncio as _asyncio
+
     successful_runs = [r for r in results if r.success]
     failed_runs = [r for r in results if not r.success]
 
@@ -376,6 +419,9 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
                 results, plan, strategy=strategy, base_dir=base_dir, logger=logger
             )
         )
+        if plan.is_sweep:
+            logger.info("Computing sweep aggregate across variations...")
+            _asyncio.run(aggregate_sweep_and_export(results, plan, base_dir, logger))
     elif len(successful_runs) == 1:
         logger.warning(
             "Only 1 successful run - cannot compute confidence statistics. "

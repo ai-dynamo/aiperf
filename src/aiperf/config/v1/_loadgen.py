@@ -14,14 +14,15 @@ See aiperf.config.v1.__init__ for the hard rules around adding new fields.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar
 
 from cyclopts import Group, Parameter
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.enums import ConvergenceMode, ConvergenceStat
 from aiperf.config._base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
+from aiperf.config.parsing import parse_int_or_int_list
 from aiperf.plugin.enums import ArrivalPattern
 
 
@@ -58,12 +59,14 @@ class LoadGeneratorConfig(BaseConfig):
     ] = 30.0
 
     concurrency: Annotated[
-        int | None,
+        Any,
         Field(
-            ge=1,
             description="Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, "
-            "maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.",
+            "maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. "
+            "Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; "
+            "the converter promotes the list to a sweep before AIPerfConfig validation.",
         ),
+        BeforeValidator(parse_int_or_int_list),
         CLIParameter(
             name=(
                 "--concurrency",  # GenAI-Perf
@@ -543,3 +546,33 @@ class LoadGeneratorConfig(BaseConfig):
             group=Groups.MULTI_RUN,
         ),
     ] = ConvergenceMode.CI_WIDTH
+
+    parameter_sweep_cooldown_seconds: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="Cooldown seconds between sweep variations (e.g. between "
+            "--concurrency 10 and --concurrency 20). Honored by "
+            "MultiRunOrchestrator when iterating plan.configs. Default 0.",
+        ),
+        CLIParameter(
+            name=("--parameter-sweep-cooldown-seconds",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = 0.0
+
+    parameter_sweep_same_seed: Annotated[
+        bool,
+        Field(
+            description="If true, every sweep variation reuses the same random seed "
+            "(correlated comparisons). If false (default), each variation derives "
+            "a unique seed `base_seed + variation.index` so independent draws "
+            "exercise different inputs. Requires --random-seed when true.",
+        ),
+        Parameter(
+            name=("--parameter-sweep-same-seed",),
+            group=Groups.MULTI_RUN,
+            show_env_var=False,
+            negative="--no-parameter-sweep-same-seed",
+        ),
+    ] = False

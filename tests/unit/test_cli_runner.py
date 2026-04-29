@@ -387,6 +387,106 @@ class TestRunMultiBenchmark:
         assert exc_info.value.code == 1
 
 
+class TestSweepAggregateRouting:
+    """Verify _run_multi_benchmark wires aggregate_sweep_and_export when sweeping."""
+
+    def _make_sweep_plan(self, tmp_path: Path) -> BenchmarkPlan:
+        cfg = _make_config(
+            runtime={"ui": "simple"},
+            sweep={
+                "type": "grid",
+                "variables": {"phases.default.concurrency": [10, 20]},
+            },
+        )
+        plan = build_benchmark_plan(cfg)
+        for c in plan.configs:
+            c.artifacts.dir = tmp_path
+        return plan
+
+    @patch("aiperf.cli_runner.aggregate_sweep_and_export", new_callable=AsyncMock)
+    @patch("aiperf.cli_runner.aggregate_and_export", new_callable=AsyncMock)
+    @patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor")
+    @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
+    def test_sweep_plan_invokes_aggregate_sweep_and_export(
+        self,
+        mock_orchestrator_cls: Mock,
+        _mock_executor_cls: Mock,
+        _mock_aggregate: AsyncMock,
+        mock_sweep_aggregate: AsyncMock,
+        tmp_path: Path,
+    ) -> None:
+        plan = self._make_sweep_plan(tmp_path)
+
+        mock_orch = MagicMock()
+        # Two successful results so summary path takes the >=2 branch.
+        ok = MagicMock(success=True, label="ok")
+        mock_orch.execute = AsyncMock(return_value=[ok, ok])
+        mock_orchestrator_cls.return_value = mock_orch
+
+        _run_multi_benchmark(plan)
+
+        mock_sweep_aggregate.assert_awaited_once()
+
+
+class TestOperatorModeSweepGate:
+    """Verify the operator-managed environment rejects in-process sweep."""
+
+    @pytest.fixture
+    def sweep_plan(self, tmp_path: Path) -> BenchmarkPlan:
+        cfg = _make_config(
+            runtime={"ui": "simple"},
+            sweep={
+                "type": "grid",
+                "variables": {"phases.default.concurrency": [10, 20]},
+            },
+        )
+        plan = build_benchmark_plan(cfg)
+        for c in plan.configs:
+            c.artifacts.dir = tmp_path
+        return plan
+
+    def test_operator_managed_env_blocks_sweep(
+        self,
+        sweep_plan: BenchmarkPlan,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("AIPERF_OPERATOR_MANAGED", "1")
+        with pytest.raises(SystemExit, match="AIPerfSweep CR"):
+            _run_multi_benchmark(sweep_plan)
+
+    def test_operator_managed_env_allows_non_sweep(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A multi-trial (non-sweep) plan under operator mode is allowed.
+
+        The gate is sweep-specific; trials within a single config remain
+        legal in operator-managed pods.
+        """
+        plan = _make_plan(
+            runtime={"ui": "simple"},
+            multi_run={"num_runs": 2, "confidence_level": 0.95},
+        )
+        for c in plan.configs:
+            c.artifacts.dir = tmp_path
+        monkeypatch.setenv("AIPERF_OPERATOR_MANAGED", "1")
+
+        with (
+            patch(
+                "aiperf.orchestrator.orchestrator.MultiRunOrchestrator"
+            ) as mock_orch_cls,
+            patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
+            patch("aiperf.cli_runner.aggregate_and_export", new_callable=AsyncMock),
+        ):
+            mock_orch = MagicMock()
+            ok = MagicMock(success=True, label="ok")
+            mock_orch.execute = AsyncMock(return_value=[ok, ok])
+            mock_orch_cls.return_value = mock_orch
+            # Should not raise SystemExit from the gate
+            _run_multi_benchmark(plan)
+
+
 class TestPrintAggregateSummary:
     """Test the _print_aggregate_summary function."""
 

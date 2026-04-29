@@ -74,6 +74,10 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
         confidence_level=multi_run.get("confidence_level", 0.95),
         set_consistent_seed=multi_run.get("set_consistent_seed", True),
         disable_warmup_after_first=multi_run.get("disable_warmup_after_first", True),
+        parameter_sweep_cooldown_seconds=multi_run.get(
+            "parameter_sweep_cooldown_seconds", 0.0
+        ),
+        parameter_sweep_same_seed=multi_run.get("parameter_sweep_same_seed", False),
     )
     for key in (
         "convergence_metric",
@@ -83,7 +87,28 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     ):
         if key in multi_run and multi_run[key] is not None:
             plan_kwargs[key] = multi_run[key]
-    return BenchmarkPlan(**plan_kwargs)
+    plan = BenchmarkPlan(**plan_kwargs)
+    _apply_sweep_seed_derivation(plan, config)
+    return plan
+
+
+def _apply_sweep_seed_derivation(plan: BenchmarkPlan, config: AIPerfConfig) -> None:
+    """Derive a unique random_seed per sweep variation when not pinned.
+
+    If ``parameter_sweep_same_seed`` is False (the default), each variation
+    after the first gets ``base_seed + variation.index`` so independent
+    samples don't degenerate to identical workloads. When the user pinned
+    same-seed, leaves seeds untouched. Variation-0 always keeps the base
+    seed so single-config runs are unaffected.
+    """
+    if plan.parameter_sweep_same_seed or not plan.is_sweep:
+        return
+    base_seed = config.random_seed
+    if base_seed is None:
+        return
+    for variation_idx, cfg in enumerate(plan.configs):
+        if variation_idx > 0:
+            cfg.random_seed = base_seed + variation_idx
 
 
 def load_benchmark_plan(

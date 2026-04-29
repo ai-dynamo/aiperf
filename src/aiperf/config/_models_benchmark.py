@@ -118,6 +118,31 @@ class MultiRunConfig(BaseConfig):
         ),
     ]
 
+    parameter_sweep_cooldown_seconds: Annotated[
+        float,
+        Field(
+            ge=0,
+            default=0.0,
+            description="Cooldown duration in seconds between sweep variations. "
+            "Honored by MultiRunOrchestrator when iterating plan.configs (one per "
+            "sweep variation). Distinct from cooldown_seconds, which gates trial-"
+            "to-trial cooldown within a single variation. Surfaced via "
+            "--parameter-sweep-cooldown-seconds.",
+        ),
+    ]
+
+    parameter_sweep_same_seed: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If true, every sweep variation reuses the same random seed "
+            "(correlated comparisons). If false (default), each variation derives a "
+            "unique seed `base_seed + variation.index`. Surfaced via "
+            "--parameter-sweep-same-seed; the cross-field validator on AIPerfConfig "
+            "requires --random-seed when true.",
+        ),
+    ]
+
 
 class AccuracyConfig(BaseConfig):
     """Configuration for accuracy benchmarking mode.

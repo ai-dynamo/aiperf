@@ -499,3 +499,55 @@ class AIPerfConfig(BenchmarkConfig):
             "When num_runs > 1, executes multiple runs and computes aggregate statistics.",
         ),
     ]
+
+    @model_validator(mode="after")
+    def validate_sweep_no_dashboard_ui(self) -> Self:
+        """Reject Dashboard UI when a sweep is active (live UI doesn't multiplex).
+
+        Only fires when the user explicitly set runtime.ui — the default
+        ``UIType.DASHBOARD`` is allowed at construction time so test fixtures
+        and YAML loads that don't touch runtime.ui can still describe sweeps.
+        ``_run_multi_benchmark`` re-checks at execution time and gives the
+        same error if the (possibly-defaulted) ui is still dashboard.
+        """
+        from aiperf.plugin.enums import UIType
+
+        if (
+            self.sweep is not None
+            and "ui" in self.runtime.model_fields_set
+            and self.runtime.ui == UIType.DASHBOARD
+        ):
+            raise ValueError(
+                "Dashboard UI is incompatible with parameter sweeps; sweep "
+                "results would overwrite each other in the live console. "
+                "Use --ui simple or --ui none with --concurrency <list> / "
+                "any sweep configuration."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sweep_same_seed_requires_seed(self) -> Self:
+        """``parameter_sweep_same_seed=true`` only matters when a base seed is set."""
+        if self.multi_run.parameter_sweep_same_seed and self.random_seed is None:
+            raise ValueError(
+                "--parameter-sweep-same-seed requires --random-seed to be set; "
+                "without a base seed every variation already gets a fresh draw, "
+                "so 'same seed' is meaningless. Either set --random-seed N or "
+                "drop --parameter-sweep-same-seed."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sweep_cooldown_nonneg(self) -> Self:
+        """Defensive cooldown check naming the offending CLI flag.
+
+        ``Field(ge=0)`` already enforces this; the explicit validator gives a
+        better error message that points at the CLI flag rather than the
+        Pydantic field path.
+        """
+        if self.multi_run.parameter_sweep_cooldown_seconds < 0:
+            raise ValueError(
+                "--parameter-sweep-cooldown-seconds must be >= 0; "
+                f"got {self.multi_run.parameter_sweep_cooldown_seconds}."
+            )
+        return self

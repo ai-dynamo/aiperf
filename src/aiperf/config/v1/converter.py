@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
+from aiperf.config.sweep import MAGIC_LIST_FIELDS
 from aiperf.config.v1._converter_dataset import build_dataset
 from aiperf.config.v1._converter_endpoint import build_endpoint, build_models
 from aiperf.config.v1._converter_optionals import (
@@ -65,6 +66,64 @@ def _assemble_optional(nested: dict[str, Any], user: UserConfig) -> None:
             nested["slos"] = dict(inp.goodput)
 
 
+def _promote_magic_lists_to_sweep_block(nested: dict[str, Any]) -> None:
+    """Lift list-shaped magic-list fields under ``phases[*]`` to a ``sweep`` block.
+
+    PhaseConfig's scalar fields (``concurrency: int | None``, etc.) reject
+    list inputs at validation time — but ``--concurrency 10,20,30`` is a
+    list at this point. We detect any phase field whose key is in
+    ``MAGIC_LIST_FIELDS`` and whose value is a list, strip it from the
+    phase dict, and add it as a ``sweep.variables`` entry keyed by the
+    dotted path ``phases.<phase_name>.<field>`` — the same convention
+    ``expand_sweep`` consumes downstream in ``build_benchmark_plan``.
+
+    No-ops when no list-shaped magic-list fields are present.
+    """
+    phases = nested.get("phases")
+    if not isinstance(phases, list):
+        return
+    sweep_variables: dict[str, list[Any]] = {}
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        phase_name = phase.get("name")
+        if not isinstance(phase_name, str):
+            continue
+        for key in list(phase.keys()):
+            if key in MAGIC_LIST_FIELDS and isinstance(phase[key], list):
+                sweep_variables[f"phases.{phase_name}.{key}"] = phase.pop(key)
+    if sweep_variables:
+        existing_sweep = nested.get("sweep")
+        if isinstance(existing_sweep, dict):
+            existing_sweep.setdefault("type", "grid")
+            existing_sweep.setdefault("variables", {})
+            existing_sweep["variables"].update(sweep_variables)
+        else:
+            nested["sweep"] = {"type": "grid", "variables": sweep_variables}
+
+
+def _reject_unsupported_sweep_mode(user: UserConfig) -> None:
+    """Reject ``--parameter-sweep-mode=repeated`` per Path-A.
+
+    The k8s sweep port keeps INDEPENDENT semantics only — variations form the
+    outer loop, trials form the inner loop, matching ``expand_sweep`` +
+    ``FixedTrialsStrategy``. REPEATED would require an outer trial loop the
+    orchestrator does not support; defer to a follow-up phase if needed.
+    """
+    loadgen = getattr(user, "loadgen", None)
+    if loadgen is None:
+        return
+    mode = getattr(loadgen, "parameter_sweep_mode", None)
+    if mode is None:
+        return
+    mode_str = str(mode).lower()
+    if "repeated" in mode_str:
+        raise ValueError(
+            "--parameter-sweep-mode=repeated is not supported in this release; "
+            "use 'independent' (the default)."
+        )
+
+
 def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfConfig:
     """Convert a parsed v1 ``UserConfig`` + ``ServiceConfig`` into ``AIPerfConfig``.
 
@@ -107,5 +166,7 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
         nested["runtime"] = runtime_dict
 
     _assemble_optional(nested, user)
+    _reject_unsupported_sweep_mode(user)
+    _promote_magic_lists_to_sweep_block(nested)
 
     return AIPerfConfig(**nested)
