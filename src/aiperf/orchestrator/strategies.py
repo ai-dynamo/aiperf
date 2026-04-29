@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 from aiperf.config.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
 
@@ -22,7 +23,38 @@ __all__ = [
     "AdaptiveStrategy",
     "ExecutionStrategy",
     "FixedTrialsStrategy",
+    "SweepMode",
 ]
+
+
+class SweepMode(CaseInsensitiveStrEnum):
+    """Execution order for sweep + confidence composition.
+
+    REPEATED: for trial in trials: for value in values
+        All values tested per trial before moving to next trial.
+        Path: base_dir/profile_runs/trial_0001/concurrency_10/
+
+    INDEPENDENT: for value in values: for trial in trials
+        All trials completed per value before moving to next value.
+        Path: base_dir/concurrency_10/profile_runs/trial_0001/
+    """
+
+    INDEPENDENT = "independent"
+    REPEATED = "repeated"
+
+
+def _sanitize_label(label: str) -> str:
+    """Sanitize label to prevent path traversal attacks.
+
+    Args:
+        label: Raw label string
+
+    Returns:
+        Sanitized label safe for filesystem paths
+    """
+    sanitized = re.sub(r"[/\\]|\.\.", "", label)
+    sanitized = re.sub(r'[<>:"|?*]', "", sanitized)
+    return sanitized
 
 
 class ExecutionStrategy(ABC):

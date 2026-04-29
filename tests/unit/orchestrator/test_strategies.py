@@ -10,7 +10,12 @@ import pytest
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.strategies import AdaptiveStrategy, FixedTrialsStrategy
+from aiperf.orchestrator.strategies import (
+    AdaptiveStrategy,
+    FixedTrialsStrategy,
+    SweepMode,
+    _sanitize_label,
+)
 
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
@@ -581,3 +586,35 @@ class TestAdaptiveStrategy:
         results = self._make_results(3, metric=metric_name)
         assert strategy.should_continue(results) is False
         criterion.is_converged.assert_called_once_with(results)
+
+
+class TestSweepMode:
+    """Tests for the SweepMode enum."""
+
+    def test_independent_value(self):
+        assert SweepMode.INDEPENDENT == "independent"
+
+    def test_repeated_value(self):
+        assert SweepMode.REPEATED == "repeated"
+
+    def test_members(self):
+        assert {m.value for m in SweepMode} == {"independent", "repeated"}
+
+
+class TestSanitizeLabel:
+    """Tests for the module-level _sanitize_label helper."""
+
+    def test_strips_parent_dir_traversal(self):
+        assert _sanitize_label("../foo") == "foo"
+
+    def test_strips_path_separators(self):
+        assert _sanitize_label("foo/bar\\baz") == "foobarbaz"
+
+    def test_strips_shell_special_chars(self):
+        assert _sanitize_label('a<b>c|d:e"f?g*h') == "abcdefgh"
+
+    def test_passthrough_safe_label(self):
+        assert _sanitize_label("concurrency_10") == "concurrency_10"
+
+    def test_passthrough_run_label(self):
+        assert _sanitize_label("run_0001") == "run_0001"
