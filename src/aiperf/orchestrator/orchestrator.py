@@ -214,8 +214,10 @@ class MultiRunOrchestrator:
         # would in independent mode. Strategy contract only inspects
         # len(prior); contents are not read - so we never have to keep
         # this list pruned or even successful-only. Do NOT replace with
-        # `[]` per call: the silent re-enable is unobservable in unit
-        # tests but corrupts wall-clock comparisons across modes.
+        # `[]` per call: the silent re-enable is unobservable in production
+        # logs but corrupts wall-clock comparisons across modes.
+        # Regression-locked by tests/unit/orchestrator/test_multi_run_orchestrator.py
+        # ::test_repeated_mode_passes_growing_prior_results_to_strategy.
         strategies = [build_strategy(plan, logger) for _ in plan.configs]
         for strategy, cfg in zip(strategies, plan.configs, strict=True):
             strategy.validate_config(cfg)

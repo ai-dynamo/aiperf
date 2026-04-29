@@ -405,11 +405,19 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
 ):
     """Each successive trial in repeated mode passes a growing prior-results list.
 
+    REGRESSION-LOCK: If you are tempted to replace
+    ``strategy.get_next_config(cfg, per_variation_history[var_idx])``
+    in ``MultiRunOrchestrator._execute_repeated`` with
+    ``strategy.get_next_config(cfg, [])`` because "the list is never read",
+    this test will fail and tell you why. The source-side comment in
+    ``orchestrator.py`` documents the invariant; this test enforces it.
+
     FixedTrialsStrategy.get_next_config keys disable_warmup_after_first off
-    `len(prior) > 0`, so passing [] every trial would re-enable warmup on
+    ``len(prior) > 0``. Passing ``[]`` every trial re-enables warmup on
     every trial - silently diverging from main's _execute_trials_then_sweep
-    semantic where warmup runs only in trial 1. This test locks the
-    per-variation history bookkeeping in `_execute_repeated`.
+    semantic where warmup runs only in trial 1. The asserted progression
+    is ``[0, 1, 2]`` per variation; with the regression it would be
+    ``[0, 0, 0]``.
     """
     plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
     captured: list[tuple[int, int]] = []  # (var_idx_seen, prior_len)
