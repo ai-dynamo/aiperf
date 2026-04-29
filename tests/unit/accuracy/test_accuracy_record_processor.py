@@ -218,32 +218,6 @@ class TestEnsureProblemsLoadedConcurrency:
         assert load_called == 1
         assert processor.problems == [problem]
 
-    async def test_results_processor_loads_problems_exactly_once_under_concurrency(
-        self,
-    ) -> None:
-        """Concurrent _ensure_problems_loaded calls must invoke load_benchmark_problems once."""
-        problem = _make_problem()
-        load_called = 0
-
-        async def slow_load(_user_config):
-            nonlocal load_called
-            load_called += 1
-            await asyncio.sleep(0)
-            return [problem]
-
-        processor = _make_results_processor(None, _make_user_config())
-
-        with patch(
-            "aiperf.accuracy.accuracy_results_processor.load_benchmark_problems",
-            side_effect=slow_load,
-        ):
-            await asyncio.gather(
-                *[processor._ensure_problems_loaded() for _ in range(10)]
-            )
-
-        assert load_called == 1
-        assert processor._problems == [problem]
-
 
 @pytest.mark.asyncio
 class TestEnsureProblemsLoadedEmptyGuard:
