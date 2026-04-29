@@ -8,6 +8,32 @@ Operates on per-combination metric dicts of shape::
 
 No I/O, no Pydantic, no BenchmarkConfig dependencies. The CSV/JSON sweep
 exporters consume the dict produced by :meth:`SweepAnalyzer.compute`.
+
+In-process vs cluster sweeps
+----------------------------
+
+AIPerf has TWO sweep paths and they target different scales:
+
+1. **In-process sweep** (this module + ``MultiRunOrchestrator`` +
+   ``aggregate_sweep_and_export``). Triggered by ``--concurrency 10,20,30``
+   on a single ``aiperf profile`` invocation. The v1->v2 converter promotes
+   the magic-list to a ``sweep`` block; ``build_benchmark_plan`` calls
+   ``expand_sweep`` to materialize one ``BenchmarkConfig`` per variation.
+   The orchestrator then executes variations x trials sequentially in the
+   same process. Best for: single-machine sweeps, quick iteration, CI/dev.
+
+2. **Cluster sweep** (``AIPerfSweep`` CRD + ``operator/handlers/sweep/``).
+   The k8s operator owns the cluster-wide cardinality contract: one
+   ``AIPerfJob`` (and one controller pod) per variation. Each child pod
+   sees a single-config plan. Best for: large sweeps, parallelism across
+   nodes, durability through controller restarts.
+
+The two paths are mutually exclusive at runtime: when
+``AIPERF_OPERATOR_MANAGED=1`` is set in the controller pod, the
+in-process gate (``cli_runner._reject_in_process_sweep_under_operator``)
+hard-fails on ``plan.is_sweep`` to keep both layers from sweeping at once.
+Use the CRD path whenever you need horizontal scale or restart durability;
+otherwise the in-process path is simpler.
 """
 
 from enum import Enum

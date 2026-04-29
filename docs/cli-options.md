@@ -829,10 +829,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency`, `--concurrency` `<int>`
+#### `--concurrency`, `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; the converter promotes the list to a sweep before AIPerfConfig validation.
 
 #### `--prefill-concurrency`, `--prefill-concurrency` `<int>`
 
@@ -1007,6 +1006,16 @@ Statistical method for convergence detection. ci_width: Stop when Student's t co
 | `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
 | `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
 | `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --concurrency 20). Honored by MultiRunOrchestrator when iterating plan.configs. Default 0.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
+
+If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
 ### Accuracy
 
@@ -2133,10 +2142,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency`, `--concurrency` `<int>`
+#### `--concurrency`, `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; the converter promotes the list to a sweep before AIPerfConfig validation.
 
 #### `--prefill-concurrency`, `--prefill-concurrency` `<int>`
 
@@ -2311,6 +2319,16 @@ Statistical method for convergence detection. ci_width: Stop when Student's t co
 | `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
 | `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
 | `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --concurrency 20). Honored by MultiRunOrchestrator when iterating plan.configs. Default 0.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
+
+If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
 ### Accuracy
 
@@ -3301,10 +3319,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency`, `--concurrency` `<int>`
+#### `--concurrency`, `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; the converter promotes the list to a sweep before AIPerfConfig validation.
 
 #### `--prefill-concurrency`, `--prefill-concurrency` `<int>`
 
@@ -3479,6 +3496,16 @@ Statistical method for convergence detection. ci_width: Stop when Student's t co
 | `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
 | `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
 | `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --concurrency 20). Honored by MultiRunOrchestrator when iterating plan.configs. Default 0.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
+
+If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
 ### Accuracy
 
@@ -4484,10 +4511,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency`, `--concurrency` `<int>`
+#### `--concurrency`, `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; the converter promotes the list to a sweep before AIPerfConfig validation.
 
 #### `--prefill-concurrency`, `--prefill-concurrency` `<int>`
 
@@ -4662,6 +4688,16 @@ Statistical method for convergence detection. ci_width: Stop when Student's t co
 | `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
 | `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
 | `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --concurrency 20). Honored by MultiRunOrchestrator when iterating plan.configs. Default 0.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
+
+If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
 ### Accuracy
 
@@ -5678,10 +5714,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency`, `--concurrency` `<int>`
+#### `--concurrency`, `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. Pass a comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over multiple concurrencies; the converter promotes the list to a sweep before AIPerfConfig validation.
 
 #### `--prefill-concurrency`, `--prefill-concurrency` `<int>`
 
@@ -5856,6 +5891,16 @@ Statistical method for convergence detection. ci_width: Stop when Student's t co
 | `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
 | `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
 | `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+
+#### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --concurrency 20). Honored by MultiRunOrchestrator when iterating plan.configs. Default 0.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
+
+If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
 ### Accuracy
 
