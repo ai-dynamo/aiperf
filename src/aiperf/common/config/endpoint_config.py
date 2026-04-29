@@ -224,10 +224,11 @@ class EndpointConfig(BaseConfig):
         float,
         Field(
             description="Enable a pre-flight readiness probe by setting this to a positive value (seconds). "
-            "aiperf will then wait up to this long for the target endpoint to accept requests before "
-            "starting the benchmark, aborting with a non-zero exit on timeout. The probe strategy is "
-            "controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. "
-            "0 (default) disables the probe. "
+            "aiperf applies this timeout to each URL/model probe before starting the benchmark, "
+            "aborting with a non-zero exit if any probe times out. For multiple URLs or models, "
+            "worst-case wall-clock time can be roughly this timeout multiplied by the number of "
+            "URL/model probes. The probe strategy is controlled by `--wait-for-model-mode`, which "
+            "defaults to sending a 1-token inference request. 0 (default) disables the probe. "
             "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
             ge=0.0,
         ),
