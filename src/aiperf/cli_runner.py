@@ -26,6 +26,8 @@ from aiperf.plugin.enums import ServiceType, UIType
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkConfig, BenchmarkPlan, BenchmarkRun
+    from aiperf.orchestrator.models import RunResult
+    from aiperf.orchestrator.strategies import ExecutionStrategy
 
 __all__ = [
     "_print_aggregate_summary",
@@ -385,18 +387,30 @@ def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
     cardinality contract. Hard-fail with a pointer to the CR path.
     """
     if os.environ.get("AIPERF_OPERATOR_MANAGED") == "1" and plan.is_sweep:
+        swept_params = sorted(
+            {
+                k
+                for variation in plan.variations
+                if variation is not None
+                for k in variation.values
+            }
+        )
         raise SystemExit(
-            "operator-managed runs cannot sweep in-process; "
-            "use AIPerfSweep CR (cluster-scope) instead."
+            f"In-process parameter sweep ({len(plan.configs)} variations across "
+            f"{swept_params or '<unknown>'}) is not supported in operator-managed "
+            f"runs (AIPERF_OPERATOR_MANAGED=1). Use the AIPerfSweep CRD "
+            f"(cluster-scope) for cross-job sweeps — see docs/kubernetes/sweeps.md "
+            f"— or submit one AIPerfJob per variation. To run as a single point "
+            f"benchmark, drop the comma in --concurrency / other magic-list flags."
         )
 
 
 def _summarize_and_export(
     plan: BenchmarkPlan,
-    results: list,  # noqa: ANN001
+    results: list[RunResult],
     *,
     total_runs: int,
-    strategy,  # noqa: ANN001
+    strategy: ExecutionStrategy,
     base_dir: Path,
     logger: AIPerfLogger,
 ) -> None:

@@ -78,14 +78,31 @@ def parse_int_or_int_list(input: Any) -> int | list[int] | None:
     if isinstance(input, str):
         if "," in input:
             tokens = [tok.strip() for tok in input.split(",") if tok.strip()]
-            if len(tokens) == 1:
-                return int(tokens[0])
-            return [int(tok) for tok in tokens]
-        return int(input)
+            try:
+                ints = [int(tok) for tok in tokens]
+            except ValueError as e:
+                raise TypeError(
+                    f"User Config: --concurrency / similar magic-list flag got "
+                    f"comma-separated string {input!r}; one of the tokens is "
+                    f"not a valid int ({e}). Expected e.g. '10' or '10,20,30'."
+                ) from e
+            return ints[0] if len(ints) == 1 else ints
+        try:
+            return int(input)
+        except ValueError as e:
+            raise TypeError(
+                f"User Config: --concurrency / similar magic-list flag got "
+                f"string {input!r}; not a valid int ({e})."
+            ) from e
     if isinstance(input, list):
-        if len(input) == 1:
-            return int(input[0])
-        return [int(x) for x in input]
+        try:
+            ints = [int(x) for x in input]
+        except (ValueError, TypeError) as e:
+            raise TypeError(
+                f"User Config: --concurrency / similar magic-list flag got "
+                f"list {input!r}; one of the elements is not a valid int ({e})."
+            ) from e
+        return ints[0] if len(ints) == 1 else ints
     raise TypeError(
         f"User Config: {input!r} ({type(input).__name__}) — expected int, "
         "comma-separated str of ints, list[int], or None."

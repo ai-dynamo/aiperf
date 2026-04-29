@@ -3330,6 +3330,37 @@
           "$ref": "#/$defs/ConvergenceMode",
           "default": "ci_width",
           "description": "Statistical method for convergence detection (ci_width, cv, distribution)."
+        },
+        "parameterSweepCooldownSeconds": {
+          "default": 0.0,
+          "description": "Cooldown duration in seconds between sweep variations. Honored by MultiRunOrchestrator when iterating plan.configs (one per sweep variation). Distinct from cooldown_seconds, which gates trial-to-trial cooldown within a single variation. Surfaced via --parameter-sweep-cooldown-seconds.",
+          "title": "Parametersweepcooldownseconds",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Cooldown duration in seconds between sweep variations. Honored by MultiRunOrchestrator when iterating plan.configs (one per sweep variation). Distinct from cooldown_seconds, which gates trial-to-trial cooldown within a single variation. Surfaced via --parameter-sweep-cooldown-seconds.",
+              "minimum": 0,
+              "title": "Parametersweepcooldownseconds",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "parameterSweepSameSeed": {
+          "default": false,
+          "description": "If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index`. Surfaced via --parameter-sweep-same-seed; the cross-field validator on AIPerfConfig requires --random-seed when true.",
+          "title": "Parametersweepsameseed",
+          "type": "boolean"
         }
       },
       "title": "MultiRunConfig",

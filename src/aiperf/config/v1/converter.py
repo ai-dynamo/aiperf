@@ -80,15 +80,29 @@ def _promote_magic_lists_to_sweep_block(nested: dict[str, Any]) -> None:
     No-ops when no list-shaped magic-list fields are present.
     """
     phases = nested.get("phases")
-    if not isinstance(phases, list):
+    if phases is None:
         return
+    if not isinstance(phases, list):
+        raise TypeError(
+            f"phases must be a list of phase dicts, got "
+            f"{type(phases).__name__}: {phases!r}"
+        )
     sweep_variables: dict[str, list[Any]] = {}
-    for phase in phases:
+    for idx, phase in enumerate(phases):
         if not isinstance(phase, dict):
-            continue
+            raise TypeError(
+                f"phases[{idx}] must be a dict with a 'name' key, got "
+                f"{type(phase).__name__}: {phase!r}. Sweep magic-list "
+                f"promotion cannot lift list-shaped fields out of a "
+                f"non-dict phase entry."
+            )
         phase_name = phase.get("name")
         if not isinstance(phase_name, str):
-            continue
+            raise ValueError(
+                f"phases[{idx}] is missing a string 'name' field "
+                f"(got {phase_name!r}); cannot key sweep variables on "
+                f"phases.<name>.<field>."
+            )
         for key in list(phase.keys()):
             if key in MAGIC_LIST_FIELDS and isinstance(phase[key], list):
                 sweep_variables[f"phases.{phase_name}.{key}"] = phase.pop(key)

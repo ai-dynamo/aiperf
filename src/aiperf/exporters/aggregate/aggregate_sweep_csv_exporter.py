@@ -11,9 +11,15 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
+from typing import Any, Protocol
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
+
+
+class _CsvWriter(Protocol):
+    """Structural type for ``csv.writer``: only ``writerow`` is used here."""
+
+    def writerow(self, row: list[Any]) -> Any: ...
 
 
 class AggregateSweepCsvExporter(AggregateBaseExporter):
@@ -88,7 +94,7 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
 
 
 def _write_per_combination_section(
-    writer: Any,
+    writer: _CsvWriter,
     per_combination_metrics: list[dict[str, Any]],
     param_names: list[str],
 ) -> None:
@@ -132,7 +138,7 @@ def _write_per_combination_section(
 
 
 def _write_best_configurations_section(
-    writer: Any, best_configs: dict[str, Any], param_names: list[str]
+    writer: _CsvWriter, best_configs: dict[str, Any], param_names: list[str]
 ) -> None:
     """Section 2: one row per objective with parameter values + metric/unit."""
     writer.writerow(["Best Configurations"])
@@ -154,7 +160,7 @@ def _write_best_configurations_section(
 
 
 def _write_pareto_section(
-    writer: Any, pareto_optimal: list[dict[str, Any]], param_names: list[str]
+    writer: _CsvWriter, pareto_optimal: list[dict[str, Any]], param_names: list[str]
 ) -> None:
     """Section 3: one row per non-dominated parameter combination."""
     writer.writerow(["Pareto Optimal Points"])
@@ -167,7 +173,7 @@ def _write_pareto_section(
 
 
 def _write_metadata_section(
-    writer: Any, metadata: dict[str, Any], param_names: list[str]
+    writer: _CsvWriter, metadata: dict[str, Any], param_names: list[str]
 ) -> None:
     """Section 4: sweep parameters + combination count."""
     writer.writerow(["Metadata"])

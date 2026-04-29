@@ -68,21 +68,61 @@ def _is_offline_mode() -> bool:
 
 
 def _find_hf_cache_aliases(name: str) -> list[Path]:
-    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    """Find HF cache directories matching a model name alias.
+
+    Scans the HF hub cache for ``models--*--<name>`` directories
+    (case-insensitive suffix match).
+
+    Returns:
+        List of matching cache directory paths.
+
+    Note:
+        Implementation lives in :mod:`aiperf.common.tokenizer_cache`; this
+        is a re-export shell to keep ``tokenizer.py`` under the file-size
+        ceiling.
+    """
     from aiperf.common.tokenizer_cache import _find_hf_cache_aliases as _impl
 
     return _impl(name)
 
 
 def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
-    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    """Check if a specific revision snapshot exists in an HF model cache directory.
+
+    Supports both named refs (``main``, ``v1.2``) and direct commit hashes.
+
+    Note:
+        Implementation lives in :mod:`aiperf.common.tokenizer_cache`; this
+        is a re-export shell to keep ``tokenizer.py`` under the file-size
+        ceiling.
+    """
     from aiperf.common.tokenizer_cache import _is_revision_snapshot_cached as _impl
 
     return _impl(model_dir, revision)
 
 
 def _is_hf_cached(name: str, revision: str | None = None) -> bool:
-    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    """Check if a HuggingFace model is available in the local cache.
+
+    Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
+    HF hub cache directory. Also handles alias-style short names, returning
+    True only when a single unambiguous match exists.
+
+    When ``revision`` is given, also verifies that the specific revision
+    snapshot is present — a model directory from a different revision is
+    not sufficient.
+
+    Example:
+        >>> _is_hf_cached("meta-llama/Llama-2-7b-hf")
+        True
+        >>> _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="main")
+        True
+
+    Note:
+        Implementation lives in :mod:`aiperf.common.tokenizer_cache`; this
+        is a re-export shell to keep ``tokenizer.py`` under the file-size
+        ceiling.
+    """
     from aiperf.common.tokenizer_cache import _is_hf_cached as _impl
 
     return _impl(name, revision)

@@ -1026,6 +1026,20 @@ spec:
                                 - ci_width
                                 - cv
                                 - distribution
+                              parameterSweepCooldownSeconds:
+                                type: number
+                                description: Cooldown duration in seconds between sweep variations. Honored by MultiRunOrchestrator
+                                  when iterating plan.configs (one per sweep variation). Distinct from cooldown_seconds, which
+                                  gates trial-to-trial cooldown within a single variation. Surfaced via --parameter-sweep-cooldown-seconds.
+                                default: 0.0
+                                minimum: 0
+                              parameterSweepSameSeed:
+                                type: boolean
+                                description: If true, every sweep variation reuses the same random seed (correlated comparisons).
+                                  If false (default), each variation derives a unique seed `base_seed + variation.index`.
+                                  Surfaced via --parameter-sweep-same-seed; the cross-field validator on AIPerfConfig requires
+                                  --random-seed when true.
+                                default: false
                         required:
                         - models
                         - endpoint
