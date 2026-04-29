@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
@@ -11,6 +11,16 @@ from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import VideoAudioDefaults, VideoDefaults
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+
+
+def _coerce_int_literal(value: Any) -> Any:
+    """Coerce numeric strings (e.g., from YAML/JSON configs) to int for Literal validation."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+    return value
+
 
 VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
     VideoFormat.WEBM: VideoAudioCodec.LIBVORBIS,
@@ -33,12 +43,12 @@ class VideoAudioConfig(BaseConfig):
     _CLI_GROUP = Groups.VIDEO_INPUT
 
     sample_rate: Annotated[
-        int,
+        float,
         Field(
-            ge=8000,
-            le=96000,
-            description="Audio sample rate in Hz for the embedded audio track. "
-            "Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). "
+            ge=8.0,
+            le=96.0,
+            description="Audio sample rate in kHz for the embedded audio track. "
+            "Common values: 8 (telephony), 16 (speech), 44.1 (CD quality), 48 (professional). "
             "Higher sample rates increase audio fidelity and file size.",
         ),
         CLIParameter(
@@ -84,6 +94,7 @@ class VideoAudioConfig(BaseConfig):
             "Supported values: 8, 16, 24, or 32 bits. "
             "Higher bit depths provide greater dynamic range but increase file size.",
         ),
+        BeforeValidator(_coerce_int_literal),
         CLIParameter(
             name=("--video-audio-depth",),
             group=_CLI_GROUP,

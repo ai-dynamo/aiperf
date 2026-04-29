@@ -424,11 +424,11 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
 <br/>_Default: `libvpx-vp9`_
 
-#### `--video-audio-sample-rate` `<int>`
+#### `--video-audio-sample-rate` `<float>`
 
-Audio sample rate in Hz for the embedded audio track. Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). Higher sample rates increase audio fidelity and file size.
-<br/>_Constraints: ≥ 8000, ≤ 96000_
-<br/>_Default: `44100`_
+Audio sample rate in kHz for the embedded audio track. Common values: 8 (telephony), 16 (speech), 44.1 (CD quality), 48 (professional). Higher sample rates increase audio fidelity and file size.
+<br/>_Constraints: ≥ 8.0, ≤ 96.0_
+<br/>_Default: `44.1`_
 
 #### `--video-audio-num-channels` `<int>`
 
