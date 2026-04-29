@@ -180,7 +180,8 @@ class MultiRunOrchestrator:
         """Trials-outer, variations-inner iteration (repeated mode).
 
         Each variation has one strategy reused across trials, called once
-        per trial with an empty cell_results list. Artifact tree:
+        per trial with that variation's growing prior-results history.
+        Artifact tree:
         <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_0001/.
         """
         from aiperf._cli_runner_helpers import build_strategy
@@ -201,13 +202,17 @@ class MultiRunOrchestrator:
             f"{len(plan.configs)} variations"
         )
 
-        # One strategy per variation cell. In repeated mode the strategy is
-        # called once per trial within each cell, so cell_results stays empty
-        # and convergence-based should_continue would never converge - that's
-        # why use_adaptive is rejected above.
+        # One strategy per variation cell. FixedTrialsStrategy.get_next_config
+        # keys disable_warmup_after_first off len(prior) > 0 - so we must pass
+        # each variation's growing prior-results list across the outer trial
+        # loop. Passing [] every trial would re-enable warmup on every trial,
+        # silently diverging from main's _execute_trials_then_sweep semantic
+        # where warmup runs only in trial 1. Strategy only inspects the list
+        # length, never its contents.
         strategies = [build_strategy(plan, logger) for _ in plan.configs]
         for strategy, cfg in zip(strategies, plan.configs, strict=True):
             strategy.validate_config(cfg)
+        per_variation_history: list[list[RunResult]] = [[] for _ in plan.configs]
 
         for trial in range(plan.trials):
             if cancel_check is not None and cancel_check():
@@ -218,11 +223,11 @@ class MultiRunOrchestrator:
             ):
                 if cancel_check is not None and cancel_check():
                     logger.info(
-                        f"Sweep cancelled mid-trial at trial={trial} v={var_idx}; aborting"
+                        f"Sweep cancelled mid-trial at [v{var_idx} t{trial}]; aborting"
                     )
                     return all_results
                 strategy = strategies[var_idx]
-                next_cfg = strategy.get_next_config(cfg, [])
+                next_cfg = strategy.get_next_config(cfg, per_variation_history[var_idx])
                 label = strategy.get_run_label(trial)
                 cell_dir = (
                     self.base_dir
@@ -240,10 +245,11 @@ class MultiRunOrchestrator:
                     label=label,
                     artifact_dir=artifact_dir,
                 )
-                logger.info(f"[trial={trial} v{var_idx}] Executing {label}...")
+                logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
                 result = await executor.execute(run)
                 self._stamp_variation_metadata(result, run, trial)
                 all_results.append(result)
+                per_variation_history[var_idx].append(result)
 
                 if self._sweep_failure_threshold_exceeded(all_results, plan):
                     logger.warning("Failure threshold exceeded; aborting sweep")

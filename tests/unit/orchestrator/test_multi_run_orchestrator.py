@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import SweepMode
 from aiperf.config.benchmark import BenchmarkPlan, BenchmarkRun
@@ -319,35 +320,31 @@ def _make_two_variation_plan(mode: SweepMode, trials: int = 3) -> BenchmarkPlan:
 
 
 @pytest.mark.asyncio
-async def test_independent_mode_iterates_variation_outer(tmp_path):
-    """Independent (default): all trials at v0, then all trials at v1."""
-    plan = _make_two_variation_plan(SweepMode.INDEPENDENT, trials=3)
+@pytest.mark.parametrize(
+    ("mode", "expected_order"),
+    [
+        param(
+            SweepMode.INDEPENDENT,
+            [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)],
+            id="independent-variation-outer",
+        ),
+        param(
+            SweepMode.REPEATED,
+            [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)],
+            id="repeated-trial-outer",
+        ),
+    ],
+)  # fmt: skip
+async def test_iteration_order_honors_parameter_sweep_mode(
+    tmp_path: Path,
+    mode: SweepMode,
+    expected_order: list[tuple[int, int]],
+) -> None:
+    """Iteration order is variation-outer for independent, trial-outer for repeated."""
+    plan = _make_two_variation_plan(mode, trials=3)
     executor = FakeExecutor()
     await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
-    assert [(c[0], c[1]) for c in executor.calls] == [
-        (0, 0),
-        (0, 1),
-        (0, 2),
-        (1, 0),
-        (1, 1),
-        (1, 2),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_repeated_mode_iterates_trial_outer(tmp_path):
-    """Repeated: variation pair fires once per trial, then advance trial."""
-    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
-    executor = FakeExecutor()
-    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
-    assert [(c[0], c[1]) for c in executor.calls] == [
-        (0, 0),
-        (1, 0),
-        (0, 1),
-        (1, 1),
-        (0, 2),
-        (1, 2),
-    ]
+    assert [(c[0], c[1]) for c in executor.calls] == expected_order
 
 
 @pytest.mark.asyncio
@@ -390,5 +387,69 @@ async def test_repeated_mode_rejects_adaptive_convergence(tmp_path):
     plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
     plan = plan.model_copy(update={"convergence_metric": "request_throughput"})
     executor = FakeExecutor()
-    with pytest.raises(ValueError, match="repeated.*convergence"):
+    with pytest.raises(
+        ValueError,
+        match=r"parameter_sweep_mode='repeated' is incompatible with",
+    ):
         await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+
+
+@pytest.mark.asyncio
+async def test_repeated_mode_passes_growing_prior_results_to_strategy(
+    tmp_path, monkeypatch
+):
+    """Each successive trial in repeated mode passes a growing prior-results list.
+
+    FixedTrialsStrategy.get_next_config keys disable_warmup_after_first off
+    `len(prior) > 0`, so passing [] every trial would re-enable warmup on
+    every trial - silently diverging from main's _execute_trials_then_sweep
+    semantic where warmup runs only in trial 1. This test locks the
+    per-variation history bookkeeping in `_execute_repeated`.
+    """
+    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
+    captured: list[tuple[int, int]] = []  # (var_idx_seen, prior_len)
+    counter = {"n": 0}
+
+    class _SpyStrategy:
+        def __init__(self, var_idx: int) -> None:
+            self.var_idx = var_idx
+
+        def validate_config(self, cfg) -> None:
+            pass
+
+        def get_next_config(self, cfg, prior):
+            captured.append((self.var_idx, len(prior)))
+            return cfg
+
+        def get_run_label(self, trial):
+            return f"run_{trial + 1:04d}"
+
+        def get_run_path(self, base, trial):
+            return Path(base) / "profile_runs" / f"run_{trial + 1:04d}"
+
+        def get_cooldown_seconds(self):
+            return 0.0
+
+    def _fake_build(plan, logger):
+        s = _SpyStrategy(counter["n"])
+        counter["n"] += 1
+        return s
+
+    # _execute_repeated imports build_strategy from _cli_runner_helpers
+    # locally, so patch the source module.
+    import aiperf._cli_runner_helpers as helpers_mod
+
+    monkeypatch.setattr(helpers_mod, "build_strategy", _fake_build)
+
+    executor = FakeExecutor()
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+
+    # Group prior-len progression by var_idx.
+    by_var: dict[int, list[int]] = {0: [], 1: []}
+    for var_idx, prior_len in captured:
+        by_var[var_idx].append(prior_len)
+    # Each variation should see prior-results length grow 0 -> 1 -> 2 across
+    # its three trials. If repeated mode passed [] every trial (the regression
+    # this locks against), every entry would be 0.
+    assert by_var[0] == [0, 1, 2]
+    assert by_var[1] == [0, 1, 2]
