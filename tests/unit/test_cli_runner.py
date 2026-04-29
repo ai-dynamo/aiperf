@@ -661,3 +661,98 @@ class TestConfigureTokenizerPreload:
         import os as _os
 
         assert "AIPERF_PRELOAD_TOKENIZERS" not in _os.environ
+
+
+class TestSummarizeAndExportFailedSweep:
+    """_summarize_and_export groups failed sweep runs by variation_values.
+
+    Locks origin/main's failed-value summary phrasing (`concurrency=20`) over
+    HEAD's older dotted-path label form (`phases.profiling.concurrency=20`).
+    """
+
+    def test_summarize_logs_failed_sweep_variations_grouped(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sweep with two failed runs at concurrency=20 logs 'concurrency=20', not the label."""
+        import logging
+
+        from aiperf.cli_runner import _summarize_and_export
+        from aiperf.config import BenchmarkConfig, BenchmarkPlan
+        from aiperf.orchestrator.models import RunResult
+
+        cfg_a = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
+        cfg_b = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
+        # Two configs -> plan.is_sweep True (len(configs) > 1).
+        plan = BenchmarkPlan(configs=[cfg_a, cfg_b])
+
+        # Two successful runs (clears the >=2 gate so _summarize calls aggregate);
+        # two failed runs at concurrency=20 to exercise the grouped-failure branch.
+        results = [
+            RunResult(
+                label="phases.profiling.concurrency=10/profile_runs/run_0001",
+                success=True,
+                variation_values={"phases.profiling.concurrency": 10},
+            ),
+            RunResult(
+                label="phases.profiling.concurrency=10/profile_runs/run_0002",
+                success=True,
+                variation_values={"phases.profiling.concurrency": 10},
+            ),
+            RunResult(
+                label="phases.profiling.concurrency=20/profile_runs/run_0001",
+                success=False,
+                error="boom-1",
+                variation_values={"phases.profiling.concurrency": 20},
+            ),
+            RunResult(
+                label="phases.profiling.concurrency=20/profile_runs/run_0002",
+                success=False,
+                error="boom-2",
+                variation_values={"phases.profiling.concurrency": 20},
+            ),
+        ]
+
+        # Stub aggregation calls so we don't actually write files; we only care
+        # about the logged warnings here.
+        async def _noop(*_a, **_kw):  # noqa: ANN202
+            return None
+
+        monkeypatch.setattr(
+            "aiperf.cli_runner.aggregate_per_variation_and_export", _noop
+        )
+        monkeypatch.setattr("aiperf.cli_runner.aggregate_sweep_and_export", _noop)
+
+        test_logger = logging.getLogger("aiperf.cli_runner.summarize_test")
+        with caplog.at_level(logging.WARNING, logger="aiperf.cli_runner.summarize_test"):
+            _summarize_and_export(
+                plan,
+                results,
+                total_runs=4,
+                strategy=Mock(),
+                base_dir=tmp_path,
+                logger=test_logger,
+            )
+
+        warnings = [
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        # Sweep summary line uses bare "concurrency=20" form, not the label form.
+        assert any(
+            "Some sweep variations failed" in m
+            and "phases.profiling.concurrency=20" in m
+            for m in warnings
+        )
+        # Per-row line lists the variation params + error message.
+        assert any(
+            m.startswith("  phases.profiling.concurrency=20:") and "boom-1" in m
+            for m in warnings
+        )
+        assert any(
+            m.startswith("  phases.profiling.concurrency=20:") and "boom-2" in m
+            for m in warnings
+        )
+        # The old dotted label list form should NOT be emitted for sweeps.
+        assert not any(m.startswith("Failed runs:") for m in warnings)

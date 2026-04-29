@@ -466,3 +466,61 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
     # this locks against), every entry would be 0.
     assert by_var[0] == [0, 1, 2]
     assert by_var[1] == [0, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Per-mode completion logging: sweeps emit "{mode} mode complete: N/M",
+# non-sweeps emit the generic "All runs complete: N/M". Mirrors
+# origin/main's SweepConfidenceStrategy._log_completion phrasing so users
+# coming from main see consistent output.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeated_mode_logs_per_mode_completion(tmp_path, caplog):
+    """Sweep + REPEATED logs 'Repeated mode complete: N/M runs successful'."""
+    import logging
+
+    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=2)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    with caplog.at_level(logging.INFO, logger="aiperf.orchestrator.orchestrator"):
+        await orchestrator.execute(plan, executor)
+
+    msgs = [r.message for r in caplog.records]
+    assert any("Repeated mode complete: 4/4 runs successful" in m for m in msgs)
+    assert not any(m.startswith("All runs complete:") for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_independent_mode_logs_per_mode_completion(tmp_path, caplog):
+    """Sweep + INDEPENDENT logs 'Independent mode complete: N/M runs successful'."""
+    import logging
+
+    plan = _make_two_variation_plan(SweepMode.INDEPENDENT, trials=2)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    with caplog.at_level(logging.INFO, logger="aiperf.orchestrator.orchestrator"):
+        await orchestrator.execute(plan, executor)
+
+    msgs = [r.message for r in caplog.records]
+    assert any("Independent mode complete: 4/4 runs successful" in m for m in msgs)
+    assert not any(m.startswith("All runs complete:") for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_non_sweep_run_logs_generic_completion(tmp_path, caplog):
+    """Non-sweep (single config, multiple trials) keeps the generic completion line."""
+    import logging
+
+    # Single variation -> plan.is_sweep is False even with multiple trials.
+    plan = _make_plan(num_variations=1, trials=2)
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    with caplog.at_level(logging.INFO, logger="aiperf.orchestrator.orchestrator"):
+        await orchestrator.execute(plan, executor)
+
+    msgs = [r.message for r in caplog.records]
+    assert any("All runs complete: 2/2 successful" in m for m in msgs)
+    assert not any("Independent mode complete" in m for m in msgs)
+    assert not any("Repeated mode complete" in m for m in msgs)

@@ -404,4 +404,26 @@ async def aggregate_sweep_and_export(
     )
     logger.info(f"Sweep aggregate JSON written to: {json_path}")
     logger.info(f"Sweep aggregate CSV written to: {csv_path}")
+
+    best_configs = aggregate_result.metadata.get("best_configurations", {})
+    if best_configs:
+        logger.info("")
+        logger.info("Best Configurations:")
+        if "best_throughput" in best_configs:
+            bt = best_configs["best_throughput"]
+            params_str = ", ".join(f"{k}={v}" for k, v in bt["parameters"].items())
+            logger.info(
+                f"  Best throughput: {params_str} ({bt['metric']:.2f} {bt['unit']})"
+            )
+        if "best_latency_p99" in best_configs:
+            bl = best_configs["best_latency_p99"]
+            params_str = ", ".join(f"{k}={v}" for k, v in bl["parameters"].items())
+            logger.info(
+                f"  Best latency (p99): {params_str} ({bl['metric']:.2f} {bl['unit']})"
+            )
+
+    pareto_optimal = aggregate_result.metadata.get("pareto_optimal", [])
+    if pareto_optimal:
+        logger.info(f"  Pareto optimal points: {pareto_optimal}")
+
     return aggregate_dir

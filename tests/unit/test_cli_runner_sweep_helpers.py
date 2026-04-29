@@ -293,3 +293,95 @@ async def test_aggregate_per_variation_handles_partial_failures_per_cell(
     fail_dir = tmp_path / "phases.profiling.concurrency=20" / "aggregate"
     assert (success_dir / "profile_export_aiperf_aggregate.json").exists()
     assert not fail_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# Best Configurations + Pareto stdout summary: aggregate_sweep_and_export
+# echoes the structured "Best Configurations:" / "Pareto optimal points:"
+# block (matching origin/main's SweepConfidenceStrategy.export_aggregates
+# wording) after the JSON+CSV files are written.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_aggregate_sweep_logs_best_configurations(tmp_path, caplog):
+    """aggregate_sweep_and_export echoes Best Configurations after writing exporters."""
+    plan = _make_plan()
+    # SweepAnalyzer keys best/pareto off ``request_throughput_avg`` (maximize)
+    # and ``time_to_first_token_p99`` (minimize). Build results with those exact
+    # metric names so the analyzer populates best_configurations + pareto.
+    def _bp_result(label: str, conc: int, tput: float, ttft_p99: float) -> RunResult:
+        return RunResult(
+            label=label,
+            success=True,
+            summary_metrics={
+                "request_throughput_avg": JsonMetricResult(
+                    unit="requests/sec", avg=tput, min=tput, max=tput
+                ),
+                "time_to_first_token_p99": JsonMetricResult(
+                    unit="ms", avg=ttft_p99, p99=ttft_p99, min=ttft_p99, max=ttft_p99
+                ),
+            },
+            variation_label=f"concurrency={conc}",
+            variation_values={"concurrency": conc},
+            trial_index=0,
+        )
+
+    results = [
+        _bp_result("c10", 10, tput=100.0, ttft_p99=50.0),
+        _bp_result("c20", 20, tput=180.0, ttft_p99=80.0),
+    ]
+    test_logger = logging.getLogger("aiperf._cli_runner_sweep_helpers.best_test")
+    with caplog.at_level(
+        logging.INFO, logger="aiperf._cli_runner_sweep_helpers.best_test"
+    ):
+        await aggregate_sweep_and_export(results, plan, tmp_path, test_logger)
+
+    msgs = [r.message for r in caplog.records]
+    assert any(m == "Best Configurations:" for m in msgs)
+    # Best throughput: 180.0 reqs/s wins -> concurrency=20.
+    assert any(
+        m.startswith("  Best throughput: concurrency=20") and "180.00" in m
+        for m in msgs
+    )
+    # Best latency (p99): 50ms wins -> concurrency=10.
+    assert any(
+        m.startswith("  Best latency (p99): concurrency=10") and "50.00" in m
+        for m in msgs
+    )
+
+
+@pytest.mark.asyncio
+async def test_aggregate_sweep_logs_pareto_optimal(tmp_path, caplog):
+    """aggregate_sweep_and_export echoes the Pareto optimal points line."""
+    plan = _make_plan()
+
+    def _bp_result(label: str, conc: int, tput: float, ttft_p99: float) -> RunResult:
+        return RunResult(
+            label=label,
+            success=True,
+            summary_metrics={
+                "request_throughput_avg": JsonMetricResult(
+                    unit="requests/sec", avg=tput, min=tput, max=tput
+                ),
+                "time_to_first_token_p99": JsonMetricResult(
+                    unit="ms", avg=ttft_p99, p99=ttft_p99, min=ttft_p99, max=ttft_p99
+                ),
+            },
+            variation_label=f"concurrency={conc}",
+            variation_values={"concurrency": conc},
+            trial_index=0,
+        )
+
+    results = [
+        _bp_result("c10", 10, tput=100.0, ttft_p99=50.0),
+        _bp_result("c20", 20, tput=180.0, ttft_p99=80.0),
+    ]
+    test_logger = logging.getLogger("aiperf._cli_runner_sweep_helpers.pareto_test")
+    with caplog.at_level(
+        logging.INFO, logger="aiperf._cli_runner_sweep_helpers.pareto_test"
+    ):
+        await aggregate_sweep_and_export(results, plan, tmp_path, test_logger)
+
+    msgs = [r.message for r in caplog.records]
+    assert any(m.startswith("  Pareto optimal points:") for m in msgs)

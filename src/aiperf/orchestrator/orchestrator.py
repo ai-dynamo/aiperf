@@ -167,7 +167,14 @@ class MultiRunOrchestrator:
             all_results.extend(cell_results)
 
         successful = sum(1 for r in all_results if r.success)
-        logger.info(f"All runs complete: {successful}/{len(all_results)} successful")
+        if plan.is_sweep:
+            logger.info(
+                f"Independent mode complete: {successful}/{len(all_results)} runs successful"
+            )
+        else:
+            logger.info(
+                f"All runs complete: {successful}/{len(all_results)} successful"
+            )
         return all_results
 
     async def _execute_repeated(
@@ -281,7 +288,14 @@ class MultiRunOrchestrator:
                     await asyncio.sleep(cooldown)
 
         successful = sum(1 for r in all_results if r.success)
-        logger.info(f"All runs complete: {successful}/{len(all_results)} successful")
+        if plan.is_sweep:
+            logger.info(
+                f"Repeated mode complete: {successful}/{len(all_results)} runs successful"
+            )
+        else:
+            logger.info(
+                f"All runs complete: {successful}/{len(all_results)} successful"
+            )
         return all_results
 
     @staticmethod

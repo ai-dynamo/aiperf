@@ -424,7 +424,25 @@ def _summarize_and_export(
     logger.info("=" * 80)
     logger.info(f"All runs complete: {len(successful_runs)}/{total_runs} successful")
     if failed_runs:
-        logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
+        if plan.is_sweep:
+            # Group by variation_values to surface which sweep values failed,
+            # mirroring origin/main's _log_completion bare-value form rather
+            # than the dotted-path label form.
+            by_variation: dict[tuple, list[RunResult]] = {}
+            for r in failed_runs:
+                key = tuple(sorted((r.variation_values or {}).items()))
+                by_variation.setdefault(key, []).append(r)
+            failed_values_str = [
+                ", ".join(f"{k}={v}" for k, v in vals) for vals in by_variation
+            ]
+            logger.warning(f"Some sweep variations failed: {failed_values_str}")
+            for key, group in by_variation.items():
+                params_str = ", ".join(f"{k}={v}" for k, v in key)
+                for r in group:
+                    error_msg = r.error or "(no error message)"
+                    logger.warning(f"  {params_str}: {error_msg}")
+        else:
+            logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
     logger.info("=" * 80)
 
     if len(successful_runs) >= 2:
