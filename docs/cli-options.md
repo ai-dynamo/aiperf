@@ -1019,9 +1019,9 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 
 #### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
 
-Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
-<br/>_Default: `independent`_
+<br/>_Default: `repeated`_
 
 ### Accuracy
 
@@ -2211,9 +2211,9 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 
 #### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
 
-Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
-<br/>_Default: `independent`_
+<br/>_Default: `repeated`_
 
 ### Accuracy
 
@@ -3269,9 +3269,9 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 
 #### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
 
-Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
-<br/>_Default: `independent`_
+<br/>_Default: `repeated`_
 
 ### Accuracy
 
@@ -4342,9 +4342,9 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 
 #### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
 
-Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
-<br/>_Default: `independent`_
+<br/>_Default: `repeated`_
 
 ### Accuracy
 
@@ -5426,9 +5426,9 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 
 #### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
 
-Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
-<br/>_Default: `independent`_
+<br/>_Default: `repeated`_
 
 ### Accuracy
 

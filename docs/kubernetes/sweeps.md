@@ -63,17 +63,17 @@ selects the iteration order of variations and trials. Both produce the
 same total runs and the same `sweep_aggregate/` output — only the artifact
 path layout and submit order differ.
 
-| Mode (default `independent`) | Iteration order | Artifact tree |
+| Mode (default `repeated`) | Iteration order | Artifact tree |
 |---|---|---|
-| `independent` | variations outer, trials inner | `<base>/<variation>/profile_runs/run_NNNN/` |
 | `repeated`    | trials outer, variations inner | `<base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/` |
+| `independent` | variations outer, trials inner | `<base>/<variation>/profile_runs/run_NNNN/` |
 
-`independent` (the default) is the right choice when you want all trials
-of a single configuration to complete in close temporal proximity — e.g.
-when your goal is tight confidence intervals per variation. `repeated`
-matches a "run the whole sweep, then run it again" workflow useful when
-absolute wall-clock timing across variations matters more than per-cell
-trial proximity.
+`repeated` (the default, matching `origin/main` / PR #699) is the right
+choice when absolute wall-clock timing across variations matters and you
+want to interleave variations within each trial — e.g. "run the whole
+sweep, then run it again". `independent` groups all trials of a single
+configuration in close temporal proximity, which gives tight confidence
+intervals per variation.
 
 Adaptive convergence (`spec.convergence` / `--convergence-metric`) is
 incompatible with `repeated` and rejected at submit time — convergence

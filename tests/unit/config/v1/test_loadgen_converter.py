@@ -95,9 +95,9 @@ def test_repeated_sweep_mode_flows_through_to_multi_run() -> None:
     assert cfg.multi_run.mode == SweepMode.REPEATED
 
 
-def test_parameter_sweep_mode_default_is_independent() -> None:
-    """Omitted flag yields ``multi_run.mode == INDEPENDENT`` (the v2 default)."""
+def test_parameter_sweep_mode_default_is_repeated() -> None:
+    """Omitted flag yields ``multi_run.mode == REPEATED`` (the v2 default)."""
     cfg = _convert(
         loadgen={"concurrency": [10, 20], "num_profile_runs": 2},
     )
-    assert cfg.multi_run.mode == SweepMode.INDEPENDENT
+    assert cfg.multi_run.mode == SweepMode.REPEATED

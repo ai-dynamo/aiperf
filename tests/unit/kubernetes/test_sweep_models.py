@@ -47,12 +47,12 @@ def test_multirun_config_defaults_apply():
     assert cfg.disable_warmup_after_first is True
 
 
-def test_multirun_config_mode_default_is_independent():
-    """Default mode is INDEPENDENT (variation-outer, trial-inner)."""
+def test_multirun_config_mode_default_is_repeated():
+    """Default mode is REPEATED (trial-outer, variation-inner)."""
     from aiperf.common.enums import SweepMode
 
     cfg = MultiRunConfig.model_validate({"trials": 3})
-    assert cfg.mode == SweepMode.INDEPENDENT
+    assert cfg.mode == SweepMode.REPEATED
 
 
 def test_multirun_config_mode_repeated_round_trips():

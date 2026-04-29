@@ -67,7 +67,12 @@ def _make_plan(num_variations: int, trials: int) -> BenchmarkPlan:
     variations = [
         SweepVariation(index=i, label=f"v{i}", values={}) for i in range(num_variations)
     ]
-    return BenchmarkPlan(configs=configs, variations=variations, trials=trials)
+    return BenchmarkPlan(
+        configs=configs,
+        variations=variations,
+        trials=trials,
+        parameter_sweep_mode=SweepMode.INDEPENDENT,
+    )
 
 
 @pytest.mark.asyncio

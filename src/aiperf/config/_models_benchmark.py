@@ -146,12 +146,12 @@ class MultiRunConfig(BaseConfig):
     mode: Annotated[
         SweepMode,
         Field(
-            default=SweepMode.INDEPENDENT,
+            default=SweepMode.REPEATED,
             description="Iteration order for sweep + multi-trial composition. "
-            "'independent' (default): variations outer, trials inner - "
-            "artifact tree is <base>/<variation>/profile_runs/run_NNNN/. "
-            "'repeated': trials outer, variations inner - artifact tree is "
-            "<base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/. "
+            "'repeated' (default): trials outer, variations inner - "
+            "artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/. "
+            "'independent': variations outer, trials inner - artifact tree is "
+            "<base>/<variation>/profile_runs/run_NNNN/. "
             "Both modes produce the same total runs and same sweep_aggregate/ "
             "output. Adaptive convergence (--convergence-metric) is "
             "incompatible with 'repeated'.",

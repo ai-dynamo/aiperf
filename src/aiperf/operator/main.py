@@ -159,9 +159,7 @@ async def on_aiperfjob_phase_transition(
 
 
 @kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
-async def on_aiperfsweep_delete(
-    name: str, namespace: str, **_: Any
-) -> None:
+async def on_aiperfsweep_delete(name: str, namespace: str, **_: Any) -> None:
     """On AIPerfSweep deletion, request cooperative cancellation of any running children.
 
     OwnerReferences will cascade-GC child AIPerfJobs and the sweep-controller

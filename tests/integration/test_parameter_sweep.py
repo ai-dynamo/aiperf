@@ -71,6 +71,7 @@ class TestParameterSweep:
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 10,20 \
+                --parameter-sweep-mode independent \
                 --request-count 10 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
@@ -121,6 +122,7 @@ class TestParameterSweep:
                 --endpoint-type chat \
                 --concurrency 10,20 \
                 --num-profile-runs 2 \
+                --parameter-sweep-mode independent \
                 --request-count 10 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
@@ -221,6 +223,7 @@ class TestParameterSweep:
                 --endpoint-type chat \
                 --concurrency 10,20 \
                 --random-seed 42 \
+                --parameter-sweep-mode independent \
                 {same_seed_flag} \
                 --request-count 5 \
                 --workers-max {defaults.workers_max} \

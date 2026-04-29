@@ -74,11 +74,11 @@ class MultiRunConfig(BaseConfig):
         description="Skip warmup on trials 2..N for steady-state measurement.",
     )
     mode: SweepMode = Field(
-        default=SweepMode.INDEPENDENT,
+        default=SweepMode.REPEATED,
         description=(
-            "Iteration order for sweep + multi-trial. 'independent' (default) "
-            "iterates variations outer, trials inner. 'repeated' iterates "
-            "trials outer, variations inner. Both produce the same total "
+            "Iteration order for sweep + multi-trial. 'repeated' (default) "
+            "iterates trials outer, variations inner. 'independent' iterates "
+            "variations outer, trials inner. Both produce the same total "
             "runs and same sweep_aggregate output. Adaptive convergence "
             "(`convergence`) is incompatible with 'repeated'."
         ),
