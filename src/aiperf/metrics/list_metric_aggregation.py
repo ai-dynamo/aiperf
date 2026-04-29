@@ -44,8 +44,8 @@ class TDigestListMetricAggregator:
         self._count += 1
         self._sum += v
         self._sum_sq += v * v
-        self._min = v if self._min is None else (v if v < self._min else self._min)
-        self._max = v if self._max is None else (v if v > self._max else self._max)
+        self._min = v if self._min is None else min(self._min, v)
+        self._max = v if self._max is None else max(self._max, v)
 
     def extend(self, values: Iterable[int | float]) -> None:
         """Add many samples. Iterable is consumed once."""
