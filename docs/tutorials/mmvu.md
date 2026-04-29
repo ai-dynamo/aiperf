@@ -20,18 +20,21 @@ dataset.
 
 Launch a vLLM server with a video-capable vision language model:
 
+<!-- setup-vllm-video-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model Qwen/Qwen2-VL-2B-Instruct
 ```
+<!-- /setup-vllm-video-openai-endpoint-server -->
 
 Verify the server is ready:
+
+<!-- health-check-vllm-video-openai-endpoint-server -->
 ```bash
-curl -s localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2-VL-2B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2-VL-2B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
+<!-- /health-check-vllm-video-openai-endpoint-server -->
 
 ---
 
@@ -41,7 +44,7 @@ AIPerf loads the MMVU dataset from HuggingFace, combines each question with its
 multiple-choice options, attaches the video URL, and sends each pair as a single-turn
 video request. The prompt format matches vLLM's own MMVU benchmark format.
 
-{/* aiperf-run-vllm-video-openai-endpoint-server */}
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -53,7 +56,7 @@ aiperf profile \
     --concurrency 2 \
     --output-tokens-mean 128
 ```
-{/* /aiperf-run-vllm-video-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-video-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

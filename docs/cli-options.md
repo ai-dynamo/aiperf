@@ -20,7 +20,7 @@ Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Parameter Sweep](#parameter-sweep) • [Multi-Run Confidence Reporting](#multi-run-confidence-reporting) • [Accuracy](#accuracy) • [Telemetry](#telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
 
 ### [`plot`](#aiperf-plot)
 
@@ -33,6 +33,18 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 ### [`service`](#aiperf-service)
 
 Run an AIPerf service in a single process.
+
+### [`speed-bench-report`](#aiperf-speed-bench-report)
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report.
+
+### [`synthesize`](#aiperf-synthesize)
+
+Synthesize a dataset workload.
+
+### [`validate`](#aiperf-validate)
+
+Validate a benchmark artifact.
 
 <hr/>
 
@@ -691,10 +703,9 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency` `<int>`
+#### `--concurrency` `<str>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
-<br/>_Constraints: ≥ 1_
+Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.
 
 #### `--prefill-concurrency` `<int>`
 
@@ -811,6 +822,24 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 Duration in seconds to ramp warmup request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration). If not set, uses `--request-rate-ramp-duration` value.
 <br/>_Constraints: > 0_
+
+### Parameter Sweep
+
+#### `--parameter-sweep-mode` `<str>`
+
+Sweep execution mode: 'repeated' (default) runs full sweep N times, 'independent' runs N trials at each sweep value.
+<br/>_Default: `repeated`_
+
+#### `--parameter-sweep-cooldown-seconds` `<float>`
+
+Cooldown duration between sweep values (seconds). Only applies when sweeping parameters (e.g., --concurrency 10,20,30). Allows the system to stabilize between different parameter values. Default is 0 (no cooldown).
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0.0`_
+
+#### `--parameter-sweep-same-seed`
+
+Use same random seed across all sweep values (default: derive different seeds). Only applies when sweeping parameters (e.g., --concurrency 10,20,30). When False (default), each sweep value uses a different derived seed (base_seed + sweep_index) to avoid artificial correlation between measurements. When True, all sweep values use the same base seed for correlated workload comparisons.
+<br/>_Flag (no value required)_
 
 ### Multi-Run Confidence Reporting
 
@@ -1122,3 +1151,97 @@ Host to bind the health server to. Falls back to AIPERF_SERVICE_HEALTH_HOST envi
 #### `--health-port` `<int>`
 
 HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes liveness and readiness probes. Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable.
+
+<hr/>
+
+## `aiperf speed-bench-report`
+
+Assemble per-category SPEED-Bench aiperf results into a matrix report.
+
+Run ``aiperf profile`` once per SPEED-Bench category, then point this command at the output directories to produce a matrix matching the SPEED-Bench paper format.
+
+**Examples:**
+
+```bash
+# Scan a parent directory for per-category run subdirectories
+aiperf speed-bench-report ./artifacts/
+
+# List run directories explicitly
+aiperf speed-bench-report ./artifacts/run_coding/ ./artifacts/run_math/
+
+# Acceptance rate matrix (accepted / draft tokens)
+aiperf speed-bench-report ./artifacts/ --metric accept_rate
+
+# Throughput matrix (output tokens/sec per category)
+aiperf speed-bench-report ./artifacts/ --metric throughput
+```
+
+#### `--paths`, `--empty-paths` `<list>` _(Required)_
+
+Run directories or parent directories containing run subdirectories.
+
+#### `--output` `<str>`
+
+Output CSV file path. Defaults to ./speed_bench_report.csv.
+<br/>_Default: `speed_bench_report.csv`_
+
+#### `--format` `<str>`
+
+Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
+<br/>_Default: `both`_
+
+#### `--metric` `<str>`
+
+Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
+<br/>_Default: `accept_length`_
+
+<hr/>
+
+## `aiperf synthesize`
+
+Synthesize a dataset workload.
+
+#### `--target` `<str>` _(Required)_
+
+Dataset workload to synthesize.
+
+#### `--num-sessions` `<int>`
+
+Number of sessions to generate.
+<br/>_Default: `1000`_
+
+#### `--output` `<str>`
+
+Parent directory for the run directory.
+<br/>_Default: `.`_
+
+#### `--config` `<str>`
+
+Path to config/manifest JSON.
+
+#### `--seed` `<int>`
+
+Random seed for reproducibility.
+<br/>_Default: `42`_
+
+#### `--max-isl` `<int>`
+
+Maximum input sequence length.
+
+#### `--max-osl` `<int>`
+
+Maximum output sequence length.
+
+<hr/>
+
+## `aiperf validate`
+
+Validate a benchmark artifact.
+
+#### `--target` `<str>` _(Required)_
+
+Artifact format to validate.
+
+#### `--input` `<str>` _(Required)_
+
+Path to the artifact file.

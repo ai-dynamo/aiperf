@@ -24,6 +24,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def __init__(
         self,
         user_config: UserConfig,
+        *,
         hf_dataset_name: str,
         hf_split: str = "train",
         hf_subset: str | None = None,

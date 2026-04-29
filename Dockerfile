@@ -1,7 +1,7 @@
 # check=skip=UndefinedVar
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM python:3.13-slim-bookworm AS base
+FROM python:3.13-slim-bookworm@sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc AS base
 
 ENV USERNAME=appuser
 ENV APP_NAME=aiperf
@@ -76,6 +76,12 @@ COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
 # Build the wheel
 RUN uv build --wheel --out-dir /dist
 
+# Export-only stage: scratch-based so `docker buildx build --target
+# wheel-artifact --output type=local,dest=<dir>` writes only the wheel file
+# (a few MB) instead of the ~400 MB wheel-builder filesystem.
+FROM scratch AS wheel-artifact
+COPY --from=wheel-builder /dist/ /
+
 ############################################
 ############# Env Builder ##################
 ############################################
@@ -83,9 +89,12 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
-# Build ffmpeg from source with libvpx
-RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+# Install build dependencies. The dpkg-installed.txt snapshot was dropped:
+# nothing downstream consumes it, and shipping it alongside runtime-pkgs.txt
+# in the artifact was misleading (build-only packages that never ship).
+RUN mkdir -p /opt/licenses/dpkg \
+    && apt-get update -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         libogg-dev \
         libvorbis-dev \
@@ -98,9 +107,10 @@ RUN apt-get update -y && \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build ffmpeg with libvpx (VP9 codec)
-RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
-    && tar -xf ffmpeg-8.0.1.tar.xz \
-    && cd ffmpeg-8.0.1 \
+ARG FFMPEG_VERSION=8.0.1
+RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure \
         --prefix=/opt/ffmpeg \
         --disable-gpl \
@@ -117,13 +127,36 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz \
     && make -j$(nproc) \
     && make install \
     && cd .. \
-    && rm -rf ffmpeg-8.0.1 ffmpeg-8.0.1.tar.xz \
+    && mkdir -p /opt/licenses/ffmpeg \
+    && cp ffmpeg-${FFMPEG_VERSION}/COPYING.LGPLv2.1 /opt/licenses/ffmpeg/ \
+    && cp ffmpeg-${FFMPEG_VERSION}/LICENSE.md /opt/licenses/ffmpeg/ \
+    && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; } \
     && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
     && cp -P /usr/lib/*/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; }
+
+# Collect copyright files for packages whose files we explicitly copy into the runtime.
+# `dpkg -S` resolves paths against the dpkg database, which only tracks files at
+# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*
+# were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns nothing for
+# them — we must query the /usr/lib/ source paths instead. /bin/bash is still
+# at its dpkg-tracked location.
+RUN { dpkg -S /bin/bash 2>/dev/null; \
+      for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so* \
+               /usr/lib/*/libvorbis.so* /usr/lib/libvorbis.so* \
+               /usr/lib/*/libvorbisenc.so* /usr/lib/libvorbisenc.so* \
+               /usr/lib/*/libogg.so* /usr/lib/libogg.so*; do \
+        [ -e "$f" ] && dpkg -S "$f" 2>/dev/null; \
+      done; \
+    } | awk -F: '{print $1}' \
+      | sort -u > /opt/licenses/dpkg/runtime-pkgs.txt \
+    && while read pkg; do \
+        [ -f "/usr/share/doc/${pkg}/copyright" ] && \
+          cp "/usr/share/doc/${pkg}/copyright" "/opt/licenses/dpkg/${pkg}.copyright"; \
+      done < /opt/licenses/dpkg/runtime-pkgs.txt
 
 ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
 ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -150,6 +183,55 @@ RUN mkdir -p /opt/tiktoken_cache \
     && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 ############################################
+######### Python License Collector #########
+############################################
+FROM env-builder AS python-licenses
+
+COPY tools/generate_python_attributions.py /tmp/generate_python_attributions.py
+COPY tools/requirements.licenses.txt /tmp/requirements.licenses.txt
+COPY tools/licenses.toml /tmp/licenses.toml
+
+# Layer 1: pip-licenses — snapshot venv diff to exclude the tool itself from output
+RUN uv pip list --format=freeze | awk -F== '{print $1}' | sort > /tmp/venv-before.txt \
+    && uv pip install -r /tmp/requirements.licenses.txt \
+    && uv pip list --format=freeze | awk -F== '{print $1}' | sort > /tmp/venv-after.txt \
+    && IGNORE=$(comm -13 /tmp/venv-before.txt /tmp/venv-after.txt | tr '\n' ' ') \
+    && mkdir -p /opt/licenses/python \
+    && pip-licenses \
+        --ignore-packages $IGNORE \
+        --format=json \
+        --with-license-file \
+        --output-file=/opt/licenses/python/licenses.json \
+    && pip-licenses \
+        --ignore-packages $IGNORE \
+        --format=json-license-finder \
+        --output-file=/opt/licenses/python/ATTRIBUTIONS-Python.json \
+    && python3 /tmp/generate_python_attributions.py \
+        /opt/licenses/python/licenses.json \
+        /opt/licenses/python/ATTRIBUTIONS-Python.md \
+        /opt/licenses/python/python-deps.csv \
+        /tmp/licenses.toml \
+    && rm /tmp/venv-before.txt /tmp/venv-after.txt
+
+# Layer 2: cyclonedx-bom via uvx — installs in isolated env, scans specified venv only
+RUN uvx --from cyclonedx-bom cyclonedx-py environment /opt/aiperf/venv/bin/python \
+    --output-format JSON \
+    --output-file /opt/licenses/python/sbom.cdx.json
+
+# Layer 3: dpkg attribution CSV for runtime-distributed system packages
+COPY tools/generate_dpkg_attributions.py /tmp/generate_dpkg_attributions.py
+RUN python3 /tmp/generate_dpkg_attributions.py \
+    /opt/licenses/dpkg/runtime-pkgs.txt \
+    /opt/licenses/dpkg/dpkg-deps.csv \
+    /tmp/licenses.toml
+
+# Export-only stage: scratch-based so `docker buildx build --target
+# licenses-artifact --output type=local,dest=<dir>` writes only the license
+# tree (a few MB) instead of the ~1.3 GB python-licenses filesystem.
+FROM scratch AS licenses-artifact
+COPY --from=python-licenses /opt/licenses/ /
+
+############################################
 ############### Test Image #################
 ############################################
 # Test stage: env-builder has aiperf, just add curl
@@ -170,8 +252,12 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.3-dev AS runtime
 
-# Include license and attribution files
-COPY LICENSE ATTRIBUTIONS*.md /legal/
+# Include project license and asset attributions
+COPY LICENSE ATTRIBUTIONS.md /legal/
+
+# Include dynamically collected third-party licenses
+COPY --from=env-builder /opt/licenses/ /licenses/
+COPY --from=python-licenses /opt/licenses/python/ATTRIBUTIONS-Python.md /licenses/python/ATTRIBUTIONS-Python.md
 
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash

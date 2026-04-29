@@ -40,7 +40,7 @@ curl -s 127.0.0.1:8000/v1/chat/completions \
 AIPerf loads the `sharegpt4o` subset from HuggingFace, extracts the first user message and image
 from each row, and sends each as a single-turn vision request.
 
-{/* aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -51,7 +51,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-{/* /aiperf-run-vllm-vision-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

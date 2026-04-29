@@ -85,6 +85,7 @@ class CreditCallbackHandler:
 
     def register_phase(
         self,
+        *,
         phase: CreditPhase,
         progress: PhaseProgressTracker,
         lifecycle: PhaseLifecycle,

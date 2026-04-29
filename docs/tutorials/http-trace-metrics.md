@@ -109,13 +109,12 @@ http_req_total = http_req_blocked + http_req_dns_lookup + http_req_connecting
                + http_req_sending + http_req_waiting + http_req_receiving
 ```
 
-<Note>
-`http_req_total` and `http_req_duration` may differ slightly because:
-- `http_req_duration` is a single end-to-end measurement (`response_receive_end - request_send_start`)
-- `http_req_total` sums 6 individual phase measurements, which may have small unmeasured gaps between phases
-
-Use `http_req_total` when you need the breakdown to add up exactly. Use `http_req_duration` when you want the most accurate single measurement of request/response exchange time.
-</Note>
+> [!NOTE]
+> `http_req_total` and `http_req_duration` may differ slightly because:
+> - `http_req_duration` is a single end-to-end measurement (`response_receive_end - request_send_start`)
+> - `http_req_total` sums 6 individual phase measurements, which may have small unmeasured gaps between phases
+>
+> Use `http_req_total` when you need the breakdown to add up exactly. Use `http_req_duration` when you want the most accurate single measurement of request/response exchange time.
 
 ### Important Distinctions
 
@@ -232,9 +231,8 @@ When exported to `profile_export.jsonl`, trace data uses **wall-clock timestamps
 }
 ```
 
-<Note>
-Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connecting_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
-</Note>
+> [!NOTE]
+> Computed duration fields (`blocked_ns`, `dns_lookup_ns`, `connecting_ns`) are **omitted** from `trace_data` when the underlying event did not occur. The corresponding metrics (e.g., `http_req_blocked`) will report `0` for aggregation purposes, but the trace field itself is absent.
 
 ### Trace Data Fields
 

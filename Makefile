@@ -24,7 +24,10 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
-		test-fern-docs internal-help help
+		test-fern-docs internal-help help \
+		check-ergonomics regenerate-ergonomics-baseline \
+		check-ruff-baselined regenerate-ruff-baseline \
+		check-agent-files-sync
 
 
 # Include user-defined environment variables
@@ -122,6 +125,21 @@ test-imports-src: #? verify all modules in src/aiperf can be imported.
 
 test-imports-tests: #? verify all modules in tests/ can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_test_modules_can_be_imported -q $(args)
+
+check-ergonomics: #? run LLM-ergonomics checks (file/function size, nesting, module state, duplicate classes, wide sigs, pydantic fields, stdlib-json).
+	$(activate_venv) && python tools/check_ergonomics.py $(args)
+
+regenerate-ergonomics-baseline: #? overwrite tools/ergonomics_baseline.json with current violations.
+	$(activate_venv) && python tools/check_ergonomics.py --regenerate-baseline
+
+check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (PLR0915/PLR0912/C901/TID251) via the out-of-band baseline wrapper.
+	$(activate_venv) && python tools/ruff_baselined.py $(args)
+
+regenerate-ruff-baseline: #? overwrite tools/ruff_baseline.json with current ruff violations (grandfather them).
+	$(activate_venv) && python tools/ruff_baselined.py --regenerate-baseline
+
+check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, and .cursor/rules/python.mdc share identical bodies.
+	$(activate_venv) && python tools/check_agent_files_sync.py
 
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration' $(args)

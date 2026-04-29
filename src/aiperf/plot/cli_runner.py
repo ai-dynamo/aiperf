@@ -11,6 +11,7 @@ from aiperf.plot.plot_controller import PlotController
 def run_plot_controller(
     paths: list[str] | None = None,
     output: str | None = None,
+    *,
     mode: PlotMode | str = PlotMode.PNG,
     theme: PlotTheme | str = PlotTheme.LIGHT,
     config: str | None = None,

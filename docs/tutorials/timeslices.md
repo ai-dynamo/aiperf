@@ -192,18 +192,16 @@ To be announced...
 
 ## Best Practices
 
-<Warning>
-**Timeslice Boundaries:**
-- Timeslices are calculated based on absolute wall clock time divisions
-- The first timeslice may be shorter if requests don't start exactly at a timeslice boundary
-- The last timeslice may be shorter if the benchmark ends mid-slice
-</Warning>
+> [!WARNING]
+> **Timeslice Boundaries:**
+> - Timeslices are calculated based on absolute wall clock time divisions
+> - The first timeslice may be shorter if requests don't start exactly at a timeslice boundary
+> - The last timeslice may be shorter if the benchmark ends mid-slice
 
-<Warning>
-**Statistical Considerations:**
-- Very short slices may have high variance and unstable metrics
-- Low-concurrency benchmarks need longer slices for adequate sample size
-</Warning>
+> [!WARNING]
+> **Statistical Considerations:**
+> - Very short slices may have high variance and unstable metrics
+> - Low-concurrency benchmarks need longer slices for adequate sample size
 
 ## Troubleshooting
 

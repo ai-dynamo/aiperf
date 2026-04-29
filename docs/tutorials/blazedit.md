@@ -51,7 +51,7 @@ entire modified file, producing thousands of output tokens per request.
 
 **5k character variant:**
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -63,7 +63,7 @@ aiperf profile \
     --concurrency 4 \
     --prompt-output-tokens-mean 512
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 
@@ -104,7 +104,7 @@ aiperf profile \
 
 **10k character variant:**
 
-{/* aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -116,4 +116,4 @@ aiperf profile \
     --concurrency 4 \
     --prompt-output-tokens-mean 512
 ```
-{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->

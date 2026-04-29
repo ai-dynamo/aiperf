@@ -66,43 +66,22 @@ jobs:
   # LINT JOBS - Run on PRs when docs/** or fern/** files change
   #############################################################################
 
-  fern-check:
-    name: Fern Configuration Check
+  docs-index-check:
+    name: Docs Index Completeness Check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '22'
+          python-version: "3.12"
 
-      - name: Install Fern CLI
-        run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
+      - name: Check all docs are listed in index.yml
+        run: python tools/check_docs_index.py
 
-      - name: Validate Fern configuration
-        run: fern check
-
-  fern-broken-links:
-    name: Fern Broken Links Check
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Fern CLI
-        run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
-
-      - name: Check for broken links
-        run: fern docs broken-links
 
   #############################################################################
   # SYNC & PUBLISH/PREVIEW - Syncs docs content to docs-website structure
@@ -163,10 +142,8 @@ jobs:
             cp source-checkout/fern/.gitignore docs-checkout/fern/.gitignore
           fi
 
-          # Sync convert_callouts.py script
-          if [ -f source-checkout/fern/convert_callouts.py ]; then
-            cp source-checkout/fern/convert_callouts.py docs-checkout/fern/convert_callouts.py
-          fi
+          # Sync md_to_mdx.py script (required — fail fast if missing)
+          cp source-checkout/fern/md_to_mdx.py docs-checkout/fern/md_to_mdx.py
 
           # Sync components/ directory (e.g., CustomFooter.tsx)
           if [ -d source-checkout/fern/components ]; then
@@ -187,11 +164,11 @@ jobs:
           # On docs-website, fern/versions/dev.yml needs ../pages-dev/ prefix.
           yq -i '(.. | select(has("path")).path) |= sub("^([a-zA-Z])", "../pages-dev/${1}")' docs-checkout/fern/versions/dev.yml
 
-      - name: Convert GitHub callouts to Fern format
+      - name: Convert Markdown to Fern MDX format
         run: |
-          echo "Converting GitHub-style callouts to Fern format in pages-dev/..."
-          python3 docs-checkout/fern/convert_callouts.py --dir docs-checkout/fern/pages-dev
-          echo "Callout conversion complete."
+          echo "Converting GitHub Markdown to Fern MDX format in pages-dev/..."
+          python3 docs-checkout/fern/md_to_mdx.py --dir docs-checkout/fern/pages-dev
+          echo "Conversion complete."
 
       - name: Update docs.yml preserving products
         run: |
@@ -211,6 +188,26 @@ jobs:
 
           echo "Updated docs.yml:"
           cat docs.yml
+
+      - name: Setup Node.js for Fern validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Fern CLI for validation
+        run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
+
+      - name: Validate transformed Fern content
+        working-directory: docs-checkout
+        run: fern check
+
+      - name: Validate transformed Fern content (strict)
+        working-directory: docs-checkout
+        run: fern check --warnings --strict-broken-links
+
+      - name: Check for broken links in transformed content
+        working-directory: docs-checkout
+        run: fern docs broken-links
 
       - name: Check for changes
         id: changes
@@ -299,6 +296,7 @@ jobs:
 
       ##########################################################################
       # PUSH AND PUBLISH - push changes to docs-website branch and publish docs
+      # TODO(AIP-855): Re-enable once convert_mdx_comments.py transform is wired in (PR 2)
       ##########################################################################
 
       - name: Setup Git
@@ -429,13 +427,13 @@ jobs:
 
           echo "GitHub link update complete."
 
-      - name: Convert GitHub callouts to Fern format
+      - name: Convert Markdown to Fern MDX format
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          echo "Converting GitHub-style callouts to Fern format in pages-$TAG/..."
-          python3 fern/convert_callouts.py --dir "fern/pages-$TAG"
-          echo "Callout conversion complete."
+          echo "Converting GitHub Markdown to Fern MDX format in pages-$TAG/..."
+          python3 fern/md_to_mdx.py --dir "fern/pages-$TAG"
+          echo "Conversion complete."
 
       - name: Create version config file
         run: |
