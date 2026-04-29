@@ -56,6 +56,30 @@ aiperf kube sweep --config sweep.yaml --image aiperf:latest --workers-max 64
 4. Per-child results under `<base>/<ns>/<sweep>-v0007-t02/<child-epoch>/`.
 5. Sweep aggregate under `<base>/<ns>/<sweep>/<sweep-epoch>/aggregate/`.
 
+## Mode: independent vs repeated
+
+`spec.multiRun.mode` (or `--parameter-sweep-mode` for in-process runs)
+selects the iteration order of variations and trials. Both produce the
+same total runs and the same `sweep_aggregate/` output — only the artifact
+path layout and submit order differ.
+
+| Mode (default `independent`) | Iteration order | Artifact tree |
+|---|---|---|
+| `independent` | variations outer, trials inner | `<base>/<variation>/profile_runs/run_NNNN/` |
+| `repeated`    | trials outer, variations inner | `<base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/` |
+
+`independent` (the default) is the right choice when you want all trials
+of a single configuration to complete in close temporal proximity — e.g.
+when your goal is tight confidence intervals per variation. `repeated`
+matches a "run the whole sweep, then run it again" workflow useful when
+absolute wall-clock timing across variations matters more than per-cell
+trial proximity.
+
+Adaptive convergence (`spec.convergence` / `--convergence-metric`) is
+incompatible with `repeated` and rejected at submit time — convergence
+needs to evaluate per-cell stability, which has no place to land in
+trial-outer iteration. Use `independent` for adaptive sweeps.
+
 ## Multi-run confidence
 
 ```yaml

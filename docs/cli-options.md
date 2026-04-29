@@ -1017,6 +1017,12 @@ Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --c
 
 If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
+#### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
+
+Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+<br/>_Choices: [`independent`, `repeated`]_
+<br/>_Default: `independent`_
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -2203,6 +2209,12 @@ Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --c
 
 If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
 
+#### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
+
+Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+<br/>_Choices: [`independent`, `repeated`]_
+<br/>_Default: `independent`_
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -3254,6 +3266,12 @@ Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --c
 #### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
 
 If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
+
+#### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
+
+Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+<br/>_Choices: [`independent`, `repeated`]_
+<br/>_Default: `independent`_
 
 ### Accuracy
 
@@ -4321,6 +4339,12 @@ Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --c
 #### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
 
 If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
+
+#### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
+
+Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+<br/>_Choices: [`independent`, `repeated`]_
+<br/>_Default: `independent`_
 
 ### Accuracy
 
@@ -5399,6 +5423,12 @@ Cooldown seconds between sweep variations (e.g. between --concurrency 10 and --c
 #### `--parameter-sweep-same-seed`, `--parameter-sweep-same-seed`, `--no-parameter-sweep-same-seed`
 
 If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index` so independent draws exercise different inputs. Requires --random-seed when true.
+
+#### `--parameter-sweep-mode`, `--parameter-sweep-mode` `<str>`
+
+Execution order for sweep + multi-trial composition. 'independent' (default) iterates variations as the outer loop and trials as the inner loop, so all trials at one variation complete before the next variation starts. 'repeated' inverts the loops: all variations run within trial 1, then within trial 2, etc. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
+<br/>_Choices: [`independent`, `repeated`]_
+<br/>_Default: `independent`_
 
 ### Accuracy
 
