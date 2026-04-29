@@ -60,6 +60,26 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+@dataclass(slots=True)
+class ToolCallResponseData(BaseResponseData):
+    """Parsed tool-call response data.
+
+    Used when a streaming chat-completions chunk contains only ``tool_calls``
+    deltas (no ``content``/``reasoning``). The text is the concatenation of
+    every tool call's ``function.name`` followed by ``function.arguments``,
+    in chunk order, with no separators — that string is what the tokenizer
+    consumes for client-side token-count metrics, and its arrival timestamp
+    counts as a non-reasoning first-token boundary for TTFT/TTFO.
+    """
+
+    text: str
+    """Concatenated function names + arguments across all tool calls in the chunk."""
+
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return self.text
+
+
 class RAGSources(RootModel[dict[str, Any] | list[Any]]):
     """RAG sources can be either a dictionary or list format."""
 
@@ -194,6 +214,7 @@ class ParsedResponse:
     data: SerializeAsAny[
         ReasoningResponseData
         | TextResponseData
+        | ToolCallResponseData
         | EmbeddingResponseData
         | RankingsResponseData
         | ImageRetrievalResponseData

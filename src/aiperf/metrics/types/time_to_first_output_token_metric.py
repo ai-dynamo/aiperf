@@ -3,7 +3,11 @@
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    TextResponseData,
+    ToolCallResponseData,
+)
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 
@@ -57,8 +61,10 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
         """
         try:
             # Try and find the first non-reasoning token output and extract the timestamp.
-            # This is done by checking for the first response that is either a TextResponseData or a ReasoningResponseData
-            # and has a non-empty text or content field. Note that ReasoningResponseData can have both reasoning and content.
+            # Counted: TextResponseData with non-empty text, ReasoningResponseData with
+            # non-empty content (note: a ReasoningResponseData chunk may carry BOTH
+            # reasoning and content), and ToolCallResponseData with non-empty text
+            # (tool-call deltas are real model-generated output that takes wall time).
             first_non_reasoning_token_perf_ns: int = next(
                 response.perf_ns
                 for response in record.content_responses
@@ -66,6 +72,10 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
                 or (
                     isinstance(response.data, ReasoningResponseData)
                     and response.data.content
+                )
+                or (
+                    isinstance(response.data, ToolCallResponseData)
+                    and response.data.text
                 )
             )
         except StopIteration:

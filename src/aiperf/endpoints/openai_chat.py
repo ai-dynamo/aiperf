@@ -11,6 +11,7 @@ from aiperf.common.models import (
     ParsedResponse,
     ReasoningResponseData,
     RequestInfo,
+    ToolCallResponseData,
     Turn,
 )
 from aiperf.common.types import JsonObject
@@ -277,7 +278,9 @@ class ChatEndpoint(BaseEndpoint):
         reasoning = data.get("reasoning_content") or data.get("reasoning")
         usage = json_obj.get("usage") or None
 
-        if not content and not reasoning and not usage:
+        tool_call_text = "" if (content or reasoning) else _extract_tool_call_text(data)
+
+        if not content and not reasoning and not tool_call_text and not usage:
             return None
 
         if reasoning:
@@ -285,8 +288,12 @@ class ChatEndpoint(BaseEndpoint):
                 content=content,
                 reasoning=reasoning,
             )
-        else:
+        elif content:
             response_data = self.make_text_response_data(content)
+        elif tool_call_text:
+            response_data = ToolCallResponseData(text=tool_call_text)
+        else:
+            response_data = None
 
         if response_data or usage:
             return ParsedResponse(perf_ns=perf_ns, data=response_data, usage=usage)
@@ -299,6 +306,11 @@ class ChatEndpoint(BaseEndpoint):
 
         Handles both streaming (chat.completion.chunk) and non-streaming
         (chat.completion) formats using pattern matching.
+
+        Priority order: reasoning > content > tool_calls > None. Tool-call
+        deltas are concatenated as ``function.name + function.arguments``
+        across every tool call in the chunk so the tokenizer can count them
+        and TTFT can include them as a non-reasoning first-token boundary.
 
         Args:
             json_obj: Deserialized OpenAI response
@@ -327,13 +339,35 @@ class ChatEndpoint(BaseEndpoint):
 
         content = data.get("content")
         reasoning = data.get("reasoning_content") or data.get("reasoning")
-        if not content and not reasoning:
-            return None
 
-        if not reasoning:
+        if reasoning:
+            return ReasoningResponseData(content=content, reasoning=reasoning)
+
+        if content:
             return self.make_text_response_data(content)
 
-        return ReasoningResponseData(
-            content=content,
-            reasoning=reasoning,
-        )
+        tool_call_text = _extract_tool_call_text(data)
+        if tool_call_text:
+            return ToolCallResponseData(text=tool_call_text)
+
+        return None
+
+
+def _extract_tool_call_text(data: dict[str, Any]) -> str:
+    """Concatenate ``function.name + function.arguments`` across all tool calls.
+
+    Used for both streaming chunks (``delta.tool_calls``) and non-streaming
+    responses (``message.tool_calls``). Empty strings are skipped so partial
+    deltas don't introduce gaps. Returns an empty string if no tool calls.
+    """
+    tool_calls = data.get("tool_calls") or []
+    parts: list[str] = []
+    for tc in tool_calls:
+        func = tc.get("function") or {}
+        name = func.get("name") or ""
+        arguments = func.get("arguments") or ""
+        if name:
+            parts.append(name)
+        if arguments:
+            parts.append(arguments)
+    return "".join(parts)

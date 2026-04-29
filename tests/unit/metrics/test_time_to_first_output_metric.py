@@ -9,6 +9,7 @@ from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
     TokenCounts,
+    ToolCallResponseData,
 )
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.time_to_first_output_token_metric import (
@@ -51,6 +52,32 @@ def create_response_record(
             )
             for perf_ns, reasoning, content in responses
         ],
+        token_counts=TokenCounts(
+            input=None,
+            output=len(responses),
+            reasoning=None,
+        ),
+    )
+
+
+def _record_with_responses(
+    start_ns: int, responses: list[ParsedResponse]
+) -> ParsedResponseRecord:
+    """Helper for tests that need pre-built ``ParsedResponse`` objects.
+
+    Use when the response data type is something other than
+    ``TextResponseData`` / ``ReasoningResponseData`` (e.g. ``ToolCallResponseData``)
+    and the tuple-based ``create_response_record`` helper does not cover the case.
+    """
+    request = RequestRecord(
+        model_name="test-model",
+        start_perf_ns=start_ns,
+        timestamp_ns=start_ns,
+        end_perf_ns=responses[-1].perf_ns,
+    )
+    return ParsedResponseRecord(
+        request=request,
+        responses=responses,
         token_counts=TokenCounts(
             input=None,
             output=len(responses),
@@ -167,3 +194,67 @@ class TestTimeToFirstOutputMetric:
             match="Record must have at least one non-reasoning token",
         ):
             metric.parse_record(record, MetricRecordDict())
+
+    def test_ttfo_tool_call_response(self):
+        """TTFO with a tool-call-only response."""
+        record = _record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(
+                    perf_ns=115, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [15]
+
+    def test_ttfo_tool_call_after_reasoning(self):
+        """TTFO skips reasoning-only tokens and finds tool call as first output."""
+        record = _record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(
+                    perf_ns=105,
+                    data=ReasoningResponseData(reasoning="thinking", content=None),
+                ),
+                ParsedResponse(
+                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [20]
+
+    def test_ttfo_text_before_tool_call(self):
+        """TTFO picks text response when it appears before a tool call."""
+        record = _record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(perf_ns=110, data=TextResponseData(text="hello")),
+                ParsedResponse(
+                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [10]
+
+    def test_ttfo_tool_call_empty_text_not_counted(self):
+        """Tool call with empty text is not counted as the first output."""
+        record = _record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(perf_ns=110, data=ToolCallResponseData(text="")),
+                ParsedResponse(perf_ns=120, data=TextResponseData(text="content")),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [20]

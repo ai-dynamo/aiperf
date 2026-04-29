@@ -89,6 +89,7 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
     TokenCounts,
+    ToolCallResponseData,
     VideoResponseData,
 )
 from aiperf.common.models.sequence_distribution import (
@@ -246,6 +247,7 @@ __all__ = [
     "TimesliceCollectionExportData",
     "TimesliceData",
     "TokenCounts",
+    "ToolCallResponseData",
     "TraceDataExport",
     "Turn",
     "TurnMetadata",

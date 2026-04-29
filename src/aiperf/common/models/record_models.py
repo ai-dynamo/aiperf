@@ -35,6 +35,7 @@ from aiperf.common.models.parsed_response_models import (
     ReasoningResponseData,
     TextResponseData,
     TokenCounts,
+    ToolCallResponseData,
     VideoResponseData,
 )
 from aiperf.common.models.record_export_models import (
@@ -74,6 +75,7 @@ __all__ = [
     "TextResponse",
     "TextResponseData",
     "TokenCounts",
+    "ToolCallResponseData",
     "Turn",
     "VideoResponseData",
     "decode_metric_record_info_json",
