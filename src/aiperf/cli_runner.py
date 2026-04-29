@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from aiperf._cli_runner_helpers import (
     aggregate_and_export,
+    aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
     build_strategy,
     log_multi_run_banner,
@@ -428,14 +429,21 @@ def _summarize_and_export(
 
     if len(successful_runs) >= 2:
         logger.info("Computing aggregate statistics...")
-        _asyncio.run(
-            aggregate_and_export(
-                results, plan, strategy=strategy, base_dir=base_dir, logger=logger
-            )
-        )
         if plan.is_sweep:
+            # Per-variation confidence aggregates (one JSON+CSV per cell with
+            # >=2 successful runs). Mirrors origin/main's
+            # SweepConfidenceStrategy.export_aggregates layout.
+            _asyncio.run(
+                aggregate_per_variation_and_export(results, plan, base_dir, logger)
+            )
             logger.info("Computing sweep aggregate across variations...")
             _asyncio.run(aggregate_sweep_and_export(results, plan, base_dir, logger))
+        else:
+            _asyncio.run(
+                aggregate_and_export(
+                    results, plan, strategy=strategy, base_dir=base_dir, logger=logger
+                )
+            )
     elif len(successful_runs) == 1:
         logger.warning(
             "Only 1 successful run - cannot compute confidence statistics. "

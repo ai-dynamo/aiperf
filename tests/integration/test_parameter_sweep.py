@@ -741,3 +741,190 @@ class TestParameterSweep:
             assert str(value) in body, (
                 f"Sweep CSV body missing data for concurrency={value}"
             )
+
+    async def test_per_variation_aggregate_files_written_in_independent_mode(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        temp_output_dir: Path,
+    ) -> None:
+        """Independent-mode multi-trial sweep writes per-cell confidence aggregates.
+
+        For each variation with >=2 successful runs, an aggregate JSON+CSV
+        pair lands at ``<base>/<variation_label>/aggregate/`` (independent
+        mode places aggregate inside the variation cell, mirroring
+        origin/main's ``SweepConfidenceStrategy.export_aggregates``).
+
+        Validates the per-variation aggregate JSON's confidence shape
+        (``aggregation_type='confidence'``, ``num_runs=2``, swept-key
+        metadata, valid ``mean/std/ci_low/ci_high`` per metric) and
+        confirms the sweep aggregate is also produced alongside.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --concurrency 2,4 \
+                --num-profile-runs 2 \
+                --parameter-sweep-mode independent \
+                --request-count 10 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+        assert result.exit_code == 0
+
+        for concurrency in (2, 4):
+            agg_dir = _variation_dir(temp_output_dir, concurrency) / "aggregate"
+            agg_json = agg_dir / "profile_export_aiperf_aggregate.json"
+            agg_csv = agg_dir / "profile_export_aiperf_aggregate.csv"
+            assert agg_json.exists(), (
+                f"per-variation aggregate JSON missing for concurrency={concurrency}: "
+                f"{agg_json}"
+            )
+            assert agg_csv.exists(), (
+                f"per-variation aggregate CSV missing for concurrency={concurrency}: "
+                f"{agg_csv}"
+            )
+            with agg_json.open() as f:
+                agg_data = json.load(f)
+            # AggregateConfidenceJsonExporter flattens AggregateResult
+            # metadata: aggregation_type / num_profile_runs /
+            # num_successful_runs / variation_label / variation_values
+            # all live under the single ``metadata`` block.
+            meta = agg_data.get("metadata", {})
+            assert meta.get("aggregation_type") == "confidence", (
+                f"expected aggregation_type='confidence'; got {agg_data!r}"
+            )
+            assert meta.get("num_profile_runs") == 2, (
+                f"expected num_profile_runs=2 for {concurrency}; "
+                f"got {meta.get('num_profile_runs')!r}"
+            )
+            assert meta.get("num_successful_runs") == 2
+            assert meta.get("variation_label") == (
+                f"phases.profiling.concurrency={concurrency}"
+            )
+            assert meta.get("variation_values") == {
+                "phases.profiling.concurrency": concurrency
+            }
+            metrics = agg_data.get("metrics") or {}
+            assert metrics, f"per-variation aggregate has no metrics for {concurrency}"
+            for metric_name, metric in metrics.items():
+                for field in ("mean", "std", "min", "max", "ci_low", "ci_high"):
+                    assert field in metric, (
+                        f"metric {metric_name!r} missing {field!r}: {metric!r}"
+                    )
+                assert metric["min"] - 1e-9 <= metric["mean"] <= metric["max"] + 1e-9
+                assert metric["std"] >= 0.0
+                assert metric["ci_low"] - 1e-9 <= metric["mean"] <= metric["ci_high"] + 1e-9
+
+        # Sweep aggregate must still be present alongside.
+        sweep_json = (
+            temp_output_dir / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
+        )
+        assert sweep_json.exists(), (
+            "Sweep aggregate must coexist with per-variation aggregates"
+        )
+
+    async def test_per_variation_aggregate_files_written_in_repeated_mode(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        temp_output_dir: Path,
+    ) -> None:
+        """Repeated-mode multi-trial sweep writes per-cell confidence aggregates.
+
+        Repeated mode flips the path: per-variation aggregate dirs land
+        at ``<base>/aggregate/<variation_label>/`` (aggregate is the
+        outer directory, variation is the leaf), mirroring origin/main.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --concurrency 2,4 \
+                --num-profile-runs 2 \
+                --parameter-sweep-mode repeated \
+                --request-count 10 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+        assert result.exit_code == 0
+
+        for concurrency in (2, 4):
+            agg_dir = (
+                temp_output_dir
+                / "aggregate"
+                / f"phases.profiling.concurrency={concurrency}"
+            )
+            agg_json = agg_dir / "profile_export_aiperf_aggregate.json"
+            agg_csv = agg_dir / "profile_export_aiperf_aggregate.csv"
+            assert agg_json.exists(), (
+                f"repeated-mode per-variation aggregate JSON missing: {agg_json}"
+            )
+            assert agg_csv.exists(), (
+                f"repeated-mode per-variation aggregate CSV missing: {agg_csv}"
+            )
+            with agg_json.open() as f:
+                agg_data = json.load(f)
+            meta = agg_data.get("metadata", {})
+            assert meta.get("num_profile_runs") == 2
+            assert str(meta.get("sweep_mode")).lower() == "repeated"
+
+        # The independent-mode layout must NOT be written in repeated mode.
+        for concurrency in (2, 4):
+            wrong = _variation_dir(temp_output_dir, concurrency) / "aggregate"
+            assert not (wrong / "profile_export_aiperf_aggregate.json").exists(), (
+                f"repeated mode must not write independent-mode layout: {wrong}"
+            )
+
+    async def test_per_variation_aggregate_skipped_when_below_minimum_runs(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        temp_output_dir: Path,
+    ) -> None:
+        """Single-trial sweep skips per-variation aggregates without crashing.
+
+        With ``--num-profile-runs 1`` (default), each variation has only
+        1 successful run, which is below the >=2 minimum needed for
+        confidence statistics. The per-variation aggregate dirs must NOT
+        be written, but the sweep aggregate (which can degrade single-
+        trial cells via ``_json_metric_to_stats``) must still produce.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --concurrency 2,4 \
+                --parameter-sweep-mode independent \
+                --request-count 10 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+        assert result.exit_code == 0
+
+        for concurrency in (2, 4):
+            agg_dir = _variation_dir(temp_output_dir, concurrency) / "aggregate"
+            agg_json = agg_dir / "profile_export_aiperf_aggregate.json"
+            assert not agg_json.exists(), (
+                f"single-trial cells must not write per-variation aggregates; "
+                f"unexpected file: {agg_json}"
+            )
+
+        # Sweep aggregate is still expected (handles single-trial via
+        # _json_metric_to_stats).
+        sweep_json = (
+            temp_output_dir / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
+        )
+        assert sweep_json.exists(), (
+            "single-trial sweep must still write sweep_aggregate"
+        )

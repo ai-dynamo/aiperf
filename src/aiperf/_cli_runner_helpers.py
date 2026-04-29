@@ -15,9 +15,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf._cli_runner_sweep_helpers import aggregate_sweep_and_export
+from aiperf._cli_runner_sweep_helpers import (
+    aggregate_per_variation_and_export,
+    aggregate_sweep_and_export,
+)
 
-__all__ = ["aggregate_sweep_and_export"]
+__all__ = ["aggregate_per_variation_and_export", "aggregate_sweep_and_export"]
 
 if TYPE_CHECKING:
     from pathlib import Path

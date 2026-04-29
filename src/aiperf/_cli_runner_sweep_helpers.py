@@ -14,11 +14,10 @@ The single public entry point is :func:`aggregate_sweep_and_export`.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
     from aiperf.orchestrator.models import RunResult
@@ -181,6 +180,146 @@ def _build_per_combination_stats(
         combo = ParameterCombination(dict(key))
         per_combination_stats[combo] = stats
     return per_combination_stats
+
+
+def _per_variation_aggregate_dir(
+    base_dir: Path,
+    variation_label: str,
+    sweep_mode: Any,
+) -> Path:
+    """Resolve the per-variation confidence-aggregate directory.
+
+    Mirrors origin/main's ``SweepConfidenceStrategy.export_aggregates``
+    layout, keyed by mode:
+
+    - ``SweepMode.REPEATED``  -> ``<base>/aggregate/<variation_label>/``
+    - ``SweepMode.INDEPENDENT`` (default fallback) -> ``<base>/<variation_label>/aggregate/``
+
+    The variation label is the dotted-path key produced by
+    ``expand_sweep`` (e.g. ``phases.profiling.concurrency=10``); we do
+    NOT sanitize it here because it already comes from a controlled
+    schema path, mirroring the layout used by ``MultiRunOrchestrator``
+    when it writes the trial subtrees.
+
+    Example:
+        >>> from aiperf.common.enums import SweepMode
+        >>> _per_variation_aggregate_dir(
+        ...     Path("/tmp/x"),
+        ...     "phases.profiling.concurrency=10",
+        ...     SweepMode.REPEATED,
+        ... )  # doctest: +SKIP
+        PosixPath('/tmp/x/aggregate/phases.profiling.concurrency=10')
+    """
+    from aiperf.common.enums import SweepMode
+
+    base_dir = Path(base_dir)
+    if sweep_mode == SweepMode.REPEATED:
+        return base_dir / "aggregate" / variation_label
+    return base_dir / variation_label / "aggregate"
+
+
+async def aggregate_per_variation_and_export(
+    results: list[RunResult],
+    plan: BenchmarkPlan,
+    base_dir: Path,
+    logger: AIPerfLogger,
+) -> list[Path]:
+    """Write a per-variation confidence aggregate (JSON+CSV) for each cell.
+
+    Sweep version of ``aggregate_and_export`` from
+    ``_cli_runner_helpers``: groups ``results`` by ``variation_values``
+    and writes one ``profile_export_aiperf_aggregate.{json,csv}`` pair
+    per variation that has >=2 successful runs. Variations with fewer
+    successful runs are skipped with a warning (single-trial sweeps,
+    runs that all failed in one cell, etc.) -- the per-cell run
+    artifacts are still on disk, and the sweep aggregate runs
+    independently downstream.
+
+    The output path matches origin/main's
+    ``SweepConfidenceStrategy.export_aggregates`` layout via
+    :func:`_per_variation_aggregate_dir`, branching on
+    ``plan.parameter_sweep_mode``.
+
+    Returns the list of directories written (in group-iteration order),
+    so the caller can log them. Empty list when no variation cleared
+    the >=2-successful-run gate.
+
+    Example:
+        >>> # 2 variations x 3 trials, mode=independent
+        >>> # writes:
+        >>> #   <base>/phases.profiling.concurrency=10/aggregate/profile_export_aiperf_aggregate.json
+        >>> #   <base>/phases.profiling.concurrency=10/aggregate/profile_export_aiperf_aggregate.csv
+        >>> #   <base>/phases.profiling.concurrency=20/aggregate/profile_export_aiperf_aggregate.json
+        >>> #   <base>/phases.profiling.concurrency=20/aggregate/profile_export_aiperf_aggregate.csv
+        >>> await aggregate_per_variation_and_export(results, plan, base, logger)  # doctest: +SKIP
+    """
+    import asyncio
+
+    from aiperf.exporters.aggregate import (
+        AggregateConfidenceCsvExporter,
+        AggregateConfidenceJsonExporter,
+        AggregateExporterConfig,
+    )
+    from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
+
+    if not results:
+        return []
+
+    groups = _group_results_by_variation(results)
+    written: list[Path] = []
+
+    for key, group in groups.items():
+        successful = [r for r in group if r.success]
+        # Use the first result's pre-stamped variation_label (set by
+        # orchestrator._stamp_variation_metadata); fall back to a
+        # reconstructed key=value form if it was never stamped (shouldn't
+        # happen in practice, but keeps this helper crash-free).
+        variation_label = next(
+            (r.variation_label for r in group if r.variation_label),
+            ",".join(f"{k}={v}" for k, v in key),
+        )
+
+        if len(successful) < 2:
+            logger.warning(
+                f"Skipping per-variation aggregate for {variation_label!r}: "
+                f"{len(successful)} successful run(s), need at least 2."
+            )
+            continue
+
+        aggregation = ConfidenceAggregation(confidence_level=plan.confidence_level)
+        try:
+            aggregate_result = aggregation.aggregate(group)
+        except ValueError as exc:
+            logger.warning(
+                f"Skipping per-variation aggregate for {variation_label!r}: "
+                f"ConfidenceAggregation raised {exc}"
+            )
+            continue
+        aggregate_result.metadata["cooldown_seconds"] = plan.cooldown_seconds
+        aggregate_result.metadata["variation_label"] = variation_label
+        aggregate_result.metadata["variation_values"] = dict(key)
+        aggregate_result.metadata["sweep_mode"] = str(plan.parameter_sweep_mode)
+
+        aggregate_dir = _per_variation_aggregate_dir(
+            base_dir, variation_label, plan.parameter_sweep_mode
+        )
+        await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
+
+        exporter_config = AggregateExporterConfig(
+            result=aggregate_result,
+            output_dir=aggregate_dir,
+        )
+        json_exporter = AggregateConfidenceJsonExporter(exporter_config)
+        csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
+        json_path, csv_path = await asyncio.gather(
+            json_exporter.export(), csv_exporter.export()
+        )
+        logger.info(
+            f"Per-variation aggregate ({variation_label}) JSON: {json_path}; CSV: {csv_path}"
+        )
+        written.append(aggregate_dir)
+
+    return written
 
 
 async def aggregate_sweep_and_export(
