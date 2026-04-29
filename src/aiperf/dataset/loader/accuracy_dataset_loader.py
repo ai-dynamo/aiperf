@@ -17,7 +17,7 @@ multi-pass (num_requests > dataset size) runs correctly.
 from __future__ import annotations
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
-from aiperf.accuracy.models import BenchmarkProblem
+from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.config import UserConfig
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
@@ -52,7 +52,7 @@ class AccuracyDatasetLoader:
             session_id = session_gen.next()
 
             if problem.chat_messages is not None:
-                messages: list[dict[str, str]] = list(problem.chat_messages)
+                messages: list[AccuracyChatMessage] = list(problem.chat_messages)
             else:
                 messages = [{"role": "user", "content": problem.prompt}]
 

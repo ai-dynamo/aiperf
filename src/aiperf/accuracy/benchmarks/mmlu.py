@@ -20,7 +20,7 @@ from string import ascii_uppercase
 
 from datasets import DatasetDict, load_dataset
 
-from aiperf.accuracy.models import BenchmarkProblem
+from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
 
@@ -274,7 +274,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         subject: str,
         few_shots: list[dict[str, str]],
         enable_cot: bool,
-    ) -> list[dict[str, str]]:
+    ) -> list[AccuracyChatMessage]:
         """Build lighteval-style multi-turn chat messages.
 
         Replicates lighteval's PromptManager._prepare_chat_template() for MMLU:
@@ -291,7 +291,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
             f"about {subject.replace('_', ' ')}.\n\n"
         )
 
-        messages: list[dict[str, str]] = []
+        messages: list[AccuracyChatMessage] = []
 
         for ix, ex in enumerate(few_shots):
             q = f"Question: {ex['question']}{ex['choices']}\nAnswer:"

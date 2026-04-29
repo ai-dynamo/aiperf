@@ -1,11 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from pydantic import Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
+
+
+class AccuracyChatMessage(TypedDict):
+    """A single OpenAI-compatible chat message used in accuracy benchmark prompts."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str
 
 
 class GradingResult(AIPerfBaseModel):
@@ -34,7 +41,7 @@ class BenchmarkProblem(AIPerfBaseModel):
     few_shot_examples: list[dict[str, Any]] = Field(
         default_factory=list, description="Few-shot examples to prepend to the prompt"
     )
-    chat_messages: list[dict[str, str]] | None = Field(
+    chat_messages: list[AccuracyChatMessage] | None = Field(
         default=None,
         description="Multi-turn chat messages for chat/completions endpoint. "
         "When set, used as raw_messages to match lighteval's chat format. "
