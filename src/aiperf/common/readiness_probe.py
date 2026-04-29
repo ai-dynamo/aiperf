@@ -203,15 +203,24 @@ async def _wait_inference(
     # the URL already carries a non-root path use that, otherwise append
     # the OpenAI default for the endpoint type.
     parsed = urlparse(url)
+    endpoint_path = _DEFAULT_PATHS.get(endpoint_type)
+    payload_template = _CANNED_PAYLOADS.get(endpoint_type)
+    if endpoint_path is None or payload_template is None:
+        _logger.warning(
+            f"Inference readiness probe has no dedicated request template for "
+            f"endpoint type '{endpoint_type}'; using the chat-compatible "
+            f"fallback. This checks server liveness but may not prove model "
+            f"readiness for that endpoint type."
+        )
+
     if custom_endpoint:
         request_url = url.rstrip("/") + "/" + custom_endpoint.lstrip("/")
     elif parsed.path and parsed.path != "/":
         request_url = url.rstrip("/")
     else:
-        endpoint_path = _DEFAULT_PATHS.get(endpoint_type, _DEFAULT_PATHS["chat"])
-        request_url = url.rstrip("/") + endpoint_path
+        request_url = url.rstrip("/") + (endpoint_path or _DEFAULT_PATHS["chat"])
 
-    payload = dict(_CANNED_PAYLOADS.get(endpoint_type, _CANNED_PAYLOADS["chat"]))
+    payload = dict(payload_template or _CANNED_PAYLOADS["chat"])
     payload["model"] = model_name
     body = orjson.dumps(payload)
 
