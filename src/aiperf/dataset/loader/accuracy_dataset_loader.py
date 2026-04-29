@@ -11,7 +11,9 @@ OpenAI-compatible messages in Turn.raw_messages.
 The problem ordering is deterministic: Conversation i corresponds to
 BenchmarkProblem i. AccuracyRecordProcessor maps each response back to its
 problem via session_num % len(problems), which handles both single-pass and
-multi-pass (num_requests > dataset size) runs correctly.
+multi-pass (num_requests > dataset size) runs correctly. This mapping is only
+valid when the dataset is sampled sequentially; DatasetManager enforces that
+invariant and rejects non-sequential strategies in accuracy mode.
 """
 
 from __future__ import annotations
