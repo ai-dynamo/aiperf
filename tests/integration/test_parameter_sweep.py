@@ -14,8 +14,6 @@ orchestrator writes per-variation artifacts under
 aggregate under ``<artifact_dir>/sweep_aggregate/``.
 
 Out of scope here:
-- ``--parameter-sweep-mode=repeated`` execution semantics (rejected at convert
-  time per Path-A; covered in tests/unit/config/v1/test_loadgen_converter.py).
 - Operator-mode gate (``AIPERF_OPERATOR_MANAGED=1``); covered at unit level in
   tests/unit/test_cli_runner.py::TestOperatorModeSweepGate.
 """
@@ -254,24 +252,21 @@ class TestParameterSweep:
                 "shifted seeds by variation.index"
             )
 
-    async def test_sweep_repeated_mode_is_rejected(
+    async def test_sweep_independent_mode_writes_variation_outer_layout(
         self,
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
+        temp_output_dir: Path,
     ) -> None:
-        """``--parameter-sweep-mode=repeated`` exits non-zero with helpful error.
+        """``--parameter-sweep-mode=independent`` (default) groups trials per variation.
 
-        Path-A explicitly defers REPEATED execution semantics. Two layers
-        reject the flag and either is acceptable here:
+        Verifies the contract from SweepMode docstring:
+            INDEPENDENT: <base>/<variation>/profile_runs/run_NNNN/
 
-        1. The v1 ``_loadgen`` CLI surface intentionally does NOT expose a
-           ``--parameter-sweep-mode`` cyclopts annotation, so cyclopts itself
-           emits an "Unknown option" error before the converter runs. This
-           is the user-visible path today (covered by this test).
-        2. If a future revision restores the flag, ``_reject_unsupported_sweep_mode``
-           in ``src/aiperf/config/v1/converter.py`` raises ``ValueError`` with
-           a pointer to ``independent``. That branch has dedicated unit
-           coverage in ``tests/unit/config/v1/test_loadgen_converter.py``.
+        Variations are the OUTER loop, trials inner. With 2 variations and
+        2 trials, expect: <variation_0>/profile_runs/run_0001 + run_0002,
+        then <variation_1>/profile_runs/run_0001 + run_0002. No
+        ``profile_runs/trial_NNNN/`` segment under the base dir.
         """
         result = await cli.run(
             f"""
@@ -280,25 +275,76 @@ class TestParameterSweep:
                 --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 10,20 \
+                --num-profile-runs 2 \
+                --parameter-sweep-mode independent \
+                --request-count 5 \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+        assert result.exit_code == 0, (
+            f"independent-mode sweep should succeed; stderr={result.stderr!r}"
+        )
+        v0 = _variation_dir(temp_output_dir, 10)
+        v1 = _variation_dir(temp_output_dir, 20)
+        assert (v0 / "profile_runs" / "run_0001").exists(), (
+            "expected variation-0 trial 1 dir under independent-mode tree"
+        )
+        assert (v0 / "profile_runs" / "run_0002").exists()
+        assert (v1 / "profile_runs" / "run_0001").exists()
+        assert (v1 / "profile_runs" / "run_0002").exists()
+        # Independent mode does NOT introduce a top-level profile_runs/trial_NNNN/
+        # prefix - that is repeated-mode's signature path.
+        assert not (temp_output_dir / "profile_runs" / "trial_0001").exists()
+
+    async def test_sweep_repeated_mode_writes_trial_outer_layout(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+        temp_output_dir: Path,
+    ) -> None:
+        """``--parameter-sweep-mode=repeated`` groups variations per trial.
+
+        Verifies the contract from SweepMode docstring:
+            REPEATED: <base>/profile_runs/trial_NNNN/<variation>/...
+
+        Trials are the OUTER loop. With 2 variations and 2 trials, expect:
+        trial_0001/<v0> + trial_0001/<v1>, then trial_0002/<v0> +
+        trial_0002/<v1>. The sweep-aggregate output (mode-agnostic) still
+        lives at <base>/sweep_aggregate/.
+        """
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --concurrency 10,20 \
+                --num-profile-runs 2 \
                 --parameter-sweep-mode repeated \
                 --request-count 5 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
-            """,
-            assert_success=False,
+            """
         )
-        assert result.exit_code != 0, "repeated-mode sweep must not succeed"
-        combined = ((result.stderr or "") + (result.stdout or "")).lower()
-        assert any(
-            needle in combined
-            for needle in (
-                "repeated",
-                "independent",
-                "unknown option",
-                "parameter-sweep-mode",
-            )
-        ), (
-            "expected an error pointing at --parameter-sweep-mode (rejected "
-            "either by cyclopts or by the v1->v2 converter); "
-            f"stderr={result.stderr!r}"
+        assert result.exit_code == 0, (
+            f"repeated-mode sweep should succeed; stderr={result.stderr!r}"
+        )
+        t1 = temp_output_dir / "profile_runs" / "trial_0001"
+        t2 = temp_output_dir / "profile_runs" / "trial_0002"
+        # Each trial dir contains both variations
+        assert (t1 / "phases.profiling.concurrency=10").exists()
+        assert (t1 / "phases.profiling.concurrency=20").exists()
+        assert (t2 / "phases.profiling.concurrency=10").exists()
+        assert (t2 / "phases.profiling.concurrency=20").exists()
+        # Sweep aggregate still lives at the base (mode-agnostic).
+        sweep_json = (
+            temp_output_dir / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
+        )
+        assert sweep_json.exists(), "sweep aggregate should be written under both modes"
+        with sweep_json.open() as f:
+            data = json.load(f)
+        assert "per_combination_metrics" in data
+        assert len(data["per_combination_metrics"]) == 2, (
+            f"expected 2 sweep cells; got {data['per_combination_metrics']!r}"
         )
