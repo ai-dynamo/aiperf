@@ -184,6 +184,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
     def __init__(
         self,
+        *,
         endpoint_url: str,
         collection_interval: float,
         reachability_timeout: float,

@@ -34,6 +34,7 @@ class ProxySocketClient(BaseZMQClient):
         self,
         socket_type: SocketType,
         address: str,
+        *,
         end_type: ProxyEndType,
         socket_ops: dict | None = None,
         proxy_uuid: str | None = None,
@@ -68,6 +69,7 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
 
     def __init__(
         self,
+        *,
         frontend_socket_class: type[BaseZMQClient],
         backend_socket_class: type[BaseZMQClient],
         zmq_proxy_config: BaseZMQProxyConfig,

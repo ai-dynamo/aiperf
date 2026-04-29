@@ -33,6 +33,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
+        *,
         user_config: UserConfig,
         prompt_column: str,
         image_column: str | None = None,

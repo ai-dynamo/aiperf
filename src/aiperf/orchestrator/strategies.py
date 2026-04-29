@@ -409,6 +409,7 @@ class AdaptiveStrategy(ExecutionStrategy):
 
     def __init__(
         self,
+        *,
         criterion: ConvergenceCriterion,
         min_runs: int = 3,
         max_runs: int = 10,
@@ -541,6 +542,7 @@ class ParameterSweepStrategy(ExecutionStrategy):
 
     def __init__(
         self,
+        *,
         parameter_name: str,
         parameter_values: list[int],
         cooldown_seconds: float = 0.0,

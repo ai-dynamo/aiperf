@@ -31,6 +31,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        *,
         client_id: str | None = None,
         additional_bind_address: str | None = None,
         **kwargs,

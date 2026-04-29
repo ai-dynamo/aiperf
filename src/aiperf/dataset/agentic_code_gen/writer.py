@@ -25,6 +25,7 @@ def write_dataset(
     sessions: list[SynthesizedSession],
     output_dir: Path,
     config: SessionDistributionConfig,
+    *,
     seed: int,
     config_name: str | None = None,
 ) -> tuple[Path, Path, Path]:

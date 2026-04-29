@@ -505,6 +505,7 @@ def accumulate_bucket_statistics(
     counts: np.ndarray,
     bucket_les: tuple[str, ...],
     bucket_counts: np.ndarray,
+    *,
     start_idx: int = 0,
 ) -> dict[str, BucketStatistics]:
     """Learn per-bucket mean positions from single-bucket scrape intervals.

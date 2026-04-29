@@ -37,6 +37,7 @@ class PlotController:
 
     def __init__(
         self,
+        *,
         paths: list[Path],
         output_dir: Path,
         mode: PlotMode = PlotMode.PNG,

@@ -111,6 +111,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         final_state: LifecycleState,
         hook_type: AIPerfHook,
         event: asyncio.Event,
+        *,
         reverse: bool = False,
     ) -> None:
         """This method wraps the functionality of changing the state of the lifecycle, and running the hooks.

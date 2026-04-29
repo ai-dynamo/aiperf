@@ -24,6 +24,7 @@ _logger = AIPerfLogger("aiperf")
 
 def raise_startup_error_and_exit(
     message: RenderableType,
+    *,
     text_color: StyleType | None = None,
     title: str = "Error",
     exit_code: int = 1,

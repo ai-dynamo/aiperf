@@ -82,6 +82,7 @@ def _decode_tokens(token_ids: list[int]) -> str:
 def parallel_decode(
     token_sequences: list[list[int]],
     tokenizer_name: str,
+    *,
     max_workers: int | None = None,
     chunksize: int = 50,
     trust_remote_code: bool = False,

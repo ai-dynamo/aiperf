@@ -160,6 +160,7 @@ def _compute_dedup_tokens(
     active_groups: dict[int, int],
     l1_tokens: int,
     l1_5_tokens: int,
+    *,
     cached_sessions: int | None = None,
     cached_groups: dict[int, int] | None = None,
 ) -> int:

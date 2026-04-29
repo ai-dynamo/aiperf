@@ -49,6 +49,7 @@ class ZMQPullClient(BaseZMQClient):
 
     def __init__(
         self,
+        *,
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
