@@ -48,6 +48,13 @@ class EndpointDefaults:
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
+    # Readiness probe defaults. Timeout 0 disables the probe (the default);
+    # any positive value enables it. Interval is only consulted when the
+    # probe is enabled but is validated positive so mis-configuration
+    # (e.g. --wait-for-model-interval 0) is rejected at config-load time.
+    WAIT_FOR_MODEL_TIMEOUT = 0.0
+    WAIT_FOR_MODEL_INTERVAL = 5.0
+    WAIT_FOR_MODEL_MODE = "inference"
 
 
 @dataclass(frozen=True)
