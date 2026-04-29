@@ -319,7 +319,12 @@ jobs:
           else
             BRANCH="${GITHUB_REF#refs/heads/}"
             PR_NUMBER="${BRANCH#pull-request/}"
-            HEAD_REPO=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name' 2>/dev/null || echo "")
+            # Surface lookup failures rather than silently routing as same-repo
+            # (which would skip the preview entirely, leaving no PR comment).
+            if ! HEAD_REPO=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name'); then
+              echo "::error::Unable to resolve head repo for PR #$PR_NUMBER — preview routing failed"
+              exit 1
+            fi
           fi
 
           SHOULD_RUN=false
@@ -438,10 +443,9 @@ jobs:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         run: |
           # Never `exit 1` here — preview is best-effort. On failure we emit a
-          # ::warning::, leave the `url` output empty, and let the comment
-          # step post a "preview unavailable" message. This keeps the job
-          # genuinely green (so the per-job check is a real check, not the
-          # not-quite-green of `continue-on-error: true` masking failure).
+          # ::warning::, set `status=failed`, and let the comment step post a
+          # "preview unavailable" message. On success we set `status=success`
+          # plus the URL. This keeps the job genuinely green.
           if OUTPUT=$(fern generate --docs --preview 2>&1); then
             FERN_EXIT=0
           else
@@ -451,11 +455,19 @@ jobs:
           URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K\S+') || true
           if [ -n "$URL" ]; then
             echo "url=$URL" >> "$GITHUB_OUTPUT"
-          elif [ $FERN_EXIT -ne 0 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
             echo "::warning::Fern docs preview generation failed (exit $FERN_EXIT) — preview will be unavailable for this run."
+            echo "status=failed" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Comment preview status on PR
+        # Run on success or failure of preceding steps, but skip the comment
+        # entirely when the preview step itself was skipped (has_changes=false)
+        # so we don't post a misleading "preview unavailable" on doc-untouched
+        # synced runs. Early-step failures (sync/checkout) are covered by
+        # validate-and-publish-docs being red, so no comment needed there either.
+        if: always() && steps.preview.outputs.status != ''
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ needs.preview-context.outputs.pr_number }}
