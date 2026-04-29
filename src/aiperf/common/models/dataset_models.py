@@ -139,7 +139,11 @@ class Turn(AIPerfBaseModel):
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted OpenAI-compatible messages array. "
-        "When set, bypasses normal turn-based message construction in endpoints.",
+        "When set, bypasses normal turn-based message construction in endpoints. "
+        "Typed list[dict[str, Any]] rather than a narrower TypedDict because callers "
+        "such as MooncakeTrace pass the full OpenAI message spec, which includes "
+        "tool-call messages, assistant messages with tool_calls, and multi-modal "
+        "content arrays — shapes that do not fit a single narrow TypedDict.",
     )
     raw_tools: list[dict[str, Any]] | None = Field(
         default=None,

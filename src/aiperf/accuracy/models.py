@@ -47,5 +47,9 @@ class BenchmarkProblem(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible messages array for the chat endpoint. "
         "Assigned verbatim to Turn.raw_messages when building the dataset, matching "
         "lighteval's chat format. The flat 'prompt' field is still used for the "
-        "completions endpoint.",
+        "completions endpoint. "
+        "AccuracyChatMessage narrows the shape to {role, content} — accuracy benchmarks "
+        "only produce these two shapes. The type broadens to dict[str, Any] at "
+        "Turn.raw_messages because that field also accepts tool-call and multi-modal "
+        "messages from other callers (e.g. MooncakeTrace).",
     )
