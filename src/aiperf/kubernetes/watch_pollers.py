@@ -129,11 +129,14 @@ class CRPoller:
         request_count = int(_metric_avg(metrics_dict, "request_count"))
         error_count = int(_metric_avg(metrics_dict, "error_count"))
         rps = _metric_avg(metrics_dict, "request_throughput")
-        goodput = (
-            rps * ((request_count - error_count) / request_count)
-            if request_count > 0
-            else 0.0
-        )
+        # Invariant: 0 <= goodput <= rps. error_count and request_count are
+        # averaged independently from staggered windows in liveMetrics, so
+        # error_count > request_count is observable and would otherwise yield
+        # a negative goodput.
+        if request_count > 0:
+            goodput = rps * max(0.0, (request_count - error_count) / request_count)
+        else:
+            goodput = 0.0
         self.metrics = MetricsSnapshot(
             request_throughput_rps=rps,
             request_latency_avg_ms=_metric_avg(metrics_dict, "request_latency"),
@@ -225,15 +228,27 @@ class CRPoller:
             self.results = status.get("results")
 
     def _populate_summary_metrics(self, status: dict[str, Any]) -> None:
+        """Populate ``self.metrics`` from ``status.liveSummary`` / ``status.summary``.
+
+        Live ``status.liveMetrics.metrics`` is preferred (handled by
+        ``_populate_metrics``); this is the fallback for archived jobs whose
+        ``liveMetrics`` was already pruned. The summary is the curated nested
+        ``{metric_tag: {avg, p50, p99, ...}}`` shape written by
+        ``MetricsSummary.from_metrics`` — same shape as ``liveMetrics.metrics``,
+        so ``_metric_stat`` works for both.
+        """
         summary = status.get("liveSummary") or status.get("summary")
-        if summary and not self.metrics:
-            self.metrics = MetricsSnapshot(
-                request_throughput_rps=summary.get("throughput_rps", 0),
-                request_latency_avg_ms=summary.get("latency_avg_ms", 0),
-                request_latency_p99_ms=summary.get("latency_p99_ms", 0),
-                ttft_avg_ms=summary.get("ttft_avg_ms", 0),
-                ttft_p99_ms=summary.get("ttft_p99_ms", 0),
-            )
+        if not summary or self.metrics:
+            return
+        self.metrics = MetricsSnapshot(
+            request_throughput_rps=_metric_avg(summary, "request_throughput"),
+            request_latency_avg_ms=_metric_avg(summary, "request_latency"),
+            request_latency_p99_ms=_metric_stat(summary, "request_latency", "p99"),
+            ttft_avg_ms=_metric_avg(summary, "time_to_first_token"),
+            ttft_p99_ms=_metric_stat(summary, "time_to_first_token", "p99"),
+            output_token_throughput_tps=_metric_avg(summary, "output_token_throughput"),
+            total_token_throughput_tps=_metric_avg(summary, "total_token_throughput"),
+        )
 
     async def _get_raw_cr(self) -> dict[str, Any] | None:
         """Get the raw AIPerfJob CR dict from the K8s API."""
@@ -288,7 +303,8 @@ class PodPoller:
                 self._namespace,
                 label_selector=job_selector(self._job_id),
             )
-        except ApiException:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            logger.debug(f"Failed to list pods for {self._job_id}", exc_info=True)
             return
         self.pods = [PodSnapshot.from_raw(_pod_to_raw(p)) for p in pod_list.items]
 
@@ -323,7 +339,8 @@ class EventPoller:
         core = client.CoreV1Api(self._api)
         try:
             ev_list = await core.list_namespaced_event(self._namespace)
-        except ApiException:
+        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            logger.debug(f"Failed to list events for {self._job_id}", exc_info=True)
             return
 
         filtered = []

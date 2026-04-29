@@ -46,7 +46,7 @@ export function TopNav({ onSearchClick }) {
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
             </svg>
           </div>
-          AIPerf
+          AIPerf Operator
         </div>
         <nav class="nav" aria-label="Main navigation">
           ${NAV_GROUPS.map((group, gi) => html`

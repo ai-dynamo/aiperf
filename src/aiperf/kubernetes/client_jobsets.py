@@ -223,7 +223,12 @@ async def delete_jobset(api: ApiClient, name: str, namespace: str) -> None:
 
 
 async def delete_namespace(api: ApiClient, name: str) -> None:
-    """Delete a Kubernetes namespace (404 treated as already gone)."""
+    """Delete a Kubernetes namespace.
+
+    Treats 404 as already-gone (logs and returns). Re-raises any other
+    :class:`ApiException` so callers can react -- previously this swallowed
+    every non-404 failure, hiding RBAC, conflict, and 5xx errors.
+    """
     core = client.CoreV1Api(api)
     try:
         await core.delete_namespace(name=name)
@@ -231,5 +236,6 @@ async def delete_namespace(api: ApiClient, name: str) -> None:
     except ApiException as e:
         if e.status == 404:
             print_info(f"Namespace {name} not found (may already be deleted)")
-        else:
-            print_warning(f"Failed to delete namespace: {e}")
+            return
+        print_warning(f"Failed to delete namespace: {e}")
+        raise

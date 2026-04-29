@@ -307,14 +307,15 @@ def test_synthesize_status_full_summary():
     assert status["workers"] == {"ready": 0, "total": 0}
 
     summary = status["summary"]
-    assert summary["throughput_rps"] == 42.1
-    assert summary["latency_avg_ms"] == 180.0
-    assert summary["latency_p99_ms"] == 390.0
-    assert summary["ttft_avg_ms"] == 45.5
-    assert summary["ttft_p99_ms"] == 120.0
-    assert summary["itl_avg_ms"] == 12.3
-    assert summary["itl_p99_ms"] == 30.0
-    assert summary["output_token_throughput_tps"] == 2048.5
+    # Each tag passes through as the full sub-dict — UI reads ``[tag][stat]``.
+    assert summary["request_throughput"]["avg"] == 42.1
+    assert summary["request_latency"]["avg"] == 180.0
+    assert summary["request_latency"]["p99"] == 390.0
+    assert summary["time_to_first_token"]["avg"] == 45.5
+    assert summary["time_to_first_token"]["p99"] == 120.0
+    assert summary["inter_token_latency"]["avg"] == 12.3
+    assert summary["inter_token_latency"]["p99"] == 30.0
+    assert summary["output_token_throughput"]["avg"] == 2048.5
     assert summary["total_requests"] == 10000
     assert summary["error_rate"] == 0.005
 
@@ -334,15 +335,12 @@ def test_synthesize_status_missing_metric_skipped():
     }
     status = synthesize_status_from_summary("ns", "j1", partial)
     summary = status["summary"]
-    assert summary["throughput_rps"] == 42.1
-    # Absent metrics should be OMITTED (not present as None keys).
-    assert "latency_p99_ms" not in summary
-    assert "latency_avg_ms" not in summary
-    assert "ttft_avg_ms" not in summary
-    assert "ttft_p99_ms" not in summary
-    assert "itl_avg_ms" not in summary
-    assert "itl_p99_ms" not in summary
-    assert "output_token_throughput_tps" not in summary
+    assert summary["request_throughput"]["avg"] == 42.1
+    # Absent metric tags must be OMITTED (not present as empty dicts).
+    assert "request_latency" not in summary
+    assert "time_to_first_token" not in summary
+    assert "inter_token_latency" not in summary
+    assert "output_token_throughput" not in summary
 
 
 def test_synthesize_status_archived_phase_fallback():

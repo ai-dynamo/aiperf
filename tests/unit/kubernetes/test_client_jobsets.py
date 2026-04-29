@@ -296,7 +296,7 @@ class TestDeleteJobsetNonSuppressedAuxError:
 
 
 class TestDeleteNamespaceNon404:
-    """Verify delete_namespace logs (not raises) on non-404 errors."""
+    """Verify delete_namespace re-raises on non-404 errors so callers can react."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -307,14 +307,18 @@ class TestDeleteNamespaceNon404:
             param(500, id="server_error"),
         ],
     )  # fmt: skip
-    async def test_logs_warning_no_raise(self, status: int) -> None:
-        """delete_namespace never re-raises — it's best-effort cleanup."""
+    async def test_logs_warning_then_raises(self, status: int) -> None:
+        """delete_namespace logs then re-raises non-404 ApiExceptions."""
         api = MagicMock(spec=ApiClient)
         mock_core = MagicMock()
         mock_core.delete_namespace = AsyncMock(side_effect=_api_exception(status))
-        with patch(
-            "aiperf.kubernetes.client_jobsets.client.CoreV1Api",
-            return_value=mock_core,
+        with (
+            patch(
+                "aiperf.kubernetes.client_jobsets.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            pytest.raises(ApiException) as exc_info,
         ):
             await delete_namespace(api, "ns")
+        assert exc_info.value.status == status
         mock_core.delete_namespace.assert_awaited_once_with(name="ns")

@@ -23,6 +23,7 @@ from aiperf.kubernetes.client import (
     get_raw_aiperfjob_status,
     list_events_for_object,
     list_nodes,
+    list_pods_all_namespaces,
 )
 from aiperf.operator.job_union import (
     find_any_job,
@@ -84,14 +85,43 @@ async def _fetch_k8s_version(api: ApiClient) -> str:
     return version_info.get("gitVersion", "unknown")
 
 
-async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
-    """Return (node_count, total_nvidia_gpus). Returns (0, 0) on failure."""
+def _pod_gpu_request(pod: V1Pod) -> int:
+    """Sum nvidia.com/gpu requests across every container in a pod.
+
+    Mirrors the gpu-report.sh accounting: only ``requests`` are summed
+    (not ``limits``), and any non-integer / missing value is treated as 0.
+    """
+    spec = pod.spec
+    if spec is None:
+        return 0
+    total = 0
+    for container in spec.containers or []:
+        resources = getattr(container, "resources", None)
+        requests = getattr(resources, "requests", None) or {}
+        raw = requests.get("nvidia.com/gpu", 0)
+        try:
+            total += int(raw)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+async def _fetch_cluster_gpu_stats(api: ApiClient) -> dict[str, Any]:
+    """Compute cluster-wide GPU capacity, usage, and node-state breakdown.
+
+    Combines :func:`list_nodes` (allocatable totals per node) with
+    :func:`list_pods_all_namespaces` (pod-level GPU requests) to produce
+    the same headline numbers as ``~/gpu-report.sh``: total/used/free
+    GPUs, utilization %, and the count of nodes that are completely
+    free / partially used / fully used.
+
+    All Kubernetes errors are absorbed and logged — this endpoint is
+    supplementary UI context, not a critical path. The response always
+    has every key present so the JS side can rely on the schema.
+    """
     try:
         nodes = await list_nodes(api)
     except ApiException as e:
-        # 403 here is almost always the operator ClusterRole missing
-        # `nodes get/list` — log at ERROR so it surfaces in the usual
-        # RBAC-misconfig triage instead of masquerading as "0 nodes".
         if (e.status or 0) == 403:
             logger.error(
                 "Cluster node listing forbidden (403) — check that the "
@@ -100,11 +130,76 @@ async def _fetch_node_gpu_totals(api: ApiClient) -> tuple[int, int]:
             )
         else:
             logger.warning("Failed to query nodes (apiserver %s): %s", e.status, e)
-        return 0, 0
+        nodes = []
     except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
         logger.warning(f"Failed to query nodes: {e}")
-        return 0, 0
-    return len(nodes), sum(_node_gpu_count(n) for n in nodes)
+        nodes = []
+
+    # Map node-name -> allocatable GPUs (only nodes that actually have GPUs).
+    node_capacity: dict[str, int] = {}
+    for node in nodes:
+        name = node.metadata.name if node.metadata else None
+        if not name:
+            continue
+        gpus = _node_gpu_count(node)
+        if gpus > 0:
+            node_capacity[name] = gpus
+
+    used_per_node: dict[str, int] = {}
+    if node_capacity:
+        try:
+            pods = await list_pods_all_namespaces(api)
+        except ApiException as e:
+            if (e.status or 0) == 403:
+                logger.error(
+                    "Cluster pod listing forbidden (403) — check that the "
+                    "operator ClusterRole grants `pods get/list`: %s",
+                    e,
+                )
+            else:
+                logger.warning("Failed to query pods (apiserver %s): %s", e.status, e)
+            pods = []
+        except Exception as e:  # noqa: BLE001 - best-effort
+            logger.warning(f"Failed to query pods cluster-wide: {e}")
+            pods = []
+
+        for pod in pods:
+            phase = (pod.status.phase if pod.status else None) or ""
+            if phase not in ("Running", "Pending"):
+                continue
+            node_name = pod.spec.node_name if pod.spec else None
+            if not node_name or node_name not in node_capacity:
+                continue
+            req = _pod_gpu_request(pod)
+            if req > 0:
+                used_per_node[node_name] = used_per_node.get(node_name, 0) + req
+
+    total_gpus = sum(node_capacity.values())
+    total_used = sum(
+        min(used_per_node.get(n, 0), cap) for n, cap in node_capacity.items()
+    )
+    total_free = max(total_gpus - total_used, 0)
+    utilization = round(100.0 * total_used / total_gpus, 1) if total_gpus > 0 else 0.0
+
+    nodes_free = sum(
+        1 for n, cap in node_capacity.items() if used_per_node.get(n, 0) == 0
+    )
+    nodes_full = sum(
+        1 for n, cap in node_capacity.items() if used_per_node.get(n, 0) >= cap
+    )
+    nodes_partial = len(node_capacity) - nodes_free - nodes_full
+
+    return {
+        "node_count": len(nodes),
+        "gpu_nodes": len(node_capacity),
+        "gpus": total_gpus,
+        "gpus_used": total_used,
+        "gpus_free": total_free,
+        "utilization_percent": utilization,
+        "nodes_free": nodes_free,
+        "nodes_partial": nodes_partial,
+        "nodes_full": nodes_full,
+    }
 
 
 async def _list_jobs_impl(api: ApiClient, results_dir: Path) -> ActiveJobListResponse:
@@ -426,19 +521,28 @@ async def _list_events_impl(
 
 
 async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
-    """Body of GET /api/v1/cluster: best-effort cluster-wide node and GPU totals.
+    """Body of GET /api/v1/cluster: best-effort cluster-wide capacity, GPU
+    utilization, and Kubernetes server version.
 
-    Calls the core ``/version`` endpoint for the server gitVersion and
-    ``list_node`` for node count + ``nvidia.com/gpu`` allocatable totals. Both
-    calls are best-effort: failures fall back to ``"unknown"`` / ``(0, 0)``
-    rather than surfacing errors, because the UI displays this as supplementary
-    context and callers with limited RBAC should not see the page fail.
+    Calls the core ``/version`` endpoint for the gitVersion plus
+    :func:`_fetch_cluster_gpu_stats` for nodes/pods accounting. All
+    sub-calls are best-effort: failures fall back to ``"unknown"`` /
+    zero counts rather than surfacing errors, because the UI displays
+    this as supplementary context and callers with limited RBAC should
+    not see the page fail.
     """
     k8s_version = await _fetch_k8s_version(api)
-    node_count, gpu_count = await _fetch_node_gpu_totals(api)
+    stats = await _fetch_cluster_gpu_stats(api)
     return ClusterResponse(
-        nodes=node_count,
-        gpus=gpu_count,
+        nodes=stats["node_count"],
+        gpus=stats["gpus"],
+        gpus_used=stats["gpus_used"],
+        gpus_free=stats["gpus_free"],
+        utilization_percent=stats["utilization_percent"],
+        gpu_nodes=stats["gpu_nodes"],
+        nodes_free=stats["nodes_free"],
+        nodes_partial=stats["nodes_partial"],
+        nodes_full=stats["nodes_full"],
         kubernetes_version=k8s_version,
     )
 

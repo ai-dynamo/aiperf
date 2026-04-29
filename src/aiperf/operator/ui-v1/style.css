@@ -412,6 +412,86 @@ select, input {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   Alpha Banner — present on every page
+────────────────────────────────────────────────────────────── */
+.alpha-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 16px;
+  margin: 8px 16px 0;
+  background:
+    linear-gradient(90deg,
+      rgba(255, 193, 7, 0.06) 0%,
+      rgba(255, 193, 7, 0.10) 50%,
+      rgba(255, 193, 7, 0.06) 100%);
+  border: 1px solid rgba(255, 193, 7, 0.25);
+  border-radius: var(--radius);
+  font-size: var(--font-size-xs);
+  color: var(--sub);
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+.alpha-banner-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--bg);
+  background: var(--amber);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Cluster Stats Banner — top-of-page GPU/node summary
+────────────────────────────────────────────────────────────── */
+.cluster-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 6px 16px;
+  margin: 8px 16px 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--sub);
+  flex-shrink: 0;
+}
+.cluster-stat-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cluster-stat-group--right {
+  margin-left: auto;
+}
+.cluster-stat-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.cluster-stat-num {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.cluster-stat-num--ok    { color: var(--green); }
+.cluster-stat-num--warn  { color: var(--amber); }
+.cluster-stat-num--bad   { color: var(--red); }
+.cluster-stat-num--total { color: var(--text); }
+.cluster-stat-sep {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* ──────────────────────────────────────────────────────────────
    Status Bar
 ────────────────────────────────────────────────────────────── */
 .status-bar {
@@ -638,6 +718,52 @@ select, input {
 .job-badge.failed {
   background: rgba(239, 68, 68, 0.12);
   color: var(--red);
+}
+
+.job-subphase {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.live-metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--bg-raised) 50%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.live-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.live-metric-label {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.live-metric-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.live-metric-unit {
+  color: var(--dim);
+  font-size: 10px;
 }
 
 .job-meta {
@@ -950,6 +1076,69 @@ select, input {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   Meta pills (namespace, epoch)
+────────────────────────────────────────────────────────────── */
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.meta-pill__prefix {
+  opacity: 0.6;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.meta-pill__prefix::after {
+  content: ':';
+  margin-left: 1px;
+  opacity: 0.7;
+}
+
+.meta-pill__suffix {
+  opacity: 0.6;
+  font-weight: 400;
+}
+
+.meta-pill__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.meta-pill--model {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-color: var(--surface0);
+}
+
+.meta-pill--clickable {
+  cursor: pointer;
+  user-select: none;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.meta-pill--clickable:hover {
+  filter: brightness(1.25);
+}
+
+.meta-pill--clickable:active {
+  transform: translateY(1px);
+}
+
+/* ──────────────────────────────────────────────────────────────
    Progress Inline
 ────────────────────────────────────────────────────────────── */
 .progress-cell {
@@ -1133,6 +1322,135 @@ select, input {
 .phase-bar-item--active .phase-bar-fill { background: var(--blue); }
 .phase-bar-item--active .phase-bar-name { color: var(--blue); }
 .phase-bar-item--pending .phase-bar-fill { background: var(--dim); }
+
+/* ──────────────────────────────────────────────────────────────
+   Record Processing panel — backed by PhaseProgress.records*
+────────────────────────────────────────────────────────────── */
+.record-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px;
+  padding: 8px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.record-summary-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  font-family: var(--font-mono);
+}
+.record-summary-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.record-summary-value {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.record-summary-value--ok   { color: var(--green); }
+.record-summary-value--warn { color: var(--amber); }
+.record-summary-value--bad  { color: var(--red); }
+
+.record-live-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 80%, transparent);
+  animation: record-pulse 1.6s ease-out infinite;
+}
+@keyframes record-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); }
+  70%  { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%,  transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%,  transparent); }
+}
+
+.record-phase-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.record-phase-table th {
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.record-phase-table td {
+  padding: 6px 8px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.record-phase-table tr:last-child td { border-bottom: none; }
+.record-phase-table td.num,
+.record-phase-table th.num {
+  text-align: right;
+}
+.record-phase-table tr[data-state="done"] .record-phase-name { color: var(--green); }
+.record-phase-table tr[data-state="active"] .record-phase-name { color: var(--blue); }
+.record-phase-table tr[data-state="cancelled"] .record-phase-name { color: var(--red); }
+.record-phase-table tr[data-state="timeout"] .record-phase-name { color: var(--amber); }
+.record-phase-table tr[data-state="pending"] .record-phase-name { color: var(--muted); }
+
+.record-phase-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.record-phase-tag--bad  { background: color-mix(in srgb, var(--red) 18%, transparent);   color: var(--red); }
+.record-phase-tag--warn { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+
+.record-progress-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+}
+.record-progress-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-raised);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.record-progress-fill {
+  height: 100%;
+  background: var(--blue);
+  transition: width 240ms ease;
+}
+.record-progress-fill--done      { background: var(--green); }
+.record-progress-fill--active    { background: var(--blue); }
+.record-progress-fill--pending   { background: var(--dim); }
+.record-progress-fill--cancelled { background: var(--red); }
+.record-progress-fill--timeout   { background: var(--amber); }
+.record-progress-pct {
+  min-width: 44px;
+  text-align: right;
+  color: var(--sub);
+  font-size: 10px;
+}
+
+.record-cell--ok   { color: var(--green); }
+.record-cell--warn { color: var(--amber); }
+.record-cell--bad  { color: var(--red); }
 
 /* ──────────────────────────────────────────────────────────────
    Pods Bar

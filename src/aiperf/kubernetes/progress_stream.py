@@ -9,11 +9,13 @@ import aiohttp
 import orjson
 
 from aiperf.kubernetes.console import print_info
+from aiperf.kubernetes.environment import K8sEnvironment
 
-# WebSocket reconnection parameters (exponential backoff)
-_WS_INITIAL_BACKOFF = 1.0  # seconds
-_WS_MAX_BACKOFF = 30.0  # seconds
-_WS_HEARTBEAT = 30  # seconds between WebSocket heartbeats
+# WebSocket reconnection parameters -- backed by K8sEnvironment.PROGRESS_STREAM.
+# Aliases kept so callsites stay short; tests monkeypatch these names.
+_WS_INITIAL_BACKOFF = K8sEnvironment.PROGRESS_STREAM.WS_INITIAL_BACKOFF_SECONDS
+_WS_MAX_BACKOFF = K8sEnvironment.PROGRESS_STREAM.WS_MAX_BACKOFF_SECONDS
+_WS_HEARTBEAT = K8sEnvironment.PROGRESS_STREAM.WS_HEARTBEAT_SECONDS
 
 
 async def _consume_ws_messages(
@@ -34,6 +36,11 @@ async def _consume_ws_messages(
                 return True
         elif msg.type == aiohttp.WSMsgType.ERROR:
             return False  # Reconnect
+        elif msg.type == aiohttp.WSMsgType.CLOSE:
+            # Server initiated close. Treat 1000 (normal) and the synthetic
+            # ``None`` (no code received) as graceful; everything else is an
+            # abnormal close and warrants a reconnect.
+            return ws.close_code in (None, 1000)
         elif msg.type == aiohttp.WSMsgType.CLOSED:
             return True  # Server closed
     return False

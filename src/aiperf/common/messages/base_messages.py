@@ -150,14 +150,19 @@ class Message(
         exclude_none: bool = False,
         mode: str | None = None,
         by_alias: bool = False,
+        exclude: set[str] | None = None,
     ) -> dict[str, Any]:
         """Pydantic-compat shim — ``mode`` and ``by_alias`` are accepted but ignored.
 
         ``omit_defaults=True`` on the Struct already drops None defaults, so the
         ``exclude_none`` branch is a no-op for the common path. Explicit non-None
-        values are preserved.
+        values are preserved. ``exclude`` filters by top-level field name to
+        match Pydantic's behavior for the simple-set case (we don't support the
+        nested-dict form).
         """
         data = msgspec.to_builtins(self, enc_hook=_msgspec_enc_hook)
+        if exclude:
+            data = {k: v for k, v in data.items() if k not in exclude}
         if exclude_none:
             return {k: v for k, v in data.items() if v is not None}
         return data

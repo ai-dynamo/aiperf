@@ -926,7 +926,7 @@ function ReliabilityMeter({ summary, slosDeclared, fallbackTotal, fallbackErrors
   const errorCount = summary.error_count
     ?? (fallbackErrors != null ? fallbackErrors : null)
     ?? (total != null && summary.error_rate != null
-        ? Math.round((summary.error_rate / 100) * total)
+        ? Math.round(summary.error_rate * total)
         : null);
 
   if (slosDeclared && total != null && goodput != null) {
@@ -1341,10 +1341,10 @@ export function Run({ ns, name, epoch }) {
           setSamples(prev => {
             const next = [...prev, {
               t: Date.now(),
-              rps:   s.throughput_rps ?? null,
-              p99:   s.latency_p99_ms ?? s.latency_avg_ms ?? null,
-              ttft:  s.ttft_p99_ms ?? s.ttft_avg_ms ?? null,
-              tokps: s.output_token_throughput ?? null,
+              rps:   s.request_throughput?.avg ?? null,
+              p99:   s.request_latency?.p99 ?? s.request_latency?.avg ?? null,
+              ttft:  s.time_to_first_token?.p99 ?? s.time_to_first_token?.avg ?? null,
+              tokps: s.output_token_throughput?.avg ?? null,
             }];
             return next.length > MAX_SAMPLES ? next.slice(-MAX_SAMPLES) : next;
           });
@@ -1375,10 +1375,10 @@ export function Run({ ns, name, epoch }) {
   const endMs = isTerminal && job?.completionTime ? new Date(job.completionTime).getTime() : Date.now();
   const elapsed = startMs != null ? (endMs - startMs) / 1000 : null;
   const eta = phaseEta(active);
-  const rps = summary.throughput_rps;
-  const ttft = summary.ttft_p99_ms ?? summary.ttft_avg_ms;
-  const p99 = summary.latency_p99_ms ?? summary.latency_avg_ms;
-  const tokps = summary.output_token_throughput ?? summary.throughput_tps;
+  const rps = summary.request_throughput?.avg;
+  const ttft = summary.time_to_first_token?.p99 ?? summary.time_to_first_token?.avg;
+  const p99 = summary.request_latency?.p99 ?? summary.request_latency?.avg;
+  const tokps = summary.output_token_throughput?.avg;
 
   if (!job && !detail) {
     return html`

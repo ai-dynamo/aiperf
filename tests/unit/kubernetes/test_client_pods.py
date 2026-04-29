@@ -33,10 +33,12 @@ from pytest import param
 from aiperf.kubernetes.client_pods import (
     cluster_version,
     find_controller_pod,
+    find_operator_namespace,
     find_operator_pod,
     find_retrievable_pod,
     get_pod_summary,
     get_pods,
+    resolve_operator_namespace,
 )
 from aiperf.kubernetes.enums import PodPhase
 from aiperf.kubernetes.models import PodSummary
@@ -273,6 +275,136 @@ class TestFindOperatorPodSelectorArgs:
         args, kwargs = mock_core.list_namespaced_pod.call_args
         assert args == ("ops",)
         assert kwargs["label_selector"] == "a=b"
+
+
+class TestFindOperatorNamespace:
+    """Cluster-wide auto-detect of the operator install."""
+
+    @pytest.mark.asyncio
+    async def test_returns_namespace_of_first_match(self) -> None:
+        """Picks the namespace from the first pod returned by list_pod_for_all_namespaces."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(
+            return_value=_pod_list([_make_v1pod(name="op-1", namespace="ops")]),
+        )
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await find_operator_namespace(api)
+        assert result == "ops"
+        kwargs = mock_core.list_pod_for_all_namespaces.call_args.kwargs
+        assert kwargs["label_selector"] == "app.kubernetes.io/name=aiperf-operator"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_forbidden(self) -> None:
+        """403 from the apiserver returns None (caller falls back)."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(
+            side_effect=_api_exception(403),
+        )
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await find_operator_namespace(api)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_other_apiexception_propagates(self) -> None:
+        """A non-403 ApiException is surfaced (e.g., apiserver outage)."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(
+            side_effect=_api_exception(500),
+        )
+        with (
+            patch(
+                "aiperf.kubernetes.client_pods.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            pytest.raises(ApiException),
+        ):
+            await find_operator_namespace(api)
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_pods_match(self) -> None:
+        """Empty pod list returns None."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(return_value=_pod_list([]))
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            assert await find_operator_namespace(api) is None
+
+
+class TestResolveOperatorNamespace:
+    """Pick-an-operator-namespace policy: explicit > auto-detect > default."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_passes_through_without_calling_apiserver(self) -> None:
+        """An explicit value short-circuits — apiserver is never queried."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock()
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await resolve_operator_namespace(api, explicit="custom-ns")
+        assert result == "custom-ns"
+        mock_core.list_pod_for_all_namespaces.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_detect_uses_discovered_namespace(self) -> None:
+        """When explicit=None and discovery succeeds, returns the discovered ns."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(
+            return_value=_pod_list([_make_v1pod(namespace="discovered-ns")]),
+        )
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            assert (
+                await resolve_operator_namespace(api, explicit=None) == "discovered-ns"
+            )
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_default_on_no_match(self) -> None:
+        """When discovery returns None (no pods, or 403), uses the default."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(return_value=_pod_list([]))
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            assert (
+                await resolve_operator_namespace(api, explicit=None) == "aiperf-system"
+            )
+
+    @pytest.mark.asyncio
+    async def test_custom_default(self) -> None:
+        """Caller can override the fallback default."""
+        api = MagicMock(spec=ApiClient)
+        mock_core = MagicMock()
+        mock_core.list_pod_for_all_namespaces = AsyncMock(
+            side_effect=_api_exception(403),
+        )
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            assert (
+                await resolve_operator_namespace(api, explicit=None, default="my-ns")
+                == "my-ns"
+            )
 
 
 class TestFindControllerPodErrorPath:

@@ -76,7 +76,10 @@ def _patch_results_dir(tmp_path: Path):
 class TestSummaryWrittenFromMetricsApi:
     """When the controller's /api/metrics returned data, summary is set
     from those metrics — pre-existing path, kept passing as a regression
-    guard."""
+    guard. The summary shape is the curated nested
+    ``{tag: {avg, p50, p99, ...}}`` projection — same shape as
+    ``status.liveMetrics.metrics`` but filtered to the allowlist of tags.
+    """
 
     def test_set_summary_called_with_throughput(self, tmp_path: Path) -> None:
         sb = MagicMock()
@@ -102,8 +105,8 @@ class TestSummaryWrittenFromMetricsApi:
         sb.set_results.assert_called_once()
         sb.set_summary.assert_called_once()
         summary = sb.set_summary.call_args.args[0]
-        assert summary["throughput_rps"] == 1234.5
-        assert summary["latency_p99_ms"] == 50.0
+        assert summary["request_throughput"]["avg"] == 1234.5
+        assert summary["request_latency"]["p99"] == 50.0
 
 
 class TestSummaryFallbackFromFiles:
@@ -136,23 +139,26 @@ class TestSummaryFallbackFromFiles:
         sb.set_results.assert_called_once()
         sb.set_summary.assert_called_once()
         summary = sb.set_summary.call_args.args[0]
-        assert summary["throughput_rps"] == 4772.5
-        assert summary["latency_avg_ms"] == 96.5
-        assert summary["latency_p99_ms"] == 900.2
-        assert summary["ttft_p99_ms"] == 900.2
+        assert summary["request_throughput"]["avg"] == 4772.5
+        assert summary["request_latency"]["avg"] == 96.5
+        assert summary["request_latency"]["p99"] == 900.2
+        assert summary["time_to_first_token"]["p99"] == 900.2
 
     def test_set_summary_skipped_when_file_metrics_yield_no_summary(
         self, tmp_path: Path
     ) -> None:
         """Edge case: file present but missing throughput/latency tags.
-        ``MetricsSummary.from_metrics`` returns a value with all-None
-        fields, ``to_status_dict`` filters those out, so set_summary
-        should not be called with an empty dict."""
+
+        ``MetricsSummary.from_metrics`` returns a (possibly partial) projection;
+        ``to_status_dict`` returns an empty dict only when no allowlisted tag
+        was present. This test exercises the half-populated case where only
+        ``request_throughput`` is on disk.
+        """
         job_dir = tmp_path / "ns" / "test-job" / FIXTURE_EPOCH
         job_dir.mkdir(parents=True, exist_ok=True)
         write_latest(tmp_path, "ns", "test-job", FIXTURE_EPOCH)
         # Has request_throughput at the top level (so _parse_metrics_from_files
-        # accepts it) but no metrics MetricsSummary cares about beyond it.
+        # accepts it) but no other allowlisted metric tags.
         (job_dir / "profile_export_aiperf.json").write_bytes(
             orjson.dumps({"request_throughput": {"avg": 100.0}})
         )
@@ -173,12 +179,10 @@ class TestSummaryFallbackFromFiles:
             )
         # set_results runs unconditionally on the file-metrics path.
         sb.set_results.assert_called_once()
-        # set_summary fires when MetricsSummary derived at least one field;
-        # the wrapped-by-_parse_metrics_from_files shape includes
-        # ``request_throughput`` so we expect throughput_rps=100.0.
+        # set_summary fires when MetricsSummary projected at least one field.
         sb.set_summary.assert_called_once()
         summary = sb.set_summary.call_args.args[0]
-        assert summary == {"throughput_rps": 100.0}
+        assert summary == {"request_throughput": {"avg": 100.0}}
 
     def test_no_summary_when_no_metrics_and_no_files(self, tmp_path: Path) -> None:
         """Fallback-of-fallback: nothing parseable → no set_summary call."""

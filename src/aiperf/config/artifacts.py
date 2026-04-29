@@ -232,11 +232,6 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / "profile_export_console.txt"
 
     @property
-    def profile_export_console_ansi_file(self) -> Path:
-        """Get the path for the ANSI-styled console export file."""
-        return self.dir / "profile_export_console.ansi"
-
-    @property
     def profile_export_gpu_telemetry_jsonl_file(self) -> Path:
         """Get the path for the GPU telemetry JSONL export file."""
         return self.dir / "gpu_telemetry_export.jsonl"

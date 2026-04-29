@@ -54,7 +54,34 @@ class ClusterResponse(AIPerfBaseModel):
     """Response for GET /api/v1/cluster."""
 
     nodes: int = Field(description="Number of cluster nodes.")
-    gpus: int = Field(description="Total allocatable GPUs.")
+    gpus: int = Field(description="Total allocatable nvidia.com/gpu resources.")
+    gpus_used: int = Field(
+        default=0,
+        description=(
+            "Sum of nvidia.com/gpu requests across Running and Pending pods "
+            "in all namespaces. 0 if cluster-wide pod listing fails."
+        ),
+    )
+    gpus_free: int = Field(
+        default=0,
+        description="Allocatable GPUs not currently requested. 0 if pod listing fails.",
+    )
+    utilization_percent: float = Field(
+        default=0.0,
+        description="100 * gpus_used / gpus, rounded to one decimal. 0 if no GPUs.",
+    )
+    gpu_nodes: int = Field(
+        default=0, description="Number of nodes with at least one nvidia.com/gpu."
+    )
+    nodes_free: int = Field(
+        default=0, description="GPU nodes with zero requested GPUs (fully available)."
+    )
+    nodes_partial: int = Field(
+        default=0, description="GPU nodes with some but not all GPUs requested."
+    )
+    nodes_full: int = Field(
+        default=0, description="GPU nodes with every GPU requested."
+    )
     kubernetes_version: str = Field(description="Kubernetes server version.")
 
 

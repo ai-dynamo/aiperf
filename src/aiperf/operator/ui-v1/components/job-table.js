@@ -3,6 +3,8 @@ import { useState, useMemo } from 'preact/hooks';
 import { phaseColor, palette } from '../lib/theme.js';
 import { fmtNumber, fmtThroughput } from '../lib/format.js';
 import { navigate } from '../lib/router.js';
+import { NsPill } from './pills.js';
+import { RelativeTime } from './time.js';
 
 const COLUMNS = [
   { key: 'name', label: 'Name' },
@@ -14,18 +16,6 @@ const COLUMNS = [
   { key: 'latency', label: 'Latency' },
   { key: 'age', label: 'Age' },
 ];
-
-function relativeAge(ts) {
-  if (!ts) return '---';
-  const ms = Date.now() - new Date(ts).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
 
 // API returns AIPerfJobInfo with flat camelCase fields:
 // name, namespace, phase, workersReady, workersTotal, progressPercent,
@@ -44,17 +34,19 @@ function jobValue(job, key) {
   }
 }
 
-export function JobTable({ jobs, onRowClick, filter }) {
-  const [sortKey, setSortKey] = useState('age');
-  const [sortDir, setSortDir] = useState(-1);
+export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onSortChange }) {
+  const [internalSort, setInternalSort] = useState({ key: 'age', dir: -1 });
+  const controlled = !!(sort && onSortChange);
+  const activeSort = controlled ? sort : internalSort;
+  const sortKey = activeSort.key;
+  const sortDir = Number(activeSort.dir) || 1;
 
   function toggleSort(key) {
-    if (sortKey === key) {
-      setSortDir((d) => -d);
-    } else {
-      setSortKey(key);
-      setSortDir(1);
-    }
+    const next = (sortKey === key)
+      ? { key, dir: -sortDir }
+      : { key, dir: 1 };
+    if (controlled) onSortChange(next);
+    else setInternalSort(next);
   }
 
   const filtered = filter && filter.length > 0
@@ -190,13 +182,17 @@ export function JobTable({ jobs, onRowClick, filter }) {
                   </div>
                 `}
               </td>
-              <td class="job-table-td text-dim">${job.namespace}</td>
+              <td class="job-table-td">
+                <${NsPill} ns=${job.namespace} onClick=${onNamespaceClick} testId=${'job-row-ns-' + (job.namespace ?? '')} />
+              </td>
               <td class="job-table-td">${renderPhase(job.phase)}</td>
               <td class="job-table-td">${renderWorkers(job)}</td>
               <td class="job-table-td">${renderProgress(job)}</td>
               <td class="job-table-td">${renderThroughput(job)}</td>
               <td class="job-table-td">${renderLatency(job)}</td>
-              <td class="job-table-td text-dim">${relativeAge(job.created)}</td>
+              <td class="job-table-td text-dim">
+                <${RelativeTime} ts=${job.created} />
+              </td>
             </tr>
           `)}
         </tbody>

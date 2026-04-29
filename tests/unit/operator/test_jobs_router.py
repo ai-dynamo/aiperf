@@ -165,7 +165,10 @@ class TestCluster:
     async def test_cluster_info(self):
         mock_api = MagicMock()
         node = _node_obj(gpu="1")
-        mock_core = MagicMock(list_node=AsyncMock(return_value=MagicMock(items=[node])))
+        mock_core = MagicMock(
+            list_node=AsyncMock(return_value=MagicMock(items=[node])),
+            list_pod_for_all_namespaces=AsyncMock(return_value=MagicMock(items=[])),
+        )
 
         # cluster_version builds its result from VersionApi.get_code; mock it.
         version_info = MagicMock()
@@ -197,7 +200,80 @@ class TestCluster:
         data = resp.json()
         assert data["nodes"] == 1
         assert data["gpus"] == 1
+        assert data["gpus_used"] == 0
+        assert data["gpus_free"] == 1
+        assert data["gpu_nodes"] == 1
+        assert data["nodes_free"] == 1
+        assert data["nodes_partial"] == 0
+        assert data["nodes_full"] == 0
+        assert data["utilization_percent"] == 0.0
         assert data["kubernetes_version"] == "v1.33.1"
+
+    @pytest.mark.asyncio
+    async def test_cluster_info_gpu_usage_breakdown(self):
+        """Two 8-GPU nodes: one fully used, one partially used → mixed states."""
+        mock_api = MagicMock()
+        node_a = _node_obj(name="node-a", gpu="8")
+        node_b = _node_obj(name="node-b", gpu="8")
+
+        def _gpu_pod(name: str, node: str, gpus: int, phase: str) -> MagicMock:
+            pod = MagicMock()
+            pod.metadata = MagicMock(name=name, namespace="bench")
+            pod.spec = MagicMock(node_name=node)
+            container = MagicMock()
+            container.resources = MagicMock(requests={"nvidia.com/gpu": str(gpus)})
+            pod.spec.containers = [container]
+            pod.status = MagicMock(phase=phase)
+            return pod
+
+        # node-a: 8 used (full); node-b: 4 used (partial); plus a Succeeded pod
+        # that should be ignored entirely.
+        pods = [
+            _gpu_pod("worker-a", "node-a", 8, "Running"),
+            _gpu_pod("worker-b", "node-b", 4, "Running"),
+            _gpu_pod("done", "node-b", 4, "Succeeded"),
+        ]
+
+        mock_core = MagicMock(
+            list_node=AsyncMock(return_value=MagicMock(items=[node_a, node_b])),
+            list_pod_for_all_namespaces=AsyncMock(return_value=MagicMock(items=pods)),
+        )
+
+        version_info = MagicMock()
+        version_info.major = "1"
+        version_info.minor = "33"
+        version_info.git_version = "v1.33.1"
+        version_info.git_commit = "abc"
+        version_info.platform = "linux/amd64"
+        mock_version = MagicMock(get_code=AsyncMock(return_value=version_info))
+
+        app = _make_app(mock_api)
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.client.VersionApi",
+                return_value=mock_version,
+            ),
+            patch(
+                "aiperf.operator.routers.jobs.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get("/api/v1/cluster")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["gpus"] == 16
+        assert data["gpus_used"] == 12
+        assert data["gpus_free"] == 4
+        assert data["utilization_percent"] == 75.0
+        assert data["gpu_nodes"] == 2
+        assert data["nodes_free"] == 0
+        assert data["nodes_partial"] == 1
+        assert data["nodes_full"] == 1
 
 
 class TestCancel:
@@ -312,9 +388,9 @@ def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
     assert status["phase"] == "Succeeded"
     assert status["currentPhase"] == "completed"
     assert status["workers"] == {"ready": 0, "total": 0}
-    assert status["summary"]["throughput_rps"] == 42.1
-    assert status["summary"]["latency_p99_ms"] == 390.0
-    assert status["summary"]["ttft_avg_ms"] == 45.5
+    assert status["summary"]["request_throughput"]["avg"] == 42.1
+    assert status["summary"]["request_latency"]["p99"] == 390.0
+    assert status["summary"]["time_to_first_token"]["avg"] == 45.5
     assert status["summary"]["total_requests"] == 7777
     assert status["phases"]["benchmark"]["requestsCompleted"] == 7777
     assert body["pods"] == []

@@ -2,9 +2,10 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
-import { navigate } from '../lib/router.js';
+import { navigate, query, setQuery } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { NsPill, ModelPill } from '../components/pills.js';
 import { fmtNumber } from '../lib/format.js';
 
 function formatDate(iso) {
@@ -31,8 +32,23 @@ function formatNum(v) {
 
 export function History() {
   const [selected, setSelected] = useState({ metric: 'request_throughput', stat: 'avg' });
-  const [model, setModel] = useState('');
-  const [endpoint, setEndpoint] = useState('');
+  const q = query.value;
+  const ns = q.ns ?? '';
+  const urlModel = q.model ?? '';
+  const urlEndpoint = q.endpoint ?? '';
+  const [model, setModel] = useState(urlModel);
+  const [endpoint, setEndpoint] = useState(urlEndpoint);
+  useEffect(() => { if (model !== urlModel) setModel(urlModel); /* eslint-disable-line */ }, [urlModel]);
+  useEffect(() => { if (endpoint !== urlEndpoint) setEndpoint(urlEndpoint); /* eslint-disable-line */ }, [urlEndpoint]);
+  useEffect(() => {
+    const t = setTimeout(() => { if (model !== urlModel) setQuery({ model }); }, 200);
+    return () => clearTimeout(t);
+  }, [model, urlModel]);
+  useEffect(() => {
+    const t = setTimeout(() => { if (endpoint !== urlEndpoint) setQuery({ endpoint }); }, 200);
+    return () => clearTimeout(t);
+  }, [endpoint, urlEndpoint]);
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -64,6 +80,7 @@ export function History() {
   const filtered = entries.filter((e) => {
     if (model && !(e.model ?? '').toLowerCase().includes(model.toLowerCase())) return false;
     if (endpoint && !(e.endpoint ?? '').toLowerCase().includes(endpoint.toLowerCase())) return false;
+    if (ns && (e.namespace ?? '') !== ns) return false;
     return true;
   });
 
@@ -134,6 +151,18 @@ export function History() {
       <div class="card" style="margin-bottom: var(--space-4); display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap">
         <${MetricSelector} value=${selected} onSelect=${setSelected} />
         <div style="display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap">
+          ${ns && html`
+            <span
+              class="meta-pill meta-pill--clickable"
+              style=${'background:' + palette.teal + '22;color:' + palette.teal + ';border-color:' + palette.teal + '55'}
+              title=${'Namespace filter: ' + ns + ' (click to clear)'}
+              onclick=${() => setQuery({ ns: undefined })}
+              data-testid="ns-filter-chip"
+            >
+              <span class="meta-pill__prefix">ns</span>${ns}
+              <span style="margin-left:4px;opacity:0.7">×</span>
+            </span>
+          `}
           <div style="display: flex; align-items: center; gap: var(--space-2)">
             <label class="metric-selector-label">Model</label>
             <input
@@ -192,6 +221,7 @@ export function History() {
               <thead>
                 <tr style="color: var(--subtext0); border-bottom: 1px solid var(--surface1)">
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Job</th>
+                  <th style="text-align: left; padding: var(--space-2) var(--space-3)">Namespace</th>
                   <th style="text-align: right; padding: var(--space-2) var(--space-3)">Value</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Model</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Date</th>
@@ -208,11 +238,16 @@ export function History() {
                         ${entry.job_id ?? '—'}
                       </span>
                     </td>
+                    <td style="padding: var(--space-2) var(--space-3)">
+                      <${NsPill} ns=${entry.namespace} onClick=${nsClicked => setQuery({ ns: nsClicked })} testId=${'history-row-ns-' + (entry.namespace ?? '')} />
+                    </td>
                     <td style="text-align: right; padding: var(--space-2) var(--space-3); font-weight: 600">
                       ${formatNum(entry.value)}${entry.unit ? html` <span style="color: var(--overlay0); font-weight: normal">${entry.unit}</span>` : ''}
                     </td>
                     <td style="padding: var(--space-2) var(--space-3); color: var(--subtext0)">
-                      ${entry.model ?? '—'}
+                      ${entry.model
+                        ? html`<${ModelPill} model=${entry.model} onClick=${m => setModel(m)} testId=${'history-row-model-' + entry.model} />`
+                        : html`<span class="text-dim">—</span>`}
                     </td>
                     <td style="padding: var(--space-2) var(--space-3); color: var(--overlay0)">
                       ${formatDate(entry.start_time)}

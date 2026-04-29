@@ -126,6 +126,31 @@ class TestBufferedJSONLWriterMixin:
         assert not temp_output_file.exists(), "Empty file should be deleted"
 
     @pytest.mark.asyncio
+    async def test_file_not_created_until_first_write(self, temp_output_file):
+        """Lazy open: the output file must not exist on disk until a record
+        is actually flushed. Closes the timing window where the results
+        sidecar enumerates artifacts and exposes a 0-byte file before
+        @on_stop cleanup runs (e.g., empty gpu_telemetry_export.jsonl when
+        no DCGM endpoints are reachable).
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+            flush_interval=1000.0,  # disable periodic flush
+        )
+        await writer.initialize()
+        await writer.start()
+
+        assert not temp_output_file.exists(), (
+            "File must not be created until first record is flushed"
+        )
+        assert writer._file_handle is None
+
+        await writer.stop()
+
+        assert not temp_output_file.exists()
+
+    @pytest.mark.asyncio
     async def test_file_preserved_when_records_written(self, temp_output_file):
         """Test that output file is preserved when records are written."""
         writer = BufferedJSONLWriterMixin[SampleRecord](

@@ -8,6 +8,16 @@
     ],
     [
       "duplicate-classes",
+      "src/aiperf/config/_models_benchmark.py",
+      "MultiRunConfig"
+    ],
+    [
+      "duplicate-classes",
+      "src/aiperf/kubernetes/sweep_models.py",
+      "MultiRunConfig"
+    ],
+    [
+      "duplicate-classes",
       "src/aiperf/operator/events.py",
       "EventType"
     ],
@@ -23,7 +33,27 @@
     ],
     [
       "file-size",
-      "src/aiperf/config/cli_model.py",
+      "src/aiperf/cli_commands/kube/results.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/artifacts.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/config.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/dataset.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/distributions.py",
       ""
     ],
     [
@@ -34,6 +64,26 @@
     [
       "file-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/kubernetes/environment.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/kubernetes/models.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/kubernetes/results.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/kubernetes/watchdog.py",
       ""
     ],
     [
@@ -49,6 +99,11 @@
     [
       "file-size",
       "src/aiperf/operator/progress_client.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/operator/routers/jobs.py",
       ""
     ],
     [
@@ -73,7 +128,17 @@
     ],
     [
       "file-size",
+      "src/aiperf/records/records_manager.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/workers/worker.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/workers/worker_pod_manager.py",
       ""
     ],
     [
@@ -108,8 +173,28 @@
     ],
     [
       "function-size",
+      "src/aiperf/cli_commands/kube/generate.py",
+      "generate"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_commands/kube/list_.py",
       "list_jobs"
+    ],
+    [
+      "function-size",
+      "src/aiperf/cli_commands/kube/results.py",
+      "_run_results"
+    ],
+    [
+      "function-size",
+      "src/aiperf/cli_commands/kube/sweep.py",
+      "_build_sweep_cr_dict"
+    ],
+    [
+      "function-size",
+      "src/aiperf/cli_commands/kube/validate.py",
+      "validate"
     ],
     [
       "function-size",
@@ -128,8 +213,58 @@
     ],
     [
       "function-size",
+      "src/aiperf/kubernetes/cli_helpers.py",
+      "resolve_target"
+    ],
+    [
+      "function-size",
+      "src/aiperf/kubernetes/models.py",
+      "to_info"
+    ],
+    [
+      "function-size",
       "src/aiperf/operator/handlers/monitor.py",
       "_maybe_recover_terminated_controller"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/handlers/sweep/child_rollup.py",
+      "on_child_phase_transition"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/handlers/sweep/create.py",
+      "_create_sweep_controller_jobset"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/handlers/sweep/create.py",
+      "_provision_rbac"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/job_union.py",
+      "find_any_job"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/preflight/_resources.py",
+      "_check_node_resources"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/routers/jobs.py",
+      "_fetch_cluster_gpu_stats"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/routers/jobs.py",
+      "create_jobs_router"
+    ],
+    [
+      "function-size",
+      "src/aiperf/orchestrator/orchestrator.py",
+      "execute"
     ],
     [
       "function-size",
@@ -308,6 +443,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/sweep_controller/main.py",
+      "_write_sweep_parent_aggregate"
+    ],
+    [
+      "function-size",
+      "src/aiperf/sweep_controller/main.py",
+      "main"
+    ],
+    [
+      "function-size",
       "src/aiperf/transports/aiohttp_trace.py",
       "create_aiohttp_trace_config"
     ],
@@ -320,6 +465,11 @@
       "function-size",
       "src/aiperf/transports/sse_utils.py",
       "__aiter__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/workers/worker_pod_tokenizer_download.py",
+      "download_tokenizer"
     ],
     [
       "keyword-only-args",
@@ -364,6 +514,16 @@
     [
       "keyword-only-args",
       "src/aiperf/operator/main.py",
+      "on_aiperfsweep_cancel"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_aiperfsweep_create"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
       "on_benchmark_complete"
     ],
     [
@@ -375,6 +535,11 @@
       "keyword-only-args",
       "src/aiperf/operator/main.py",
       "on_create"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/routers/results_analytics.py",
+      "leaderboard"
     ],
     [
       "keyword-only-args",
@@ -437,14 +602,14 @@
       "register_export_png_callback"
     ],
     [
-      "pydantic-fields",
-      "src/aiperf/common/models/export_models.py",
-      "JsonExportData"
+      "nesting-depth",
+      "src/aiperf/workers/worker_pod_tokenizer_download.py",
+      "download_tokenizer"
     ],
     [
       "pydantic-fields",
-      "src/aiperf/config/cli_model.py",
-      "CLIModel"
+      "src/aiperf/common/models/export_models.py",
+      "JsonExportData"
     ]
   ]
 }

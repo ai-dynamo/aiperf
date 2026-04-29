@@ -64,6 +64,74 @@ async def find_operator_pod(
     return (pod.metadata.name, PodPhase(raw_phase))
 
 
+async def find_operator_namespace(
+    api: ApiClient,
+    label_selector: str = "app.kubernetes.io/name=aiperf-operator",
+) -> str | None:
+    """Cluster-wide search for an aiperf-operator pod; returns its namespace.
+
+    Returns:
+        Namespace of the first matching operator pod, or ``None`` if no pods
+        match. Also returns ``None`` (without raising) when the caller lacks
+        cluster-wide ``list pods`` RBAC — caller should fall back to a default.
+
+    The caller is expected to log a warning if more than one operator install
+    is detected; that's surfaced via the ``logger`` here.
+    """
+    core = client.CoreV1Api(api)
+    try:
+        pod_list = await core.list_pod_for_all_namespaces(
+            label_selector=label_selector,
+        )
+    except ApiException as exc:
+        # 403 = cluster-wide list-pods forbidden; caller falls back to default.
+        if exc.status == 403:
+            logger.debug(
+                "Cluster-wide pod list forbidden (RBAC); operator namespace "
+                "auto-detect unavailable: %s",
+                exc.reason,
+            )
+            return None
+        raise
+    if not pod_list.items:
+        return None
+    namespaces = {p.metadata.namespace for p in pod_list.items if p.metadata}
+    if len(namespaces) > 1:
+        logger.warning(
+            "Multiple aiperf-operator installs detected across namespaces %s; "
+            "picking '%s'. Pass --operator-namespace to override.",
+            sorted(namespaces),
+            pod_list.items[0].metadata.namespace,
+        )
+    return pod_list.items[0].metadata.namespace
+
+
+async def resolve_operator_namespace(
+    api: ApiClient,
+    *,
+    explicit: str | None,
+    default: str = "aiperf-system",
+) -> str:
+    """Pick the operator namespace: explicit flag > cluster-wide auto-detect > default.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+        explicit: Value of a CLI ``--operator-namespace`` flag, or ``None`` to
+            auto-detect.
+        default: Fallback when auto-detect finds no match or RBAC blocks the
+            cluster-wide pod list. Matches the chart's default install location.
+
+    Returns:
+        The resolved namespace string. Never raises for the auto-detect path —
+        the worst case is the caller getting back ``default`` and surfacing
+        "operator pod not found in namespace 'X'" downstream.
+    """
+    if explicit is not None:
+        return explicit
+    detected = await find_operator_namespace(api)
+    return detected if detected is not None else default
+
+
 async def find_controller_pod(
     api: ApiClient,
     namespace: str,
@@ -233,7 +301,7 @@ async def list_nodes(api: ApiClient) -> list[Any]:
     """Return cluster-wide ``V1Node`` list for the given apiclient.
 
     Thin wrapper over ``CoreV1Api(api).list_node().items`` exposed so
-    the UI's cluster-info endpoint (``_fetch_node_gpu_totals``) has a
+    the UI's cluster-info endpoint (``_fetch_cluster_gpu_stats``) has a
     single patch point for test fakes alongside :func:`get_pods` /
     :func:`list_events_for_object`. Callers that just need counts or
     GPU allocatable totals iterate the returned list directly.
@@ -258,6 +326,32 @@ async def list_nodes(api: ApiClient) -> list[Any]:
         ...     gpus = sum(int(n.status.allocatable.get("nvidia.com/gpu", 0)) for n in nodes)
     """
     return list((await client.CoreV1Api(api).list_node()).items or [])
+
+
+async def list_pods_all_namespaces(api: ApiClient) -> list[Any]:
+    """Return cluster-wide ``V1Pod`` list across every namespace.
+
+    Wraps ``CoreV1Api(api).list_pod_for_all_namespaces().items`` so the UI
+    cluster-stats endpoint can compute GPU usage by summing
+    ``nvidia.com/gpu`` requests on Running/Pending pods. Requires the
+    operator ServiceAccount's ClusterRole to grant ``pods get/list`` —
+    already present alongside the ``nodes`` permission used by
+    :func:`list_nodes`.
+
+    Args:
+        api: Open ``ApiClient`` from :func:`k8s_client`.
+
+    Returns:
+        List of ``kubernetes_asyncio.client.V1Pod``. Empty list if the
+        cluster has no pods. Return type is ``list[Any]`` for the same
+        reason as :func:`list_nodes`.
+
+    Raises:
+        kubernetes_asyncio.client.exceptions.ApiException: On any API
+            failure — in particular 403 when the ServiceAccount's
+            ClusterRole lacks ``pods list`` cluster-wide.
+    """
+    return list((await client.CoreV1Api(api).list_pod_for_all_namespaces()).items or [])
 
 
 async def cluster_version(api: ApiClient) -> dict[str, Any]:

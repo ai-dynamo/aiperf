@@ -125,6 +125,12 @@ async def _open_api_client(
     beyond a single ``async with`` block: CLI commands pass it through
     ``ResolvedJob`` to subsequent helpers and it closes when the process
     exits. Tests patch this function to inject a mock api.
+
+    Note: CLAUDE.md says "Always use ``async with k8s_client() as api:``;
+    never instantiate ``ApiClient()`` directly." This helper is the
+    documented exception -- short-lived CLI commands cannot wrap their
+    entire lifetime in one ``async with`` and rely on process exit to
+    close the client.
     """
     from kubernetes_asyncio import config
     from kubernetes_asyncio.client import ApiClient as _ApiClient

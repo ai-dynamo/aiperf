@@ -9,6 +9,7 @@ No I/O, no state -- suitable for use in any context.
 
 from __future__ import annotations
 
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.watch_models import (
     DiagnosisIssue,
     DiagnosisResult,
@@ -16,11 +17,13 @@ from aiperf.kubernetes.watch_models import (
 )
 from aiperf.operator.status import Phase
 
-_STALLED_PENDING_THRESHOLD_S = 60.0
-_STALLED_RUNNING_THRESHOLD_S = 30.0
-_CRASH_LOOP_RESTART_THRESHOLD = 3
-_HIGH_ERROR_RATE_THRESHOLD = 0.05
-_HIGH_LATENCY_P99_MULTIPLIER = 10.0
+# Aliases over K8sEnvironment.WATCH so the threshold names stay short at the
+# call sites; tests can monkeypatch these names if they need to shrink waits.
+_STALLED_PENDING_THRESHOLD_S = K8sEnvironment.WATCH.STALLED_PENDING_THRESHOLD_SECONDS
+_STALLED_RUNNING_THRESHOLD_S = K8sEnvironment.WATCH.STALLED_RUNNING_THRESHOLD_SECONDS
+_CRASH_LOOP_RESTART_THRESHOLD = K8sEnvironment.WATCH.CRASH_LOOP_RESTART_THRESHOLD
+_HIGH_ERROR_RATE_THRESHOLD = K8sEnvironment.WATCH.HIGH_ERROR_RATE_THRESHOLD
+_HIGH_LATENCY_P99_MULTIPLIER = K8sEnvironment.WATCH.HIGH_LATENCY_P99_MULTIPLIER
 
 
 def diagnose(snapshot: WatchSnapshot) -> DiagnosisResult:

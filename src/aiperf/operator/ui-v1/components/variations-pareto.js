@@ -1,0 +1,160 @@
+import { html } from 'htm/preact';
+import { useMemo } from 'preact/hooks';
+import { palette } from '../lib/theme.js';
+import { fmtNumber, fmtInt } from '../lib/format.js';
+import { ChartWrapper } from './chart-wrapper.js';
+
+/**
+ * Pareto-frontier scatter for a sweep — mirrors the legacy ui's
+ * ``analysis.js`` pattern: sort points ascending in x, walk left-to-right
+ * tracking the best-so-far on y, push on improvement. Output is a
+ * naturally-sorted frontier rendered as a dashed line; dominated points
+ * stay rendered as muted scatter dots.
+ *
+ * Props:
+ *   variations: [{ variation_index, label,
+ *                  perMetric: { "<key>.<stat>": { mean, std, cv, n } } }]
+ *   xMetric:    { key, stat, label, unit }
+ *   yMetric:    { key, stat, label, unit }
+ *   yIsSmallerBetter: bool   (if y is a latency metric — frontier rule flips)
+ */
+
+function shortLabel(label) {
+  if (!label) return '';
+  const eq = label.indexOf('=');
+  if (eq < 0) return label;
+  const dot = label.lastIndexOf('.', eq);
+  return dot >= 0 ? label.slice(dot + 1) : label;
+}
+
+const MUTED = palette.overlay1;
+
+export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBetter }) {
+  const chart = useMemo(() => {
+    if (!variations || variations.length === 0) return null;
+    const points = variations
+      .map(v => {
+        const xr = v.perMetric?.[xMetric.key + '.' + xMetric.stat];
+        const yr = v.perMetric?.[yMetric.key + '.' + yMetric.stat];
+        if (xr?.mean == null || yr?.mean == null) return null;
+        return {
+          x: xr.mean,
+          y: yr.mean,
+          jobName: shortLabel(v.label) || `v${v.variation_index}`,
+          cluster: 'sweep',
+        };
+      })
+      .filter(Boolean);
+    if (points.length === 0) return null;
+
+    // Monotone scan: sort by x asc, walk forward, push each point that
+    // improves bestY (strictly better when yIsSmallerBetter, otherwise
+    // greater-or-equal). Yields a left-to-right frontier ready to draw.
+    const sorted = [...points].sort((a, b) => a.x - b.x);
+    const frontier = [];
+    let bestY = yIsSmallerBetter ? Infinity : -Infinity;
+    for (const p of sorted) {
+      const better = yIsSmallerBetter ? p.y <= bestY : p.y >= bestY;
+      if (better) {
+        bestY = p.y;
+        frontier.push({ x: p.x, y: p.y, jobName: p.jobName });
+      }
+    }
+
+    const isSingleton = points.length < 2;
+    const color = isSingleton ? MUTED : palette.blue;
+
+    const datasets = [
+      {
+        label: 'sweep',
+        data: points.map(p => ({ x: p.x, y: p.y, jobName: p.jobName, cluster: p.cluster })),
+        backgroundColor: color,
+        borderColor: color,
+        borderWidth: 1.4,
+        pointRadius: 7,
+        pointHoverRadius: 11,
+        showLine: false,
+        order: 1,
+      },
+    ];
+    if (frontier.length >= 2) {
+      datasets.push({
+        label: 'sweep · frontier',
+        data: frontier,
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.6,
+        borderDash: [4, 4],
+        showLine: true,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        order: 2,
+        legend: false,
+      });
+    }
+
+    const options = {
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: {
+            color: palette.text,
+            usePointStyle: true,
+            pointStyle: 'rect',
+            boxWidth: 10,
+            padding: 16,
+            font: { size: 11 },
+            filter: (item, data) => {
+              const ds = data.datasets[item.datasetIndex];
+              return ds && ds.legend !== false;
+            },
+          },
+        },
+        tooltip: {
+          backgroundColor: palette.mantle,
+          titleColor: palette.text,
+          bodyColor: palette.text,
+          borderColor: palette.surface0,
+          borderWidth: 1,
+          callbacks: {
+            label: ctx => `${ctx.raw.cluster ?? ctx.dataset.label} · ${ctx.raw.jobName ?? ''} — ${fmtNumber(ctx.raw.x, 0)} · ${fmtInt(ctx.raw.y)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: `${xMetric.label} (${xMetric.unit})`, color: palette.overlay1, font: { size: 11 } },
+          grid: { color: palette.surface0 },
+          ticks: { color: palette.overlay1, font: { size: 10 } },
+        },
+        y: {
+          type: 'linear',
+          title: { display: true, text: `${yMetric.label} (${yMetric.unit})`, color: palette.overlay1, font: { size: 11 } },
+          grid: { color: palette.surface0 },
+          ticks: { color: palette.overlay1, font: { size: 10 } },
+        },
+      },
+    };
+
+    return { datasets, options, frontier };
+  }, [variations, xMetric, yMetric, yIsSmallerBetter]);
+
+  if (!chart) {
+    return html`<div class="text-dim" style="padding:var(--space-3) 0" data-testid="variations-pareto-empty">
+      Awaiting data — need at least one variation with both metrics.
+    </div>`;
+  }
+  return html`
+    <div data-testid="sweep-variations-pareto">
+      <${ChartWrapper} type="scatter" data=${{ datasets: chart.datasets }} options=${chart.options} height=${360} />
+      ${chart.frontier.length > 0 && html`
+        <div class="text-dim" style="margin-top:var(--space-2);font-size:var(--font-size-xs)">
+          frontier: ${chart.frontier.map(p => p.jobName).join(' → ') || '—'}
+        </div>
+      `}
+    </div>
+  `;
+}

@@ -695,7 +695,8 @@ class TestGPUTelemetryJSONLWriterLifecycle:
 
         assert processor._file_handle is None
         await processor.initialize()
-        assert processor._file_handle is not None
+        # File handle is opened lazily on first flush, not at initialize().
+        assert processor._file_handle is None
         await processor.start()
 
         try:
@@ -736,16 +737,17 @@ class TestGPUTelemetryJSONLWriterLifecycle:
         # Initially None
         assert processor._file_handle is None
 
-        # After initialize, should be open
+        # After initialize, still None — file is opened lazily on first flush.
         await processor.initialize()
-        assert processor._file_handle is not None
+        assert processor._file_handle is None
 
         await processor.start()
-        assert processor._file_handle is not None
+        assert processor._file_handle is None
 
-        # After stop, should be closed (None)
+        # After stop with no writes, file_handle stays None and no file is created.
         await processor.stop()
-        # Note: _file_handle may still be set but closed
+        assert processor._file_handle is None
+        assert not processor.output_file.exists()
 
     @pytest.mark.asyncio
     async def test_flush_on_shutdown(

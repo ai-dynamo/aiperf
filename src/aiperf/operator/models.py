@@ -11,7 +11,6 @@ This module provides validated models for:
 from __future__ import annotations
 
 import dataclasses
-import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -161,82 +160,119 @@ class PhaseProgress(K8sCamelModel):
 
 @dataclass(slots=True)
 class MetricsSummary:
-    """Extracted key metrics for CRD status.
+    """Filtered nested-dict view of metric tags written to ``status.summary``.
 
-    These are the most important metrics that users want to see at a glance
-    via `kubectl get aiperfjob -o wide` or in dashboards.
+    The CR exposes the full per-tag metrics dict at ``status.liveMetrics.metrics``
+    (running) and ``status.results.metrics`` (completed) — keys are AIPerf metric
+    tags (``output_token_throughput``, ``request_latency``, ...) and values are
+    the metric's full sub-dict (``avg``, ``p50``, ``p99``, ``count``, ``unit``,
+    ...). ``status.summary`` and ``status.liveSummary`` are a curated subset of
+    those tags written verbatim — same shape, fewer keys — so the UI reads
+    every metric through the single path ``summary[tag][stat]``.
+
+    Two derived top-level scalars are bolted on:
+    ``error_rate`` (errors / requests) and ``total_requests`` (request count).
+    These aren't AIPerf metric tags; they're computed from the raw counts.
     """
 
-    throughput_rps: float | None = None
-    """Request throughput (requests/second)."""
-
-    throughput_tps: float | None = None
-    """Token throughput (tokens/second)."""
-
-    latency_avg_ms: float | None = None
-    """Average request latency (milliseconds)."""
-
-    latency_p50_ms: float | None = None
-    """P50 request latency (milliseconds)."""
-
-    latency_p99_ms: float | None = None
-    """P99 request latency (milliseconds)."""
-
-    ttft_avg_ms: float | None = None
-    """Average time to first token (milliseconds)."""
-
-    ttft_p50_ms: float | None = None
-    """P50 time to first token (milliseconds)."""
-
-    ttft_p99_ms: float | None = None
-    """P99 time to first token (milliseconds)."""
-
-    total_requests: int | None = None
-    """Total requests completed."""
-
-    error_rate: float | None = None
-    """Error rate (0.0 to 1.0)."""
+    data: dict[str, Any] = dataclasses.field(default_factory=dict)
+    """Projected ``{metric_tag: metric_dict}`` plus derived scalars."""
 
     @classmethod
-    def from_metrics(cls, metrics: dict[str, Any]) -> MetricsSummary:
-        """Extract summary from full metrics response."""
+    def from_metrics(cls, metrics: dict[str, Any] | None) -> MetricsSummary:
+        """Project a curated nested view from a full metrics payload.
+
+        Accepts three input shapes:
+        1. ``{"metrics": {tag: {...}, ...}, ...}`` — live ``/api/metrics``.
+        2. ``{"metrics": [{"tag": ..., ...}, ...], ...}`` — legacy results
+           list form.
+        3. ``{tag: {...}, ...}`` — top-level tag dict, as written by
+           ``profile_export_aiperf.json``.
+        """
         if not metrics:
             return cls()
-
-        def get_metric(tag_pattern: str, stat: str = "avg") -> float | None:
-            raw = metrics.get("metrics", [])
-            # Live metrics API returns a dict keyed by metric name;
-            # results API returns a list of dicts with "tag" fields.
-            items: list[tuple[str, dict]] = []
-            if isinstance(raw, dict):
-                items = [(k, v) for k, v in raw.items() if isinstance(v, dict)]
-            elif isinstance(raw, list):
-                items = [(m.get("tag", ""), m) for m in raw if isinstance(m, dict)]
-
-            for tag, m in items:
-                if re.search(tag_pattern, tag, re.IGNORECASE):
-                    if stat in m:
-                        return m[stat]
-                    if "value" in m:
-                        return m["value"]
-            return None
-
-        return cls(
-            throughput_rps=get_metric(r"request.*throughput|throughput.*request"),
-            throughput_tps=get_metric(r"output.*token.*throughput|token.*throughput"),
-            latency_avg_ms=get_metric(r"request.*latency", "avg"),
-            latency_p50_ms=get_metric(r"request.*latency", "p50"),
-            latency_p99_ms=get_metric(r"request.*latency", "p99"),
-            ttft_avg_ms=get_metric(r"time.*first.*token|ttft", "avg"),
-            ttft_p50_ms=get_metric(r"time.*first.*token|ttft", "p50"),
-            ttft_p99_ms=get_metric(r"time.*first.*token|ttft", "p99"),
-            total_requests=int(get_metric(r"total.*requests") or 0) or None,
-            error_rate=get_metric(r"error.*rate"),
-        )
+        by_tag = _normalize_to_by_tag(metrics)
+        out: dict[str, Any] = {
+            tag: by_tag[tag] for tag in _SUMMARY_TAGS if tag in by_tag
+        }
+        out.update(_derived_scalars(metrics, by_tag))
+        return cls(data=out)
 
     def to_status_dict(self) -> dict[str, Any]:
-        """Convert to dict for CRD status, excluding None values."""
-        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
+        """Return the projected dict for writing to CR status (omits empty)."""
+        return self.data
+
+
+# Metric tags from the AIPerf metrics payload that we mirror verbatim into
+# ``status.summary``. Keep this list aligned with the metric tags emitted by
+# the controller's ``/api/metrics`` endpoint and the ``profile_export_aiperf.json``
+# results format. New metrics surface in summary by adding their tag here.
+_SUMMARY_TAGS: tuple[str, ...] = (
+    "request_throughput",
+    "request_latency",
+    "request_count",
+    "time_to_first_token",
+    "time_to_second_token",
+    "inter_token_latency",
+    "output_token_throughput",
+    "total_token_throughput",
+    "output_token_throughput_per_user",
+    "prefill_throughput_per_user",
+    "output_sequence_length",
+    "input_sequence_length",
+    "output_token_count",
+    "error_request_count",
+    "benchmark_duration",
+)
+
+
+def _normalize_to_by_tag(metrics: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Coerce any of the three accepted metrics shapes into a tag-keyed dict.
+
+    The live API delivers ``{"metrics": {tag: {...}}}``, the legacy results
+    file delivers ``{"metrics": [{"tag": ..., ...}]}``, and
+    ``profile_export_aiperf.json`` delivers metric tags at the top level.
+    """
+    raw: Any = metrics.get("metrics")
+    if raw is None:
+        raw = metrics
+    if isinstance(raw, dict):
+        return {k: v for k, v in raw.items() if isinstance(v, dict)}
+    if isinstance(raw, list):
+        out: dict[str, dict[str, Any]] = {}
+        for m in raw:
+            if not isinstance(m, dict):
+                continue
+            tag = m.get("tag")
+            if isinstance(tag, str):
+                out[tag] = m
+        return out
+    return {}
+
+
+def _derived_scalars(
+    metrics: dict[str, Any], by_tag: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Compute the two derived top-level scalars: ``total_requests`` and ``error_rate``.
+
+    Prefers the live counts (``request_count``/``error_request_count`` metric
+    tags); falls back to the top-level scalars ``profile_export_aiperf.json``
+    keeps for completed runs.
+    """
+    out: dict[str, Any] = {}
+    rc = (by_tag.get("request_count") or {}).get("avg")
+    ec = (by_tag.get("error_request_count") or {}).get("avg")
+    if isinstance(rc, (int, float)) and rc > 0:
+        out["total_requests"] = int(rc)
+        if isinstance(ec, (int, float)):
+            out["error_rate"] = float(ec) / float(rc)
+    if "error_rate" not in out and isinstance(metrics.get("error_rate"), (int, float)):
+        out["error_rate"] = float(metrics["error_rate"])
+    if "total_requests" not in out and isinstance(
+        metrics.get("request_count"), (int, float)
+    ):
+        out["total_requests"] = int(metrics["request_count"])
+    return out
 
 
 class K8sEndpointConfig(AIPerfBaseModel):
@@ -301,7 +337,7 @@ class AIPerfJobSpec(AIPerfBaseModel):
         default=0, ge=0, description="Job timeout in seconds (0 = no timeout)"
     )
     ttl_seconds_after_finished: int | None = Field(
-        default=300, description="TTL after finished (seconds)"
+        default=300, ge=0, description="TTL after finished (seconds)"
     )
     results_ttl_days: int | None = Field(
         default=None, ge=1, le=365, description="TTL for results in PVC (days)"

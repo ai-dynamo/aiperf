@@ -35,7 +35,7 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
     }
 
     const primaryDim = dimensions[0];
-    const xValues = primaryDim.values;
+    const xValues = Array.isArray(primaryDim?.values) ? primaryDim.values : [];
     const datasets = [];
 
     if (dimensions.length <= 1) {
@@ -57,7 +57,8 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
       });
     } else {
       const secondDim = dimensions[1];
-      secondDim.values.forEach((sv, idx) => {
+      const secondValues = Array.isArray(secondDim?.values) ? secondDim.values : [];
+      secondValues.forEach((sv, idx) => {
         const ys = xValues.map(xv => {
           const cell = cells.find(cc =>
             cc.values?.[primaryDim.name] === xv &&

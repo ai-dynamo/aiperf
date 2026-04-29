@@ -1,8 +1,10 @@
 import { html } from 'htm/preact';
 import { palette } from '../lib/theme.js';
+import { EpochPill } from './pills.js';
 
 /**
- * Reusable epoch dropdown + "viewing N of M" banner.
+ * Reusable epoch pill + dropdown. Always shows the active epoch as a pill
+ * (even on latest, so the user can never wonder which epoch they are on).
  *
  * Props:
  *   epochs:   [{ epoch, isLatest, mtimeEpoch, fileCount }]
@@ -17,32 +19,36 @@ export function EpochSelector({ epochs, current, onPick }) {
   }
 
   const latest = epochs.find(e => e.isLatest);
-  const sortedDesc = [...epochs].sort((a, b) => b.epoch.localeCompare(a.epoch));
+  const sortedDesc = [...epochs].sort((a, b) =>
+    (b?.epoch ?? '').localeCompare(a?.epoch ?? '')
+  );
   const isCurrentLatest = !current || (latest && current === latest.epoch);
+  const activeEpoch = current ?? latest?.epoch;
 
   return html`
-    <div data-testid="epoch-selector" style="display:flex;gap:var(--space-2);align-items:center">
-      <label class="text-dim" style="font-size:11px">Epoch:</label>
-      <select
-        value=${current ?? '__latest__'}
-        onchange=${e => {
-          const v = e.target.value;
-          onPick(v === '__latest__' ? undefined : v);
-        }}
-        style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};
-                 border:1px solid ${palette.surface0};border-radius:var(--radius-sm);
-                 color:${palette.text};font-size:var(--font-size-sm)`}
-      >
-        <option value="__latest__">latest${latest ? ` (${latest.epoch})` : ''}</option>
-        ${sortedDesc.map(e => html`
-          <option key=${e.epoch} value=${e.epoch}>
-            ${e.epoch}${e.isLatest ? ' · latest' : ''}
-          </option>
-        `)}
-      </select>
+    <div data-testid="epoch-selector" style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+      <span style="position:relative;display:inline-flex;align-items:center">
+        <${EpochPill} epoch=${activeEpoch} isLatest=${isCurrentLatest} testId="epoch-selector-pill" />
+        <select
+          aria-label="Select epoch"
+          value=${current ?? '__latest__'}
+          onchange=${e => {
+            const v = e.target.value;
+            onPick(v === '__latest__' ? undefined : v);
+          }}
+          style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:11px"
+        >
+          <option value="__latest__">latest${latest ? ` (${latest.epoch})` : ''}</option>
+          ${sortedDesc.map(e => html`
+            <option key=${e.epoch} value=${e.epoch}>
+              ${e.epoch}${e.isLatest ? ' · latest' : ''}
+            </option>
+          `)}
+        </select>
+      </span>
       ${!isCurrentLatest && html`
         <span data-testid="epoch-banner-not-latest" class="text-dim" style="font-size:11px">
-          viewing ${current} of ${epochs.length} ·
+          ${epochs.length} total ·
           <button
             type="button"
             onclick=${() => onPick(undefined)}

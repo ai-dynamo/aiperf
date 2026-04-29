@@ -6,23 +6,15 @@ import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { PhaseBar } from '../components/phase-bar.js';
+import { RecordProcessing } from '../components/record-processing.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
 import { EpochSelector } from '../components/epoch-selector.js';
+import { NsPill, ModelPill } from '../components/pills.js';
+import { RelativeTime } from '../components/time.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
-
-function formatElapsed(startTime) {
-  if (!startTime) return null;
-  const ms = Date.now() - new Date(startTime).getTime();
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m`;
-  if (m > 0) return `${m}m ${s % 60}s`;
-  return `${s}s`;
-}
 
 function formatDuration(ms) {
   if (ms == null) return null;
@@ -1425,6 +1417,10 @@ export function JobDetail({ namespace, name, epoch }) {
 
   const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 
+  const resultsBase = epoch
+    ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}`
+    : `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+
   // Close file viewer on Escape
   useEffect(() => {
     function onKeyDown(e) {
@@ -1472,8 +1468,8 @@ export function JobDetail({ namespace, name, epoch }) {
         // Append to throughput chart
         const summary = extractSummary(data);
         const tps =
-          summary?.request_throughput?.avg ??
-          data?.status?.liveMetrics?.metrics?.request_throughput?.avg ??
+          summary?.output_token_throughput?.avg ??
+          data?.status?.liveMetrics?.metrics?.output_token_throughput?.avg ??
           null;
 
         if (tps != null) {
@@ -1489,7 +1485,7 @@ export function JobDetail({ namespace, name, epoch }) {
             labels: [...pts.labels],
             datasets: [
               {
-                label: 'Throughput (req/s)',
+                label: 'Output Token Throughput (tok/s)',
                 data: [...pts.values],
                 borderColor: palette.blue,
                 backgroundColor: palette.blue + '22',
@@ -1513,20 +1509,20 @@ export function JobDetail({ namespace, name, epoch }) {
       .catch(() => {});
 
     // Fetch available result files directly
-    fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { signal: ac.signal })
+    fetch(resultsBase, { signal: ac.signal })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
         const fileList = d?.files ?? [];
         setFiles(fileList);
         if (fileList.some(f => f.name === 'server_metrics_export.json')) {
-          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/server_metrics_export.json`, { signal: ac.signal })
+          fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })
             .then(r => r.ok ? r.json() : null)
             .then(sm => { if (sm) setServerMetrics(sm); })
             .catch(() => {});
         }
         if (fileList.some(f => f.name === 'profile_export.jsonl')) {
-          fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/profile_export.jsonl`, { signal: ac.signal })
+          fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })
             .then(r => r.ok ? r.text() : null)
             .then(text => {
               if (!text) return;
@@ -1550,7 +1546,7 @@ export function JobDetail({ namespace, name, epoch }) {
   }
 
   function downloadFile(fileName) {
-    const url = `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/${encodeURIComponent(fileName)}`;
+    const url = `${resultsBase}/${encodeURIComponent(fileName)}`;
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName;
@@ -1558,7 +1554,7 @@ export function JobDetail({ namespace, name, epoch }) {
   }
 
   function openFile(fileName) {
-    const url = `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/${encodeURIComponent(fileName)}`;
+    const url = `${resultsBase}/${encodeURIComponent(fileName)}`;
     const ext = fileName.split('.').pop().toLowerCase();
     if (PREVIEWABLE.has(ext)) {
       setFileViewer({ filename: fileName, url });
@@ -1618,7 +1614,6 @@ export function JobDetail({ namespace, name, epoch }) {
   const model = info.model ?? '---';
   const endpointUrl = info.endpoint ?? null;
   const startTime = info.startTime ?? status.startTime;
-  const elapsed = formatElapsed(startTime);
   const isRunning = phase.toLowerCase() === 'running';
   const isCompleted = phase.toLowerCase() === 'completed' || phase.toLowerCase() === 'succeeded';
 
@@ -1644,12 +1639,14 @@ export function JobDetail({ namespace, name, epoch }) {
   const outputTokenThroughput = summary.output_token_throughput?.avg ?? null;
 
   const conditions = status.conditions ?? [];
-  // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array
+  // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array.
+  // ``p`` may be null briefly during a phase transition, so ``?.`` the inner
+  // reads. Operator emits camelCase per CRD convention; no snake fallback.
   const rawPhases = status.phases ?? {};
   const phasesArray = Object.entries(rawPhases).map(([phaseName, p]) => ({
     name: phaseName,
-    completed: p.requestsCompleted ?? p.requests_completed ?? 0,
-    total: p.requestsTotal ?? p.requests_total ?? 0,
+    completed: p?.requestsCompleted ?? 0,
+    total: p?.requestsTotal ?? 0,
   }));
   const pods = job?.pods ?? [];
   const jobError = info.error ?? status.error ?? null;
@@ -1682,7 +1679,7 @@ export function JobDetail({ namespace, name, epoch }) {
       y: {
         ticks: { color: palette.overlay0, font: { size: 10 } },
         grid: { color: palette.surface0 },
-        title: { display: true, text: 'req/s', color: palette.overlay1, font: { size: 10 } },
+        title: { display: true, text: 'tok/s', color: palette.overlay1, font: { size: 10 } },
       },
     },
   };
@@ -1724,7 +1721,9 @@ export function JobDetail({ namespace, name, epoch }) {
               <span class="phase-badge" style=${'background: ' + phaseClr + '22; color: ' + phaseClr + '; border-color: ' + phaseClr + '44'}>
                 ${phase}
               </span>
-              ${elapsed && html`<span class="text-dim" style="font-size: var(--font-size-sm)">${elapsed}</span>`}
+              <${NsPill} ns=${namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId="job-detail-ns-pill" />
+              ${model && html`<${ModelPill} model=${model} testId="job-detail-model-pill" />`}
+              ${startTime && html`<${RelativeTime} ts=${startTime} mode="elapsed" className="text-dim" />`}
               <!-- Live / Completed indicator -->
               ${polling
                 ? html`
@@ -1739,10 +1738,11 @@ export function JobDetail({ namespace, name, epoch }) {
               }
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
-            <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1)">
-              ${namespace} · ${model}
-              ${endpointUrl && html` · <span style="color: ${palette.blue}">${endpointUrl}</span>`}
-            </div>
+            ${endpointUrl && html`
+              <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1)">
+                <span style="color: ${palette.blue}">${endpointUrl}</span>
+              </div>
+            `}
             ${info.sweepName && html`
               <p class="text-dim" data-testid="job-detail-sweep-link" style="margin: var(--space-1) 0 0 0; font-size: var(--font-size-sm)">
                 Part of sweep
@@ -1824,6 +1824,12 @@ export function JobDetail({ namespace, name, epoch }) {
             <div class="card" style="margin-bottom: var(--space-4)">
               <div class="card-title">Phases</div>
               <${PhaseBar} phases=${phasesArray} />
+            </div>
+          `}
+
+          ${Object.keys(rawPhases).length > 0 && html`
+            <div style="margin-bottom: var(--space-4)">
+              <${RecordProcessing} phases=${rawPhases} />
             </div>
           `}
 

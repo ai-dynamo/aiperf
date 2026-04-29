@@ -22,6 +22,7 @@ import asyncio
 import time
 
 from kubernetes_asyncio import client  # noqa: F401 - re-exported for test patching
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
@@ -142,6 +143,7 @@ class BenchmarkWatchdog:
         self.crashloop_threshold = crashloop_threshold
 
         self._task: asyncio.Task[None] | None = None
+        self._bg_tasks: set[asyncio.Task[None]] = set()
         self._problems: list[WatchdogProblem] = []
         self._pod_timelines: dict[str, PodTimeline] = {}
         self._start_time: float = 0.0
@@ -308,8 +310,11 @@ class BenchmarkWatchdog:
             events = await self._source.get_events(self.namespace)
             for event in events:
                 self._process_event(event)
-        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
-            pass
+        except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
+            self._log.debug(
+                lambda: f"[WATCHDOG] _check_events failed for {self.namespace}",
+                exc_info=True,
+            )
 
     def _process_event(self, event: EventInfo) -> None:
         """Classify a single event and record problems."""
@@ -361,8 +366,11 @@ class BenchmarkWatchdog:
                     f"[WATCHDOG] Cluster GPUs: {total_gpu} allocatable "
                     f"across {len(nodes)} node(s)"
                 )
-        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
-            pass
+        except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
+            self._log.debug(
+                "[WATCHDOG] _check_node_resources failed (RBAC or transient API error?)",
+                exc_info=True,
+            )
 
     async def _check_stale_namespaces(self) -> None:
         """Detect leftover aiperf-* namespaces from previous runs."""
@@ -394,8 +402,23 @@ class BenchmarkWatchdog:
                 )
             else:
                 self._log.info("[WATCHDOG] Cluster clean - no stale namespaces")
-        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
-            pass
+        except ApiException as e:
+            # 403: caller cannot list namespaces cluster-wide -- benign in
+            # multi-tenant clusters. Log once at INFO so the user knows the
+            # check is disabled, but keep the rest of the watchdog running.
+            if e.status == 403:
+                self._log.info(
+                    "[WATCHDOG] Stale-namespace check skipped: "
+                    "no cluster-wide namespace list permission"
+                )
+            else:
+                status = e.status
+                self._log.debug(
+                    lambda status=status: f"[WATCHDOG] _check_stale_namespaces API error: {status}",
+                    exc_info=True,
+                )
+        except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
+            self._log.debug("[WATCHDOG] _check_stale_namespaces failed", exc_info=True)
 
     async def _check_pod_resources(self) -> None:
         """Check pod resource usage and warn on high memory."""
@@ -418,8 +441,12 @@ class BenchmarkWatchdog:
                             pod_name=pm.name,
                             suggestion="Check for memory leaks. Consider increasing memory limits.",
                         )
-        except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
-            pass
+        except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
+            self._log.debug(
+                "[WATCHDOG] _check_pod_resources failed "
+                "(metrics-server may not be installed)",
+                exc_info=True,
+            )
 
     def _log_status_dashboard(self, pods: list[WatchdogPodSnapshot]) -> None:
         """Log a formatted status dashboard."""

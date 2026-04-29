@@ -733,12 +733,20 @@ class TestAIPerfJobInfoProgress:
 
 
 class TestAIPerfJobInfoMetrics:
-    """Verify liveSummary vs summary fallback for throughput and latency."""
+    """Verify liveSummary vs summary fallback for throughput and latency.
+
+    The summary shape is the curated nested ``{tag: {avg, p50, p99, ...}}``
+    projection written by :class:`MetricsSummary`. ``to_info`` reads
+    ``request_throughput.avg`` and ``request_latency.p99``.
+    """
 
     def test_metrics_from_live_summary(self) -> None:
         raw = _make_raw_aiperfjob(
             status={
-                "liveSummary": {"throughput_rps": 42.5, "latency_p99_ms": 120.3},
+                "liveSummary": {
+                    "request_throughput": {"avg": 42.5},
+                    "request_latency": {"p99": 120.3},
+                },
             }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()
@@ -748,7 +756,10 @@ class TestAIPerfJobInfoMetrics:
     def test_metrics_from_summary_fallback(self) -> None:
         raw = _make_raw_aiperfjob(
             status={
-                "summary": {"throughput_rps": 38.0, "latency_p99_ms": 95.1},
+                "summary": {
+                    "request_throughput": {"avg": 38.0},
+                    "request_latency": {"p99": 95.1},
+                },
             }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()
@@ -758,8 +769,14 @@ class TestAIPerfJobInfoMetrics:
     def test_metrics_live_summary_takes_priority(self) -> None:
         raw = _make_raw_aiperfjob(
             status={
-                "liveSummary": {"throughput_rps": 50.0, "latency_p99_ms": 100.0},
-                "summary": {"throughput_rps": 30.0, "latency_p99_ms": 200.0},
+                "liveSummary": {
+                    "request_throughput": {"avg": 50.0},
+                    "request_latency": {"p99": 100.0},
+                },
+                "summary": {
+                    "request_throughput": {"avg": 30.0},
+                    "request_latency": {"p99": 200.0},
+                },
             }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()
@@ -769,7 +786,10 @@ class TestAIPerfJobInfoMetrics:
     def test_metrics_snake_case_keys(self) -> None:
         raw = _make_raw_aiperfjob(
             status={
-                "summary": {"throughput_rps": 25.0, "latency_p99_ms": 150.0},
+                "summary": {
+                    "request_throughput": {"avg": 25.0},
+                    "request_latency": {"p99": 150.0},
+                },
             }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()
@@ -790,7 +810,12 @@ class TestAIPerfJobInfoMetrics:
 
     def test_metrics_integer_converted_to_float(self) -> None:
         raw = _make_raw_aiperfjob(
-            status={"liveSummary": {"throughput_rps": 100, "latency_p99_ms": 50}}
+            status={
+                "liveSummary": {
+                    "request_throughput": {"avg": 100},
+                    "request_latency": {"p99": 50},
+                }
+            }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()
         assert info.throughput_rps == 100.0
@@ -799,16 +824,64 @@ class TestAIPerfJobInfoMetrics:
         assert isinstance(info.latency_p99_ms, float)
 
     def test_metrics_partial_throughput_only(self) -> None:
-        raw = _make_raw_aiperfjob(status={"liveSummary": {"throughput_rps": 60.0}})
+        raw = _make_raw_aiperfjob(
+            status={"liveSummary": {"request_throughput": {"avg": 60.0}}}
+        )
         info = AIPerfJobCR.model_validate(raw).to_info()
         assert info.throughput_rps == 60.0
         assert info.latency_p99_ms is None
 
     def test_metrics_partial_latency_only(self) -> None:
-        raw = _make_raw_aiperfjob(status={"liveSummary": {"latency_p99_ms": 80.0}})
+        raw = _make_raw_aiperfjob(
+            status={"liveSummary": {"request_latency": {"p99": 80.0}}}
+        )
         info = AIPerfJobCR.model_validate(raw).to_info()
         assert info.throughput_rps is None
         assert info.latency_p99_ms == 80.0
+
+    def test_extended_live_metrics_extracted(self) -> None:
+        """to_info surfaces TTFT, output token throughput, ITL, totals, error rate."""
+        raw = _make_raw_aiperfjob(
+            status={
+                "liveSummary": {
+                    "request_throughput": {"avg": 42.5},
+                    "request_latency": {"p99": 120.3},
+                    "time_to_first_token": {"avg": 245.7},
+                    "output_token_throughput": {"avg": 12345.6},
+                    "inter_token_latency": {"avg": 18.4},
+                    "request_count": {"avg": 1500},
+                    "total_requests": 1500,
+                    "error_rate": 0.0123,
+                },
+            }
+        )
+        info = AIPerfJobCR.model_validate(raw).to_info()
+        assert info.ttft_ms == 245.7
+        assert info.output_token_throughput_tps == 12345.6
+        assert info.inter_token_latency_ms == 18.4
+        assert info.total_requests == 1500
+        assert info.error_rate == 0.0123
+
+    def test_extended_metrics_none_when_summary_empty(self) -> None:
+        raw = _make_raw_aiperfjob()
+        info = AIPerfJobCR.model_validate(raw).to_info()
+        assert info.ttft_ms is None
+        assert info.output_token_throughput_tps is None
+        assert info.inter_token_latency_ms is None
+        assert info.total_requests is None
+        assert info.error_rate is None
+
+    def test_total_requests_falls_back_to_request_count_avg(self) -> None:
+        """Older statuses without the derived `total_requests` scalar still work."""
+        raw = _make_raw_aiperfjob(
+            status={
+                "liveSummary": {
+                    "request_count": {"avg": 723},
+                },
+            }
+        )
+        info = AIPerfJobCR.model_validate(raw).to_info()
+        assert info.total_requests == 723
 
 
 # =============================================================================
@@ -905,8 +978,8 @@ class TestAIPerfJobInfoFullSnapshot:
                     "benchmark": {"requestsProgressPercent": 62.5},
                 },
                 "liveSummary": {
-                    "throughput_rps": 85.3,
-                    "latency_p99_ms": 45.7,
+                    "request_throughput": {"avg": 85.3},
+                    "request_latency": {"p99": 45.7},
                 },
             },
         )
@@ -943,7 +1016,7 @@ class TestAIPerfJobInfoSerialization:
             status={
                 "phase": "Running",
                 "workers": {"ready": 2, "total": 3},
-                "liveSummary": {"throughput_rps": 10.0},
+                "liveSummary": {"request_throughput": {"avg": 10.0}},
             }
         )
         info = AIPerfJobCR.model_validate(raw).to_info()

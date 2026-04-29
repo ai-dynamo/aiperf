@@ -58,11 +58,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._last_flush_monotonic = time.monotonic()
 
     @on_init
-    async def _open_file(self) -> None:
-        """Open the file handle for writing in binary mode (called automatically on initialization)."""
+    async def _prepare_output_file(self) -> None:
+        """Prepare the output destination without creating the file.
 
+        Ensures the parent directory exists and removes any stale file from a
+        prior run. The file handle itself is opened lazily on the first
+        ``_flush_buffer`` so writers that receive zero records never create a
+        0-byte artifact on disk — avoiding the race where the results sidecar
+        exposes an empty file before ``@on_stop`` cleanup runs.
+        """
         try:
-            # Create the output file directory if it doesn't exist and clear the file
             self.output_file.parent.mkdir(parents=True, exist_ok=True)
             self.output_file.unlink(missing_ok=True)
         except Exception as e:
@@ -70,10 +75,6 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 f"Failed to create output file directory or clear file: {self.output_file}: {e!r}"
             )
             raise
-
-        async with self._file_lock:
-            # Binary mode for optimal performance with orjson
-            self._file_handle = await aiofiles.open(self.output_file, mode="wb")
 
     async def buffered_write(self, record: BaseModelT) -> None:
         """Write a record to the buffer with automatic flushing."""
@@ -122,10 +123,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return
         async with self._file_lock:
             if self._file_handle is None:
-                self.error(
-                    f"Tried to flush buffer, but file handle is not open: {self.output_file}"
-                )
-                return
+                try:
+                    # Lazy open on first flush so empty writers leave no
+                    # 0-byte artifact behind. Binary mode for orjson speed.
+                    self._file_handle = await aiofiles.open(self.output_file, mode="wb")
+                except OSError as e:
+                    self.exception(f"Failed to open output file: {e!r}")
+                    return
 
             try:
                 self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
@@ -198,5 +202,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         )
 
         if self.lines_written == 0:
-            self.debug(f"No lines written, deleting output file: {self.output_file}")
+            # File only exists if a write actually happened (lazy open). The
+            # unlink covers the late-flush path that opened the handle but
+            # then failed every record before lines_written advanced.
             self.output_file.unlink(missing_ok=True)

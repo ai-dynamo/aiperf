@@ -4,13 +4,18 @@ import { useRef, useEffect } from 'preact/hooks';
 /**
  * Compute a fast fingerprint of chart data to detect actual changes.
  * Extracts only the numeric values that matter for rendering.
+ *
+ * Note ``typeof null === 'object'``: scatter datasets with sparse data
+ * may interleave nulls between point objects, so the object branch must
+ * also guard against null before reading ``pt.x`` / ``pt.y``.
  */
 function dataFingerprint(data) {
   if (!data?.datasets) return '';
   return data.datasets.map(ds =>
-    (ds.label ?? '') + ':' + (ds.data ?? []).map(pt =>
-      typeof pt === 'object' ? `${pt.x},${pt.y}` : pt
-    ).join(';')
+    (ds.label ?? '') + ':' + (ds.data ?? []).map(pt => {
+      if (pt == null) return '';
+      return typeof pt === 'object' ? `${pt.x},${pt.y}` : pt;
+    }).join(';')
   ).join('|');
 }
 

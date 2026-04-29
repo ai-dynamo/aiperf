@@ -1,31 +1,107 @@
-import { signal, effect } from '@preact/signals';
+import { signal } from '@preact/signals';
 
-// Current route signal - hash without the leading '#'
-export const route = signal(getHash());
+// Current route signal — path only (no query string)
+export const route = signal(parseHash().path);
+// Current query string signal — object map (decoded keys/values, never null)
+export const query = signal(parseHash().query);
 
-function getHash() {
+function parseHash() {
   const hash = window.location.hash;
-  // Strip leading '#', normalize empty to '/'
-  const path = hash.startsWith('#') ? hash.slice(1) : hash;
-  return path || '/';
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [path, queryStr] = (raw || '/').split('?', 2);
+  return { path: path || '/', query: parseQueryString(queryStr) };
 }
 
-// Listen for hash changes
-window.addEventListener('hashchange', () => {
-  route.value = getHash();
-});
+function parseQueryString(queryStr) {
+  const out = {};
+  if (!queryStr) return out;
+  for (const pair of queryStr.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    if (eq === -1) {
+      out[decodeURIComponent(pair)] = '';
+    } else {
+      out[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(pair.slice(eq + 1));
+    }
+  }
+  return out;
+}
 
-// Also capture initial load
-window.addEventListener('load', () => {
-  route.value = getHash();
-});
+function encodeQueryString(q) {
+  const parts = [];
+  for (const [k, v] of Object.entries(q)) {
+    if (v === undefined || v === null || v === '') continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? '?' + parts.join('&') : '';
+}
+
+function syncFromHash() {
+  const cur = parseHash();
+  if (route.value !== cur.path) route.value = cur.path;
+  // Always replace query — shallow compare keys/values to avoid extra rerenders
+  if (!shallowEq(query.value, cur.query)) query.value = cur.query;
+}
+
+function shallowEq(a, b) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+window.addEventListener('hashchange', syncFromHash);
+window.addEventListener('load', syncFromHash);
 
 /**
- * Navigate to a path. Updates the hash, which triggers the hashchange listener.
- * @param {string} path - Path like '/jobs' or '/jobs/default/my-job'
+ * Navigate to a path. Preserves nothing — overwrites the hash entirely.
+ * Pass query string directly in `path` (e.g. '/jobs?ns=foo') if needed.
+ *
+ * @param {string} path - e.g. '/jobs', '/jobs?ns=default', '/jobs/default/my-job'
  */
 export function navigate(path) {
-  window.location.hash = path.startsWith('/') ? path : `/${path}`;
+  const target = path.startsWith('/') ? path : `/${path}`;
+  if (window.location.hash !== `#${target}`) {
+    window.location.hash = target;
+  }
+}
+
+/**
+ * Build a hash URL for the given path + query map. Useful for `<a href>`.
+ * Empty/null/undefined values are dropped.
+ *
+ * @param {string} path - e.g. '/jobs'
+ * @param {object} q    - e.g. { ns: 'default', phase: 'running' }
+ * @returns {string}    - e.g. '#/jobs?ns=default&phase=running'
+ */
+export function hashUrl(path, q) {
+  return `#${path}${q ? encodeQueryString(q) : ''}`;
+}
+
+/**
+ * Merge updates into the current query string at the current path. Keys whose
+ * value is `undefined` / `null` / `''` are removed. Other keys retain prior values.
+ *
+ * @param {object} updates
+ */
+export function setQuery(updates) {
+  const cur = parseHash();
+  const merged = { ...cur.query };
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === undefined || v === null || v === '') {
+      delete merged[k];
+    } else {
+      merged[k] = String(v);
+    }
+  }
+  if (shallowEq(merged, cur.query)) return;
+  const next = `#${cur.path}${encodeQueryString(merged)}`;
+  if (window.location.hash !== next) {
+    window.location.hash = next;
+  }
 }
 
 /**

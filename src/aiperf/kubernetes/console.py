@@ -256,14 +256,9 @@ def print_results_summary(output_dir: str) -> None:
     logger.info(f"  [dim]Saved to:[/dim]  {output_dir}/")
 
     output_path = Path(output_dir)
-    ansi_file = output_path / "profile_export_console.ansi"
     txt_file = output_path / "profile_export_console.txt"
 
-    if sys.stdout.isatty() and ansi_file.exists():
-        logger.info("")
-        sys.stdout.write(ansi_file.read_text(encoding="utf-8"))
-        sys.stdout.flush()
-    elif txt_file.exists():
+    if txt_file.exists():
         logger.info("")
         sys.stdout.write(txt_file.read_text(encoding="utf-8"))
         sys.stdout.flush()

@@ -263,8 +263,8 @@ class FakeK8sClient:
     cluster_nodes: list[dict[str, Any]] = field(default_factory=list)
     """Canned list of raw ``V1Node`` dicts for the cluster-info endpoint.
 
-    Empty by default — ``_fetch_node_gpu_totals`` tolerates an empty
-    cluster and returns ``(0, 0)``. Tests that exercise GPU totals can
+    Empty by default — ``_fetch_cluster_gpu_stats`` tolerates an empty
+    cluster and returns zero counts. Tests that exercise GPU totals can
     prepend entries shaped like
     ``{"status": {"allocatable": {"nvidia.com/gpu": "8"}}}``.
     """
@@ -314,7 +314,7 @@ def _node_raw_to_v1node(node_raw: dict[str, Any]) -> SimpleNamespace:
     """Build a V1Node-shaped SimpleNamespace the router's ``_node_gpu_count`` reads.
 
     ``_node_gpu_count`` calls ``node.status.allocatable.get(...)``; the
-    UI's ``_fetch_node_gpu_totals`` only needs ``.status`` and a
+    UI's ``_fetch_cluster_gpu_stats`` only needs ``.status`` and a
     ``.status.allocatable`` dict.
     """
     status = node_raw.get("status") or {}

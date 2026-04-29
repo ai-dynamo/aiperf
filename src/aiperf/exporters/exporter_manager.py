@@ -117,11 +117,19 @@ class ExporterManager(AIPerfLoggerMixin):
     async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")
 
+        # Without a tty, Rich falls back to a default width that's typically
+        # too narrow for our metrics tables; pin it to 160 to match the
+        # .txt artifact recording.
+        if not console.is_terminal:
+            console = Console(file=console.file, width=160)
+
+        # Fixed-width recording used only to capture the .txt artifact;
+        # live output goes to `console` directly at terminal width.
         recording_console = Console(
             record=True,
             file=__import__("io").StringIO(),
             force_terminal=True,
-            width=console.width or 100,
+            width=160,
         )
 
         for exporter_entry, ExporterClass in plugins.iter_all(
@@ -141,35 +149,26 @@ class ExporterManager(AIPerfLoggerMixin):
                 continue
 
             self.debug(f"Creating task for exporter: {exporter_entry.name}")
-            task = asyncio.create_task(exporter.export(console=recording_console))
-            self._tasks.add(task)
-            task.add_done_callback(self._task_done_callback)
+            live_task = asyncio.create_task(exporter.export(console=console))
+            file_task = asyncio.create_task(exporter.export(console=recording_console))
+            self._tasks.add(live_task)
+            self._tasks.add(file_task)
+            live_task.add_done_callback(self._task_done_callback)
+            file_task.add_done_callback(self._task_done_callback)
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
         self._write_console_files(recording_console)
 
-        ansi_output = recording_console.export_text(styles=True)
-        if ansi_output.strip():
-            console.file.write(ansi_output)
-            console.file.flush()
-
         self.debug("Exporting console data completed")
 
     def _write_console_files(self, recording_console: Console) -> None:
-        """Write recorded console output to .txt and .ansi files."""
+        """Write recorded console output to the .txt artifact."""
         try:
-            artifacts = self._config.artifacts
-            txt_path = artifacts.profile_export_console_txt_file
-            ansi_path = artifacts.profile_export_console_ansi_file
-
+            txt_path = self._config.artifacts.profile_export_console_txt_file
             plain_text = recording_console.export_text(styles=False, clear=False)
-            ansi_text = recording_console.export_text(styles=True, clear=False)
-
             txt_path.write_text(plain_text, encoding="utf-8")
-            ansi_path.write_text(ansi_text, encoding="utf-8")
-
-            self.debug(f"Console export written to {txt_path} and {ansi_path}")
+            self.debug(f"Console export written to {txt_path}")
         except (OSError, ValueError) as e:
-            self.warning(f"Failed to write console export files: {e}")
+            self.warning(f"Failed to write console export file: {e}")

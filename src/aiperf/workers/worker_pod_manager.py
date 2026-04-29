@@ -178,6 +178,7 @@ class WorkerGroupManagerBase(BaseComponentService):
         self._dataset_generation: str | None = None
         self._dataset_download_task: asyncio.Task[None] | None = None
         self._tokenizer_prefetch_task: asyncio.Task[None] | None = None
+        self._latest_tokenizer_ready: GroupTokenizerReady | None = None
         self._stopping = False
 
     def _make_registration(self) -> Registration:
@@ -377,7 +378,17 @@ class WorkerGroupManagerBase(BaseComponentService):
         Mirrors ``validate_tokenizer_early`` resolution: explicit
         ``cfg.tokenizer.name`` wins; otherwise fall back to the configured
         model names. Returns an empty list when neither is set.
+
+        Excludes the local-only tokenizer names (``builtin`` and the
+        tiktoken encodings) — those are constructed in-process by every
+        consumer via the special-case in ``Tokenizer.from_pretrained`` and
+        do not need a controller-side bundle.
         """
+        from aiperf.common.tokenizer import (
+            BUILTIN_TOKENIZER_NAME,
+            TIKTOKEN_ENCODING_NAMES,
+        )
+
         seen: dict[str, None] = {}
         cfg = self.run.cfg
         tokenizer_cfg = getattr(cfg, "tokenizer", None)
@@ -386,7 +397,11 @@ class WorkerGroupManagerBase(BaseComponentService):
         else:
             for model_name in cfg.get_model_names():
                 seen.setdefault(model_name, None)
-        return list(seen)
+        return [
+            n
+            for n in seen
+            if n != BUILTIN_TOKENIZER_NAME and n not in TIKTOKEN_ENCODING_NAMES
+        ]
 
     def _tokenizer_dest_root(self) -> Path:
         """Resolve the on-disk root for tokenizer bundles for this benchmark."""
@@ -397,11 +412,15 @@ class WorkerGroupManagerBase(BaseComponentService):
         """Fan out a tokenizer-ready struct to RecordProcessor sibling peers.
 
         Only ``ServiceType.RECORD_PROCESSOR`` consumes the bundle paths —
-        in-process workers never tokenize. Sibling RPs that have not
-        registered yet by this point will pick up the bundles via a future
-        state query (parallel to how late workers recover dataset state via
-        ``GroupDatasetStateQuery``).
+        in-process workers never tokenize. The latest message is cached on
+        ``self._latest_tokenizer_ready`` so that any RP that registers later
+        (after this call returned) gets a replay from
+        ``_on_pod_lifecycle_message`` when it sends ``GroupPeerHello``.
+        Without that replay, the publish-before-peer-hello race silently
+        drops the ready signal (ZMQ ROUTER does not queue for unknown
+        identities) and the RP hangs forever on ``_tokenizer_ready.wait()``.
         """
+        self._latest_tokenizer_ready = message
         target_type = str(ServiceType.RECORD_PROCESSOR)
         peer_identities = [
             self._pod_peer_identities[sid]
@@ -470,6 +489,13 @@ class WorkerGroupManagerBase(BaseComponentService):
                 self._pod_peer_types[message.service_id] = message.service_type
                 if message.service_type == str(ServiceType.RECORD_PROCESSOR):
                     self._record_processors_shutdown.discard(message.service_id)
+                    # Replay the latest tokenizer-ready message to recover from
+                    # the publish-before-hello race. send_to is fire-and-forget
+                    # on a known identity so this is safe to await inline.
+                    if self._latest_tokenizer_ready is not None:
+                        await self.pod_lifecycle_router.send_to(
+                            identity, self._latest_tokenizer_ready
+                        )
                 return GroupPeerAck(rid=message.rid, service_id=self.service_id)
             case GroupPeerShutdown():
                 self._pod_peer_types[message.service_id] = message.service_type

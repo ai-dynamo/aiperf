@@ -91,20 +91,20 @@ class TestExporterManager:
                 config=config,
                 telemetry_results=None,
             )
-            await manager.export_console(Console())
+            await manager.export_console(Console(file=StringIO()))
 
         for mock_class, mock_instance in zip(
             mock_classes, mock_instances, strict=False
         ):
             mock_class.assert_called_once()
-            mock_instance.export.assert_awaited_once()
+            assert mock_instance.export.await_count == 2
 
 
 class TestConsoleExportToFile:
-    """Verify export_console writes .txt and .ansi files."""
+    """Verify export_console writes the .txt artifact."""
 
     @pytest.mark.asyncio
-    async def test_writes_txt_and_ansi_files(self, sample_records, config, tmp_path):
+    async def test_writes_txt_file(self, sample_records, config, tmp_path):
         config.artifacts.dir = tmp_path
 
         mock_instance = MagicMock()
@@ -139,17 +139,13 @@ class TestConsoleExportToFile:
         ansi_file = tmp_path / "profile_export_console.ansi"
 
         assert txt_file.exists(), ".txt file not created"
-        assert ansi_file.exists(), ".ansi file not created"
+        assert not ansi_file.exists(), ".ansi file should no longer be written"
 
         txt_content = txt_file.read_text()
-        ansi_content = ansi_file.read_text()
 
         assert "Hello" in txt_content
         assert "world" in txt_content
         assert "\x1b[" not in txt_content
-
-        assert "\x1b[" in ansi_content
-        assert "Hello" in ansi_content
 
     @pytest.mark.asyncio
     async def test_file_write_failure_does_not_crash(self, sample_records, config):
@@ -180,20 +176,22 @@ class TestConsoleExportToFile:
             await manager.export_console(Console(file=StringIO()))
 
     @pytest.mark.asyncio
-    async def test_stdout_still_receives_output(self, sample_records, config, tmp_path):
+    async def test_recording_console_uses_fixed_width_160(
+        self, sample_records, config, tmp_path
+    ):
+        """Non-tty live console and the .txt recording both render at 160 cols."""
         config.artifacts.dir = tmp_path
 
-        mock_instance = MagicMock()
+        captured_widths: list[int] = []
 
         async def fake_export(console):
-            console.print("visible output")
+            captured_widths.append(console.width)
 
+        mock_instance = MagicMock()
         mock_instance.export = AsyncMock(side_effect=fake_export)
         mock_class = MagicMock(return_value=mock_instance)
         mock_entry = MagicMock()
         mock_entry.name = "mock_exporter"
-
-        stdout_capture = StringIO()
 
         with patch(
             "aiperf.exporters.exporter_manager.plugins.iter_all",
@@ -211,6 +209,6 @@ class TestConsoleExportToFile:
                 config=config,
                 telemetry_results=None,
             )
-            await manager.export_console(Console(file=stdout_capture))
+            await manager.export_console(Console(file=StringIO(), width=80))
 
-        assert "visible output" in stdout_capture.getvalue()
+        assert captured_widths == [160, 160]

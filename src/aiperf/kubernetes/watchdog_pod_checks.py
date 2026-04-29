@@ -42,6 +42,7 @@ class WatchdogLike(Protocol):
     _completed_pods: set[str]
     _start_time: float
     _add_problem: Callable[..., None]
+    _bg_tasks: set[asyncio.Task[None]]
 
 
 def track_phase_transition(
@@ -175,7 +176,11 @@ def check_pod_completion(
         suggestion=(f"kubectl -n {wd.namespace} logs {pod.name} --all-containers"),
     )
     with contextlib.suppress(RuntimeError):
-        asyncio.create_task(fetch_failure_logs(wd, pod.name))
+        # Retain the task so the loop holds a strong reference (asyncio only
+        # keeps a weak ref). discard on completion to avoid unbounded growth.
+        task = asyncio.create_task(fetch_failure_logs(wd, pod.name))
+        wd._bg_tasks.add(task)
+        task.add_done_callback(wd._bg_tasks.discard)
 
 
 async def fetch_failure_logs(wd: WatchdogLike, pod_name: str) -> None:
@@ -188,7 +193,11 @@ async def fetch_failure_logs(wd: WatchdogLike, pod_name: str) -> None:
                     f"[WATCHDOG] Last logs from {pod_name}:\n{logs}"
                 )
             )
-    except Exception:  # noqa: BLE001, S110 - watchdog must never die on a single-check failure
-        # Best-effort: logs already swallowed to empty by get_pod_logs in
-        # normal paths; this is a defensive net for unexpected failures.
-        pass
+    except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
+        # Best-effort log fetch: ``get_pod_logs`` already returns "" on the
+        # common cases (pod gone, RBAC, transient apiserver). Log the
+        # unexpected paths at DEBUG so they're at least discoverable.
+        wd._log.debug(
+            lambda: f"[WATCHDOG] fetch_failure_logs failed for {pod_name}",
+            exc_info=True,
+        )

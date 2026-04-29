@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import aiohttp
 
 from aiperf.kubernetes.console import print_info, print_warning
+from aiperf.kubernetes.environment import K8sEnvironment
 
 # Re-exported for backward compatibility; see progress_stream.py for implementation.
 from aiperf.kubernetes.progress_stream import (
@@ -17,12 +18,14 @@ from aiperf.kubernetes.progress_stream import (
     stream_progress_from_api,  # noqa: F401
 )
 
-# Port-forward configuration
-_PORT_FORWARD_TIMEOUT = 60.0  # seconds to wait for kubectl port-forward
-_API_INITIAL_DELAY = 0.5  # seconds before first API health check
-_API_RETRY_DELAY = 2.0  # seconds between port-forward restart attempts
-_API_MAX_RETRIES = 10  # max times to restart port-forward when API isn't ready
-_PROCESS_CLEANUP_TIMEOUT = 5.0  # seconds to wait for graceful termination
+# Port-forward tunables -- moved to K8sEnvironment.PORT_FORWARD; aliases kept
+# so internal callers don't have to spell the long path. Tests can monkeypatch
+# these attributes if they need to shrink timeouts.
+_PORT_FORWARD_TIMEOUT = K8sEnvironment.PORT_FORWARD.TIMEOUT_SECONDS
+_API_INITIAL_DELAY = K8sEnvironment.PORT_FORWARD.API_INITIAL_DELAY_SECONDS
+_API_RETRY_DELAY = K8sEnvironment.PORT_FORWARD.API_RETRY_DELAY_SECONDS
+_API_MAX_RETRIES = K8sEnvironment.PORT_FORWARD.API_MAX_RETRIES
+_PROCESS_CLEANUP_TIMEOUT = K8sEnvironment.PORT_FORWARD.PROCESS_CLEANUP_TIMEOUT_SECONDS
 
 
 async def _monitor_pod_liveness(
@@ -41,31 +44,26 @@ async def _monitor_pod_liveness(
     if kube_context:
         cmd_base.extend(["--context", kube_context])
 
-    from aiperf.kubernetes.subproc import terminate_process
+    from aiperf.kubernetes.subproc import run_command
 
     try:
         while proc.returncode is None:
             await asyncio.sleep(check_interval)
             try:
-                check = await asyncio.create_subprocess_exec(
-                    *cmd_base,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                try:
-                    # Bound the probe so a stuck kubectl (network partition,
-                    # throttled apiserver) cannot pin the liveness monitor.
-                    await asyncio.wait_for(check.wait(), timeout=check_interval)
-                except asyncio.TimeoutError:
-                    await terminate_process(check)
-                    continue
-                if check.returncode != 0:
+                # Bound the probe so a stuck kubectl (network partition,
+                # throttled apiserver) cannot pin the liveness monitor.
+                check_result = await run_command(cmd_base, timeout=check_interval)
+                if check_result.returncode != 0:
                     print_warning(
                         f"Pod {pod_name} no longer exists, closing port-forward"
                     )
                     proc.terminate()
                     return
-            except (OSError, asyncio.TimeoutError):  # noqa: BLE001 - watchdog must never die on a single-check failure
+            except asyncio.TimeoutError:
+                # Probe timed out (run_command already terminated the kubectl
+                # subprocess); skip this tick and try again next interval.
+                continue
+            except OSError:  # noqa: BLE001 - watchdog must never die on a single-check failure
                 # Transient subprocess/OS error on the probe path; drop this
                 # check and try again on the next interval.
                 continue
@@ -156,11 +154,9 @@ async def _start_port_forward_process(
     if kube_context:
         cmd.extend(["--context", kube_context])
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    from aiperf.kubernetes.subproc import start_streaming_process
+
+    proc = await start_streaming_process(cmd)
 
     try:
         actual_port = await asyncio.wait_for(

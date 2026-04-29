@@ -1414,6 +1414,54 @@
       "additionalProperties": false,
       "description": "Discrete distribution sampled from weighted values.\n\nYAML:\n    isl:\n      points:\n        - {value: 128, weight: 40}\n        - {value: 512, weight: 35}\n        - {value: 2048, weight: 20}\n        - {value: 8192, weight: 5}",
       "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+          "title": "Min",
+          "x-jinja2-supported": true
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound; samples above are clamped down.",
+          "title": "Max",
+          "x-jinja2-supported": true
+        },
         "points": {
           "description": "Weighted discrete values. Weights are relative.",
           "items": {
@@ -1427,7 +1475,8 @@
         "points"
       ],
       "title": "EmpiricalDistribution",
-      "type": "object"
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
     },
     "EmpiricalPoint": {
       "additionalProperties": false,
@@ -1498,7 +1547,8 @@
           },
           "minItems": 1,
           "title": "Urls",
-          "type": "array"
+          "type": "array",
+          "x-kubernetes-preserve-unknown-fields": true
         },
         "urlStrategy": {
           "$ref": "#/$defs/URLSelectionStrategy",
@@ -1713,7 +1763,8 @@
               },
               "minItems": 1,
               "title": "Urls",
-              "type": "array"
+              "type": "array",
+              "x-kubernetes-preserve-unknown-fields": true
             }
           ],
           "x-singular-alias-of": "urls"
@@ -1900,6 +1951,32 @@
           "additionalProperties": false,
           "description": "Returns a constant value on every sample. Scalars coerce to this.",
           "properties": {
+            "min": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+              "title": "Min"
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Inclusive upper bound; samples above are clamped down.",
+              "title": "Max"
+            },
             "value": {
               "description": "The constant value returned on every sample.",
               "title": "Value",
@@ -1910,7 +1987,8 @@
             "value"
           ],
           "title": "FixedDistribution",
-          "type": "object"
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
         },
         {
           "type": "integer"
@@ -2672,7 +2750,8 @@
             }
           },
           "title": "GpuTelemetryConfig",
-          "type": "object"
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
         },
         {
           "type": "string"
@@ -2855,6 +2934,54 @@
       "additionalProperties": false,
       "description": "Log-normal parameterized by mean and median (right-skewed, always positive).\n\nSkew is controlled by the mean/median ratio: larger ratio = heavier right tail.\nWhen mean == median the distribution is deterministic.\n\nInternally: sigma = sqrt(2 * log(mean / median)), mu = log(median).",
       "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+          "title": "Min",
+          "x-jinja2-supported": true
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound; samples above are clamped down.",
+          "title": "Max",
+          "x-jinja2-supported": true
+        },
         "mean": {
           "description": "Desired mean of the output distribution.",
           "title": "Mean",
@@ -2916,7 +3043,8 @@
         "median"
       ],
       "title": "LogNormalDistribution",
-      "type": "object"
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
     },
     "LoggingConfig": {
       "additionalProperties": false,
@@ -3211,6 +3339,54 @@
       "additionalProperties": false,
       "description": "Weighted mixture of N peaks (N >= 2).\n\nYAML:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20, weight: 60}\n        - {mean: 2048, median: 1800, weight: 40}\n    # Equal split — omit weight:\n    isl:\n      peaks:\n        - {mean: 128, stddev: 20}\n        - {mean: 2048, median: 1800}\n        - {mean: 8192, median: 4096}",
       "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+          "title": "Min",
+          "x-jinja2-supported": true
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound; samples above are clamped down.",
+          "title": "Max",
+          "x-jinja2-supported": true
+        },
         "peaks": {
           "description": "Two or more weighted sub-distributions.",
           "items": {
@@ -3225,12 +3401,61 @@
         "peaks"
       ],
       "title": "MultimodalDistribution",
-      "type": "object"
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
     },
     "NormalDistribution": {
       "additionalProperties": false,
       "description": "Gaussian (truncated at 0) parameterized by mean and stddev.",
       "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+          "title": "Min",
+          "x-jinja2-supported": true
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound; samples above are clamped down.",
+          "title": "Max",
+          "x-jinja2-supported": true
+        },
         "mean": {
           "description": "Mean value.",
           "title": "Mean",
@@ -3292,7 +3517,8 @@
         "mean"
       ],
       "title": "NormalDistribution",
-      "type": "object"
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
     },
     "OslMode": {
       "description": "Defines how output sequence length is handled in composed datasets.",
@@ -4727,7 +4953,8 @@
             }
           },
           "title": "ServerMetricsConfig",
-          "type": "object"
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
         },
         {
           "type": "string"
@@ -6393,7 +6620,8 @@
         },
         {
           "$ref": "#/$defs/ModelsAdvanced",
-          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced."
+          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
+          "x-kubernetes-preserve-unknown-fields": true
         }
       ],
       "x-singular-alias-of": "models"

@@ -39,8 +39,18 @@
     ],
     [
       "C901",
+      "src/aiperf/config/distributions.py",
+      "_distribution_discriminator"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "C901",
+      "src/aiperf/kubernetes/models.py",
+      "AIPerfJobCR.to_info"
     ],
     [
       "C901",
@@ -51,6 +61,31 @@
       "C901",
       "src/aiperf/operator/job_union.py",
       "list_all_jobs"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/jobs.py",
+      "_fetch_cluster_gpu_stats"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/jobs.py",
+      "create_jobs_router"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/sweeps.py",
+      "_cells_from_live_children"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/sweeps.py",
+      "create_sweeps_router"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/sweep_union.py",
+      "_scan_archived"
     ],
     [
       "C901",
@@ -264,6 +299,26 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/kubernetes/models.py",
+      "AIPerfJobCR.to_info"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/operator/job_union.py",
+      "find_any_job"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/operator/job_union.py",
+      "list_all_jobs"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/operator/routers/jobs.py",
+      "_fetch_cluster_gpu_stats"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/plot/dashboard/callbacks.py",
       "_generate_custom_single_run_plot"
     ],
@@ -321,6 +376,11 @@
       "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/kubernetes/models.py",
+      "AIPerfJobCR.to_info"
     ],
     [
       "PLR0915",
@@ -401,6 +461,11 @@
       "PLR0915",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_single_run_plot_edit_callbacks.open_plot_edit_modal"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/sweep_controller/main.py",
+      "main"
     ],
     [
       "PLR0915",

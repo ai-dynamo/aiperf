@@ -250,7 +250,6 @@ class TestRetrieveResultsFromApi:
         metrics_content = orjson.dumps({"throughput": 100})
         profile_content = b"profile data"
         console_content = b"console output"
-        ansi_content = b"\x1b[1mconsole output\x1b[0m"
 
         responses = {
             f"http://localhost:9999{API_RESULTS_FILES_PATH}/metrics.json": FakeResponse(
@@ -261,9 +260,6 @@ class TestRetrieveResultsFromApi:
             ),
             f"http://localhost:9999{API_RESULTS_FILES_PATH}/profile_export_console.txt": FakeResponse(
                 body=console_content
-            ),
-            f"http://localhost:9999{API_RESULTS_FILES_PATH}/profile_export_console.ansi": FakeResponse(
-                body=ansi_content
             ),
         }
         session = FakeSession(responses)
@@ -288,7 +284,6 @@ class TestRetrieveResultsFromApi:
         assert (tmp_path / "metrics.json").read_bytes() == metrics_content
         assert (tmp_path / "profile_export_aiperf.json").read_bytes() == profile_content
         assert (tmp_path / "profile_export_console.txt").read_bytes() == console_content
-        assert (tmp_path / "profile_export_console.ansi").read_bytes() == ansi_content
 
     @pytest.mark.asyncio
     async def test_404_files_skipped_silently(self, tmp_path: Path) -> None:
@@ -1075,7 +1070,7 @@ class TestModuleConstants:
         assert "metrics.json" in KEY_RESULT_FILES
         assert "profile_export_aiperf.json" in KEY_RESULT_FILES
         assert "profile_export_console.txt" in KEY_RESULT_FILES
-        assert "profile_export_console.ansi" in KEY_RESULT_FILES
+        assert "profile_export_console.ansi" not in KEY_RESULT_FILES
 
     def test_api_paths(self) -> None:
         assert API_RESULTS_FILES_PATH.startswith("/api/")

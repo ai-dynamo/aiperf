@@ -2,8 +2,10 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { sweeps } from '../lib/state.js';
-import { navigate } from '../lib/router.js';
+import { navigate, query, setQuery } from '../lib/router.js';
 import { palette, phaseColor } from '../lib/theme.js';
+import { NsPill, ModelPill } from '../components/pills.js';
+import { RelativeTime } from '../components/time.js';
 
 const FILTERS = [
   { label: 'All', value: null },
@@ -11,6 +13,10 @@ const FILTERS = [
   { label: 'Completed', value: ['succeeded'] },
   { label: 'Failed', value: ['failed', 'partiallyfailed', 'cancelled'] },
 ];
+
+const PHASE_BY_KEY = Object.fromEntries(
+  FILTERS.filter(f => f.value).map(f => [f.label.toLowerCase(), f.value])
+);
 
 const COLUMNS = [
   { key: 'name', label: 'Name' },
@@ -40,14 +46,6 @@ function sweepValue(s, key) {
   }
 }
 
-function formatAge(s) {
-  if (s == null) return '---';
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s/60)}m`;
-  if (s < 86400) return `${Math.floor(s/3600)}h`;
-  return `${Math.floor(s/86400)}d`;
-}
-
 function renderPhase(phase) {
   const color = phaseColor(phase);
   return html`
@@ -61,12 +59,37 @@ function renderSource(source) {
   return html`<span class="text-dim" style=${`font-size:11px;padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${source}</span>`;
 }
 
+function parseSort(s) {
+  if (!s) return { key: 'age', dir: -1 };
+  const [key, dir] = s.split(':');
+  return { key: key || 'age', dir: dir === 'asc' ? 1 : -1 };
+}
+
+function formatSort(sort) {
+  return `${sort.key}:${sort.dir === 1 ? 'asc' : 'desc'}`;
+}
+
 export function Sweeps() {
   const [list, setList] = useState(sweeps.value);
-  const [activeFilter, setActiveFilter] = useState(null);
-  const [searchText, setSearchText] = useState('');
-  const [sortKey, setSortKey] = useState('age');
-  const [sortDir, setSortDir] = useState(-1);
+
+  const q = query.value;
+  const phaseKey = q.phase ?? null;
+  const activeFilter = phaseKey ? (PHASE_BY_KEY[phaseKey] ?? null) : null;
+  const ns = q.ns ?? '';
+  const sort = parseSort(q.sort);
+
+  const urlQ = q.q ?? '';
+  const [searchText, setSearchText] = useState(urlQ);
+  useEffect(() => {
+    if (searchText !== urlQ) setSearchText(urlQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQ]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (searchText !== urlQ) setQuery({ q: searchText });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [searchText, urlQ]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -81,14 +104,16 @@ export function Sweeps() {
 
   function toggleSort(key) {
     if (!key) return;
-    if (sortKey === key) setSortDir(d => -d);
-    else { setSortKey(key); setSortDir(1); }
+    const next = (sort.key === key)
+      ? { key, dir: -sort.dir }
+      : { key, dir: 1 };
+    setQuery({ sort: formatSort(next) });
   }
 
   function renderSortIcon(key) {
     if (!key) return null;
-    if (sortKey !== key) return html`<span class="sort-icon sort-icon--none">↕</span>`;
-    return sortDir === 1
+    if (sort.key !== key) return html`<span class="sort-icon sort-icon--none">↕</span>`;
+    return sort.dir === 1
       ? html`<span class="sort-icon sort-icon--asc">↑</span>`
       : html`<span class="sort-icon sort-icon--desc">↓</span>`;
   }
@@ -96,25 +121,26 @@ export function Sweeps() {
   const filtered = useMemo(() => {
     let r = list;
     if (activeFilter) r = r.filter(s => activeFilter.includes((s.phase ?? '').toLowerCase()));
+    if (ns) r = r.filter(s => (s.namespace ?? '') === ns);
     if (searchText) {
-      const q = searchText.toLowerCase();
+      const qLower = searchText.toLowerCase();
       r = r.filter(s =>
-        (s.name ?? '').toLowerCase().includes(q) ||
-        (s.namespace ?? '').toLowerCase().includes(q)
+        (s.name ?? '').toLowerCase().includes(qLower) ||
+        (s.namespace ?? '').toLowerCase().includes(qLower)
       );
     }
     return r;
-  }, [list, activeFilter, searchText]);
+  }, [list, activeFilter, ns, searchText]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      const av = sweepValue(a, sortKey);
-      const bv = sweepValue(b, sortKey);
-      if (av < bv) return -sortDir;
-      if (av > bv) return sortDir;
+      const av = sweepValue(a, sort.key);
+      const bv = sweepValue(b, sort.key);
+      if (av < bv) return -sort.dir;
+      if (av > bv) return sort.dir;
       return 0;
     });
-  }, [filtered, sortKey, sortDir]);
+  }, [filtered, sort.key, sort.dir]);
 
   function rowClick(s) {
     navigate(`/sweeps/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`);
@@ -124,20 +150,24 @@ export function Sweeps() {
     <div class="sweeps-page" data-testid="page-sweeps">
       <div class="section-header">
         <div class="filter-tabs">
-          ${FILTERS.map(f => html`
-            <button
-              key=${f.label}
-              class=${'filter-tab' + (activeFilter === f.value ? ' filter-tab--active' : '')}
-              onclick=${() => setActiveFilter(f.value)}
-            >
-              ${f.label}
-              ${f.value === null
-                ? html`<span class="filter-tab-count">${list.length}</span>`
-                : html`<span class="filter-tab-count">
-                    ${list.filter(s => f.value.includes((s.phase ?? '').toLowerCase())).length}
-                  </span>`}
-            </button>
-          `)}
+          ${FILTERS.map(f => {
+            const key = f.value ? f.label.toLowerCase() : null;
+            const active = (phaseKey ?? null) === key;
+            return html`
+              <button
+                key=${f.label}
+                class=${'filter-tab' + (active ? ' filter-tab--active' : '')}
+                onclick=${() => setQuery({ phase: key })}
+              >
+                ${f.label}
+                ${f.value === null
+                  ? html`<span class="filter-tab-count">${list.length}</span>`
+                  : html`<span class="filter-tab-count">
+                      ${list.filter(s => f.value.includes((s.phase ?? '').toLowerCase())).length}
+                    </span>`}
+              </button>
+            `;
+          })}
         </div>
         <span class="text-dim" style="font-size: var(--font-size-sm)">
           ${filtered.length} of ${list.length} sweep${list.length !== 1 ? 's' : ''}
@@ -155,6 +185,18 @@ export function Sweeps() {
                    border-radius: var(--radius-md); color: ${palette.text};
                    font-size: var(--font-size-sm)`}
         />
+        ${ns && html`
+          <span
+            class="meta-pill meta-pill--clickable"
+            style=${'background:' + palette.teal + '22;color:' + palette.teal + ';border-color:' + palette.teal + '55'}
+            title=${'Namespace filter: ' + ns + ' (click to clear)'}
+            onclick=${() => setQuery({ ns: undefined })}
+            data-testid="ns-filter-chip"
+          >
+            <span class="meta-pill__prefix">ns</span>${ns}
+            <span style="margin-left:4px;opacity:0.7">×</span>
+          </span>
+        `}
       </div>
 
       ${sorted.length === 0
@@ -184,7 +226,9 @@ export function Sweeps() {
                         style="cursor: pointer"
                         data-testid=${'sweep-row-' + (s.namespace ?? '') + '-' + (s.name ?? '')}>
                       <td class="job-table-td job-table-name">${s.name}</td>
-                      <td class="job-table-td text-dim">${s.namespace}</td>
+                      <td class="job-table-td">
+                        <${NsPill} ns=${s.namespace} onClick=${nsClicked => setQuery({ ns: nsClicked, q: undefined })} testId=${'sweep-row-ns-' + (s.namespace ?? '')} />
+                      </td>
                       <td class="job-table-td">${renderPhase(s.phase)}</td>
                       <td class="job-table-td">${s.completed_runs} / ${s.total_variations || '?'}</td>
                       <td class="job-table-td"
@@ -192,9 +236,13 @@ export function Sweeps() {
                         ${s.failed_runs}
                       </td>
                       <td class="job-table-td">${s.total_variations}</td>
-                      <td class="job-table-td text-dim">${s.model ?? '---'}</td>
+                      <td class="job-table-td">
+                        <${ModelPill} model=${s.model} testId=${'sweep-row-model-' + (s.model ?? '')} />
+                      </td>
                       <td class="job-table-td">${renderSource(s.source)}</td>
-                      <td class="job-table-td text-dim">${formatAge(s.age_seconds)}</td>
+                      <td class="job-table-td text-dim">
+                        <${RelativeTime} seconds=${s.age_seconds} />
+                      </td>
                       <td class="job-table-td">
                         <a href=${`#${detailUrl}`}
                            title="View run history"

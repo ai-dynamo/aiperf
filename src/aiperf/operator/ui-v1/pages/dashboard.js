@@ -6,16 +6,9 @@ import { phaseColor, modelColor, palette, colors } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { NsPill, ModelPill } from '../components/pills.js';
+import { RelativeTime } from '../components/time.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
-
-function formatElapsed(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m`;
-  if (m > 0) return `${m}m ${s % 60}s`;
-  return `${s}s`;
-}
 
 function findBest(jobList, field) {
   let best = null;
@@ -345,7 +338,22 @@ export function Dashboard() {
             const pct = Math.round(job.progressPercent ?? 0);
             const color = phaseColor(phase);
             const startTime = job.startTime;
-            const elapsed = startTime ? formatElapsed(Date.now() - new Date(startTime).getTime()) : null;
+            const workersReady = job.workersReady ?? 0;
+            const workersTotal = job.workersTotal ?? 0;
+            const showWorkers = workersTotal > 0;
+            const errPctValue = job.errorRate != null ? job.errorRate * 100 : null;
+            const errColor = errPctValue == null
+              ? palette.muted
+              : errPctValue >= 5 ? palette.red
+              : errPctValue >= 1 ? palette.amber
+              : palette.green;
+            const liveMetrics = [
+              { label: 'TTFT', value: job.ttftMs, fmt: v => fmtNumber(v, 0), unit: 'ms' },
+              { label: 'OutTok', value: job.outputTokenThroughputTps, fmt: v => fmtInt(v), unit: 'tok/s' },
+              { label: 'P99', value: job.latencyP99Ms, fmt: v => fmtNumber(v, 0), unit: 'ms' },
+              { label: 'ITL', value: job.interTokenLatencyMs, fmt: v => fmtNumber(v, 1), unit: 'ms' },
+              { label: 'Reqs', value: job.totalRequests, fmt: v => fmtInt(v), unit: '' },
+            ].filter(m => m.value != null);
 
             return html`
               <div
@@ -356,14 +364,23 @@ export function Dashboard() {
               >
                 <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">
                   <div>
-                    <div style="display:flex;align-items:center;gap:8px">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                       <div class="job-indicator running"></div>
                       <span class="job-name">${job.name}</span>
                       <span class="job-badge running">${phase}</span>
+                      ${job.currentPhase ? html`
+                        <span class="job-subphase" title="Current benchmark phase">${job.currentPhase}</span>
+                      ` : null}
+                      <${NsPill} ns=${job.namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId=${'dashboard-active-ns-' + (job.namespace ?? '')} />
+                      ${job.model && html`<${ModelPill} model=${job.model} testId=${'dashboard-active-model-' + (job.namespace ?? '')} />`}
                     </div>
-                    <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">
-                      ${job.model ? html`<span>${job.model}</span>` : null}
-                      ${elapsed ? html`<span>\u00b7 ${elapsed}</span>` : null}
+                    <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                      ${startTime ? html`<${RelativeTime} ts=${startTime} mode="elapsed" />` : null}
+                      ${showWorkers ? html`
+                        <span title="Workers ready / total">\u00b7
+                          <span style="color:${workersReady === workersTotal ? palette.green : palette.amber}">${workersReady}/${workersTotal}</span> workers
+                        </span>
+                      ` : null}
                     </div>
                   </div>
                   <div style="text-align:right">
@@ -373,6 +390,23 @@ export function Dashboard() {
                     ` : null}
                   </div>
                 </div>
+                ${liveMetrics.length > 0 || errPctValue != null ? html`
+                  <div class="live-metric-strip" data-testid="dashboard-active-metrics">
+                    ${liveMetrics.map(m => html`
+                      <div class="live-metric" key=${m.label} title=${m.label + (m.unit ? ' (' + m.unit + ')' : '')}>
+                        <span class="live-metric-label">${m.label}</span>
+                        <span class="live-metric-value">${m.fmt(m.value)}</span>
+                        ${m.unit ? html`<span class="live-metric-unit">${m.unit}</span>` : null}
+                      </div>
+                    `)}
+                    ${errPctValue != null ? html`
+                      <div class="live-metric" title="Errored requests as % of total">
+                        <span class="live-metric-label">Err</span>
+                        <span class="live-metric-value" style="color:${errColor}">${fmtNumber(errPctValue, errPctValue < 1 ? 2 : 1)}%</span>
+                      </div>
+                    ` : null}
+                  </div>
+                ` : null}
                 ${pct > 0 ? html`
                   <div class="progress-track" style="margin-top:8px">
                     <div class="progress-fill" style=${'width:' + pct + '%;background:' + color} />
@@ -397,10 +431,11 @@ export function Dashboard() {
               onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
               style="cursor:pointer;margin-bottom:var(--space-3);border-color:${palette.red}44"
             >
-              <div style="display:flex;align-items:center;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                 <div class="job-indicator failed"></div>
                 <span class="job-name">${job.name}</span>
                 <span class="job-badge failed">${job.phase ?? 'Failed'}</span>
+                <${NsPill} ns=${job.namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId=${'dashboard-failed-ns-' + (job.namespace ?? '')} />
               </div>
               ${job.error ? html`
                 <div style="font-size:var(--font-size-sm);color:${palette.red};margin-top:4px">${job.error}</div>

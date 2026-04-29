@@ -2,7 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { jobs } from '../lib/state.js';
-import { navigate } from '../lib/router.js';
+import { navigate, query, setQuery } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
 import { JobTable } from '../components/job-table.js';
 
@@ -13,16 +13,48 @@ const FILTERS = [
   { label: 'Failed', value: ['failed', 'error'] },
 ];
 
+const PHASE_BY_KEY = Object.fromEntries(
+  FILTERS.filter(f => f.value).map(f => [f.label.toLowerCase(), f.value])
+);
+
+function parseSort(s) {
+  if (!s) return { key: 'age', dir: -1 };
+  const [key, dir] = s.split(':');
+  return { key: key || 'age', dir: dir === 'asc' ? 1 : -1 };
+}
+
+function formatSort(sort) {
+  return `${sort.key}:${sort.dir === 1 ? 'asc' : 'desc'}`;
+}
+
 export function Jobs() {
   const [localJobs, setLocalJobs] = useState(jobs.value);
-  const [activeFilter, setActiveFilter] = useState(null);
-  const [searchText, setSearchText] = useState('');
-  const [modelFilter, setModelFilter] = useState('');
-  const [endpointFilter, setEndpointFilter] = useState('');
+
+  // URL-driven filter state
+  const q = query.value;
+  const phaseKey = q.phase ?? null;
+  const activeFilter = phaseKey ? (PHASE_BY_KEY[phaseKey] ?? null) : null;
+  const ns = q.ns ?? '';
+  const modelFilter = q.model ?? '';
+  const endpointFilter = q.endpoint ?? '';
+  const sort = parseSort(q.sort);
+
+  // Search text is local; debounced into ?q= so typing doesn't spam history
+  const urlQ = q.q ?? '';
+  const [searchText, setSearchText] = useState(urlQ);
+  useEffect(() => {
+    if (searchText !== urlQ) setSearchText(urlQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQ]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (searchText !== urlQ) setQuery({ q: searchText });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [searchText, urlQ]);
 
   useEffect(() => {
     const ac = new AbortController();
-
     poll(
       async () => {
         const data = await api.listJobs();
@@ -33,11 +65,9 @@ export function Jobs() {
       5000,
       ac.signal,
     );
-
     return () => ac.abort();
   }, []);
 
-  // Extract unique models and endpoints for filter dropdowns
   const models = useMemo(() => {
     const set = new Set(localJobs.map(j => j.model).filter(Boolean));
     return [...set].sort();
@@ -48,36 +78,29 @@ export function Jobs() {
     return [...set].sort();
   }, [localJobs]);
 
-  // Apply all filters
   const filtered = useMemo(() => {
     let result = localJobs;
-
-    // Phase filter
     if (activeFilter) {
       result = result.filter(j => activeFilter.includes((j.phase ?? '').toLowerCase()));
     }
-
-    // Text search (name, namespace)
+    if (ns) {
+      result = result.filter(j => (j.namespace ?? '') === ns);
+    }
     if (searchText) {
-      const q = searchText.toLowerCase();
+      const qLower = searchText.toLowerCase();
       result = result.filter(j =>
-        (j.name ?? '').toLowerCase().includes(q) ||
-        (j.namespace ?? '').toLowerCase().includes(q),
+        (j.name ?? '').toLowerCase().includes(qLower) ||
+        (j.namespace ?? '').toLowerCase().includes(qLower),
       );
     }
-
-    // Model filter
     if (modelFilter) {
       result = result.filter(j => j.model === modelFilter);
     }
-
-    // Endpoint filter
     if (endpointFilter) {
       result = result.filter(j => j.endpoint === endpointFilter);
     }
-
     return result;
-  }, [localJobs, activeFilter, searchText, modelFilter, endpointFilter]);
+  }, [localJobs, activeFilter, ns, searchText, modelFilter, endpointFilter]);
 
   function handleRowClick(job) {
     navigate('/jobs/' + encodeURIComponent(job.namespace ?? 'default') + '/' + encodeURIComponent(job.name ?? ''));
@@ -85,32 +108,34 @@ export function Jobs() {
 
   function clearFilters() {
     setSearchText('');
-    setModelFilter('');
-    setEndpointFilter('');
-    setActiveFilter(null);
+    setQuery({ q: undefined, ns: undefined, phase: undefined, model: undefined, endpoint: undefined });
   }
 
-  const hasFilters = searchText || modelFilter || endpointFilter || activeFilter;
+  const hasFilters = searchText || ns || modelFilter || endpointFilter || activeFilter;
 
   return html`
     <div class="jobs-page" data-testid="page-jobs">
       <div class="section-header">
         <div class="filter-tabs">
-          ${FILTERS.map((f) => html`
-            <button
-              key=${f.label}
-              class=${'filter-tab' + (activeFilter === f.value ? ' filter-tab--active' : '')}
-              onclick=${() => setActiveFilter(f.value)}
-            >
-              ${f.label}
-              ${f.value === null
-                ? html`<span class="filter-tab-count">${localJobs.length}</span>`
-                : html`<span class="filter-tab-count">
-                    ${localJobs.filter((j) => f.value.includes((j.phase ?? '').toLowerCase())).length}
-                  </span>`
-              }
-            </button>
-          `)}
+          ${FILTERS.map((f) => {
+            const key = f.value ? f.label.toLowerCase() : null;
+            const active = (phaseKey ?? null) === key;
+            return html`
+              <button
+                key=${f.label}
+                class=${'filter-tab' + (active ? ' filter-tab--active' : '')}
+                onclick=${() => setQuery({ phase: key })}
+              >
+                ${f.label}
+                ${f.value === null
+                  ? html`<span class="filter-tab-count">${localJobs.length}</span>`
+                  : html`<span class="filter-tab-count">
+                      ${localJobs.filter((j) => f.value.includes((j.phase ?? '').toLowerCase())).length}
+                    </span>`
+                }
+              </button>
+            `;
+          })}
         </div>
         <span class="text-dim" style="font-size: var(--font-size-sm)">
           ${filtered.length} of ${localJobs.length} job${localJobs.length !== 1 ? 's' : ''}
@@ -126,10 +151,22 @@ export function Jobs() {
           oninput=${e => setSearchText(e.target.value)}
           style=${'flex: 1; min-width: 150px; padding: var(--space-2) var(--space-3); background: ' + palette.mantle + '; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.text + '; font-size: var(--font-size-sm)'}
         />
+        ${ns && html`
+          <span
+            class="meta-pill meta-pill--clickable"
+            style=${'background:' + palette.teal + '22;color:' + palette.teal + ';border-color:' + palette.teal + '55'}
+            title=${'Namespace filter: ' + ns + ' (click to clear)'}
+            onclick=${() => setQuery({ ns: undefined })}
+            data-testid="ns-filter-chip"
+          >
+            <span class="meta-pill__prefix">ns</span>${ns}
+            <span style="margin-left:4px;opacity:0.7">×</span>
+          </span>
+        `}
         ${models.length > 1 && html`
           <select
             value=${modelFilter}
-            onchange=${e => setModelFilter(e.target.value)}
+            onchange=${e => setQuery({ model: e.target.value })}
             style=${'padding: var(--space-2) var(--space-3); background: ' + palette.mantle + '; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.text + '; font-size: var(--font-size-sm)'}
           >
             <option value="">All Models</option>
@@ -139,7 +176,7 @@ export function Jobs() {
         ${endpoints.length > 1 && html`
           <select
             value=${endpointFilter}
-            onchange=${e => setEndpointFilter(e.target.value)}
+            onchange=${e => setQuery({ endpoint: e.target.value })}
             style=${'padding: var(--space-2) var(--space-3); background: ' + palette.mantle + '; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.text + '; font-size: var(--font-size-sm)'}
           >
             <option value="">All Endpoints</option>
@@ -159,6 +196,9 @@ export function Jobs() {
       <${JobTable}
         jobs=${filtered}
         onRowClick=${handleRowClick}
+        sort=${sort}
+        onSortChange=${next => setQuery({ sort: formatSort(next) })}
+        onNamespaceClick=${nsClicked => setQuery({ ns: nsClicked, q: undefined })}
       />
     </div>
   `;

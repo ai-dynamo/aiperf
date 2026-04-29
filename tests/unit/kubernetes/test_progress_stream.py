@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, NonCallableMock, patch
 
 import aiohttp
 import pytest
+from pytest import param
 
 from aiperf.kubernetes import progress_stream
 from aiperf.kubernetes.progress_stream import (
@@ -399,3 +400,40 @@ class TestCallbackFailure:
 
         # Only one attempt: non-transport exception must not trigger reconnect.
         assert call_count == 1
+
+
+# ============================================================
+# WSMsgType.CLOSE handling
+# ============================================================
+
+
+class TestConsumeWSCloseFrame:
+    """``_consume_ws_messages`` distinguishes graceful vs abnormal CLOSE."""
+
+    @pytest.mark.parametrize(
+        "close_code,expected_graceful",
+        [
+            param(1000, True, id="normal-close-1000"),
+            param(None, True, id="no-code"),
+            param(1006, False, id="abnormal-1006"),
+            param(1011, False, id="server-error-1011"),
+        ],
+    )  # fmt: skip
+    async def test_close_frame_returns_graceful_for_normal_codes_only(
+        self, close_code: int | None, expected_graceful: bool
+    ) -> None:
+        """A CLOSE frame with code 1000 (or None) is graceful; others reconnect."""
+        from aiperf.kubernetes.progress_stream import _consume_ws_messages
+
+        close_frame = MagicMock()
+        close_frame.type = aiohttp.WSMsgType.CLOSE
+
+        ws = AsyncMock()
+        ws.close_code = close_code
+        ws.__aiter__ = lambda self: _async_iter([close_frame])
+
+        async def on_message(_data: dict) -> bool:
+            return False
+
+        result = await _consume_ws_messages(ws, on_message)
+        assert result is expected_graceful

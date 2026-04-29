@@ -7,24 +7,77 @@ import { Conditions } from '../components/conditions.js';
 import { JobTable } from '../components/job-table.js';
 import { CellsChart } from '../components/cells-chart.js';
 import { CellsTable } from '../components/cells-table.js';
+import { VariationsTable } from '../components/variations-table.js';
+import { VariationsChart } from '../components/variations-chart.js';
+import { VariationsPareto } from '../components/variations-pareto.js';
 import { EpochSelector } from '../components/epoch-selector.js';
+import { NsPill, ModelPill } from '../components/pills.js';
+import { RelativeTime } from '../components/time.js';
+import { fmtNumber } from '../lib/format.js';
 import { navigate } from '../lib/router.js';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
-const DEFAULT_METRIC = 'request_throughput';
-const DEFAULT_STAT = 'avg';
-const STATS = ['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'];
 
-function formatAge(s) {
-  if (s == null) return null;
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  if (s < 86400) {
-    const h = Math.floor(s / 3600);
-    return `${h}h ${Math.floor((s % 3600) / 60)}m`;
-  }
-  return `${Math.floor(s / 86400)}d`;
+const HEADLINE_METRICS = [
+  { key: 'request_throughput',      stat: 'avg', label: 'Req throughput',      unit: 'req/s' },
+  { key: 'output_token_throughput', stat: 'avg', label: 'Output tok/s',        unit: 'tok/s' },
+  { key: 'total_token_throughput',  stat: 'avg', label: 'Total tok/s',         unit: 'tok/s' },
+  { key: 'request_latency',         stat: 'p50', label: 'Req latency p50',     unit: 'ms'    },
+  { key: 'request_latency',         stat: 'p99', label: 'Req latency p99',     unit: 'ms'    },
+  { key: 'time_to_first_token',     stat: 'p50', label: 'TTFT p50',            unit: 'ms'    },
+  { key: 'time_to_first_token',     stat: 'p99', label: 'TTFT p99',            unit: 'ms'    },
+  { key: 'inter_token_latency',     stat: 'avg', label: 'ITL avg',             unit: 'ms'    },
+];
+
+const DEFAULT_CHART_METRIC_KEY = 'output_token_throughput.avg';
+
+// Mirror the axis presets from the legacy ui's ``analysis.js`` so the
+// pareto UX feels identical: pick from a short list of well-known
+// throughput-vs-latency pairs rather than freeform x/y selectors.
+const PARETO_AXES = [
+  {
+    key: 'tps_p99',
+    label: 'tps × p99',
+    x: { key: 'request_throughput',      stat: 'avg', label: 'Throughput',       unit: 'req/s' },
+    y: { key: 'request_latency',         stat: 'p99', label: 'Latency P99',      unit: 'ms'    },
+    yIsSmallerBetter: true,
+  },
+  {
+    key: 'tps_ttft',
+    label: 'tps × ttft',
+    x: { key: 'request_throughput',      stat: 'avg', label: 'Throughput',       unit: 'req/s' },
+    y: { key: 'time_to_first_token',     stat: 'avg', label: 'TTFT',             unit: 'ms'    },
+    yIsSmallerBetter: true,
+  },
+  {
+    key: 'tok_p99',
+    label: 'tok × p99',
+    x: { key: 'output_token_throughput', stat: 'avg', label: 'Token Throughput', unit: 'tok/s' },
+    y: { key: 'request_latency',         stat: 'p99', label: 'Latency P99',      unit: 'ms'    },
+    yIsSmallerBetter: true,
+  },
+];
+const DEFAULT_PARETO_AXIS_KEY = 'tps_p99';
+
+/** Compute population mean / std / cv across an array of numbers. */
+function meanStd(values) {
+  const filtered = values.filter(v => typeof v === 'number' && Number.isFinite(v));
+  if (filtered.length === 0) return null;
+  const n = filtered.length;
+  const mean = filtered.reduce((a, b) => a + b, 0) / n;
+  if (n < 2) return { mean, std: 0, cv: null, n };
+  const variance = filtered.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+  const std = Math.sqrt(variance);
+  const cv = mean !== 0 ? std / Math.abs(mean) : null;
+  return { mean, std, cv, n };
+}
+
+function fmtKpi(value, unit) {
+  if (value == null) return '---';
+  if (unit === 'req/s' || unit === 'tok/s') return fmtNumber(value, 0);
+  if (unit === 'ms') return fmtNumber(value, value < 1 ? 3 : 1);
+  return fmtNumber(value, 3);
 }
 
 export function SweepDetail({ namespace, name, epoch }) {
@@ -32,9 +85,9 @@ export function SweepDetail({ namespace, name, epoch }) {
   const [cells, setCells] = useState(null);
   const [epochs, setEpochs] = useState([]);
   const [archivedChildren, setArchivedChildren] = useState(null);
-  const [view, setView] = useState('chart');
-  const [metric, setMetric] = useState(DEFAULT_METRIC);
-  const [stat, setStat] = useState(DEFAULT_STAT);
+  const [childSummaries, setChildSummaries] = useState({});
+  const [chartMetricKey, setChartMetricKey] = useState(DEFAULT_CHART_METRIC_KEY);
+  const [paretoAxisKey, setParetoAxisKey] = useState(DEFAULT_PARETO_AXIS_KEY);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -58,7 +111,7 @@ export function SweepDetail({ namespace, name, epoch }) {
     let cancelled = false;
     api.getSweepCells(namespace, name, epoch)
       .then(d => { if (!cancelled) setCells(d); })
-      .catch(e => { if (!cancelled) setError(String(e)); });
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [namespace, name, epoch]);
 
@@ -86,6 +139,128 @@ export function SweepDetail({ namespace, name, epoch }) {
     return () => { cancelled = true; };
   }, [namespace, name, epoch, detail]);
 
+  // The variation manifest lives on ``status.aggregate.children`` once the
+  // sweep-controller has patched it. The on-disk ``children.json`` is
+  // wrapped as ``{sweep_run_epoch, children: [...]}`` and embedded
+  // verbatim, so normalize either shape (object envelope or bare array).
+  const manifest = useMemo(() => {
+    const raw = detail?.status?.aggregate?.children;
+    if (Array.isArray(raw)) return raw;
+    if (raw && Array.isArray(raw.children)) return raw.children;
+    return [];
+  }, [detail]);
+
+  // Fetch each child's status.summary once per manifest snapshot, so the
+  // chart and table share one set of network requests instead of duplicating.
+  useEffect(() => {
+    if (manifest.length === 0) {
+      setChildSummaries({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      manifest.map(c =>
+        api.getJob(c.namespace ?? namespace, c.name)
+          .then(d => [c.name, d?.status?.summary ?? d?.status?.results?.metrics ?? null])
+          .catch(() => [c.name, null])
+      )
+    ).then(pairs => {
+      if (cancelled) return;
+      setChildSummaries(Object.fromEntries(pairs));
+    });
+    return () => { cancelled = true; };
+  }, [namespace, JSON.stringify(manifest.map(c => c.name))]);
+
+  // Group manifest entries by variation_index and compute mean/std/cv per
+  // headline metric across the available trials. ``perMetric`` is keyed
+  // ``"<key>.<stat>"`` so a metric+stat selector can index it directly.
+  const variations = useMemo(() => {
+    if (manifest.length === 0) return [];
+    const groups = new Map();
+    for (const c of manifest) {
+      const idx = c.variation_index ?? 0;
+      if (!groups.has(idx)) {
+        groups.set(idx, {
+          variation_index: idx,
+          label: c.variation_label ?? '',
+          n_total: 0,
+          summaries: [],
+        });
+      }
+      const g = groups.get(idx);
+      g.n_total += 1;
+      const summary = childSummaries[c.name];
+      if (summary) g.summaries.push(summary);
+    }
+    return [...groups.values()]
+      .sort((a, b) => a.variation_index - b.variation_index)
+      .map(g => {
+        const perMetric = {};
+        for (const m of HEADLINE_METRICS) {
+          const values = g.summaries.map(s => s?.[m.key]?.[m.stat]).filter(x => x != null);
+          const r = meanStd(values);
+          perMetric[m.key + '.' + m.stat] = r ?? { mean: null, std: null, cv: null, n: 0 };
+        }
+        return {
+          variation_index: g.variation_index,
+          label: g.label,
+          n_trials: g.summaries.length,
+          n_total: g.n_total,
+          perMetric,
+        };
+      });
+  }, [manifest, childSummaries]);
+
+  // Per-metric series used by the chart: one point per variation, with
+  // ``mean`` + ``std`` for the error band.
+  const chartMetric = useMemo(() => {
+    const m = HEADLINE_METRICS.find(x => x.key + '.' + x.stat === chartMetricKey)
+      ?? HEADLINE_METRICS[0];
+    const series = variations.map(v => {
+      const r = v.perMetric?.[m.key + '.' + m.stat];
+      return {
+        variation_index: v.variation_index,
+        label: v.label,
+        mean: r?.mean ?? null,
+        std: r?.std ?? 0,
+        cv: r?.cv ?? null,
+        n: r?.n ?? 0,
+      };
+    });
+    return { meta: m, series };
+  }, [variations, chartMetricKey]);
+
+  const paretoAxis = useMemo(() =>
+    PARETO_AXES.find(a => a.key === paretoAxisKey) ?? PARETO_AXES[0]
+  , [paretoAxisKey]);
+
+  // Headline KPI extraction: pick the *peak* mean across variations for
+  // throughput, and the *minimum* mean across variations for latency. CV
+  // shown on the card is the variation that produced the peak/min.
+  const headlineKpis = useMemo(() => {
+    const out = [];
+    const pick = (key, stat, label, unit, mode) => {
+      const points = variations
+        .map(v => ({ v, r: v.perMetric?.[key + '.' + stat] }))
+        .filter(p => p.r?.mean != null);
+      if (points.length === 0) return;
+      points.sort((a, b) => mode === 'max' ? b.r.mean - a.r.mean : a.r.mean - b.r.mean);
+      const top = points[0];
+      out.push({
+        label,
+        unit,
+        value: top.r.mean,
+        cv: top.r.cv,
+        variation: top.v.label || `v${top.v.variation_index}`,
+      });
+    };
+    pick('output_token_throughput', 'avg', 'Peak output tok/s',  'tok/s', 'max');
+    pick('request_throughput',      'avg', 'Peak req/s',         'req/s', 'max');
+    pick('time_to_first_token',     'p50', 'Best TTFT p50',      'ms',    'min');
+    pick('request_latency',         'p99', 'Best req lat p99',   'ms',    'min');
+    return out;
+  }, [variations]);
+
   function pickEpoch(next) {
     if (next === undefined) {
       navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
@@ -103,14 +278,6 @@ export function SweepDetail({ namespace, name, epoch }) {
   }, [detail, epoch, archivedChildren]);
   const childRowsAreArchived =
     epoch !== undefined && (detail?.children ?? []).length === 0 && !!archivedChildren;
-
-  const metricNames = useMemo(() => {
-    const set = new Set();
-    for (const c of (cells?.cells ?? [])) {
-      for (const m of Object.keys(c.metrics ?? {})) set.add(m);
-    }
-    return [...set].sort();
-  }, [cells]);
 
   if (error) {
     return html`
@@ -132,6 +299,10 @@ export function SweepDetail({ namespace, name, epoch }) {
   const phase = s.phase ?? 'Unknown';
   const phaseClr = phaseColor(phase);
   const isRunning = RUNNING_PHASES.has(phase.toLowerCase());
+  // Show legacy /cells panel only when the new manifest path has nothing
+  // to render — avoids a confusing "No cells completed yet." card sitting
+  // next to a populated VariationsTable.
+  const hasManifest = manifest.length > 0;
 
   return html`
     <div class="sweep-detail" data-testid="page-sweep-detail">
@@ -144,7 +315,9 @@ export function SweepDetail({ namespace, name, epoch }) {
               <span class="phase-badge" style=${'background: ' + phaseClr + '22; color: ' + phaseClr + '; border-color: ' + phaseClr + '44'}>
                 ${phase}
               </span>
-              ${formatAge(s.age_seconds) && html`<span class="text-dim" style="font-size:var(--font-size-sm)">${formatAge(s.age_seconds)}</span>`}
+              <${NsPill} ns=${s.namespace} onClick=${ns => navigate('/sweeps?ns=' + encodeURIComponent(ns))} testId="sweep-detail-ns-pill" />
+              ${s.model && html`<${ModelPill} model=${s.model} testId="sweep-detail-model-pill" />`}
+              ${s.age_seconds != null && html`<${RelativeTime} seconds=${s.age_seconds} mode="elapsed" className="text-dim" />`}
               ${isRunning && html`
                 <span style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}>
                   <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
@@ -154,8 +327,7 @@ export function SweepDetail({ namespace, name, epoch }) {
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:var(--space-1)">
-              ${s.namespace}${s.model ? ' · ' + s.model : ''}
-              ${html` · <span style=${`color:${palette.overlay1};font-size:var(--font-size-xs);padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${s.source}</span>`}
+              <span style=${`color:${palette.overlay1};font-size:var(--font-size-xs);padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${s.source}</span>
             </div>
             ${currentCell && html`
               <p class="text-dim" style="margin:var(--space-1) 0 0 0;font-size:var(--font-size-sm)">
@@ -172,8 +344,8 @@ export function SweepDetail({ namespace, name, epoch }) {
         </div>
       `}
 
-      <!-- KPI row -->
-      <div class="kpi-row" style="margin-bottom: var(--space-6)">
+      <!-- KPI row: progress (left) + headline performance (right) -->
+      <div class="kpi-row" style="margin-bottom: var(--space-4)">
         <${KpiCard}
           label="Variations"
           value=${s.total_variations}
@@ -181,7 +353,7 @@ export function SweepDetail({ namespace, name, epoch }) {
         />
         <${KpiCard}
           label="Completed"
-          value=${s.completed_runs}
+          value=${`${s.completed_runs ?? 0}/${(s.completed_runs ?? 0) + (s.failed_runs ?? 0)}`}
           color=${palette.green}
         />
         <${KpiCard}
@@ -189,59 +361,97 @@ export function SweepDetail({ namespace, name, epoch }) {
           value=${s.failed_runs}
           color=${s.failed_runs > 0 ? palette.red : palette.overlay1}
         />
-        <${KpiCard}
-          label="Total runs"
-          value=${(s.completed_runs ?? 0) + (s.failed_runs ?? 0)}
-          color=${palette.mauve}
-        />
+        ${headlineKpis.map(k => html`
+          <${KpiCard}
+            key=${k.label}
+            label=${k.label}
+            value=${fmtKpi(k.value, k.unit)}
+            unit=${k.unit}
+            color=${palette.peach}
+            sub=${html`<span class="text-dim" style="font-size:var(--font-size-xs)">${k.variation}${k.cv != null ? ` · cv ${(k.cv * 100).toFixed(1)}%` : ''}</span>`}
+          />
+        `)}
       </div>
 
-      <!-- Cells panel -->
-      <div class="card" style="margin-bottom: var(--space-4)">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
-          <div class="card-title" style="margin:0">Cells</div>
-          <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+      <!-- Per-variation curve + table (driven by the inline aggregate manifest) -->
+      ${hasManifest && html`
+        <div class="card" style="margin-bottom: var(--space-4)" data-testid="sweep-detail-variations">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
+            <div class="card-title" style="margin:0">Variation curve</div>
             <select
-              value=${metric}
-              onchange=${e => setMetric(e.target.value)}
+              value=${chartMetricKey}
+              onchange=${e => setChartMetricKey(e.target.value)}
+              data-testid="variations-chart-metric"
               style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
             >
-              ${metricNames.length === 0
-                ? html`<option value=${DEFAULT_METRIC}>${DEFAULT_METRIC}</option>`
-                : metricNames.map(m => html`<option key=${m} value=${m}>${m}</option>`)}
+              ${HEADLINE_METRICS.map(m => html`
+                <option key=${m.key + '.' + m.stat} value=${m.key + '.' + m.stat}>
+                  ${m.label} (${m.unit})
+                </option>
+              `)}
             </select>
-            <select
-              value=${stat}
-              onchange=${e => setStat(e.target.value)}
-              style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
-            >
-              ${STATS.map(s2 => html`<option key=${s2} value=${s2}>${s2}</option>`)}
-            </select>
-            <div class="filter-tabs" style="margin:0">
-              <button
-                class=${'filter-tab' + (view === 'chart' ? ' filter-tab--active' : '')}
-                onclick=${() => setView('chart')}
-              >Chart</button>
-              <button
-                class=${'filter-tab' + (view === 'table' ? ' filter-tab--active' : '')}
-                onclick=${() => setView('table')}
-              >Table</button>
-            </div>
+          </div>
+          <${VariationsChart}
+            variations=${chartMetric.series}
+            metricLabel=${chartMetric.meta.label}
+            unit=${chartMetric.meta.unit}
+          />
+          <div style="margin-top: var(--space-3)">
+            <${VariationsTable}
+              variations=${variations}
+              headlineMetrics=${HEADLINE_METRICS}
+            />
           </div>
         </div>
-        ${view === 'chart'
-          ? html`<${CellsChart}
+
+        <!-- Pareto frontier — mirrors the legacy ui's analysis.js: pick
+             one of a few preset axis pairs and we sweep the points
+             monotonically (sort by x asc, track best y, push improvements)
+             to draw the frontier as a dashed line. -->
+        <div class="card" style="margin-bottom: var(--space-4)" data-testid="sweep-detail-pareto">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
+            <div class="card-title" style="margin:0">Pareto · ${paretoAxis.x.label} × ${paretoAxis.y.label}</div>
+            <div class="filter-tabs" style="margin:0">
+              ${PARETO_AXES.map(a => html`
+                <button
+                  key=${a.key}
+                  class=${'filter-tab' + (paretoAxisKey === a.key ? ' filter-tab--active' : '')}
+                  onclick=${() => setParetoAxisKey(a.key)}
+                  data-testid=${'pareto-axis-' + a.key}
+                >${a.label}</button>
+              `)}
+            </div>
+          </div>
+          <${VariationsPareto}
+            variations=${variations}
+            xMetric=${paretoAxis.x}
+            yMetric=${paretoAxis.y}
+            yIsSmallerBetter=${paretoAxis.yIsSmallerBetter}
+          />
+        </div>
+      `}
+
+      <!-- Legacy server-computed Cells panel — only when the new manifest
+           path has no data, e.g. older sweeps that never carried the
+           inline aggregate. -->
+      ${!hasManifest && cells && html`
+        <div class="card" style="margin-bottom: var(--space-4)">
+          <div class="card-title">Cells</div>
+          <${CellsChart}
+            dimensions=${cells?.dimensions ?? []}
+            cells=${cells?.cells ?? []}
+            metric="request_throughput"
+            stat="avg" />
+          <div style="margin-top: var(--space-3)">
+            <${CellsTable}
               dimensions=${cells?.dimensions ?? []}
               cells=${cells?.cells ?? []}
-              metric=${metric}
-              stat=${stat} />`
-          : html`<${CellsTable}
-              dimensions=${cells?.dimensions ?? []}
-              cells=${cells?.cells ?? []}
-              metric=${metric}
-              stat=${stat}
-              onCellClick=${c => c.children?.[0] && navigate(`/jobs/${encodeURIComponent(c.children[0].namespace)}/${encodeURIComponent(c.children[0].name)}`)} />`}
-      </div>
+              metric="request_throughput"
+              stat="avg"
+              onCellClick=${c => c.children?.[0] && navigate(`/jobs/${encodeURIComponent(c.children[0].namespace)}/${encodeURIComponent(c.children[0].name)}`)} />
+          </div>
+        </div>
+      `}
 
       <!-- Children -->
       <div class="card" data-testid="sweep-detail-children">

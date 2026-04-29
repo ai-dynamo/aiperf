@@ -959,7 +959,8 @@ class TestRecordExportResultsProcessorLifecycle:
 
         assert processor._file_handle is None
         await processor.initialize()
-        assert processor._file_handle is not None
+        # File handle is opened lazily on first flush, not at initialize().
+        assert processor._file_handle is None
         await processor.start()
 
         mock_display_dict = {"inter_token_latency": MetricValue(value=100, unit="ms")}

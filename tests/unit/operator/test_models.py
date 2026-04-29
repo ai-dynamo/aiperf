@@ -18,124 +18,118 @@ from aiperf.operator.models import AIPerfJobSpec, K8sEndpointConfig, MetricsSumm
 
 
 class TestMetricsSummary:
-    """Tests for MetricsSummary model."""
+    """Tests for MetricsSummary projection."""
 
     def test_creates_empty_summary(self) -> None:
-        """Verify creates empty summary with all None values."""
+        """Empty default has an empty data dict."""
         summary = MetricsSummary()
-        assert summary.throughput_rps is None
-        assert summary.latency_avg_ms is None
-        assert summary.total_requests is None
+        assert summary.data == {}
+        assert summary.to_status_dict() == {}
 
     def test_from_metrics_with_empty_dict(self) -> None:
-        """Verify returns empty summary for empty metrics dict."""
+        """Empty input metrics produces empty summary."""
         summary = MetricsSummary.from_metrics({})
-        assert summary.throughput_rps is None
+        assert summary.data == {}
 
     def test_from_metrics_with_none(self) -> None:
-        """Verify handles None input."""
-        summary = MetricsSummary.from_metrics(None)  # type: ignore
-        assert summary.throughput_rps is None
+        """None input is handled."""
+        summary = MetricsSummary.from_metrics(None)
+        assert summary.data == {}
 
-    def test_from_metrics_extracts_throughput(self) -> None:
-        """Verify extracts throughput metrics."""
+    def test_from_metrics_passthrough_list_form(self) -> None:
+        """Legacy list-of-dicts ``metrics`` form is normalized to tag-keyed dict."""
         metrics = {
             "metrics": [
-                {"tag": "request_throughput", "avg": 100.5},
-            ]
-        }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.throughput_rps == 100.5
-
-    def test_from_metrics_extracts_token_throughput(self) -> None:
-        """Verify extracts token throughput."""
-        metrics = {
-            "metrics": [
-                {"tag": "output_token_throughput", "avg": 500.0},
-            ]
-        }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.throughput_tps == 500.0
-
-    def test_from_metrics_extracts_latency_stats(self) -> None:
-        """Verify extracts latency percentiles."""
-        metrics = {
-            "metrics": [
+                {"tag": "request_throughput", "avg": 100.5, "unit": "requests/sec"},
                 {"tag": "request_latency", "avg": 50.0, "p50": 45.0, "p99": 120.0},
             ]
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.latency_avg_ms == 50.0
-        assert summary.latency_p50_ms == 45.0
-        assert summary.latency_p99_ms == 120.0
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["request_throughput"]["avg"] == 100.5
+        assert result["request_latency"]["p99"] == 120.0
 
-    def test_from_metrics_extracts_ttft(self) -> None:
-        """Verify extracts time to first token."""
+    def test_from_metrics_passthrough_dict_form(self) -> None:
+        """Live ``metrics`` dict form passes through verbatim for known tags."""
         metrics = {
-            "metrics": [
-                {"tag": "time_to_first_token", "avg": 100.0, "p50": 90.0, "p99": 200.0},
-            ]
+            "metrics": {
+                "output_token_throughput": {"avg": 500.0, "unit": "tokens/sec"},
+                "time_to_first_token": {"avg": 100.0, "p50": 90.0, "p99": 200.0},
+            }
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.ttft_avg_ms == 100.0
-        assert summary.ttft_p50_ms == 90.0
-        assert summary.ttft_p99_ms == 200.0
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["output_token_throughput"]["avg"] == 500.0
+        assert result["time_to_first_token"]["p99"] == 200.0
 
-    def test_from_metrics_extracts_total_requests(self) -> None:
-        """Verify extracts total requests count."""
+    def test_from_metrics_unwrapped_top_level_form(self) -> None:
+        """``profile_export_aiperf.json`` top-level tag dict is also accepted."""
         metrics = {
-            "metrics": [
-                {"tag": "total_requests", "avg": 1000.0},
-            ]
+            "request_throughput": {"avg": 200.0, "unit": "requests/sec"},
+            "request_latency": {"avg": 30.0, "p99": 80.0},
+            "request_count": 1000,
+            "error_rate": 0.05,
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.total_requests == 1000
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["request_throughput"]["avg"] == 200.0
+        assert result["request_latency"]["p99"] == 80.0
+        assert result["total_requests"] == 1000
+        assert result["error_rate"] == 0.05
 
-    def test_from_metrics_extracts_error_rate(self) -> None:
-        """Verify extracts error rate."""
+    def test_from_metrics_drops_unknown_tags(self) -> None:
+        """Tags not on the curated allowlist are dropped — keeps summary tight."""
         metrics = {
-            "metrics": [
-                {"tag": "error_rate", "avg": 0.05},
-            ]
+            "metrics": {
+                "request_throughput": {"avg": 100.0},
+                "internal_diagnostic_xyz": {"avg": 999.0},
+            }
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.error_rate == 0.05
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert "request_throughput" in result
+        assert "internal_diagnostic_xyz" not in result
 
-    def test_from_metrics_uses_value_field(self) -> None:
-        """Verify falls back to 'value' field when stat not present."""
+    def test_from_metrics_does_not_shadow_with_e2e_variant(self) -> None:
+        """``e2e_output_token_throughput`` (not on allowlist) must not shadow
+        the canonical ``output_token_throughput`` aggregate metric.
+        """
         metrics = {
-            "metrics": [
-                {"tag": "request_throughput", "value": 200.0},
-            ]
+            "metrics": {
+                "e2e_output_token_throughput": {"avg": 83.5, "unit": "tokens/sec/user"},
+                "output_token_throughput": {"avg": 80105.4, "unit": "tokens/sec"},
+            }
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.throughput_rps == 200.0
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert "e2e_output_token_throughput" not in result
+        assert result["output_token_throughput"]["avg"] == 80105.4
 
-    def test_from_metrics_handles_total_requests_zero(self) -> None:
-        """Verify handles zero total requests."""
+    def test_from_metrics_derives_error_rate_and_total_requests(self) -> None:
+        """``error_rate`` and ``total_requests`` are computed from raw counts."""
         metrics = {
-            "metrics": [
-                {"tag": "total_requests", "avg": 0},
-            ]
+            "metrics": {
+                "request_count": {"avg": 1000},
+                "error_request_count": {"avg": 50},
+            }
         }
-        summary = MetricsSummary.from_metrics(metrics)
-        assert summary.total_requests is None
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["total_requests"] == 1000
+        assert result["error_rate"] == 0.05
 
-    def test_to_status_dict_excludes_none(self) -> None:
-        """Verify to_status_dict excludes None values."""
-        summary = MetricsSummary(throughput_rps=100.0, latency_avg_ms=50.0)
-        result = summary.to_status_dict()
-
-        assert "throughput_rps" in result
-        assert "latency_avg_ms" in result
-        assert "throughput_tps" not in result
+    def test_from_metrics_handles_zero_request_count(self) -> None:
+        """Zero requests means no derived scalars (avoids ZeroDivisionError)."""
+        metrics = {
+            "metrics": {
+                "request_count": {"avg": 0},
+                "error_request_count": {"avg": 0},
+            }
+        }
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert "total_requests" not in result
         assert "error_rate" not in result
 
-    def test_to_status_dict_empty_for_all_none(self) -> None:
-        """Verify returns empty dict when all values are None."""
-        summary = MetricsSummary()
+    def test_to_status_dict_returns_projection(self) -> None:
+        """``to_status_dict`` returns the same nested dict that's written to CR status."""
+        metrics = {"metrics": {"request_throughput": {"avg": 100.0, "unit": "rps"}}}
+        summary = MetricsSummary.from_metrics(metrics)
         result = summary.to_status_dict()
-        assert result == {}
+        assert result == {"request_throughput": {"avg": 100.0, "unit": "rps"}}
 
 
 # =============================================================================
