@@ -9,6 +9,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
@@ -69,10 +70,6 @@ class TestMetricResultsProcessor:
         T-digest preserves count/sum/min/max exactly; percentiles are
         approximate but irrelevant to this test (3 samples).
         """
-        from aiperf.metrics.list_metric_aggregation import (
-            TDigestListMetricAggregator,
-        )
-
         processor = MetricResultsProcessor(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
