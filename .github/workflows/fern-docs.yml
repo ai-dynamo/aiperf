@@ -62,6 +62,8 @@ on:
     paths:
       - 'docs/**'
       - 'fern/**'
+      # Self-validate when the workflow itself is edited.
+      - '.github/workflows/fern-docs.yml'
   push:
     branches:
       - main
