@@ -143,9 +143,10 @@ class BenchmarkPlan(BaseModel):
     parameter_sweep_mode: SweepMode = Field(
         default=SweepMode.INDEPENDENT,
         description=(
-            "Iteration order for sweep + multi-trial. 'independent' (default) "
-            "iterates variations outer, trials inner. 'repeated' iterates "
-            "trials outer, variations inner. Honored by MultiRunOrchestrator."
+            "Iteration order for sweep + multi-trial. 'independent' "
+            "(default) iterates variations outer, trials inner. "
+            "'repeated' iterates trials outer, variations inner. "
+            "Dispatched in MultiRunOrchestrator.execute."
         ),
     )
 

@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from aiperf.common.enums import SweepMode
 from aiperf.config.benchmark import BenchmarkPlan, BenchmarkRun
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation
@@ -281,3 +284,111 @@ async def test_orchestrator_cancel_check_inside_trial_loop_truncates_cell(tmp_pa
     assert len(executor.calls) == 2
     assert [c[1] for c in executor.calls] == [0, 1]
     assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# parameter_sweep_mode dispatch: independent vs repeated.
+#
+# Locks:
+#   - INDEPENDENT default: variations outer, trials inner.
+#   - REPEATED: trials outer, variations inner.
+#   - REPEATED artifact tree includes the trial_NNNN/<variation>/ prefix.
+# ---------------------------------------------------------------------------
+
+
+def _make_two_variation_plan(mode: SweepMode, trials: int = 3) -> BenchmarkPlan:
+    """Build a minimal 2-variation plan with the given parameter_sweep_mode."""
+    plan = _make_plan(num_variations=2, trials=trials)
+    return plan.model_copy(
+        update={
+            "variations": [
+                SweepVariation(
+                    index=0,
+                    label="phases.profiling.concurrency=10",
+                    values={"phases.profiling.concurrency": 10},
+                ),
+                SweepVariation(
+                    index=1,
+                    label="phases.profiling.concurrency=20",
+                    values={"phases.profiling.concurrency": 20},
+                ),
+            ],
+            "parameter_sweep_mode": mode,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_independent_mode_iterates_variation_outer(tmp_path):
+    """Independent (default): all trials at v0, then all trials at v1."""
+    plan = _make_two_variation_plan(SweepMode.INDEPENDENT, trials=3)
+    executor = FakeExecutor()
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+    assert [(c[0], c[1]) for c in executor.calls] == [
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (1, 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_mode_iterates_trial_outer(tmp_path):
+    """Repeated: variation pair fires once per trial, then advance trial."""
+    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
+    executor = FakeExecutor()
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+    assert [(c[0], c[1]) for c in executor.calls] == [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (0, 2),
+        (1, 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_mode_artifact_path_includes_trial_prefix(tmp_path):
+    """Repeated artifact dirs are <base>/profile_runs/trial_NNNN/<variation>/..."""
+    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=2)
+    seen: list[Path] = []
+
+    class PathRecorder(FakeExecutor):
+        async def execute(self, run):
+            seen.append(run.artifact_dir)
+            return await super().execute(run)
+
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, PathRecorder())
+    # Order under repeated: (v0, t0), (v1, t0), (v0, t1), (v1, t1).
+    # Artifact path = <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN
+    expected_v0_t0 = (
+        tmp_path
+        / "profile_runs"
+        / "trial_0001"
+        / "phases.profiling.concurrency=10"
+        / "profile_runs"
+        / "run_0001"
+    )
+    expected_v1_t1 = (
+        tmp_path
+        / "profile_runs"
+        / "trial_0002"
+        / "phases.profiling.concurrency=20"
+        / "profile_runs"
+        / "run_0002"
+    )
+    assert seen[0] == expected_v0_t0
+    assert seen[3] == expected_v1_t1
+
+
+@pytest.mark.asyncio
+async def test_repeated_mode_rejects_adaptive_convergence(tmp_path):
+    """Repeated + --convergence-metric must fail loud, not silently misbehave."""
+    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
+    plan = plan.model_copy(update={"convergence_metric": "request_throughput"})
+    executor = FakeExecutor()
+    with pytest.raises(ValueError, match="repeated.*convergence"):
+        await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
