@@ -58,7 +58,7 @@ class LocalSubprocessExecutor(RunExecutor):
             if result.returncode != 0:
                 return self._failure_from_subprocess(result, run.label, artifacts_path)
 
-            summary_metrics = self._extract_summary_metrics(artifacts_path)
+            summary_metrics = self._extract_summary_metrics(run)
             return self._build_result_from_metrics(
                 summary_metrics, run.label, artifacts_path
             )
@@ -181,18 +181,24 @@ class LocalSubprocessExecutor(RunExecutor):
         )
 
     def _extract_summary_metrics(
-        self, artifacts_path: Path
+        self, run: BenchmarkRun
     ) -> dict[str, JsonMetricResult]:
         """Extract run-level summary statistics from artifacts.
 
-        Reads the profile_export_aiperf.json (or .zst variant) written by the
-        SystemController and returns a dict of metric name -> JsonMetricResult.
-        Returns empty dict if the file is missing or unparseable.
+        Reads ``profile_export_{prefix}.json`` (or ``.zst`` variant) where
+        ``prefix`` comes from ``run.cfg.artifacts.prefix``. Honoring the
+        prefix here is required for ``--profile-export-prefix`` parity:
+        prior versions hardcoded ``profile_export_aiperf.json`` and
+        silently lost metrics when callers customized the prefix.
+
+        Returns empty dict if the file is missing or unparsable.
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        json_file = artifacts_path / "profile_export_aiperf.json"
-        zst_file = artifacts_path / "profile_export_aiperf.json.zst"
+        artifacts_path = run.artifact_dir
+        prefix = run.cfg.artifacts.prefix
+        json_file = artifacts_path / f"profile_export_{prefix}.json"
+        zst_file = artifacts_path / f"profile_export_{prefix}.json.zst"
 
         if zst_file.exists():
             json_file = zst_file
