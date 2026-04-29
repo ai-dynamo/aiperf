@@ -53,8 +53,8 @@ class AccuracyDatasetLoader:
         for problem in problems:
             session_id = session_gen.next()
 
-            if problem.chat_messages is not None:
-                messages: list[AccuracyChatMessage] = list(problem.chat_messages)
+            if problem.raw_messages is not None:
+                messages: list[AccuracyChatMessage] = list(problem.raw_messages)
             else:
                 messages = [{"role": "user", "content": problem.prompt}]
 

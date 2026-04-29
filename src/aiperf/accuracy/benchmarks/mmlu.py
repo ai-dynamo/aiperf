@@ -118,7 +118,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
 
             for row in test_split:
                 prompt = self._format_prompt(row, subject, few_shots, enable_cot)
-                chat_msgs = self._build_chat_messages(
+                raw_messages = self._build_chat_messages(
                     row, subject, few_shots, enable_cot
                 )
                 gold_ix = (
@@ -137,7 +137,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
                             "stop_sequence": STOP_SEQUENCE,
                         },
                         few_shot_examples=few_shots,
-                        chat_messages=chat_msgs,
+                        raw_messages=raw_messages,
                     )
                 )
 

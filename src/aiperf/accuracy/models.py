@@ -41,9 +41,10 @@ class BenchmarkProblem(AIPerfBaseModel):
     few_shot_examples: list[dict[str, Any]] = Field(
         default_factory=list, description="Few-shot examples to prepend to the prompt"
     )
-    chat_messages: list[AccuracyChatMessage] | None = Field(
+    raw_messages: list[AccuracyChatMessage] | None = Field(
         default=None,
-        description="Multi-turn chat messages for chat/completions endpoint. "
-        "When set, used as raw_messages to match lighteval's chat format. "
-        "The flat 'prompt' field is still used for the completions endpoint.",
+        description="Pre-formatted OpenAI-compatible messages array for the chat endpoint. "
+        "Assigned verbatim to Turn.raw_messages when building the dataset, matching "
+        "lighteval's chat format. The flat 'prompt' field is still used for the "
+        "completions endpoint.",
     )
