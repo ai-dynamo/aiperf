@@ -19,11 +19,10 @@ from typing import Annotated, Any, ClassVar
 from cyclopts import Group, Parameter
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat
+from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.parsing import parse_int_or_int_list
-from aiperf.orchestrator.strategies import SweepMode
 from aiperf.plugin.enums import ArrivalPattern
 
 
@@ -587,8 +586,7 @@ class LoadGeneratorConfig(BaseConfig):
             "before the next variation starts. 'repeated' inverts the loops: "
             "all variations run within trial 1, then within trial 2, etc. "
             "Both modes produce the same total runs, only the artifact-path "
-            "layout and submit order differ. Note: this branch defaults to "
-            "'independent'; main's PR #699 defaults to 'repeated'.",
+            "layout and submit order differ.",
         ),
         CLIParameter(
             name=("--parameter-sweep-mode",),

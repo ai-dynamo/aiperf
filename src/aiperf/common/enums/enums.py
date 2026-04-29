@@ -121,6 +121,22 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     COMMENT = "comment"
 
 
+class SweepMode(CaseInsensitiveStrEnum):
+    """Execution order for sweep + confidence composition.
+
+    REPEATED: for trial in trials: for value in values
+        All values tested per trial before moving to next trial.
+        Path: base_dir/profile_runs/trial_0001/concurrency_10/
+
+    INDEPENDENT: for value in values: for trial in trials
+        All trials completed per value before moving to next value.
+        Path: base_dir/concurrency_10/profile_runs/trial_0001/
+    """
+
+    INDEPENDENT = "independent"
+    REPEATED = "repeated"
+
+
 __all__ = [
     "AIPerfLogLevel",
     "AudioFormat",
@@ -157,6 +173,7 @@ __all__ = [
     "ServerMetricsFormat",
     "ServiceRegistrationStatus",
     "SummaryFormat",
+    "SweepMode",
     "SweepType",
     "SystemState",
     "VideoAudioCodec",
