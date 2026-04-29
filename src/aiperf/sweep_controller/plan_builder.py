@@ -70,6 +70,7 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
         plan_kwargs["disable_warmup_after_first"] = (
             spec.multi_run.disable_warmup_after_first
         )
+        plan_kwargs["parameter_sweep_mode"] = spec.multi_run.mode
     if spec.convergence is not None:
         plan_kwargs["convergence_metric"] = spec.convergence.metric
         plan_kwargs["convergence_threshold"] = spec.convergence.threshold

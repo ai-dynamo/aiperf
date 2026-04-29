@@ -47,6 +47,28 @@ def test_multirun_config_defaults_apply():
     assert cfg.disable_warmup_after_first is True
 
 
+def test_multirun_config_mode_default_is_independent():
+    """Default mode is INDEPENDENT (variation-outer, trial-inner)."""
+    from aiperf.common.enums import SweepMode
+
+    cfg = MultiRunConfig.model_validate({"trials": 3})
+    assert cfg.mode == SweepMode.INDEPENDENT
+
+
+def test_multirun_config_mode_repeated_round_trips():
+    """`mode: repeated` round-trips through CR validation as SweepMode.REPEATED."""
+    from aiperf.common.enums import SweepMode
+
+    cfg = MultiRunConfig.model_validate({"trials": 3, "mode": "repeated"})
+    assert cfg.mode == SweepMode.REPEATED
+
+
+def test_multirun_config_mode_invalid_string_rejected():
+    """Unknown mode strings are rejected by Pydantic enum validation."""
+    with pytest.raises(ValidationError, match=r"(?i)mode|fortnightly"):
+        MultiRunConfig.model_validate({"trials": 3, "mode": "fortnightly"})
+
+
 def test_multirun_config_accepts_camelcase_alias():
     cfg = MultiRunConfig.model_validate(
         {"trials": 5, "cooldownSeconds": 30, "autoSetSeed": False}

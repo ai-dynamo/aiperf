@@ -22,6 +22,8 @@ from typing import Any
 
 import orjson
 
+from aiperf.common.enums import SweepMode
+
 logger = logging.getLogger(__name__)
 
 AGGREGATE_READY_MARKER = ".aiperf_results_ready.json"
@@ -176,9 +178,16 @@ def _write_sweep_parent_aggregate(
     # roll variation_index forward as trials saturate.
     children: list[dict[str, Any]] = []
     trials_per_variation = max(int(getattr(plan, "trials", 1) or 1), 1)
+    n_variations = max(len(plan.variations), 1)
     for idx, r in enumerate(results):
-        var_idx = min(idx // trials_per_variation, len(plan.variations) - 1)
-        trial_idx = idx % trials_per_variation
+        if plan.parameter_sweep_mode == SweepMode.REPEATED:
+            # Trial-outer / variation-inner: idx -> (trial * N) + var
+            trial_idx = min(idx // n_variations, trials_per_variation - 1)
+            var_idx = idx % n_variations
+        else:
+            # Variation-outer / trial-inner: idx -> (var * trials) + trial
+            var_idx = min(idx // trials_per_variation, n_variations - 1)
+            trial_idx = idx % trials_per_variation
         variation = plan.variations[var_idx]
         trial_for_name = trial_idx if with_trial_suffix else None
         child_name = build_child_name(

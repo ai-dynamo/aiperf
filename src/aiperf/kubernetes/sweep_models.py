@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.common.enums import SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.config.sweep import SweepConfig
 from aiperf.operator.models import AIPerfJobSpec
@@ -71,6 +72,16 @@ class MultiRunConfig(BaseConfig):
     disable_warmup_after_first: bool = Field(
         default=True,
         description="Skip warmup on trials 2..N for steady-state measurement.",
+    )
+    mode: SweepMode = Field(
+        default=SweepMode.INDEPENDENT,
+        description=(
+            "Iteration order for sweep + multi-trial. 'independent' (default) "
+            "iterates variations outer, trials inner. 'repeated' iterates "
+            "trials outer, variations inner. Both produce the same total "
+            "runs and same sweep_aggregate output. Adaptive convergence "
+            "(`convergence`) is incompatible with 'repeated'."
+        ),
     )
 
 
