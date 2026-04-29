@@ -115,6 +115,26 @@ class BenchmarkPlan(BaseModel):
         default=None,
         description="Sweep convergence config (ConvergenceConfig); None for non-sweep plans.",
     )
+    parameter_sweep_cooldown_seconds: Annotated[
+        float,
+        Field(
+            ge=0,
+            default=0.0,
+            description=(
+                "Cooldown seconds to sleep between sweep variations. "
+                "Honored by MultiRunOrchestrator.execute when iterating "
+                "plan.configs."
+            ),
+        ),
+    ]
+    parameter_sweep_same_seed: bool = Field(
+        default=False,
+        description=(
+            "If true, every sweep variation reuses the same seed for "
+            "correlated comparisons. If false (default), each variation "
+            "derives a unique seed (base_seed + variation.index)."
+        ),
+    )
 
     @property
     def use_adaptive(self) -> bool:
@@ -125,6 +145,15 @@ class BenchmarkPlan(BaseModel):
     def is_single_run(self) -> bool:
         """True if this plan has exactly one config and one trial."""
         return len(self.configs) == 1 and self.trials <= 1
+
+    @property
+    def is_sweep(self) -> bool:
+        """True when build_benchmark_plan expanded a sweep (multiple variations).
+
+        Used by _cli_runner_helpers and the operator-mode gate to detect
+        sweep-in-flight without re-counting plan.configs at every callsite.
+        """
+        return len(self.configs) > 1
 
 
 class ResolvedConfig(BaseModel):

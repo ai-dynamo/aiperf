@@ -151,6 +151,55 @@ async def test_orchestrator_applies_cooldown_between_trials(tmp_path, monkeypatc
     assert sleeps == [1.5, 1.5]
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_inter_variation_cooldown_sleeps_between_variations(
+    tmp_path, monkeypatch
+):
+    """parameter_sweep_cooldown_seconds is honored between variations only."""
+    import aiperf.orchestrator.orchestrator as orch_mod
+
+    plan = _make_plan(num_variations=2, trials=1)
+    plan = plan.model_copy(update={"parameter_sweep_cooldown_seconds": 4.0})
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(d: float) -> None:
+        sleeps.append(d)
+
+    monkeypatch.setattr(orch_mod.asyncio, "sleep", fake_sleep)
+
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    await orchestrator.execute(plan, executor)
+
+    # 2 variations x 1 trial: no inter-trial cooldown (single trial), one
+    # inter-variation cooldown before variation 1; nothing after the last.
+    assert sleeps == [4.0]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_inter_variation_cooldown_default_zero_no_sleep(
+    tmp_path, monkeypatch
+):
+    """Default parameter_sweep_cooldown_seconds=0 emits no inter-variation sleep."""
+    import aiperf.orchestrator.orchestrator as orch_mod
+
+    plan = _make_plan(num_variations=3, trials=1)
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(d: float) -> None:
+        sleeps.append(d)
+
+    monkeypatch.setattr(orch_mod.asyncio, "sleep", fake_sleep)
+
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+    await orchestrator.execute(plan, executor)
+
+    assert sleeps == []
+
+
 # ---------------------------------------------------------------------------
 # Adversarial regression-locks: cancel_check semantics in the orchestrator.
 #

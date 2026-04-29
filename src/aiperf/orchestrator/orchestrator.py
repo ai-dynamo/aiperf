@@ -82,6 +82,12 @@ class MultiRunOrchestrator:
             if cancel_check is not None and cancel_check():
                 logger.info(f"Sweep cancelled at variation {var_idx}; aborting")
                 return all_results
+            if var_idx > 0 and plan.parameter_sweep_cooldown_seconds > 0:
+                logger.debug(
+                    f"Inter-variation cooldown: "
+                    f"{plan.parameter_sweep_cooldown_seconds}s before v{var_idx}"
+                )
+                await asyncio.sleep(plan.parameter_sweep_cooldown_seconds)
             strategy = build_strategy(plan, logger)  # fresh per-cell strategy
             strategy.validate_config(cfg)
             cell_results: list[RunResult] = []

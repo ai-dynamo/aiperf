@@ -121,6 +121,30 @@ class TestBenchmarkPlan:
         with pytest.raises(ValidationError):
             BenchmarkPlan(configs=[])
 
+    def test_is_sweep_single_config_false(self) -> None:
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(configs=[config])
+        assert plan.is_sweep is False
+
+    def test_is_sweep_multiple_configs_true(self) -> None:
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(configs=[config, config])
+        assert plan.is_sweep is True
+
+    def test_parameter_sweep_defaults(self) -> None:
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(configs=[config])
+        assert plan.parameter_sweep_cooldown_seconds == 0.0
+        assert plan.parameter_sweep_same_seed is False
+
+    def test_parameter_sweep_cooldown_negative_rejected(self) -> None:
+        config = _make_benchmark_config()
+        with pytest.raises(ValidationError):
+            BenchmarkPlan(
+                configs=[config],
+                parameter_sweep_cooldown_seconds=-1.0,
+            )
+
 
 # ============================================================
 # BenchmarkRun Model

@@ -68,7 +68,16 @@ def log_multi_run_banner(
 
 
 def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrategy:
-    """Construct the per-trial execution strategy (adaptive or fixed)."""
+    """Construct the per-trial execution strategy (adaptive or fixed).
+
+    Called once per ``BenchmarkConfig`` in ``plan.configs`` by
+    ``MultiRunOrchestrator.execute``. When ``plan.is_sweep`` is True
+    (multiple variations), this is invoked N times for N variations so
+    each cell gets a fresh strategy with no convergence state leakage.
+    The returned strategy governs only the inner trial loop within a
+    single variation; the orchestrator's outer variation loop is owned
+    by ``MultiRunOrchestrator``.
+    """
     from aiperf.orchestrator.strategies import FixedTrialsStrategy
 
     if not plan.use_adaptive:
