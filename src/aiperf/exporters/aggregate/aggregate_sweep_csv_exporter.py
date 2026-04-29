@@ -32,7 +32,8 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
     2. Best configurations — one row per objective
        (``best_throughput``, ``best_latency_p99``).
     3. Pareto optimal points — one row per non-dominated combination.
-    4. Metadata — sweep parameters, combination count.
+    4. Metadata — aggregation type, sweep parameters, combination count,
+       profile-run counts (matches PR #699 schema).
 
     Constructor surface deliberately differs from siblings: takes the
     sweep dict (output of :meth:`SweepAnalyzer.compute`) directly so
@@ -88,7 +89,7 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
         )
 
         writer.writerow([])
-        _write_metadata_section(writer, metadata, param_names)
+        _write_metadata_section(writer, metadata, param_names, self._result)
 
         return buf.getvalue()
 
@@ -173,13 +174,24 @@ def _write_pareto_section(
 
 
 def _write_metadata_section(
-    writer: _CsvWriter, metadata: dict[str, Any], param_names: list[str]
+    writer: _CsvWriter,
+    metadata: dict[str, Any],
+    param_names: list[str],
+    result: Any,
 ) -> None:
-    """Section 4: sweep parameters + combination count."""
+    """Section 4: aggregation type, sweep parameters, run counts.
+
+    Schema mirrors PR #699: includes ``Aggregation Type``,
+    ``Number of Profile Runs``, and ``Number of Successful Runs`` so the
+    CSV stays byte-compatible with main's :class:`AggregateSweepCsvExporter`.
+    """
     writer.writerow(["Metadata"])
     writer.writerow(["Field", "Value"])
+    writer.writerow(["Aggregation Type", result.aggregation_type])
     writer.writerow(["Sweep Parameters", ", ".join(param_names)])
     writer.writerow(["Number of Combinations", metadata.get("num_combinations", 0)])
+    writer.writerow(["Number of Profile Runs", result.num_runs])
+    writer.writerow(["Number of Successful Runs", result.num_successful_runs])
 
 
 def _format_number(value: float | int | None, decimals: int = 2) -> str:

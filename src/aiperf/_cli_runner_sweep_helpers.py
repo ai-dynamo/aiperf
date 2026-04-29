@@ -237,13 +237,17 @@ async def aggregate_sweep_and_export(
     aggregate_dir = base_dir / "sweep_aggregate"
     await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
 
-    placeholder_result = AggregateResult(
+    failed_runs = [
+        {"label": r.label, "error": r.error} for r in results if not r.success
+    ]
+    aggregate_meta = AggregateResult(
         aggregation_type="sweep",
         num_runs=len(results),
         num_successful_runs=sum(1 for r in results if r.success),
+        failed_runs=failed_runs,
     )
     exporter_config = AggregateExporterConfig(
-        result=placeholder_result, output_dir=aggregate_dir
+        result=aggregate_meta, output_dir=aggregate_dir
     )
     json_exporter = AggregateSweepJsonExporter(exporter_config, sweep_dict)
     csv_exporter = AggregateSweepCsvExporter(exporter_config, sweep_dict)

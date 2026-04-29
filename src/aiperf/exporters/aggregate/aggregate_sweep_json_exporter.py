@@ -19,9 +19,13 @@ from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExpo
 class AggregateSweepJsonExporter(AggregateBaseExporter):
     """Exports sweep aggregate results to JSON format.
 
-    The output JSON contains the four sweep sections produced by
-    :meth:`SweepAnalyzer.compute`:
+    The output JSON contains the AggregateResult wrapper fields plus
+    the four sweep sections produced by :meth:`SweepAnalyzer.compute`:
 
+    - ``aggregation_type`` — always ``"sweep"`` for this exporter.
+    - ``num_profile_runs`` — total number of runs (variations x trials).
+    - ``num_successful_runs`` — runs that completed without error.
+    - ``failed_runs`` — list of ``{"label", "error"}`` dicts.
     - ``metadata`` — sweep parameter definitions + ``num_combinations``.
     - ``per_combination_metrics`` — list of ``{parameters, metrics}`` per cell.
     - ``best_configurations`` — per-objective single-best
@@ -29,8 +33,10 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
     - ``pareto_optimal`` — list of non-dominated parameter dicts.
 
     Constructor surface differs from siblings: takes the sweep dict
-    directly rather than wrapping in :class:`AggregateResult`, because
-    :class:`SweepAnalyzer` is already the authoritative producer.
+    directly *in addition to* the standard :class:`AggregateExporterConfig`,
+    because :class:`SweepAnalyzer` is the authoritative producer of the
+    per-combination sweep sections while the wrapper fields come from the
+    enclosing :class:`AggregateResult` (carried on ``config.result``).
 
     Example:
         >>> sweep_dict = SweepAnalyzer.compute(stats, sweep_parameters)  # doctest: +SKIP
@@ -47,13 +53,17 @@ class AggregateSweepJsonExporter(AggregateBaseExporter):
         return "profile_export_aiperf_sweep.json"
 
     def _generate_content(self) -> str:
-        """Serialize the four sweep sections as indented JSON.
+        """Serialize wrapper fields + four sweep sections as indented JSON.
 
         Numpy scalars are unwrapped by ``OPT_SERIALIZE_NUMPY``; this is
         load-bearing because :class:`SweepAnalyzer` propagates numpy
         ``float64`` values from the underlying ``ConfidenceMetric``.
         """
         output = {
+            "aggregation_type": self._result.aggregation_type,
+            "num_profile_runs": self._result.num_runs,
+            "num_successful_runs": self._result.num_successful_runs,
+            "failed_runs": self._result.failed_runs or [],
             "metadata": self._sweep_dict.get("metadata", {}),
             "per_combination_metrics": self._sweep_dict.get(
                 "per_combination_metrics", []
