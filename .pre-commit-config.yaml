@@ -8,6 +8,9 @@ ci:
     - generate-plugin-artifacts
     - validate-plugin-schemas
     - test-imports
+    - check-agent-files-sync
+    - check-ergonomics
+    - check-ruff-baselined
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
@@ -117,6 +120,13 @@ repos:
         files: ^(src/aiperf|tests)/.*\.py$
         pass_filenames: false
         args: []
+      - id: check-agent-files-sync
+        name: check-agent-files-sync
+        entry: make check-agent-files-sync
+        language: python
+        files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
+        pass_filenames: false
+        args: []
       - id: check-ergonomics
         name: check-ergonomics
         description: >-
@@ -125,22 +135,24 @@ repos:
           signatures, Pydantic field count, stdlib-json ban, isinstance
           tuple-form. Pre-existing violations are grandfathered via
           tools/ergonomics_baseline.json.
-        entry: python tools/check_ergonomics.py
+        entry: make check-ergonomics
         language: python
-        files: ^src/aiperf/.*\.py$
-        pass_filenames: true
-      - id: check-ruff-baseline-drift
-        name: check-ruff-baseline-drift
+        files: (\.py$|^tools/(check_ergonomics\.py|ergonomics_baseline\.json)$)
+        pass_filenames: false
+        args: []
+      - id: check-ruff-baselined
+        name: check-ruff-baselined
         description: >-
           Run ruff for the LLM-ergonomics rules (PLR0915, PLR0912, C901,
           TID251) and filter through the out-of-band baseline at
           tools/ruff_baseline.json (keyed on (rule, file, function-name) —
           no # noqa comments or per-file ignores). New violations fail the
           commit; pre-existing grandfathered ones don't.
-        entry: python tools/ruff_baselined.py
-        language: system
-        files: ^src/aiperf/.*\.py$
-        pass_filenames: true
+        entry: make check-ruff-baselined
+        language: python
+        files: (\.py$|^tools/(ruff_baselined\.py|ruff_baseline\.json)$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.14
     hooks:

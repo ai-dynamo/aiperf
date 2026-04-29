@@ -14,7 +14,7 @@ artifacts = ["aiperf/operator/ui/**"]
 
 [project]
 name = "aiperf"
-version = "0.7.0"
+version = "0.8.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -85,6 +85,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",
+  "hypothesis>=6.0.0",
   "jsonschema>=4.23.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
@@ -147,8 +148,14 @@ max-branches = 12    # nesting proxy (custom tool targets depth 5)
 max-complexity = 10
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Enforced ONLY via the wrapper (``tools/ruff_baselined.py`` passes
+# ``--select TID251`` explicitly) — plain ``ruff check`` / ``make lint``
+# does NOT fire these because TID251 is intentionally absent from
+# ``select`` above. ``tools/check_ergonomics.py`` is the second
+# enforcement path: its ``stdlib-json`` axis flags the same imports via
+# AST walk, independent of ruff. Both run as pre-commit hooks.
 # Enforce orjson over stdlib json (CLAUDE.md standard).
-"json.dumps".msg = "Use orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode() instead."
+"json.dumps".msg = "Use orjson.dumps(obj).decode() instead. Add option=orjson.OPT_INDENT_2 only when pretty-printed output is required (configs, manifests, debug exports) — the default must stay compact to preserve byte-for-byte equivalence for tests, JSONL, and cache keys."
 "json.loads".msg = "Use orjson.loads instead."
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."

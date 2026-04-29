@@ -141,14 +141,14 @@ When `--num-profile-runs > 1`, AIPerf creates a hierarchical output structure wi
 artifacts/
   llama-3-8b-openai-chat-concurrency_10/
     profile_runs/
-      run_0001/
+      trial_0001/
         profile_export_aiperf.json
         profile_export_aiperf.csv
         profile_export.jsonl
         inputs.json
-      run_0002/
+      trial_0002/
         ...
-      run_0005/
+      trial_0005/
         ...
     aggregate/
       profile_export_aiperf_aggregate.json
@@ -170,7 +170,7 @@ Examples:
 
 ### Per-Run Artifacts
 
-Each run's artifacts are stored in separate directories (`run_0001`, `run_0002`, etc.) and include:
+Each run's artifacts are stored in separate directories (`trial_0001`, `trial_0002`, etc.) and include:
 - `profile_export_aiperf.json` - Complete metrics for that run
 - `profile_export_aiperf.csv` - CSV export for that run
 - `profile_export.jsonl` - Per-request records
@@ -209,7 +209,7 @@ For each metric, the aggregate output includes:
     "num_profile_runs": 5,
     "num_successful_runs": 5,
     "confidence_level": 0.95,
-    "run_labels": ["run_0001", "run_0002", "run_0003", "run_0004", "run_0005"]
+    "run_labels": ["trial_0001", "trial_0002", "trial_0003", "trial_0004", "trial_0005"]
   },
   "metrics": {
     "request_throughput_avg": {
@@ -569,7 +569,7 @@ If some runs fail, AIPerf will:
     "num_profile_runs": 5,
     "num_successful_runs": 4,
     "failed_runs": [
-      {"label": "run_0003", "error": "Connection timeout"}
+      {"label": "trial_0003", "error": "Connection timeout"}
     ]
   }
 }

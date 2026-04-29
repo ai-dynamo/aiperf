@@ -31,7 +31,7 @@ Axes below label **research principle** (universal) vs **AIPerf-specific impleme
 
 **Core principle:** Every finding must cite a specific file:line, quote the current text, and propose a concrete rewrite. "This could be better" is not acceptable output.
 
-**The 7 judgment axes (with research basis, full rationale in `artifacts/code-review-2026-04-21/llm-codebase-ergonomics-extended.md`):**
+**The 7 judgment axes (with research basis):**
 
 1. Error-message informativeness — *compression paradox* (arxiv 2604.07502)
 2. Type-hint descriptiveness — *type constraints reduce errors >50%* (arxiv 2504.09246)
@@ -97,13 +97,21 @@ If either mechanical check exits non-zero: **stop, report the failures, instruct
 
 ## Scope
 
-**Default:** files modified on the current branch vs. `origin/main`, restricted to `src/aiperf/`.
+**Default:** all files modified on the current branch vs. `origin/main`. This intentionally includes agent-facing files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, `docs/dev/patterns.md`) so Axes 6 and 7 have something to review when a branch touches them.
+
+**Per-axis applicability:**
+
+- Axes 1-5 apply to `src/aiperf/**.py` (and any other Python under review).
+- Axis 6 applies to the agent-facing convention files listed above.
+- Axis 7 applies to `docs/dev/patterns.md` plus any reference files it cites.
+
+If a given axis has no in-scope files on this branch, record "no in-scope files" under that axis in the report — do not skip it silently.
 
 **Override (the user may specify):**
 
 - `aiperf-llm-ergonomics-review <path>` → scope to a file or subdirectory
 - `aiperf-llm-ergonomics-review PR <number>` → pull the PR diff via `gh pr diff <n>`
-- `aiperf-llm-ergonomics-review full` → all of `src/aiperf/`, not just changed files
+- `aiperf-llm-ergonomics-review full` → all of `src/aiperf/` plus the agent-facing files, not just changed files
 
 Inside the scope, only review code **added or modified on this branch**. Pre-existing issues are not in scope unless the edit touched the line.
 
@@ -179,6 +187,8 @@ For every public function / class / service added or modified **that has a docst
 - Docstring lists `Args:` but not what they mean (`x: the x parameter`).
 - No `Raises:` section on a function that raises project-specific exceptions.
 
+**Calibration:** do not require examples for every trivial method. Flag cases where an agent would likely misuse the API without one.
+
 **Note:** `D103` (in the ruff baseline) catches missing docstrings on public **functions**. It does NOT catch missing docstrings on modules (`D100`), classes (`D101`), methods (`D102`), or `__init__` (`D107`) — those rules are not enabled. So for public *classes* and *methods*, the absence of a docstring is also an Axis 3 finding (a method silently has no docstring and the mechanical tools didn't warn).
 
 ### Axis 4 — Naming disambiguation / synonym discoverability (R7 + R17)
@@ -189,7 +199,7 @@ For every new class, public function, module path, or constant:
 
 **Required checks:**
 
-- [ ] Grep for the name across the repo — is there an existing similar concept with a synonym? (`Client` vs `Customer` vs `User`; `Credit` vs `Request` vs `Session`; `Metrics` vs `Records` vs `Results`).
+- [ ] Grep for the name across the repo — is there an existing similar concept with a synonym? AIPerf near-collisions to check: `Client` / `User` / `Customer` / `Session`; `Metric` / `Record` / `Result` / `Sample`; `Worker` / `Service` / `Component` / `Process`; `Credit` / `Request` / `Turn` / `Conversation`.
 - [ ] If a synonym exists, is it mentioned in the docstring or a comment? (`"""A Credit is the internal name for what external docs call a 'work unit'."""`)
 - [ ] Does the name describe the BEHAVIOR (verb phrase) or the IDENTITY (noun)? Prefer verbs for functions, nouns with specific roles for classes (`HistogramStatsComputer` > `StatsHelper`).
 - [ ] Does the name collide ambiguously with a stdlib/framework name? (`Request`, `Response`, `Task`).
@@ -232,16 +242,16 @@ For every comment added or modified:
 
 For every new pattern introduced on this branch:
 
-- [ ] Is the pattern documented in at least one of the project's agent-facing files? (AIPerf: `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, or `docs/dev/patterns.md`.)
+- [ ] Is the pattern documented in at least one of the project's agent-facing files? (AIPerf: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, or `docs/dev/patterns.md`.)
 - [ ] If the pattern has an invariant ("always call X after Y"; "never raise in an @on_message handler"), is the invariant documented somewhere an agent will find it (not just at one call site)?
 - [ ] If this pattern replaces an older one, is the replacement noted (and the old one either deleted or marked deprecated in the convention file)?
 
-**AIPerf-specific implementation — three-file sync:** CLAUDE.md explicitly mandates that `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` contain identical content (only headers/frontmatter differ). This is AIPerf's LOCAL mechanism for ensuring the research principle holds across the three major agent platforms (Claude Code, Copilot, Cursor). When CLAUDE.md is updated, verify the other two were updated to match.
+**AIPerf-specific implementation — four-file sync:** AGENTS.md explicitly mandates that `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` contain identical content (only headers/frontmatter differ). This is AIPerf's LOCAL mechanism for ensuring the research principle holds across the four major agent surfaces (Codex, Claude Code, Copilot, Cursor). When one file is updated, verify the other three were updated to match.
 
 **Red flags (HIGH if the pattern is load-bearing, MEDIUM otherwise):**
 
 - New pattern used in 2+ places on this branch with zero documentation in any convention file (research violation).
-- `CLAUDE.md` updated but `.github/copilot-instructions.md` or `.cursor/rules/python.mdc` was not (AIPerf-specific three-file-sync violation).
+- One of `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, or `.cursor/rules/python.mdc` updated without the other three (AIPerf-specific four-file-sync violation).
 - Deprecated pattern still referenced as current in docs (research violation — agents will model after the stale doc).
 
 ### Axis 7 — Reference-file exemplariness (R16 quality)
@@ -278,10 +288,18 @@ For every new pattern introduced on this branch:
 
 (Create the date dir if it doesn't exist. `branch-slug` is the current branch with `/` replaced by `-`.)
 
+Use a readable PR-comment style. Avoid wide finding tables; they are hard to
+read in GitHub comments. Keep the counts compact, then give one section per
+finding.
+
 **Structure:**
 
-```markdown
+````markdown
 # LLM-Ergonomics Review — <branch> @ YYYY-MM-DD
+
+I reviewed <N> changed `src/aiperf/` files on <branch-or-commit>.
+
+Model used: <specific model/version and settings, e.g. "GPT-5.5 xhigh" or "Claude Opus 4.7 (1M context) max">
 
 ## Preflight
 
@@ -291,44 +309,79 @@ For every new pattern introduced on this branch:
 
 ## Summary
 
-| Axis | High | Medium | Low | Notes |
-|---|---:|---:|---:|---|
-| 1. Error messages | N | N | N | |
-| 2. Type hints | N | N | N | |
-| 3. Docstring examples | N | N | N | |
-| 4. Naming | N | N | N | |
-| 5. Comments | N | N | N | |
-| 6. Conventions | N | N | N | |
-| 7. Reference files | N | N | N | |
-| **Total** | | | | |
+I found <N> LLM-ergonomics issues:
+
+- High: <h>
+- Medium: <m>
+- Low: <l>
+
+Top issue: <one sentence naming the highest-priority finding and why it matters>.
 
 ## Findings
 
-### Axis 1 — Error-message informativeness
+### <Severity> - <Short Finding Title>
 
-| File:Line | Severity | Current | Suggested rewrite |
-|---|---|---|---|
-| `src/aiperf/dataset/loader.py:142` | HIGH | `raise ValueError("bad input")` | `raise DatasetLoadError(f"dataset '{name}' failed to parse at row {row_idx}: column 'answer_key' is required but missing; check the schema in docs/accuracy/")` |
+Axis: <axis number and name>
 
-(repeat for each finding)
+File: `<path>:<line>`
 
-### Axis 2 — Type-hint descriptiveness
-...
+Current code/text:
 
-### Axis 3–7
-...
+```python
+<quote the current code or text>
+```
+
+Why this matters:
+
+<Explain the semantic risk in 1-3 sentences.>
+
+Suggested rewrite:
+
+```python
+<verbatim concrete rewrite>
+```
+
+<details>
+<summary>Prompt for AI Agents</summary>
+
+```
+Verify each finding against the current code and only fix it if needed.
+
+In `@<path>` around lines <line-start> - <line-end>, re-open the current code
+and confirm <finding-specific condition> still applies before making changes.
+Inspect <related symbols, call sites, tests, docs, or generated files>. If
+confirmed, make the smallest change that <finding-specific semantic fix>, while
+preserving <relevant AIPerf pattern or local convention>. Treat the suggested
+rewrite as guidance, not a patch to apply blindly. Update the specific affected
+tests, docs, or generated files. Do not perform unrelated refactors while
+addressing this finding.
+```
+
+</details>
+
+Repeat one section per finding, ordered by severity, then by file.
+
+## Axes With No Findings
+
+- Error messages: <brief note or omit if this axis has findings>
+- Type hints: <brief note or omit if this axis has findings>
+- Docstring examples: <brief note or omit if this axis has findings>
+- Naming: <brief note or omit if this axis has findings>
+- Comments: <brief note or omit if this axis has findings>
+- Conventions: <brief note or omit if this axis has findings>
+- Reference files: <brief note or omit if this axis has findings>
 
 ## Prioritized action list
 
 HIGH-severity items first, grouped by file to minimize context switches for the fixer:
 
-1. `src/aiperf/dataset/loader.py:142` — rewrite the DatasetLoadError raise.
+1. `<path>:<line>` — <highest-priority action>.
 2. ...
 
-## What's fine (explicit)
+## What Looks Good
 
-- [list any axis where the branch is clean — explicit "no findings" builds trust]
-```
+- <High-signal positive observation, especially where an axis is clean.>
+````
 
 ## Anti-patterns (self-check before submitting)
 
@@ -347,16 +400,17 @@ HIGH-severity items first, grouped by file to minimize context switches for the 
 Before claiming complete:
 
 - [ ] Report written to `artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md`
-- [ ] All 7 axes have a section (even "no findings")
+- [ ] All 7 axes are accounted for by a finding or the "Axes With No Findings" section
+- [ ] Every finding ends with a collapsed `Prompt for AI Agents` block with a fenced prompt after the suggested rewrite
 - [ ] Every HIGH-severity finding has a verbatim suggested rewrite
-- [ ] Summary table at top has accurate counts
+- [ ] Summary at top has accurate High / Medium / Low counts
 - [ ] Prioritized action list at bottom groups by file
 - [ ] User is told the exact path to the report
 - [ ] Code is unchanged (this is review, not fix)
 
 Report concisely to the user:
 
-```
+```text
 LLM-ergonomics review complete: <N> findings (H: <h>, M: <m>, L: <l>)
 Report: artifacts/code-review-YYYY-MM-DD/llm-ergonomics-<branch-slug>.md
 Highest-priority: <one-line summary of the top HIGH finding>
@@ -367,7 +421,6 @@ Highest-priority: <one-line summary of the top HIGH finding>
 ### Mechanical tooling (AIPerf-local)
 
 - The 18 mechanical checks and their baselines: `tools/check_ergonomics.py`, `tools/ruff_baselined.py`, `tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`.
-- Research synthesis for AIPerf: `artifacts/code-review-2026-04-21/llm-codebase-ergonomics.md` (the original 8 structural rules) and `artifacts/code-review-2026-04-21/llm-codebase-ergonomics-extended.md` (R9–R17, the axes this skill operationalizes).
 - Sibling skill: `aiperf-code-review` for correctness review (different goal — use both sequentially on important PRs).
 
 ### Primary research sources for the 7 axes

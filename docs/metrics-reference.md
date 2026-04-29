@@ -1331,7 +1331,7 @@ The aggregate output also includes metadata about the multi-run benchmark:
 - **failed_runs**: List of failed runs with error details
 - **confidence_level**: Confidence level used for intervals (e.g., 0.95)
 - **cooldown_seconds**: Cooldown duration between runs
-- **run_labels**: Labels for each run (e.g., ["run_0001", "run_0002", ...])
+- **run_labels**: Labels for each run (e.g., ["trial_0001", "trial_0002", ...])
 
 ---
 

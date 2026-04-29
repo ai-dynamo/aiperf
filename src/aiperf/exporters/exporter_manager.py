@@ -33,6 +33,7 @@ class ExporterManager(AIPerfLoggerMixin):
 
     def __init__(
         self,
+        *,
         results: ProfileResults,
         config: BenchmarkConfig,
         telemetry_results: TelemetryExportData | None,

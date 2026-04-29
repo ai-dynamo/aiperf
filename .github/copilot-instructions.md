@@ -65,7 +65,7 @@ pre-commit run              # Staged files only
 pre-commit run --all-files  # All files (recommended after significant changes)
 ```
 
-Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `ruff` (lint + format).
+Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-executables-have-shebangs`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `check-shebang-scripts-are-executable`, `end-of-file-fixer`, `mixed-line-ending`, `no-commit-to-branch`, `requirements-txt-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `check-agent-files-sync`, `check-ergonomics`, `check-ruff-baselined`, `ruff`, `ruff-format`.
 
 ## Adding a New Service
 
@@ -192,19 +192,21 @@ Hard rules for adding new CLI flags:
 5. `Field(description=...)` on all Pydantic fields
 6. `git commit -s`
 
-## Three-File Sync Rule
+## Four-File Sync Rule
 
-`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only file-specific headers/frontmatter differ; the cursor file's `alwaysApply: true` frontmatter is required and must be preserved). When updating one, update all three. Always diff them after editing to confirm sync.
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ; the cursor file's `alwaysApply: true` frontmatter is required and must be preserved). When updating one, update all four. Run `make check-agent-files-sync` after editing to confirm sync — pre-commit enforces this on every commit that touches one of these files.
 
 ## Documentation Updates
 
-When making changes, update the appropriate documentation files. When adding a new tutorial, also add it to `README.md`'s tutorial index.
+> **DOCUMENTATION IS REQUIRED, NOT OPTIONAL.** Any PR that adds or changes a feature, CLI option, env var, plugin, message type, or service without updating the relevant docs is incomplete and will not be merged.
+
+When making changes, update the appropriate documentation files using the table below. When adding a new tutorial, also add it to `README.md`'s tutorial index. **Any new file under `docs/` must also be added to `docs/index.yml`** (the Fern site index) — `tools/check_docs_index.py` enforces this in CI. If the change is internal-only and not user-facing (e.g. developer reference, internal mechanics, debugging notes), put the doc under `docs/reference/` rather than skipping documentation.
 
 | Change type | Files to update |
 |---|---|
 | Adding/removing a doc file, or changing its purpose | `llms.txt` |
 | Architecture, components, data flow, communication | `docs/architecture.md` |
-| Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
+| Coding standards, build commands, new patterns | `AGENTS.md` + `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
 | Code patterns, examples, base classes | `docs/dev/patterns.md` |
 | CLI arguments or commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
 | Environment variables | `docs/environment-variables.md` (auto-generated via `make generate-env-vars-docs`) |
