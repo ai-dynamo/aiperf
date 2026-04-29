@@ -17,16 +17,24 @@ class AudioDurationMetric(BaseRecordMetric[float]):
     (avg, p50, p99) are still computed automatically and available for
     characterizing dataset shape.
 
+    Example:
+        A 12.5s audio clip produces audio_duration = 12.5. Useful for
+        correlating latency with clip length and verifying RTFx post-hoc.
+
     Computed only when the request's first turn carries
     ``audio_duration_seconds``. Non-ASR requests yield no metric value.
+
+    Raises:
+        NoMetricValue: when the request has no turns, or the first turn
+            lacks ``audio_duration_seconds`` (or it is non-positive).
     """
 
     tag = "audio_duration"
     header = "Audio Duration"
     short_header = "Audio Dur"
     unit = MetricTimeUnit.SECONDS
-    display_order = 860
-    flags = MetricFlags.NO_CONSOLE
+    display_order = 870
+    flags = MetricFlags.SUPPORTS_AUDIO_ONLY | MetricFlags.NO_CONSOLE
     required_metrics = None
 
     def _parse_record(
@@ -41,7 +49,7 @@ class AudioDurationMetric(BaseRecordMetric[float]):
         audio_duration = turns[0].audio_duration_seconds
         if audio_duration is None or audio_duration <= 0:
             raise NoMetricValue(
-                "Turn has no audio_duration_seconds; metric applies to ASR requests only."
+                "Turn has no audio_duration_seconds; audio_duration metric applies to ASR requests only."
             )
 
         return audio_duration

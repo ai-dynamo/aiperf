@@ -46,3 +46,4 @@ class TestAudioDurationMetric:
         assert metric.tag == "audio_duration"
         assert metric.header == "Audio Duration"
         assert MetricFlags.NO_CONSOLE in metric.flags
+        assert MetricFlags.SUPPORTS_AUDIO_ONLY in metric.flags
