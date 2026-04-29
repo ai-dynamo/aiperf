@@ -33,7 +33,11 @@ class TestRTFxMetric:
         cases = [
             (5.0, 500_000_000, 10.0),  # 5s audio, 0.5s latency -> 10x
             (60.0, 12_000_000_000, 5.0),  # 60s audio, 12s latency -> 5x
-            (1.0, 2_000_000_000, 0.5),  # 1s audio, 2s latency -> 0.5x (slower than real-time)
+            (
+                1.0,
+                2_000_000_000,
+                0.5,
+            ),  # 1s audio, 2s latency -> 0.5x (slower than real-time)
             (30.0, 100_000_000, 300.0),  # 30s audio, 100ms latency -> 300x
         ]
         for audio_dur, latency_ns, expected in cases:
