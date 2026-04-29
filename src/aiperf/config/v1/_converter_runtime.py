@@ -95,9 +95,15 @@ def build_artifacts(user: UserConfig) -> dict[str, Any]:
         artifacts["per_chunk_data"] = output.export_per_chunk_data
     if "show_trace_timing" in out_set:
         artifacts["show_trace_timing"] = output.show_trace_timing
-    if "export_level" in out_set:
-        if output.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
-            artifacts["records"] = [ExportFormat.JSONL, "csv"]
+    # v1's default is ExportLevel.RECORDS but v2 ArtifactsConfig defaults
+    # records=False; always honor the v1 value so CLI users get per-request
+    # records output by default, matching the v1 default they didn't override.
+    if output.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
+        artifacts["records"] = [ExportFormat.JSONL, "csv"]
+    # Only emit raw when the user explicitly set the level OR the level is
+    # actually RAW (the v1 default is RECORDS, so an unset field shouldn't
+    # noise up the artifacts dict with raw=False).
+    if "export_level" in out_set or output.export_level == ExportLevel.RAW:
         artifacts["raw"] = output.export_level == ExportLevel.RAW
     if "profile_export_prefix" in out_set and output.profile_export_prefix:
         artifacts["prefix"] = Path(output.profile_export_prefix).stem

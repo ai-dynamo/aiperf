@@ -31,7 +31,7 @@ def _make_snapshot(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 def _patch_resolver(monkeypatch, snap: Path) -> None:
-    async def _resolver(name: str) -> Path:
+    async def _resolver(name: str, registry=None) -> Path:
         if name == "unknown":
             raise HTTPException(status_code=404, detail=f"tokenizer '{name}' not found")
         return snap

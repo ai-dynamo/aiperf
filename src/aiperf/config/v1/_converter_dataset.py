@@ -535,16 +535,37 @@ def _build_composed_dataset(user: UserConfig) -> dict[str, Any]:
 
 
 _NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
-    ("prompt.input_tokens.mean", "--isl/--prompt-input-tokens-mean"),
-    ("prompt.input_tokens.stddev", "--isl-stddev/--prompt-input-tokens-stddev"),
+    (
+        "prompt.input_tokens.mean",
+        "--isl/--prompt-input-tokens-mean/--synthetic-input-tokens-mean",
+    ),
+    (
+        "prompt.input_tokens.stddev",
+        "--isl-stddev/--prompt-input-tokens-stddev/--synthetic-input-tokens-stddev",
+    ),
     (
         "prompt.input_tokens.block_size",
-        "--isl-block-size/--prompt-input-tokens-block-size",
+        "--isl-block-size/--prompt-input-tokens-block-size/--synthetic-input-tokens-block-size",
     ),
     ("prompt.batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt.sequence_distribution", "--seq-dist/--sequence-distribution"),
-    ("prompt.prefix_prompt.length", "--prompt-prefix-length"),
-    ("prompt.prefix_prompt.pool_size", "--prompt-prefix-pool-size"),
+    (
+        "prompt.prefix_prompt.length",
+        "--prompt-prefix-length/--prefix-prompt-length",
+    ),
+    (
+        "prompt.prefix_prompt.pool_size",
+        "--prompt-prefix-pool-size/--prefix-prompt-pool-size",
+    ),
+)
+
+# Tokenizer options are also rejected for non-tokenizing endpoints
+# (image_retrieval, embeddings, etc.).  The validator path lives on
+# ``user.tokenizer`` rather than ``user.input``.
+_NON_TEXT_TOKENIZER_TRIGGERS: tuple[tuple[str, str], ...] = (
+    ("name", "--tokenizer"),
+    ("trust_remote_code", "--tokenizer-trust-remote-code"),
+    ("revision", "--tokenizer-revision"),
 )
 
 
@@ -585,6 +606,16 @@ def _determine_needs_text(user: UserConfig) -> bool:
             raise ValueError(
                 f"{', '.join(violations)} cannot be used with --endpoint-type "
                 f"{endpoint_type}."
+            )
+    if not needs_text and user.tokenizer is not None:
+        tok_set = user.tokenizer.model_fields_set
+        tok_violations = [
+            flag for field, flag in _NON_TEXT_TOKENIZER_TRIGGERS if field in tok_set
+        ]
+        if tok_violations:
+            raise ValueError(
+                f"Tokenizer options ({', '.join(tok_violations)}) cannot be used "
+                f"with --endpoint-type {endpoint_type}."
             )
     return needs_text
 

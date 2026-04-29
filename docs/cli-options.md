@@ -24,7 +24,7 @@ Assemble per-category SPEED-Bench aiperf results into a matrix report
 
 Benchmark AI models and measure performance metrics
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Parameters](#parameters) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service)
 
 ### [`plot`](#aiperf-plot)
 
@@ -62,7 +62,7 @@ Compare two configuration files and show differences.
 
 Generate YAML configuration from CLI options.
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Parameters](#parameters) • [Workers](#workers) • [Service](#service)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service) • [Parameters](#parameters)
 
 ### [`config init`](#aiperf-config-init)
 
@@ -80,19 +80,19 @@ Validate AIPerfJob YAML files against the CRD schema
 
 Run a benchmark in Kubernetes
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Parameters](#parameters) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets) • [Parameters](#parameters)
 
 ### [`kube sweep`](#aiperf-kube-sweep)
 
 Run a parameter sweep or multi-run benchmark in Kubernetes
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Parameters](#parameters) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets) • [Parameters](#parameters)
 
 ### [`kube generate`](#aiperf-kube-generate)
 
 Generate Kubernetes YAML manifests
 
-[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Parameters](#parameters) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets)
+[Endpoint](#endpoint) • [Input](#input) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Prompt](#prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Conversation Input](#conversation-input) • [Output](#output) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [GPU Telemetry](#gpu-telemetry) • [Server Metrics](#server-metrics) • [ZMQ Communication](#zmq-communication) • [Workers](#workers) • [Service](#service) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets) • [Parameters](#parameters)
 
 ### [`kube attach`](#aiperf-kube-attach)
 
@@ -1096,133 +1096,6 @@ Host address for internal ZMQ TCP communication between AIPerf services. Default
 #### `--zmq-ipc-path`, `--zmq-ipc-path`, `--zmq-ipc-path` `<str>`
 
 Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory if not specified. Only applicable when using IPC communication backend.
-
-### Parameters
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmqdualbind.event-bus-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmqdualbind.event-bus-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmqdualbind.dataset-manager-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmqdualbind.dataset-manager-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmqdualbind.raw-inference-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmqdualbind.raw-inference-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmqdualbind.ipc-path` `<str>`
-
-Directory path for IPC socket files.
-
-#### `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmqdualbind.tcp-host` `<str>`
-
-TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmqdualbind.controller-host` `<str>`
-
-Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes.
-
-#### `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmqdualbind.records-push-pull-tcp-port` `<int>`
-
-TCP port for records push/pull communication with remote workers.
-<br/>_Default: `5557`_
-
-#### `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmqdualbind.credit-router-tcp-port` `<int>`
-
-TCP port for credit router communication with remote workers.
-<br/>_Default: `5564`_
 
 ### Workers
 
@@ -2410,142 +2283,6 @@ Host address for internal ZMQ TCP communication between AIPerf services. Default
 
 Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory if not specified. Only applicable when using IPC communication backend.
 
-### Parameters
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmqdualbind.event-bus-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmqdualbind.event-bus-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmqdualbind.dataset-manager-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmqdualbind.dataset-manager-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmqdualbind.raw-inference-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmqdualbind.raw-inference-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmqdualbind.ipc-path` `<str>`
-
-Directory path for IPC socket files.
-
-#### `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmqdualbind.tcp-host` `<str>`
-
-TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmqdualbind.controller-host` `<str>`
-
-Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes.
-
-#### `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmqdualbind.records-push-pull-tcp-port` `<int>`
-
-TCP port for records push/pull communication with remote workers.
-<br/>_Default: `5557`_
-
-#### `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmqdualbind.credit-router-tcp-port` `<int>`
-
-TCP port for credit router communication with remote workers.
-<br/>_Default: `5564`_
-
-#### `--output` `<str>`
-
-Path to write the config. If not provided, prints to stdout.
-
-#### `--format` `<str>`
-
-Output format: 'yaml' or 'json'.
-<br/>_Default: `yaml`_
-
 ### Workers
 
 #### `--workers-max`, `--max-workers`, `--workers-max`, `--max-workers` `<int>`
@@ -2600,6 +2337,17 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 #### `--api-host` `<str>`
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
+
+### Parameters
+
+#### `--output` `<str>`
+
+Path to write the config. If not provided, prints to stdout.
+
+#### `--format` `<str>`
+
+Output format: 'yaml' or 'json'.
+<br/>_Default: `yaml`_
 
 <hr/>
 
@@ -3587,160 +3335,6 @@ Host address for internal ZMQ TCP communication between AIPerf services. Default
 
 Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory if not specified. Only applicable when using IPC communication backend.
 
-### Parameters
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmqdualbind.event-bus-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmqdualbind.event-bus-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmqdualbind.dataset-manager-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmqdualbind.dataset-manager-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmqdualbind.raw-inference-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmqdualbind.raw-inference-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmqdualbind.ipc-path` `<str>`
-
-Directory path for IPC socket files.
-
-#### `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmqdualbind.tcp-host` `<str>`
-
-TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmqdualbind.controller-host` `<str>`
-
-Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes.
-
-#### `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmqdualbind.records-push-pull-tcp-port` `<int>`
-
-TCP port for records push/pull communication with remote workers.
-<br/>_Default: `5557`_
-
-#### `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmqdualbind.credit-router-tcp-port` `<int>`
-
-TCP port for credit router communication with remote workers.
-<br/>_Default: `5564`_
-
-#### `-d`, `--detach`, `--no-detach`
-
-Exit immediately after deploying (don't wait for completion). Automatically enabled in non-interactive environments (pipes, CI/CD).
-
-#### `--no-wait`
-
-Don't wait for pods to be ready before attaching (advanced).
-
-#### `--attach-port` `<int>`
-
-Local port for API port-forward (default: 0 = ephemeral).
-<br/>_Default: `0`_
-
-#### `--skip-endpoint-check`
-
-Skip endpoint health validation before deploying.
-<br/>_Flag (no value required)_
-
-#### `--dry-run`
-
-Print the AIPerfJob CR as JSON without submitting it.
-<br/>_Flag (no value required)_
-
-#### `--no-operator`
-
-Force direct deployment without the operator. Automatically enabled if the AIPerfJob CRD is not installed on the cluster.
-
 ### Workers
 
 #### `--workers-max`, `--max-workers`, `--workers-max`, `--max-workers` `<int>`
@@ -3901,6 +3495,35 @@ Secret volume mounts.
 #### `--service-account` `<str>`
 
 Service account name for pods.
+
+### Parameters
+
+#### `-d`, `--detach`, `--no-detach`
+
+Exit immediately after deploying (don't wait for completion). Automatically enabled in non-interactive environments (pipes, CI/CD).
+
+#### `--no-wait`
+
+Don't wait for pods to be ready before attaching (advanced).
+
+#### `--attach-port` `<int>`
+
+Local port for API port-forward (default: 0 = ephemeral).
+<br/>_Default: `0`_
+
+#### `--skip-endpoint-check`
+
+Skip endpoint health validation before deploying.
+<br/>_Flag (no value required)_
+
+#### `--dry-run`
+
+Print the AIPerfJob CR as JSON without submitting it.
+<br/>_Flag (no value required)_
+
+#### `--no-operator`
+
+Force direct deployment without the operator. Automatically enabled if the AIPerfJob CRD is not installed on the cluster.
 
 <hr/>
 
@@ -4779,171 +4402,6 @@ Host address for internal ZMQ TCP communication between AIPerf services. Default
 
 Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory if not specified. Only applicable when using IPC communication backend.
 
-### Parameters
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmqdualbind.event-bus-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmqdualbind.event-bus-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmqdualbind.dataset-manager-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmqdualbind.dataset-manager-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmqdualbind.raw-inference-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmqdualbind.raw-inference-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmqdualbind.ipc-path` `<str>`
-
-Directory path for IPC socket files.
-
-#### `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmqdualbind.tcp-host` `<str>`
-
-TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmqdualbind.controller-host` `<str>`
-
-Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes.
-
-#### `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmqdualbind.records-push-pull-tcp-port` `<int>`
-
-TCP port for records push/pull communication with remote workers.
-<br/>_Default: `5557`_
-
-#### `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmqdualbind.credit-router-tcp-port` `<int>`
-
-TCP port for credit router communication with remote workers.
-<br/>_Default: `5564`_
-
-#### `--trials` `<int>`
-
-Multi-run trials per sweep cell; overrides multi_run.trials in the YAML.
-
-#### `--cooldown` `<float>`
-
-Cooldown seconds between multi-run trials (overrides YAML).
-<br/>_Default: `0.0`_
-
-#### `--convergence-metric` `<str>`
-
-Stop multi-run early when this metric converges (e.g. ttft_p99).
-
-#### `--min-runs` `<int>`
-
-Minimum runs before convergence is checked (default 3).
-<br/>_Default: `3`_
-
-#### `--max-runs` `<int>`
-
-Hard cap on runs even if not converged (default 10).
-<br/>_Default: `10`_
-
-#### `--convergence-threshold` `<float>`
-
-Relative convergence threshold (default 0.05 = 5%).
-<br/>_Constraints: > 0, &lt; 1_
-<br/>_Default: `0.05`_
-
-#### `-d`, `--detach`, `--no-detach`
-
-Exit after submitting (don't tail). v1 always behaves as detach=True.
-
-#### `--dry-run`
-
-Print the AIPerfSweep CR as JSON without submitting it.
-<br/>_Flag (no value required)_
-
 ### Workers
 
 #### `--workers-max`, `--max-workers`, `--workers-max`, `--max-workers` `<int>`
@@ -5104,6 +4562,46 @@ Secret volume mounts.
 #### `--service-account` `<str>`
 
 Service account name for pods.
+
+### Parameters
+
+#### `--trials` `<int>`
+
+Multi-run trials per sweep cell; overrides multi_run.trials in the YAML.
+
+#### `--cooldown` `<float>`
+
+Cooldown seconds between multi-run trials (overrides YAML).
+<br/>_Default: `0.0`_
+
+#### `--convergence-metric` `<str>`
+
+Stop multi-run early when this metric converges (e.g. ttft_p99).
+
+#### `--min-runs` `<int>`
+
+Minimum runs before convergence is checked (default 3).
+<br/>_Default: `3`_
+
+#### `--max-runs` `<int>`
+
+Hard cap on runs even if not converged (default 10).
+<br/>_Default: `10`_
+
+#### `--convergence-threshold` `<float>`
+
+Relative convergence threshold (default 0.05 = 5%).
+<br/>_Constraints: > 0, &lt; 1_
+<br/>_Default: `0.05`_
+
+#### `-d`, `--detach`, `--no-detach`
+
+Exit after submitting (don't tail). v1 always behaves as detach=True.
+
+#### `--dry-run`
+
+Print the AIPerfSweep CR as JSON without submitting it.
+<br/>_Flag (no value required)_
 
 <hr/>
 
@@ -5982,142 +5480,6 @@ Host address for internal ZMQ TCP communication between AIPerf services. Default
 
 Directory path for ZMQ IPC (Inter-Process Communication) socket files. When using IPC transport instead of TCP, AIPerf creates Unix domain socket files in this directory for faster local communication. Auto-generated in system temp directory if not specified. Only applicable when using IPC communication backend.
 
-### Parameters
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.event-bus-proxy-config.ipc-path`, `--service-config.zmqdualbind.event-bus-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmq-dual-bind.event-bus-proxy-config.name`, `--service-config.zmqdualbind.event-bus-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-host`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.event-bus-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.event-bus-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-control`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.event-bus-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.event-bus-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.ipc-path`, `--service-config.zmqdualbind.dataset-manager-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.name`, `--service-config.zmqdualbind.dataset-manager-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-host`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.dataset-manager-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-control`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.dataset-manager-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.dataset-manager-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.ipc-path`, `--service-config.zmqdualbind.raw-inference-proxy-config.ipc-path` `<str>`
-
-Path for IPC sockets.
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.name`, `--service-config.zmqdualbind.raw-inference-proxy-config.name` `<str>`
-
-Name for IPC sockets.
-<br/>_Default: `proxy`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-host`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-host` `<str>`
-
-TCP bind host (use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-frontend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-frontend-port` `<int>`
-
-TCP port for frontend.
-<br/>_Default: `15555`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.tcp-backend-port`, `--service-config.zmqdualbind.raw-inference-proxy-config.tcp-backend-port` `<int>`
-
-TCP port for backend.
-<br/>_Default: `15556`_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-control`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-control`
-
-Enable control socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmq-dual-bind.raw-inference-proxy-config.no-enable-capture`, `--service-config.zmqdualbind.raw-inference-proxy-config.no-enable-capture`
-
-Enable capture socket.
-<br/>_Flag (no value required)_
-
-#### `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmq-dual-bind.ipc-path`, `--service-config.zmqdualbind.ipc-path` `<str>`
-
-Directory path for IPC socket files.
-
-#### `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmq-dual-bind.tcp-host`, `--service-config.zmqdualbind.tcp-host` `<str>`
-
-TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).
-<br/>_Default: `127.0.0.1`_
-
-#### `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmq-dual-bind.controller-host`, `--service-config.zmqdualbind.controller-host` `<str>`
-
-Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes.
-
-#### `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmq-dual-bind.records-push-pull-tcp-port`, `--service-config.zmqdualbind.records-push-pull-tcp-port` `<int>`
-
-TCP port for records push/pull communication with remote workers.
-<br/>_Default: `5557`_
-
-#### `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmq-dual-bind.credit-router-tcp-port`, `--service-config.zmqdualbind.credit-router-tcp-port` `<int>`
-
-TCP port for credit router communication with remote workers.
-<br/>_Default: `5564`_
-
-#### `--operator`
-
-Output an AIPerfJob CR (requires operator on target cluster).
-<br/>_Flag (no value required)_
-
-#### `--no-operator`
-
-Output raw K8s manifests (Namespace, RBAC, ConfigMap, JobSet).
-
 ### Workers
 
 #### `--workers-max`, `--max-workers`, `--workers-max`, `--max-workers` `<int>`
@@ -6278,6 +5640,17 @@ Secret volume mounts.
 #### `--service-account` `<str>`
 
 Service account name for pods.
+
+### Parameters
+
+#### `--operator`
+
+Output an AIPerfJob CR (requires operator on target cluster).
+<br/>_Flag (no value required)_
+
+#### `--no-operator`
+
+Output raw K8s manifests (Namespace, RBAC, ConfigMap, JobSet).
 
 <hr/>
 

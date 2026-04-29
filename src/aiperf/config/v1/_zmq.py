@@ -433,6 +433,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         Field(
             description="Directory path for IPC socket files.",
         ),
+        DisableCLI(reason="cluster-managed; set via env or operator"),
     ] = None
 
     tcp_host: Annotated[
@@ -440,6 +441,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         Field(
             description="TCP bind host for proxies (Defaults to 127.0.0.1 for localhost, use 0.0.0.0 for all interfaces).",
         ),
+        DisableCLI(reason="cluster-managed; set via env or operator"),
     ] = "127.0.0.1"
 
     controller_host: Annotated[
@@ -450,18 +452,23 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
                 "connect via TCP to this host instead of IPC. Set via JobSet DNS in Kubernetes."
             ),
         ),
+        DisableCLI(
+            reason="set via JobSet DNS in Kubernetes; not a user-facing CLI flag"
+        ),
     ] = None
 
-    records_push_pull_tcp_port: int = Field(
+    records_push_pull_tcp_port: Annotated[int, DisableCLI()] = Field(
         default=5557,
         description="TCP port for records push/pull communication with remote workers.",
     )
-    credit_router_tcp_port: int = Field(
+    credit_router_tcp_port: Annotated[int, DisableCLI()] = Field(
         default=5564,
         description="TCP port for credit router communication with remote workers.",
     )
 
-    event_bus_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
+    event_bus_proxy_config: Annotated[  # type: ignore
+        ZMQDualBindProxyConfig, DisableCLI()
+    ] = Field(
         default=ZMQDualBindProxyConfig(
             name="event_bus_proxy",
             tcp_frontend_port=5663,
@@ -469,7 +476,9 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         ),
         description="Event bus proxy configuration (XPUB/XSUB).",
     )
-    dataset_manager_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
+    dataset_manager_proxy_config: Annotated[  # type: ignore
+        ZMQDualBindProxyConfig, DisableCLI()
+    ] = Field(
         default=ZMQDualBindProxyConfig(
             name="dataset_manager_proxy",
             tcp_frontend_port=5661,
@@ -477,7 +486,9 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         ),
         description="Dataset manager proxy configuration (DEALER/ROUTER).",
     )
-    raw_inference_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
+    raw_inference_proxy_config: Annotated[  # type: ignore
+        ZMQDualBindProxyConfig, DisableCLI()
+    ] = Field(
         default=ZMQDualBindProxyConfig(
             name="raw_inference_proxy",
             tcp_frontend_port=5665,

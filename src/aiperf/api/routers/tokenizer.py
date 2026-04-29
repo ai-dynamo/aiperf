@@ -16,12 +16,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import zstandard
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from aiperf.common.environment import Environment
+
+if TYPE_CHECKING:
+    from aiperf.common.tokenizer_bundle_registry import TokenizerBundleRegistry
 
 _CHUNK_SIZE = 1 << 16  # 64 KiB
 
@@ -53,13 +57,27 @@ def _stream_bytes(payload: bytes) -> AsyncIterator[bytes]:
     return _iter()
 
 
-async def _resolve_snapshot_dir(name: str) -> Path:
+async def _resolve_snapshot_dir(
+    name: str, registry: TokenizerBundleRegistry | None = None
+) -> Path:
     """Return the local snapshot dir for ``name`` from the shared HF cache.
 
     Returns 503 when the warmer hasn't populated the cache yet (worker pods
     retry through this) and 404 when the warmer asked for a name HF doesn't
     know about. Never reaches the network.
+
+    When ``registry`` is provided and has a ready entry for ``name``, the
+    registered snapshot dir is returned without consulting HF Hub at all —
+    this is the path component-integration tests exercise via a hermetic
+    HF_HOME.
     """
+    if registry is not None:
+        entry = registry.get(name)
+        if entry is not None:
+            snapshot_dir, ready = entry
+            if snapshot_dir is not None and ready.is_set():
+                return snapshot_dir
+
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import (
         EntryNotFoundError,
@@ -89,8 +107,16 @@ async def _resolve_snapshot_dir(name: str) -> Path:
     return Path(path)
 
 
-def build_tokenizer_router() -> APIRouter:
-    """Return an APIRouter exposing ``GET /api/tokenizer/{name:path}/bundle``."""
+def build_tokenizer_router(
+    registry: TokenizerBundleRegistry | None = None,
+) -> APIRouter:
+    """Return an APIRouter exposing ``GET /api/tokenizer/{name:path}/bundle``.
+
+    When ``registry`` is supplied, snapshot-dir resolution prefers the
+    registry's entries before falling back to ``snapshot_download``. The
+    operator-pod path uses this; the component-integration round-trip test
+    exercises it with a hermetic HF cache.
+    """
     router = APIRouter(
         prefix="/api/tokenizer", tags=["Tokenizer"], include_in_schema=False
     )
@@ -109,7 +135,7 @@ def build_tokenizer_router() -> APIRouter:
             cached = bundle_cache.get(name)
             if cached is not None:
                 return cached
-            snapshot_dir = await _resolve_snapshot_dir(name)
+            snapshot_dir = await _resolve_snapshot_dir(name, registry)
             payload = await asyncio.to_thread(_materialize_bundle, snapshot_dir)
             bundle_cache[name] = payload
             return payload
