@@ -12,7 +12,11 @@ from aiperf.common.models import (
     TextResponseData,
     Usage,
 )
-from tests.unit.records.conftest import create_invalid_record, create_test_request_info
+from tests.unit.records.conftest import (
+    create_invalid_record,
+    create_test_request_info,
+    rebuild_payload_bytes,
+)
 
 
 @pytest.fixture
@@ -21,7 +25,6 @@ def request_record(sample_turn):
     return RequestRecord(
         request_info=create_test_request_info(turns=[sample_turn]),
         model_name="test-model",
-        turns=[sample_turn],
     )
 
 
@@ -126,13 +129,14 @@ class TestInvalidRecords:
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
         inference_result_parser.get_turn = AsyncMock(return_value=sample_turn)
-        inference_result_parser.endpoint = MagicMock()
-        setup_parser_responses(
-            inference_result_parser,
-            [
+        # Stub only the response-extraction side; leave ``extract_payload_inputs``
+        # untouched so ISL tokenisation still goes through the real
+        # ChatEndpoint installed by the fixture.
+        inference_result_parser.endpoint.extract_response_data = MagicMock(
+            return_value=[
                 ParsedResponse(perf_ns=1000, data=None),
                 ParsedResponse(perf_ns=2000, data=None),
-            ],
+            ]
         )
 
         result = await inference_result_parser.parse_request_record(record)
@@ -170,7 +174,6 @@ class TestInvalidRecords:
             record = RequestRecord(
                 request_info=create_test_request_info(turns=[sample_turn]),
                 model_name="test-model",
-                turns=[sample_turn],
                 error=ErrorDetails(
                     code=500, message="Server error", type="ServerError"
                 ),
@@ -181,7 +184,6 @@ class TestInvalidRecords:
             record = RequestRecord(
                 request_info=create_test_request_info(turns=[sample_turn]),
                 model_name="test-model",
-                turns=[sample_turn],
             )
 
         inference_result_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
@@ -250,7 +252,6 @@ class TestAsyncTokenizerEncode:
         record = RequestRecord(
             request_info=create_test_request_info(turns=[sample_turn]),
             model_name="test-model",
-            turns=[sample_turn],
         )
 
         result = await setup_inference_parser.compute_input_token_count(record)
@@ -266,7 +267,6 @@ class TestAsyncTokenizerEncode:
         record = RequestRecord(
             request_info=create_test_request_info(turns=[]),
             model_name="test-model",
-            turns=[],
         )
 
         setup_parser_responses(
@@ -460,11 +460,13 @@ class TestContextPromptISL:
         if user_context_message is not None:
             sample_request_info.user_context_message = user_context_message
         sample_request_info.turns = [sample_turn]
+        # Tokeniser reads payload_bytes only; rebuild after mutations so
+        # the wire body reflects the new system/user_context/turns.
+        rebuild_payload_bytes(sample_request_info)
 
         record = RequestRecord(
             model_name="test-model",
             request_info=sample_request_info,
-            turns=[sample_turn],
         )
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
 
@@ -480,11 +482,11 @@ class TestContextPromptISL:
         sample_request_info.system_message = "You are a helpful assistant"
         sample_request_info.user_context_message = "This is user context for session"
         sample_request_info.turns = [sample_turn]
+        rebuild_payload_bytes(sample_request_info)
 
         record = RequestRecord(
             model_name="test-model",
             request_info=sample_request_info,
-            turns=[sample_turn],
             error=ErrorDetails(code=500, message="Server error", type="ServerError"),
         )
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
@@ -493,3 +495,205 @@ class TestContextPromptISL:
 
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+class TestMultimodalMediaCountsEndToEnd:
+    """End-to-end: ``payload_bytes`` → ``InferenceResultParser`` →
+    ``ParsedResponseRecord.media_counts``.
+
+    Gap in the existing coverage: ``test_image_metrics.py`` hoists
+    ``record.media_counts.images`` directly, bypassing the parser.
+    If ``extract_payload_inputs`` miscounts or
+    ``inference_result_parser.py``'s media-count wiring (line ~145)
+    regresses, the old tests pass while downstream metrics silently
+    report zero. These tests drive the real parser.
+    """
+
+    @pytest.mark.parametrize(
+        "images_in_payload,audios_in_payload,videos_in_payload",
+        [
+            (0, 0, 0),
+            (1, 0, 0),
+            (3, 0, 0),
+            (2, 1, 1),
+            (0, 2, 0),
+        ],
+        ids=["text_only", "one_image", "three_images", "mixed", "audio_only"],
+    )
+    async def test_media_counts_from_wire_payload(
+        self,
+        setup_inference_parser,
+        mock_tokenizer,
+        sample_request_info,
+        images_in_payload,
+        audios_in_payload,
+        videos_in_payload,
+    ):
+        """Build a chat-shape payload with a known part count, stash the
+        bytes on ``request_info.payload_bytes``, and assert the parsed
+        record carries the matching counts."""
+        import orjson
+
+        from aiperf.common.models import ParsedResponse, TextResponseData
+
+        content: list[dict] = [{"type": "text", "text": "describe"}]
+        for i in range(images_in_payload):
+            content.append({"type": "image_url", "image_url": {"url": f"data:img-{i}"}})
+        for i in range(audios_in_payload):
+            content.append({"type": "input_audio", "input_audio": {"data": f"a{i}"}})
+        for i in range(videos_in_payload):
+            content.append({"type": "video_url", "video_url": {"url": f"v{i}"}})
+        payload = {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": content}],
+        }
+
+        sample_request_info.payload_bytes = orjson.dumps(payload)
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=sample_request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+            status=200,
+            responses=[],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
+        setup_inference_parser.endpoint.extract_response_data = MagicMock(
+            return_value=[
+                ParsedResponse(perf_ns=1500, data=TextResponseData(text="ok"))
+            ]
+        )
+
+        parsed_record = await setup_inference_parser.parse_request_record(record)
+
+        assert parsed_record.media_counts.images == images_in_payload
+        assert parsed_record.media_counts.audios == audios_in_payload
+        assert parsed_record.media_counts.videos == videos_in_payload
+
+    async def test_media_counts_zero_when_payload_bytes_missing(
+        self,
+        setup_inference_parser,
+        mock_tokenizer,
+        sample_request_info,
+    ):
+        """Pre-transport error records (payload_bytes is None) still
+        produce a ParsedResponseRecord, with zero media counts — no
+        media metric should fire for them."""
+        from aiperf.common.models import ParsedResponse, TextResponseData
+
+        sample_request_info.payload_bytes = None
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=sample_request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+            status=200,
+            responses=[],
+        )
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=mock_tokenizer)
+        setup_inference_parser.endpoint.extract_response_data = MagicMock(
+            return_value=[
+                ParsedResponse(perf_ns=1500, data=TextResponseData(text="ok"))
+            ]
+        )
+
+        parsed_record = await setup_inference_parser.parse_request_record(record)
+
+        assert parsed_record.media_counts.images == 0
+        assert parsed_record.media_counts.audios == 0
+        assert parsed_record.media_counts.videos == 0
+
+
+class TestParseOutputAndReasoningTextsToolCallDualField:
+    """Cover ``InferenceResultParser._parse_output_and_reasoning_texts``
+    when the parsed responses include ``ToolCallResponseData`` with the
+    new ``content`` field populated. Both ``content`` and
+    ``tool_call_text`` must contribute to ``output_texts`` (via
+    ``get_text()``) so client-OSL matches what the model actually emitted
+    on a mixed turn.
+    """
+
+    def test_pure_tool_call_only_tool_call_text_in_output(self, setup_inference_parser):
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        responses = [
+            ParsedResponse(
+                perf_ns=1,
+                data=ToolCallResponseData(tool_call_text='fn{"a":1}'),
+            )
+        ]
+        out, rsn = setup_inference_parser._parse_output_and_reasoning_texts(responses)
+        assert out == ['fn{"a":1}']
+        assert rsn == []
+
+    def test_dual_field_concatenates_content_then_tool_call_text(
+        self, setup_inference_parser
+    ):
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        responses = [
+            ParsedResponse(
+                perf_ns=1,
+                data=ToolCallResponseData(
+                    tool_call_text='compute{"a":1}',
+                    content="Looking it up. ",
+                ),
+            )
+        ]
+        out, rsn = setup_inference_parser._parse_output_and_reasoning_texts(responses)
+        # ``get_text()`` returns content + tool_call_text — appended
+        # whole, not split. The tokeniser sees the same combined string
+        # the model generated; the server's usage.completion_tokens
+        # counts both portions so client-OSL matches.
+        assert out == ['Looking it up. compute{"a":1}']
+        assert rsn == []
+
+    def test_mixed_responses_text_reasoning_dualtoolcall_in_one_record(
+        self, setup_inference_parser
+    ):
+        from aiperf.common.models.record_models import (
+            ReasoningResponseData,
+            ToolCallResponseData,
+        )
+
+        responses = [
+            ParsedResponse(perf_ns=1, data=TextResponseData(text="hello ")),
+            ParsedResponse(
+                perf_ns=2,
+                data=ReasoningResponseData(reasoning="rsn", content="content "),
+            ),
+            ParsedResponse(
+                perf_ns=3,
+                data=ToolCallResponseData(
+                    tool_call_text="dispatch{}",
+                    content="and then ",
+                ),
+            ),
+        ]
+        out, rsn = setup_inference_parser._parse_output_and_reasoning_texts(responses)
+        # Order matters: TextResponseData → ReasoningResponseData.content
+        # → ToolCallResponseData.get_text() (content+tool_call_text).
+        # All three contribute to output_texts; only reasoning goes to
+        # the separate reasoning_texts bucket.
+        assert out == ["hello ", "content ", "and then dispatch{}"]
+        assert rsn == ["rsn"]
+
+    def test_dual_field_with_none_content_skips_content_portion(
+        self, setup_inference_parser
+    ):
+        from aiperf.common.models.record_models import ToolCallResponseData
+
+        responses = [
+            ParsedResponse(
+                perf_ns=1,
+                data=ToolCallResponseData(tool_call_text="search", content=None),
+            )
+        ]
+        out, rsn = setup_inference_parser._parse_output_and_reasoning_texts(responses)
+        # ``get_text()`` with content=None returns just tool_call_text;
+        # no leading empty fragment.
+        assert out == ["search"]
+        assert rsn == []

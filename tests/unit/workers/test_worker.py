@@ -11,10 +11,11 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
     ParsedResponse,
-    ReasoningResponseData,
     RequestRecord,
     SSEMessage,
+    Text,
     TextResponseData,
+    Turn,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.workers.worker import Worker
@@ -45,90 +46,34 @@ async def mock_worker(
 
 @pytest.mark.asyncio
 class TestWorker:
-    async def test_process_response(
+    async def test_process_response_delegates_to_endpoint(
         self, monkeypatch, mock_worker, sample_request_record
     ):
-        """Ensure process_response extracts text correctly from RequestRecord."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=TextResponseData(text="Hello, world!"),
-        )
+        """_process_response forwards the record to ``endpoint.build_assistant_turn``
+        and returns its result unchanged. Per-endpoint capture semantics
+        (text, reasoning, tool_calls) are covered in the endpoint test suites."""
+        captured_turn = Turn(role="assistant", texts=[Text(contents=["captured"])])
         mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        mock_endpoint.build_assistant_turn = Mock(return_value=captured_turn)
         monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
         turn = await mock_worker._process_response(sample_request_record)
-        assert turn.texts[0].contents == ["Hello, world!"]
 
-    async def test_process_response_empty(
-        self, monkeypatch, mock_worker, sample_request_record
-    ):
-        """Ensure process_response handles empty responses correctly."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=TextResponseData(text=""),
+        mock_endpoint.build_assistant_turn.assert_called_once_with(
+            sample_request_record
         )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(sample_request_record)
-        assert turn is None
+        assert turn is captured_turn
 
-    async def test_process_response_reasoning_extracts_content(
+    async def test_process_response_returns_none_when_endpoint_returns_none(
         self, monkeypatch, mock_worker
     ):
-        """Ensure process_response extracts content from reasoning responses."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=ReasoningResponseData(
-                reasoning="Let me think...",
-                content="The answer is 42.",
-            ),
-        )
+        """No replayable content → None propagates to the caller (which then
+        skips ``store_response`` so the session's history stays empty)."""
         mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
+        mock_endpoint.build_assistant_turn = Mock(return_value=None)
         monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn.texts[0].contents == ["The answer is 42."]
 
-    async def test_process_response_reasoning_only_returns_none(
-        self, monkeypatch, mock_worker
-    ):
-        """Ensure process_response returns None for reasoning-only responses (no content)."""
-        mock_parsed_response = ParsedResponse(
-            perf_ns=0,
-            data=ReasoningResponseData(
-                reasoning="Let me think about this...",
-                content=None,
-            ),
-        )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn is None
-
-    async def test_process_response_mixed_reasoning_and_text_combines_content(
-        self, monkeypatch, mock_worker
-    ):
-        """Ensure process_response combines text and reasoning content."""
-        mock_parsed_responses = [
-            ParsedResponse(
-                perf_ns=0,
-                data=TextResponseData(text="Hello"),
-            ),
-            ParsedResponse(
-                perf_ns=1,
-                data=ReasoningResponseData(
-                    reasoning="Thinking...",
-                    content="World",
-                ),
-            ),
-        ]
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=mock_parsed_responses)
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(RequestRecord())
-        assert turn.texts[0].contents == ["HelloWorld"]
+        assert await mock_worker._process_response(RequestRecord()) is None
 
 
 # --- FirstToken Callback Test Helpers ---
@@ -314,3 +259,122 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+@pytest.mark.asyncio
+class TestProcessCreditFastPathRouting:
+    """Worker's payload-bytes fast path routing.
+
+    The fast path (read ``payload_bytes`` directly from the dataset
+    client, bypass session/conversation deserialisation) is gated on
+    two conditions:
+    1. ``self._is_payload_bytes`` is True (mmap format is PAYLOAD_BYTES)
+    2. ``credit_context.credit.agent_depth == 0`` (not a DAG descendant)
+
+    DAG descendants (``agent_depth > 0``) must go through the session
+    path even under PAYLOAD_BYTES mmap so FORK children can seed their
+    ``UserSession.turn_list`` from the parent session's local state.
+    """
+
+    def _make_credit_context(
+        self, agent_depth: int, conversation_id: str = "conv-xyz"
+    ) -> CreditContext:
+        return CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id=conversation_id,
+                x_correlation_id="xcorr",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                agent_depth=agent_depth,
+            ),
+            drop_perf_ns=0,
+        )
+
+    async def test_root_credit_uses_fast_path_when_payload_bytes_mode(
+        self, monkeypatch, mock_worker
+    ):
+        """agent_depth == 0 under PAYLOAD_BYTES mmap → fast path fires."""
+        mock_client = AsyncMock()
+        mock_client.get_payload_bytes = AsyncMock(
+            return_value=b'{"model":"x","messages":[]}'
+        )
+        mock_worker._dataset_client = mock_client
+        mock_worker._is_payload_bytes = True
+
+        execute = AsyncMock()
+        session_path = AsyncMock()
+        monkeypatch.setattr(mock_worker, "_execute_request", execute)
+        monkeypatch.setattr(mock_worker, "_process_credit_with_session", session_path)
+
+        await mock_worker._process_credit(self._make_credit_context(agent_depth=0))
+
+        mock_client.get_payload_bytes.assert_called_once()
+        execute.assert_called_once()
+        session_path.assert_not_called()
+
+    async def test_child_credit_forced_to_session_path(self, monkeypatch, mock_worker):
+        """agent_depth > 0 must bypass the fast path even when
+        PAYLOAD_BYTES mmap is active. FORK children need the parent's
+        session-local turn_list, which is inaccessible from the fast path.
+        """
+        mock_client = AsyncMock()
+        mock_worker._dataset_client = mock_client
+        mock_worker._is_payload_bytes = True
+
+        execute = AsyncMock()
+        session_path = AsyncMock()
+        monkeypatch.setattr(mock_worker, "_execute_request", execute)
+        monkeypatch.setattr(mock_worker, "_process_credit_with_session", session_path)
+
+        await mock_worker._process_credit(self._make_credit_context(agent_depth=1))
+
+        # Fast path never consulted the dataset client for bytes.
+        mock_client.get_payload_bytes.assert_not_called()
+        execute.assert_not_called()
+        session_path.assert_called_once()
+
+    async def test_non_payload_bytes_mode_always_session_path(
+        self, monkeypatch, mock_worker
+    ):
+        """Without PAYLOAD_BYTES mmap, every credit (root or child) goes
+        through the session path — the fast path is opt-in via mmap
+        format."""
+        mock_client = AsyncMock()
+        mock_worker._dataset_client = mock_client
+        mock_worker._is_payload_bytes = False
+
+        execute = AsyncMock()
+        session_path = AsyncMock()
+        monkeypatch.setattr(mock_worker, "_execute_request", execute)
+        monkeypatch.setattr(mock_worker, "_process_credit_with_session", session_path)
+
+        await mock_worker._process_credit(self._make_credit_context(agent_depth=0))
+
+        mock_client.get_payload_bytes.assert_not_called()
+        execute.assert_not_called()
+        session_path.assert_called_once()
+
+    async def test_fast_path_falls_back_when_bytes_missing(
+        self, monkeypatch, mock_worker
+    ):
+        """If ``get_payload_bytes`` returns None (stale index, missing
+        turn), the worker falls back to the session path rather than
+        dispatching an empty request."""
+        mock_client = AsyncMock()
+        mock_client.get_payload_bytes = AsyncMock(return_value=None)
+        mock_worker._dataset_client = mock_client
+        mock_worker._is_payload_bytes = True
+
+        execute = AsyncMock()
+        session_path = AsyncMock()
+        monkeypatch.setattr(mock_worker, "_execute_request", execute)
+        monkeypatch.setattr(mock_worker, "_process_credit_with_session", session_path)
+
+        await mock_worker._process_credit(self._make_credit_context(agent_depth=0))
+
+        mock_client.get_payload_bytes.assert_called_once()
+        execute.assert_not_called()
+        session_path.assert_called_once()

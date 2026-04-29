@@ -74,7 +74,9 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
                 )
                 or (
                     isinstance(response.data, ToolCallResponseData)
-                    and response.data.text
+                    # Either field counts as "real output" for TTFT —
+                    # ``get_text()`` returns content + tool_call_text.
+                    and response.data.get_text()
                 )
             )
         except StopIteration:

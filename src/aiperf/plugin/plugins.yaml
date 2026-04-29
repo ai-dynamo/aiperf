@@ -377,6 +377,23 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Fallback endpoint for non-standard APIs. Does not format payloads or
+      append a URL path. Parses responses using auto-detection with optional
+      JMESPath extraction via response_field. Prefer a regular endpoint type
+      when the target API is supported.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
@@ -502,6 +519,32 @@ custom_dataset_loader:
       Single-turn dataset loader supporting multi-modal data and client-side
       batching. Supports text, images, audio with optional timestamps or delays.
       Does NOT support multi-turn features.
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a complete
+      API request body sent directly to the transport with zero formatting.
+      Supports single file (one conversation per line) and directory mode
+      (one JSONL file per multi-turn conversation).
+
+  dag_jsonl:
+    class: aiperf.dataset.loader.dag_jsonl:DagJsonlLoader
+    description: |
+      DAG-shaped conversation JSONL loader. One conversation per line with a
+      required turn-level 'messages' array, optional OpenAI-native fields
+      (max_tokens, model, tools), an 'extra_body' passthrough, and optional
+      'forks: [session_id, ...]' / 'spawns: [session_id, ...]' that dispatch
+      child sessions when a turn completes. FORK children inherit the
+      parent's accumulated turn_list and sticky-route to the parent's worker
+      for prompt-cache reuse; SPAWN children start fresh and route freely.
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf InputsFile
+      format with pre-formatted payloads. Preserves multi-turn session structure
+      and sends each payload directly to the transport without endpoint formatting.
 
 # =============================================================================
 # Dataset Samplers

@@ -6,9 +6,22 @@ import pytest
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.enums import CreditPhase
-from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import RawRecordInfo
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models import (
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestInfo,
+    RequestRecord,
+    TextResponse,
+)
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
+from aiperf.common.models.record_models import RawRecordInfo, TokenCounts
+from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
@@ -165,6 +178,167 @@ class TestRawRecordWriterProcessorProcessRecord:
             assert record.metadata.session_num == i
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.x_request_id == f"req-{i}"
+
+
+class TestRawRecordWriterProcessorRawPayload:
+    """Test that payload_bytes bypasses endpoint.format_payload."""
+
+    @pytest.mark.asyncio
+    async def test_payload_bytes_used_directly(
+        self,
+        user_config_raw: UserConfig,
+    ):
+        """When request_info has payload_bytes, it should be deserialized as the payload."""
+        from aiperf.common.models import TextResponseData
+
+        raw_payload = {"model": "m", "messages": [{"role": "user", "content": "raw"}]}
+
+        request_info = RequestInfo(
+            model_endpoint=ModelEndpointInfo(
+                models=ModelListInfo(
+                    models=[ModelInfo(name="test-model")],
+                    model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+                ),
+                endpoint=EndpointInfo(
+                    type=EndpointType.RAW,
+                    base_url="http://localhost:8000",
+                ),
+            ),
+            turns=[],
+            payload_bytes=orjson.dumps(raw_payload),
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-1",
+            x_correlation_id="corr-1",
+            conversation_id="conv-raw",
+        )
+
+        raw_responses = [
+            TextResponse(text="ok", perf_ns=2_000_000_000),
+        ]
+
+        request = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            start_perf_ns=1_000_000_000,
+            timestamp_ns=1_000_000_000,
+            end_perf_ns=2_000_000_000,
+            status=200,
+            request_headers={"Content-Type": "application/json"},
+            responses=raw_responses,
+            error=None,
+        )
+
+        parsed_responses = [
+            ParsedResponse(
+                perf_ns=2_000_000_000,
+                data=TextResponseData(text="ok"),
+            ),
+        ]
+
+        record = ParsedResponseRecord(
+            request=request,
+            responses=parsed_responses,
+            token_counts=TokenCounts(input=10, output=5, reasoning=None),
+        )
+
+        async with raw_record_processor("processor-raw", user_config_raw) as processor:
+            metadata = create_metric_metadata(
+                session_num=0,
+                conversation_id="conv-raw",
+                x_request_id="req-1",
+            )
+            await processor.process_record(record, metadata)
+
+        lines = processor.output_file.read_text().splitlines()
+        assert len(lines) == 1
+        record_dict = orjson.loads(lines[0])
+        export_record = RawRecordInfo.model_validate(record_dict)
+        assert export_record.payload == raw_payload
+
+    @pytest.mark.asyncio
+    async def test_fragment_splice_is_byte_for_byte(
+        self,
+        user_config_raw: UserConfig,
+    ):
+        """buffered_write's fast path splices payload_bytes into the
+        JSONL line via ``orjson.Fragment`` — the exporter must emit the
+        wire bytes verbatim, not decode-and-re-encode.
+
+        Semantic round-trip (orjson.loads → model_validate → equal dict)
+        passes even if the exporter rewrites key order, reformats
+        floats, or normalizes whitespace. This test asserts the exact
+        source bytes appear as a substring of the JSONL line so a
+        regression that bypassed ``orjson.Fragment`` (falling back to
+        ``model_dump``-style re-serialisation) fails loudly.
+        """
+        from aiperf.common.models import TextResponseData
+
+        # Key ordering chosen so a naive re-encode via ``orjson.dumps``
+        # would reorder it alphabetically (``messages`` < ``model``);
+        # substring match on the original ordering proves zero re-parse.
+        canonical_bytes = (
+            b'{"model":"m","messages":[{"role":"user","content":"verbatim-payload"}]}'
+        )
+
+        request_info = RequestInfo(
+            model_endpoint=ModelEndpointInfo(
+                models=ModelListInfo(
+                    models=[ModelInfo(name="test-model")],
+                    model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+                ),
+                endpoint=EndpointInfo(
+                    type=EndpointType.RAW,
+                    base_url="http://localhost:8000",
+                ),
+            ),
+            turns=[],
+            payload_bytes=canonical_bytes,
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-splice",
+            x_correlation_id="corr-splice",
+            conversation_id="conv-splice",
+        )
+
+        request = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            start_perf_ns=1_000_000_000,
+            timestamp_ns=1_000_000_000,
+            end_perf_ns=2_000_000_000,
+            status=200,
+            request_headers={},
+            responses=[TextResponse(text="ok", perf_ns=2_000_000_000)],
+            error=None,
+        )
+
+        record = ParsedResponseRecord(
+            request=request,
+            responses=[
+                ParsedResponse(perf_ns=2_000_000_000, data=TextResponseData(text="ok"))
+            ],
+            token_counts=TokenCounts(input=1, output=1, reasoning=None),
+        )
+
+        async with raw_record_processor(
+            "processor-splice", user_config_raw
+        ) as processor:
+            metadata = create_metric_metadata(
+                session_num=0,
+                conversation_id="conv-splice",
+                x_request_id="req-splice",
+            )
+            await processor.process_record(record, metadata)
+
+        line_bytes = processor.output_file.read_bytes().rstrip(b"\n")
+        assert canonical_bytes in line_bytes, (
+            "payload_bytes must be spliced verbatim into the JSONL line; "
+            "a regression that fell back to model_dump-style re-serialisation "
+            "would reorder the keys and break this substring match"
+        )
 
 
 class TestRawRecordWriterProcessorFileFormat:

@@ -6,7 +6,7 @@ import asyncio
 import gc
 import time
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import aiohttp
@@ -18,9 +18,10 @@ from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    ConversationBranchMode,
     ConversationContextMode,
-    CreditPhase,
     ImageFormat,
+    MemoryMapFormat,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -40,14 +41,15 @@ from aiperf.common.models import (
     DatasetMetadata,
     InputsFile,
     ModelEndpointInfo,
-    RequestInfo,
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset.payload_formatting import format_conversation_payloads
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
+    CustomDatasetType,
     DatasetBackingStoreType,
     PluginType,
     ServiceRunType,
@@ -60,7 +62,6 @@ if TYPE_CHECKING:
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
     )
-    from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
 
@@ -107,13 +108,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_config.service_run_type == ServiceRunType.KUBERNETES
         )
 
-        BackingStoreClass = plugins.get_class(
-            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
-        )
-        self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
-            compress_only=self._compress_only,
-        )
+        self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
 
@@ -140,7 +135,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
-        await self._generate_inputs_json_file()
+        if self.user_config.input.custom_dataset_type in (
+            CustomDatasetType.RAW_PAYLOAD,
+            CustomDatasetType.INPUTS_JSON,
+        ):
+            self.info("Skipping inputs.json generation (payloads are pre-built)")
+        else:
+            await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
 
         duration = time.perf_counter() - begin
@@ -269,47 +270,108 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.info("Media URL download and inline encoding complete")
 
+    def _preformat_payloads(self, conversations: list[Conversation]) -> None:
+        """Pre-format API request payloads and store them on each turn.
+
+        Must run after all content mutations (media rewriting, etc.) so the
+        serialized payloads reflect final turn content.  Only preformats when
+        every conversation is eligible: single-turn, or multi-turn with
+        self-contained turns (MESSAGE_ARRAY_WITH_RESPONSES where each turn
+        carries a complete message array).
+
+        DELTAS_WITH_RESPONSES is NOT safe for preformatting because each turn
+        is a delta — the worker accumulates prior turns at runtime, so the
+        payload for turn N depends on turns 0..N-1.
+
+        Conversations that already carry raw_payload on ALL turns are skipped.
+        If ANY conversation cannot be preformatted, the entire batch is skipped
+        to avoid mixed raw_payload state (which the mmap format check rejects).
+        """
+        if self.user_config is None:
+            return
+
+        # FORK parents need the slow-path Conversation round-trip because the
+        # PAYLOAD_BYTES fast path at ``Worker._build_request_from_payload_bytes``
+        # bypasses the session manager entirely (no ``UserSession`` is cached).
+        # FORK children at ``agent_depth > 0`` then fail their sticky-routing
+        # seed lookup because the parent's ``UserSession`` was never populated,
+        # blowing the FORK routing invariant. Bail to CONVERSATION format
+        # whenever any conversation declares a FORK branch.
+        for conv in conversations:
+            for branch in conv.branches:
+                if branch.mode == ConversationBranchMode.FORK:
+                    return
+
+        needs_formatting = False
+        for conv in conversations:
+            if all(t.raw_payload is not None for t in conv.turns):
+                continue
+            needs_formatting = True
+            is_single_turn = len(conv.turns) == 1
+            is_self_contained = (
+                conv.context_mode
+                == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+            )
+            if not (is_single_turn or is_self_contained):
+                return
+
+        if not needs_formatting:
+            return
+
+        model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
+
+        turn_lookup: dict[tuple[str, int], Any] = {}
+        for conversation in conversations:
+            for i, turn in enumerate(conversation.turns):
+                turn_lookup[(conversation.session_id, i)] = turn
+
+        try:
+            count = 0
+            for session_id, turn_idx, payload in format_conversation_payloads(
+                conversations, model_endpoint
+            ):
+                turn_lookup[(session_id, turn_idx)].raw_payload = payload
+                count += 1
+        except NotImplementedError:
+            self.info(
+                "Skipping payload pre-formatting "
+                "(endpoint does not support format_payload)"
+            )
+            return
+
+        self.info(f"Pre-formatted {count} payloads for payload mmap fast path")
+
     def _generate_input_payloads(
         self,
         model_endpoint: ModelEndpointInfo,
     ) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
         inputs = InputsFile()
-
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, model_endpoint.endpoint.type
-        )
-        endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
-        self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
-        )
         session_payloads_map: dict[str, list] = {}
-        for conversation in self.dataset.values():
-            session_id = conversation.session_id
-            if session_id not in session_payloads_map:
-                session_payloads_map[session_id] = []
 
-            for i, turn in enumerate(conversation.turns):
-                request_info = RequestInfo(
-                    model_endpoint=model_endpoint,
-                    turns=[turn],
-                    turn_index=i,
-                    credit_num=i,
-                    credit_phase=CreditPhase.PROFILING,
-                    x_request_id="",
-                    x_correlation_id="",
-                    conversation_id=conversation.session_id,
-                    system_message=conversation.system_message,
-                    user_context_message=conversation.user_context_message,
-                )
-                request_info.endpoint_headers = endpoint.get_endpoint_headers(
-                    request_info
-                )
-                request_info.endpoint_params = endpoint.get_endpoint_params(
-                    request_info
-                )
-                payload = endpoint.format_payload(request_info)
+        has_raw_payloads = any(
+            turn.raw_payload is not None
+            for conv in self.dataset.values()
+            for turn in conv.turns
+        )
+
+        if has_raw_payloads:
+            for conversation in self.dataset.values():
+                payloads = [
+                    turn.raw_payload
+                    for turn in conversation.turns
+                    if turn.raw_payload is not None
+                ]
+                if payloads:
+                    session_payloads_map[conversation.session_id] = payloads
+        else:
+            from aiperf.dataset.payload_formatting import format_conversation_payloads
+
+            for session_id, _turn_idx, payload in format_conversation_payloads(
+                self.dataset.values(), model_endpoint
+            ):
+                if session_id not in session_payloads_map:
+                    session_payloads_map[session_id] = []
                 session_payloads_map[session_id].append(payload)
 
         for session_id, payloads in session_payloads_map.items():
@@ -381,6 +443,33 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
         return "rankings" in endpoint_type.lower()
 
+    def _maybe_warn_dag_request_count_truncation(self) -> None:
+        """Surface a NOTICE when ``--request-count`` is paired with a forking
+        dataset. ``--request-count`` is a literal cap on wire requests
+        (children of fork-spawned branches count toward it), which means
+        a DAG run can be truncated mid-tree when the cap fires. Users
+        wanting "run N full conversation trees" should use
+        ``--num-conversations`` instead. This warning is printed once at
+        configure time so it's visible before any benchmark output.
+        """
+        cap = self.user_config.loadgen.request_count
+        if cap is None:
+            return
+        if not any(
+            turn.has_forks
+            for conversation in self.dataset_metadata.conversations
+            for turn in conversation.turns
+        ):
+            return
+        self.notice(
+            f"--request-count={cap} is a literal cap on wire requests; with this "
+            "forking dataset, fork-spawned children count toward the cap and the "
+            "run can be truncated mid-DAG when it fires. Watch the "
+            "'BranchOrchestrator stats' line for a non-zero `truncated=` count, "
+            "and use --num-conversations instead if you want full conversation "
+            "trees to complete."
+        )
+
     def _load_synthetic_dataset(self) -> list[Conversation]:
         endpoint_type = self.user_config.endpoint.type
 
@@ -426,11 +515,45 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if endpoint_meta.requires_inline_media:
             await self._convert_media_urls_to_inline()
 
+        # Pre-format payloads after all mutations (media rewriting, etc.) are
+        # complete.  Safe only when every turn's payload is fully deterministic
+        # at compose time: single-turn conversations, or multi-turn with
+        # pre-canned assistant responses (WITH_RESPONSES context modes).
+        self._preformat_payloads(conversations)
+
+        # Determine storage format from conversations
+        has_payload_bytes = any(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        )
+        if has_payload_bytes and not all(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        ):
+            raise ValueError(
+                "Mixed raw_payload state: all turns must have raw_payload "
+                "when any turn does (PAYLOAD_BYTES format requires uniformity)"
+            )
+        mmap_format = (
+            MemoryMapFormat.PAYLOAD_BYTES
+            if has_payload_bytes
+            else MemoryMapFormat.CONVERSATION
+        )
+
         # Initialize backing store and stream conversations to mmap files
         # Workers read directly from these files
+        BackingStoreClass = plugins.get_class(
+            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
+        )
+        self._backing_store = BackingStoreClass(
+            benchmark_id=self.user_config.benchmark_id,
+            compress_only=self._compress_only,
+            format=mmap_format,
+        )
         await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
+        await self._backing_store.add_conversations(self.dataset)
         await self._backing_store.finalize()
         # In Kubernetes mode (compress_only=True), files are already compressed
         # during finalize(). In local mode, uncompressed files are used directly.
@@ -458,6 +581,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
             f"unique turn count: {self.dataset_metadata.total_turn_count}"
         )
+        self._maybe_warn_dag_request_count_truncation()
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.

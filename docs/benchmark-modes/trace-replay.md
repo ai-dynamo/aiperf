@@ -45,12 +45,19 @@ Mooncake provides a specification and sample datasets for [trace replay](https:/
 
 Mooncake traces use a JSONL file where each line represents a request with timing information.
 
-Required fields for trace replay:
+Each trace entry requires exactly one input mode:
+- `input_length`: Number of input tokens (synthetic prompt generated from token count)
+- `text_input`: Literal text string sent as the prompt
+- `messages`: List of OpenAI-compatible message dicts sent directly to the API
+- `payload`: Complete API request dict sent verbatim (bypasses all endpoint formatting)
+
+Optional fields:
 - `timestamp`: Request arrival time in milliseconds
-- `input_length`: Number of input tokens
+- `delay`: Milliseconds to wait before sending (alternative to `timestamp`)
 - `output_length`: Number of output tokens
-- `hash_ids`: List of block hashes (optional)
-- `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
+- `hash_ids`: List of block hashes (only with `input_length`)
+- `tools`: List of OpenAI-compatible tool definitions (only with `messages`)
+- `session_id`: Unique identifier for multi-turn conversation grouping
 
 Example entry:
 
@@ -110,6 +117,34 @@ When replaying conversations that involve tool use (function calling), include t
 ```
 
 The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
+
+## Using Raw Payloads (Verbatim Replay)
+
+For the most precise replay, you can provide complete API request payloads that are sent verbatim to the server with zero formatting. This bypasses all endpoint payload construction, giving you full control over every field in the request body while still using Mooncake's timestamp/delay scheduling.
+
+Each entry's `payload` field contains the exact JSON body to send:
+
+```json
+{"payload": {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "stream": true, "max_tokens": 100}, "timestamp": 0}
+{"payload": {"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "How?"}], "model": "gpt-4", "stream": true}, "timestamp": 2000}
+```
+
+The `payload` field is mutually exclusive with `input_length`, `text_input`, and `messages`. When set, the payload dict is sent directly to the transport without any endpoint formatting. Any endpoint type can be used -- the endpoint controls response parsing and URL path, while payload formatting is bypassed automatically:
+
+```bash
+aiperf profile \
+    --url localhost:8000 \
+    --input-file payloads.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --fixed-schedule
+```
+
+Multi-turn sessions work with `session_id` and `delay`:
+
+```json
+{"session_id": "s1", "payload": {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}, "timestamp": 0}
+{"session_id": "s1", "payload": {"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "Continue"}], "model": "gpt-4"}, "delay": 500}
+```
 
 ## Profile using real Mooncake Trace
 

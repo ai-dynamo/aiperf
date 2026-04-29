@@ -10,6 +10,7 @@ Structure:
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.CONFIG.*         - Configuration file paths for distributed deployments
+    Environment.DAG.*            - DAG branch orchestration settings
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -135,6 +136,27 @@ class _ConfigSettings(BaseSettings):
         default=None,
         description="Path to user configuration JSON/YAML file. "
         "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
+    )
+
+
+class _DagSettings(BaseSettings):
+    """DAG branch orchestration configuration.
+
+    Controls runtime behaviour of ``BranchOrchestrator`` for FORK-mode
+    DAG benchmarks (``dag_jsonl`` input type).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DAG_",
+    )
+
+    FAIL_FAST: bool = Field(
+        default=False,
+        description="When True, a single child error aborts the parent and every "
+        "orphan sibling under the same DAG branch (releases sticky refcounts and "
+        "calls issuer.abort_session). When False (default), a child error is "
+        "treated as leaf-reached for join counting and the parent's join still "
+        "fires. Inspected once at BranchOrchestrator construction.",
     )
 
 
@@ -985,6 +1007,10 @@ class _Environment(BaseSettings):
     CONFIG: _ConfigSettings = Field(
         default_factory=_ConfigSettings,
         description="Configuration file paths for distributed deployments",
+    )
+    DAG: _DagSettings = Field(
+        default_factory=_DagSettings,
+        description="DAG branch orchestration settings",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,

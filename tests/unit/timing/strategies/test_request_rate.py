@@ -285,3 +285,113 @@ class TestConstantArrival:
         )
         await h.run_with_auto_return()
         assert len(h.sent_credits) == 2
+
+
+@pytest.mark.asyncio
+class TestChildContinuationRaceRegression:
+    """The original DAG hard-cap deadlock: ``_issue_child_continuation_or_release``
+    used ``issue_credit`` and called ``on_child_stopped`` whenever the
+    return was False — but ``issue_credit`` returns False for BOTH "gate
+    refused, credit not on wire" AND "credit issued, was the final
+    credit". When a child continuation issuance landed as the cap-hitter,
+    the strategy prematurely released the child from join tracking even
+    though the credit was on the wire. The real return arrived later to
+    an empty join, ``has_pending_branch_work`` stayed True forever, and
+    end-to-end runs hung at-cap with no error.
+
+    The fix routes child continuations through ``dispatch_child_turn``
+    which returns True iff the credit was actually sent. These tests
+    pin the contract.
+    """
+
+    async def _make_strategy(
+        self,
+        dispatch_returns: bool,
+        orchestrator: object | None,
+    ):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from aiperf.common.enums import CreditPhase
+        from aiperf.plugin.enums import TimingMode
+        from aiperf.timing.config import CreditPhaseConfig
+        from aiperf.timing.strategies.request_rate import RequestRateStrategy
+
+        config = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.REQUEST_RATE,
+            total_expected_requests=30,
+            arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+            concurrency=4,
+        )
+        issuer = MagicMock()
+        issuer.dispatch_child_turn = AsyncMock(return_value=dispatch_returns)
+        return RequestRateStrategy(
+            config=config,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(),
+            branch_orchestrator=orchestrator,
+        ), issuer
+
+    def _make_credit_and_turn(self):
+        from aiperf.credit.structs import Credit, TurnToSend
+
+        credit = Credit(
+            id=1,
+            phase=__import__(
+                "aiperf.common.enums", fromlist=["CreditPhase"]
+            ).CreditPhase.PROFILING,
+            conversation_id="c",
+            x_correlation_id="child-x",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=0,
+            agent_depth=1,
+            parent_correlation_id="parent-x",
+        )
+        turn = TurnToSend(
+            conversation_id="c",
+            turn_index=1,
+            num_turns=2,
+            x_correlation_id="child-x",
+            agent_depth=1,
+            parent_correlation_id="parent-x",
+        )
+        return credit, turn
+
+    async def test_dispatched_credit_does_not_trigger_on_child_stopped(self):
+        """Critical regression: when the child credit IS sent (dispatch
+        returns True), on_child_stopped MUST NOT fire. The original bug
+        called on_child_stopped here because issue_credit returned False
+        for is_final, prematurely draining a child whose return was in
+        flight."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        orchestrator = MagicMock()
+        orchestrator.on_child_stopped = AsyncMock()
+        strategy, _ = await self._make_strategy(
+            dispatch_returns=True, orchestrator=orchestrator
+        )
+        credit, turn = self._make_credit_and_turn()
+
+        await strategy._issue_child_continuation_or_release(turn, credit)
+
+        orchestrator.on_child_stopped.assert_not_called()
+
+    async def test_refused_dispatch_triggers_on_child_stopped(self):
+        """Mirror of the above: when the gate refuses (no credit on wire),
+        on_child_stopped MUST fire so the parent's pending-join drains."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        orchestrator = MagicMock()
+        orchestrator.on_child_stopped = AsyncMock()
+        strategy, _ = await self._make_strategy(
+            dispatch_returns=False, orchestrator=orchestrator
+        )
+        credit, turn = self._make_credit_and_turn()
+
+        await strategy._issue_child_continuation_or_release(turn, credit)
+
+        orchestrator.on_child_stopped.assert_awaited_once_with("child-x")

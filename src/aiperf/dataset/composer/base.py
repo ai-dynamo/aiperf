@@ -146,14 +146,18 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """Finalize a turn by populating all required metadata fields.
 
         This method handles:
-        - Model name selection
+        - Model name selection (only when the turn doesn't already carry an
+          explicit per-turn model override from the loader — e.g., ``dag_jsonl``
+          and ``mooncake_trace`` both support per-turn ``model`` fields that
+          must win over the CLI-level ``--model`` default).
         - Max tokens sampling based on output configuration
         - Any other turn-level metadata that needs to be set
 
         Args:
             turn: The turn object to finalize.
         """
-        turn.model = self._select_model_name()
+        if turn.model is None:
+            turn.model = self._select_model_name()
         self._set_max_tokens(turn)
 
         # Clear cached sequence lengths for this turn to free memory

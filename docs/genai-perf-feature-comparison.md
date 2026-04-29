@@ -88,7 +88,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Input File** | `--input-file` | ✅ | ✅ | |
 | **Dataset Entries/Conversations** | `--num-dataset-entries` | ✅ | ✅ | |
 | **Public Dataset** | `--public-dataset`<br/>`{sharegpt}` | ❌ | ✅ | |
-| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
+| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,raw_payload,inputs_json}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
 | **Fixed Schedule** | `--fixed-schedule` | ✅ | ✅ | |
 | **Fixed Schedule Auto Offset** | `--fixed-schedule-auto-offset` | ❌ | ✅ | |
 | **Fixed Schedule Start/End Offset** | `--fixed-schedule-start-offset`<br/>`--fixed-schedule-end-offset` | ❌ | ✅ | |

@@ -109,7 +109,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         )
         self._dataset_sampler = SamplerClass(
             conversation_ids=[
-                c.conversation_id for c in self._dataset_metadata.conversations
+                c.conversation_id
+                for c in self._dataset_metadata.conversations
+                if c.agent_depth == 0
             ],
         )
 
@@ -131,6 +133,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             self._url_sampler = StrategyClass(urls=config.urls)
 
         # Callback handler registered directly with router (no orchestrator in middle)
+        # Subagent orchestrator (DAG) is attached via ``set_branch_orchestrator``
+        # by Task 14 wiring once the orchestrator is constructed with its issuer.
         self._callback_handler = CreditCallbackHandler(self._concurrency_manager)
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(

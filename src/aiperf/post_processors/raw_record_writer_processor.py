@@ -5,6 +5,7 @@
 import contextlib
 
 import aiofiles
+import orjson
 
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
@@ -14,15 +15,11 @@ from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
-    ModelEndpointInfo,
     ParsedResponseRecord,
     RawRecordInfo,
 )
-from aiperf.common.models.record_models import RequestInfo
 from aiperf.common.redact import redact_headers
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
 
 
 class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
@@ -60,12 +57,6 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         safe_id = self.service_id.replace("/", "_").replace(":", "_").replace(" ", "_")
         output_file = output_dir / f"raw_records_{safe_id}.jsonl"
 
-        self._model_endpoint = ModelEndpointInfo.from_user_config(user_config)
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self._model_endpoint.endpoint.type
-        )
-        self._endpoint = EndpointClass(model_endpoint=self._model_endpoint)
-
         # Initialize the buffered writer mixin
         super().__init__(
             output_file=output_file,
@@ -83,35 +74,62 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     def _build_export_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> RawRecordInfo:
-        """Build the export record for a single record."""
+        """Build the export record for a single record.
 
-        # Use existing request_info if available, otherwise create minimal one
+        ``inference_client`` canonicalises ``payload_bytes`` on every live
+        request before transport dispatch, so the exporter reads it
+        directly and splices it into the JSONL line via ``orjson.Fragment``
+        in ``buffered_write``. Error records that never reached transport
+        carry no ``payload_bytes`` — those export with ``payload=None`` and
+        rely on the attached ``error`` field for replay context.
+        """
         request_info = record.request.request_info
-        if request_info is None:
-            # Fallback for records without complete request_info
-            # This should rarely happen after proper request_info propagation
-            request_info = RequestInfo(
-                model_endpoint=self._model_endpoint,
-                turns=record.request.turns,
-                turn_index=metadata.turn_index or 0,
-                credit_num=metadata.session_num,
-                credit_phase=metadata.benchmark_phase,
-                x_request_id=metadata.x_request_id or "",
-                x_correlation_id=metadata.x_correlation_id or "",
-                conversation_id=metadata.conversation_id or "",
-            )
-
-        payload = self._endpoint.format_payload(request_info)
+        payload_bytes = request_info.payload_bytes if request_info else None
         return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,
-            payload=payload,
+            payload=None,
+            payload_bytes=payload_bytes,
             request_headers=redact_headers(record.request.request_headers),
             response_headers=None,
             status=record.request.status,
             responses=record.request.responses,
             error=record.request.error,
         )
+
+    async def buffered_write(self, record: RawRecordInfo) -> None:
+        """Serialise + buffer a ``RawRecordInfo``.
+
+        Fast path: when ``record.payload_bytes`` is set, splice the bytes
+        verbatim into the JSONL line via ``orjson.Fragment`` so the exporter
+        never decodes-then-re-encodes the wire payload. Falls back to the
+        mixin's generic ``model_dump``-based serialisation when
+        ``payload_bytes`` is absent — the only surviving case is a
+        pre-transport error record (``_build_export_record`` sets
+        ``payload=None, payload_bytes=None`` when the enriched
+        ``RecordContext`` carries no ``payload_bytes``).
+        """
+        if record.payload_bytes is None:
+            await super().buffered_write(record)
+            return
+        try:
+            dumped = record.model_dump(exclude_none=True, mode="json")
+            # ``payload_bytes`` carries the wire-exact JSON; substitute it
+            # in place of the (absent) ``payload`` dict so orjson emits the
+            # pre-encoded bytes with zero re-parsing.
+            dumped["payload"] = orjson.Fragment(record.payload_bytes)
+            json_bytes = orjson.dumps(dumped)
+
+            buffer_to_flush = None
+            self._buffer.append(json_bytes)
+            self.lines_written += 1
+            if len(self._buffer) >= self._batch_size:
+                buffer_to_flush = self._buffer
+                self._buffer = []
+            if buffer_to_flush:
+                self.execute_async(self._flush_buffer(buffer_to_flush))
+        except Exception as e:
+            self.error(f"Failed to write raw record: {e!r}")
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

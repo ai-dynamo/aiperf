@@ -294,7 +294,10 @@ class LoadGeneratorConfig(BaseConfig):
         Field(
             ge=1,
             description="The maximum number of requests to send. If not set, will be automatically determined based "
-            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`.",
+            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
+            "For DAG (`dag_jsonl`) datasets, this is a literal cap on wire requests — children of fork-spawned "
+            "branches count toward it, and a run can be truncated mid-DAG when the cap is hit. To bound a DAG run "
+            "by full conversation trees instead, use `--num-conversations`.",
         ),
         CLIParameter(
             name=(

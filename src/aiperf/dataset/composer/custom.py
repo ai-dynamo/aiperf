@@ -56,6 +56,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
+
         return conversations
 
     def get_default_context_mode(self) -> ConversationContextMode | None:

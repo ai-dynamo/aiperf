@@ -5,7 +5,7 @@
 
 from pydantic import Field
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
@@ -32,7 +32,9 @@ class UserSession(AIPerfBaseModel):
     )
     turn_list: list[Turn] = Field(
         default_factory=list,
-        description="Current list of turns in conversation order, including the assistant responses",
+        description="Current list of turns in conversation order, including the assistant responses. "
+        "For FORK-mode DAG children, seeded at session creation from the parent's "
+        "turn_list so the endpoint sees the full inherited history.",
     )
     turn_index: int = Field(
         default=0, ge=0, description="The index of the current turn in the conversation"
@@ -42,10 +44,38 @@ class UserSession(AIPerfBaseModel):
         description="Resolved context mode for this session. "
         "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
     )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="Parent session's x_correlation_id when this is a DAG child "
+        "(set at ``create_and_store`` time for FORK/SPAWN children). ``None`` "
+        "for root sessions. Used by the session manager's FORK-pin refcount "
+        "to decrement the parent's live-child count on eviction.",
+    )
+    branch_mode: ConversationBranchMode | None = Field(
+        default=None,
+        description="Relationship to the parent (FORK / SPAWN) when this is a DAG "
+        "child, else ``None``. FORK children contribute to the parent's "
+        "pinned-eviction refcount; SPAWN children do not (they don't seed "
+        "from the parent so the parent does not need to stay cached for them).",
+    )
+    is_fork_parent: bool = Field(
+        default=False,
+        description="Whether this session declares any FORK branch and must be "
+        "pinned in the worker's session cache until all FORK children evict. "
+        "Stamped at ``create_and_store`` time from ``conversation.branches`` so "
+        "the eviction path does not depend on ``conversation`` retaining its "
+        "branch metadata (PAYLOAD_BYTES round-trips strip ``branches``).",
+    )
 
     def advance_turn(self, turn_index: int) -> Turn:
-        """
-        Advance the turn list to the next turn.
+        """Append the next turn onto ``turn_list`` and return it.
+
+        Mutates ``turn_list`` in place:
+        - Under ``MESSAGE_ARRAY_WITH_RESPONSES`` the list is replaced with
+          ``[turn]`` (each turn carries its own full history; prior turns are
+          dropped so the endpoint sends the turn's messages as-authored).
+        - Under every other mode the turn is appended. Callers that only need
+          per-turn overrides can read ``turn_list[-1]`` after this call.
 
         Args:
             turn_index: The index of the turn to advance to.
@@ -54,10 +84,14 @@ class UserSession(AIPerfBaseModel):
             The turn that was advanced to.
         """
         if turn_index < 0:
-            raise ValueError(f"Turn index {turn_index} is negative")
+            raise ValueError(
+                f"UserSession.advance_turn: session {self.x_correlation_id!r} "
+                f"received negative turn_index={turn_index} (must be >= 0)"
+            )
         if turn_index >= self.num_turns:
             raise ValueError(
-                f"Turn index {turn_index} is out of range for conversation with {self.num_turns} turns"
+                f"UserSession.advance_turn: session {self.x_correlation_id!r} "
+                f"turn_index={turn_index} out of range (num_turns={self.num_turns})"
             )
 
         turn = self.conversation.turns[turn_index]
@@ -77,9 +111,7 @@ class UserSession(AIPerfBaseModel):
         return self.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
 
     def store_response(self, response_turn: Turn) -> None:
-        """
-        Store the response for the turn.
-        """
+        """Append the captured live assistant response Turn to ``turn_list``."""
         self.turn_list.append(response_turn)
 
 
@@ -87,11 +119,49 @@ class UserSessionManager:
     """User session manager for multi-turn processing.
 
     Manages user sessions for multi-turn processing.
+
+    FORK-pin eviction
+    -----------------
+    FORK-mode DAG children seed their ``turn_list`` from the parent's
+    session at ``create_and_store`` time, so the parent must stay cached
+    until every FORK child that will ever seed from it has done so.
+    The classic bug is: parent's final turn returns → worker calls
+    ``evict(parent)`` → child credit arrives later → seed fails with
+    ``RuntimeError`` (sticky-routing invariant violated).
+
+    The fix tracks a per-parent live-FORK-child refcount:
+
+    - ``create_and_store`` for a FORK child increments
+      ``_fork_child_count[parent]``.
+    - ``evict(child)`` decrements the parent's count. When the count hits
+      zero and the parent is in ``_pending_eviction``, the parent is
+      actually dropped from the cache.
+    - ``evict(parent)`` for a session that declared FORK branches checks
+      the current count: zero → drop immediately (nothing pending or
+      in-flight), non-zero → mark ``_pending_eviction`` and keep cached.
+
+    A parent can only spawn more FORK children from a non-final turn, so
+    by the time its final turn completes, all FORK children have either
+    already been dispatched (and are tracked in the refcount) or will
+    never exist — the count reflects the true outstanding set.
     """
 
     def __init__(self) -> None:
         self._cache: dict[str, UserSession] = {}
         self._default_context_mode: ConversationContextMode | None = None
+        # FORK-pin refcount: parent x_correlation_id -> number of live
+        # FORK children currently cached on this worker that will seed
+        # from the parent's turn_list.
+        self._fork_child_count: dict[str, int] = {}
+        # Parents whose final turn has completed but still have one or
+        # more live FORK children; evicted only when the refcount drops
+        # to zero via a child eviction.
+        self._pending_eviction: set[str] = set()
+
+    @property
+    def default_context_mode(self) -> ConversationContextMode | None:
+        """The dataset-level default context mode, if one was set by the loader."""
+        return self._default_context_mode
 
     def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
         """Set the dataset-level default context mode from the loader."""
@@ -103,6 +173,8 @@ class UserSessionManager:
         conversation: Conversation,
         num_turns: int,
         url_index: int | None = None,
+        parent_correlation_id: str | None = None,
+        branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
     ) -> UserSession:
         """
         Create and store user session.
@@ -114,9 +186,19 @@ class UserSessionManager:
                 len(conversation.turns) for ramp-up users who start mid-session.
             url_index: URL index for multi-URL load balancing. All turns in this session
                 will use this index to ensure they hit the same backend server.
+            parent_correlation_id: Parent session's correlation id for DAG
+                children; under FORK mode, used to seed ``turn_list`` from the
+                parent (sticky routing co-locates them on this worker).
+            branch_mode: DAG branch mode. FORK inherits the parent's accumulated
+                ``turn_list`` (system/user messages + captured live assistant
+                responses). SPAWN starts fresh. Ignored when
+                ``parent_correlation_id`` is None.
 
         Raises:
             ValueError: If num_turns exceeds the actual conversation length.
+            RuntimeError: If ``parent_correlation_id`` is set under FORK mode
+                but the parent session is not cached on this worker
+                (sticky-routing invariant violated).
         """
         if num_turns > len(conversation.turns):
             raise ValueError(
@@ -127,15 +209,52 @@ class UserSessionManager:
             or self._default_context_mode
             or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
+
+        seed_turn_list: list[Turn] = []
+        if (
+            parent_correlation_id is not None
+            and branch_mode == ConversationBranchMode.FORK
+        ):
+            parent_session = self.get(parent_correlation_id)
+            if parent_session is None:
+                raise RuntimeError(
+                    f"FORK routing invariant violated: parent session "
+                    f"{parent_correlation_id!r} not found on this worker. "
+                    f"Sticky routing should have co-located the child "
+                    f"{x_correlation_id!r}."
+                )
+            # Shallow copy: child owns its own list but shares Turn
+            # references with the parent. This is a hot path (FORK fanout
+            # runs at credit-return time) so deep-copying every turn would
+            # cost. Invariant: Turn instances are treated as read-only
+            # post-construction — sessions only ``append`` / ``reassign``
+            # ``turn_list``, never mutate Turn fields in place. If a future
+            # session op needs to mutate a Turn, deep-copy here first.
+            seed_turn_list = list(parent_session.turn_list)
+
         user_session = UserSession(
             x_correlation_id=x_correlation_id,
             num_turns=num_turns,
             url_index=url_index,
             conversation=conversation,
-            turn_list=[],
+            turn_list=seed_turn_list,
             context_mode=context_mode,
+            parent_correlation_id=parent_correlation_id,
+            branch_mode=branch_mode if parent_correlation_id is not None else None,
+            is_fork_parent=any(
+                b.mode == ConversationBranchMode.FORK for b in conversation.branches
+            ),
         )
         self.store(x_correlation_id, user_session)
+        # FORK children bump the parent's live-child refcount so the
+        # parent stays cached (pinned) until every child has evicted.
+        if (
+            parent_correlation_id is not None
+            and branch_mode == ConversationBranchMode.FORK
+        ):
+            self._fork_child_count[parent_correlation_id] = (
+                self._fork_child_count.get(parent_correlation_id, 0) + 1
+            )
         return user_session
 
     def store(self, x_correlation_id: str, user_session: UserSession) -> None:
@@ -161,7 +280,68 @@ class UserSessionManager:
         """
         Evict user session.
 
+        Three cases, discriminated by the session's FORK-branch topology:
+
+        1. **Plain session (no FORK branches, not a FORK child)**: pop
+           immediately — nothing depends on this cache entry surviving.
+
+        2. **FORK child (``parent_correlation_id`` set,
+           ``branch_mode == FORK``)**: pop the child, then decrement the
+           parent's live-child refcount. If the parent is in
+           ``_pending_eviction`` and its refcount has now reached zero,
+           drop the parent too (cascade).
+
+        3. **FORK parent (conversation declares any FORK branch)**: mark
+           ``_pending_eviction`` and leave cached, regardless of the
+           current refcount. The parent's final turn returns on the
+           worker's credit-return path BEFORE the orchestrator's child
+           credits have been dispatched back to this worker, so the
+           refcount is typically still zero at evict time even though
+           children are imminent. Popping here would race the children's
+           ``create_and_store`` sticky-routing lookup. The last child to
+           evict cascades through case 2 and actually drops the parent.
+
+        Note: a FORK parent whose children never actually spawn (e.g.
+        the orchestrator's dispatch all failed) will remain pinned in
+        ``_pending_eviction`` until the session manager is cleaned up
+        at phase teardown. That matches the original permanent-pin
+        behavior for that pathological case; the common flow now evicts
+        once the DAG drains.
+
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
+        session = self._cache.get(x_correlation_id)
+        if session is None:
+            return
+
+        is_fork_child = (
+            session.parent_correlation_id is not None
+            and session.branch_mode == ConversationBranchMode.FORK
+        )
+        is_fork_parent = session.is_fork_parent
+
+        if is_fork_parent:
+            # Case 3: mark pending, leave cached. Children may not have
+            # reached this worker yet; popping now would race their
+            # sticky-routing seed lookup.
+            self._pending_eviction.add(x_correlation_id)
+            return
+
+        # Case 1 or 2: drop from cache.
         self._cache.pop(x_correlation_id, None)
+        self._pending_eviction.discard(x_correlation_id)
+        self._fork_child_count.pop(x_correlation_id, None)
+
+        if is_fork_child:
+            # Case 2: decrement parent's refcount and cascade-evict if the
+            # parent is pending and we were the last child holding it open.
+            parent = session.parent_correlation_id
+            remaining = self._fork_child_count.get(parent, 0) - 1
+            if remaining <= 0:
+                self._fork_child_count.pop(parent, None)
+                if parent in self._pending_eviction:
+                    self._pending_eviction.discard(parent)
+                    self._cache.pop(parent, None)
+            else:
+                self._fork_child_count[parent] = remaining

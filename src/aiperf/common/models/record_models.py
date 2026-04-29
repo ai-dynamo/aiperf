@@ -25,6 +25,7 @@ from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
@@ -107,6 +108,16 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
     )
+    agent_depth: int = Field(
+        default=0,
+        description="The DAG agent depth of the session that produced this record. 0 for root sessions, "
+        "incremented by 1 for each nested subagent fork. Use to filter records by DAG layer.",
+    )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the parent session that spawned this record's session via a "
+        "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -178,6 +189,12 @@ class ProfileResults(AIPerfBaseModel):
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",
+    )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="Aggregate subagent orchestration counters for DAG-shaped runs "
+        "(children spawned/completed/errored, parents suspended/resumed). "
+        "None for non-DAG runs where no orchestrator was active.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -449,29 +466,39 @@ class SSEMessage:
             return None
 
 
-class RequestInfo(AIPerfBaseModel):
-    """Info about a request."""
+class RecordContext(AIPerfBaseModel):
+    """Slim per-record context attached to ``RequestRecord``.
 
-    model_endpoint: ModelEndpointInfo = Field(
-        ...,
-        description="The model endpoint that the request was sent to.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations.",
-    )
-    turn_index: int = Field(
-        ...,
-        description="The index of the turn in the conversation (if applicable).",
-    )
-    endpoint_headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific headers (auth, API keys, custom headers).",
-    )
-    endpoint_params: dict[str, str] = Field(
-        default_factory=dict,
-        description="Endpoint-specific URL query parameters.",
-    )
+    Carries *only* the fields the record-processor pipeline reads
+    post-transport. The full ``RequestInfo`` (model endpoint, transport
+    headers, URL params, pre-send-only timing fields) stays on the worker
+    and never crosses ZMQ — eliminating ~500-900 bytes of dead weight per
+    record at 15k req/s.
+
+    ``RequestInfo`` inherits from this class so production-side callers
+    that build a full request info can still assign it to
+    ``RequestRecord.request_info`` (it IS a ``RecordContext``); the worker's
+    ``inference_client._enrich_request_record`` explicitly down-casts to a
+    pure ``RecordContext`` before the ZMQ hop so the subclass extras are
+    dropped.
+
+    Consumers of these fields:
+
+    - ``record_processor_service._build_metric_metadata`` — identity /
+      routing scalars for ``MetricRecordMetadata``
+    - ``inference_result_parser.compute_input_token_count`` — ISL
+      tokenisation reads ``payload_bytes`` only; ``system_message`` /
+      ``user_context_message`` are inlined into ``payload_bytes`` by the
+      endpoint's ``format_payload`` pre-send and therefore stay on
+      ``RequestInfo``, not ``RecordContext``
+    - ``osl_mismatch_metrics`` — ``max_tokens``
+    - ``image_metrics`` — ``media_counts.images`` on ``ParsedResponseRecord``
+    - ``raw_record_writer_processor`` — ``payload_bytes`` spliced via
+      ``orjson.Fragment``
+    """
+
+    # --- Identity / routing (read by MetricRecordMetadata builder) -----------
+
     credit_num: int = Field(
         ...,
         ge=0,
@@ -482,10 +509,13 @@ class RequestInfo(AIPerfBaseModel):
         ...,
         description="The type of credit phase (either warmup or profiling)",
     )
-    cancel_after_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="The delay in nanoseconds after which the request should be cancelled, or None if the request should not be cancelled.",
+    conversation_id: str = Field(
+        ...,
+        description="The ID of the conversation (if applicable).",
+    )
+    turn_index: int = Field(
+        ...,
+        description="The index of the turn in the conversation (if applicable).",
     )
     x_request_id: str = Field(
         ...,
@@ -495,31 +525,108 @@ class RequestInfo(AIPerfBaseModel):
         ...,
         description="The X-Correlation-ID header of the request. This is the ID of the credit drop.",
     )
-    conversation_id: str = Field(
+    credit_issued_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
+        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
+    )
+
+    # --- DAG ------------------------------------------------------------------
+
+    agent_depth: int = Field(
+        default=0,
+        description="The DAG agent depth of the session that produced this request. 0 for root sessions, "
+        "incremented by 1 for each nested subagent fork. Sourced from the originating Credit.",
+    )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the parent session that spawned this session via a DAG "
+        "subagent fork. None for root sessions. Sourced from the originating Credit.",
+    )
+
+    # --- Canonical wire payload ----------------------------------------------
+
+    payload_bytes: bytes | None = Field(
+        default=None,
+        description="Canonical pre-encoded JSON bytes of the request body sent "
+        "to the server. MUST be valid JSON — the raw-record exporter splices "
+        "these bytes into the JSONL output via ``orjson.Fragment`` without "
+        "re-parsing, so non-JSON content would produce malformed output. "
+        "Populated by ``inference_client`` before transport dispatch (either "
+        "inherited from the PAYLOAD_BYTES mmap fast path or serialised from "
+        "the turn-based payload). Used by the raw-record exporter to replay "
+        "the exact wire payload, and tokenised by the record processor via "
+        "the endpoint's ``extract_payload_inputs`` hook.",
+    )
+
+    # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
+
+    max_tokens: int | None = Field(
+        default=None,
+        description="``max_tokens`` from the originating turn. Populated at "
+        "record-enrichment time so the record processor (``osl_mismatch`` "
+        "metric) no longer needs the full ``turns`` list on the wire.",
+    )
+
+
+class RequestInfo(RecordContext):
+    """Full request info used Worker-side for transport dispatch.
+
+    Extends ``RecordContext`` with pre-send-only fields that never need to
+    cross the ZMQ hop to the record processor: ``ModelEndpointInfo``
+    (URLs / headers / extras), transport timing (``drop_perf_ns``,
+    ``cancel_after_ns``), round-robin URL index, and the
+    connection-lease-release marker. ``inference_client`` builds these
+    on-the-fly during transport dispatch; ``_enrich_request_record``
+    down-casts to a pure ``RecordContext`` before attaching to the record.
+    """
+
+    model_endpoint: ModelEndpointInfo = Field(
         ...,
-        description="The ID of the conversation (if applicable).",
+        description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request, consumed by "
+        "``format_payload`` to build the wire body. Lives on ``RequestInfo`` "
+        "(not ``RecordContext``) so the full Turn list never crosses the "
+        "ZMQ hop to the record processor — only the canonical "
+        "``payload_bytes`` travel.",
     )
     system_message: str | None = Field(
         default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time.",
+        description="Optional shared system message extracted from "
+        "``Conversation.system_message`` at request time. Consumed by the "
+        "endpoint's ``format_payload`` (or top-level ``instructions`` on the "
+        "Responses API) and inlined into ``payload_bytes`` before transport; "
+        "lives on ``RequestInfo`` because the record processor reads only "
+        "``payload_bytes`` downstream.",
     )
     user_context_message: str | None = Field(
         default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time.",
+        description="Optional per-conversation user context message extracted "
+        "from ``Conversation.user_context_message`` at request time. Same "
+        "inlining contract as ``system_message``.",
+    )
+    endpoint_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific headers (auth, API keys, custom headers).",
+    )
+    endpoint_params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Endpoint-specific URL query parameters.",
+    )
+    cancel_after_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The delay in nanoseconds after which the request should be cancelled, or None if the request should not be cancelled.",
     )
     drop_perf_ns: int | None = Field(
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the credit was dropped by the timing manager. "
         "This is used to calculate the credit drop latency.",
-    )
-    credit_issued_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
-        "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
     )
     is_final_turn: bool = Field(
         default=True,
@@ -537,9 +644,13 @@ class RequestInfo(AIPerfBaseModel):
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
-    request_info: RequestInfo | None = Field(
+    request_info: RecordContext | None = Field(
         default=None,
-        description="The original request info.",
+        description="Slim per-record context (see ``RecordContext``). Built "
+        "by ``inference_client._enrich_request_record`` from the full "
+        "``RequestInfo`` that drove the request — stripping the transport-"
+        "only extras so only the fields the record processor actually "
+        "reads cross ZMQ.",
     )
     request_headers: dict[str, str] | None = Field(
         default=None,
@@ -599,11 +710,6 @@ class RequestRecord(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
     )
 
     @field_validator("trace_data", mode="before")
@@ -703,14 +809,33 @@ class ReasoningResponseData(BaseResponseData):
 
 @dataclass(slots=True)
 class ToolCallResponseData(BaseResponseData):
-    """Parsed tool call response data (streaming delta or complete message)."""
+    """Parsed tool-call response data (streaming delta or complete message).
 
-    text: str
-    """Combined model-generated text from tool calls (function names and arguments)."""
+    Mirrors the ``ReasoningResponseData`` shape — two fields, one for the
+    type's primary content and one for any prose that arrived alongside
+    it. Both contribute to client-side OSL via :meth:`get_text`; the
+    distinct fields let downstream metrics that want to categorise output
+    (e.g. "what fraction of OSL was tool-call dispatch?") read each
+    portion separately.
+    """
+
+    tool_call_text: str
+    """Combined model-generated text from tool calls — every call's
+    ``function.name`` and ``function.arguments`` concatenated in
+    ``output[]`` order."""
+
+    content: str | None = None
+    """Optional prose ``content`` emitted alongside the tool calls in the
+    same chunk/message. Carries the prose portion when the model talks
+    while dispatching a tool (~18% of turns in agentic traffic) so
+    client-side OSL counts both portions and matches the server's
+    ``usage.completion_tokens``. ``None`` when the response is pure
+    tool-call (no prose accompanying the dispatch)."""
 
     def get_text(self) -> str:
-        """Get the text of the response."""
-        return self.text
+        """Return ``content`` followed by ``tool_call_text`` — the
+        combined string the tokeniser sees for this response."""
+        return (self.content or "") + self.tool_call_text
 
 
 class RAGSources(RootModel[dict[str, Any] | list[Any]]):
@@ -895,6 +1020,46 @@ class TokenCounts:
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
 
 
+@dataclass(slots=True)
+class MediaCounts:
+    """Multimodal content-part counts for a record.
+
+    Computed once by ``InferenceResultParser`` at parse time via the
+    endpoint's ``extract_payload_inputs`` hook (which walks the
+    wire-payload's message-array shape). Stashed on
+    ``ParsedResponseRecord`` so the record-metric classes
+    (``NumImagesMetric`` et al.) don't have to re-parse ``payload_bytes``
+    per metric per record.
+
+    Zero-valued when the endpoint reports no matches or the payload
+    doesn't carry a recognised message-array shape (e.g. embeddings,
+    completions, rankings).
+    """
+
+    images: int = 0
+    audios: int = 0
+    videos: int = 0
+
+
+@dataclass(slots=True)
+class ExtractedPayload:
+    """Single-pass extraction result from a wire-ready request payload.
+
+    Returned by ``BaseEndpoint.extract_payload_inputs`` — one walk of the
+    decoded payload yields both the tokenisable text fragments (for ISL)
+    and the multimodal content-part counts (for ``num_images`` et al.).
+
+    Paired with ``MediaCounts`` which is what ends up stashed on
+    ``ParsedResponseRecord``; ``ExtractedPayload`` adds the tokenisable
+    text list so the parser can feed it straight into the tokeniser.
+    """
+
+    texts: list[str] = field(default_factory=list)
+    image_count: int = 0
+    audio_count: int = 0
+    video_count: int = 0
+
+
 @dataclass
 class ParsedResponseRecord:
     """Record of a request and its associated responses, already parsed and ready for metrics.
@@ -910,6 +1075,11 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    media_counts: MediaCounts = field(default_factory=MediaCounts)
+    """Multimodal content-part counts extracted from the wire payload by
+    ``InferenceResultParser`` via the endpoint's ``extract_payload_inputs``
+    hook. Zero-valued when the payload has no recognised message-array shape."""
 
     @cached_property
     def start_perf_ns(self) -> int:
@@ -1028,9 +1198,20 @@ class RawRecordInfo(AIPerfBaseModel):
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
     )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description="The raw request payload sent to the server. Exactly one "
+        "of ``payload`` or ``payload_bytes`` is populated per record — "
+        "``payload_bytes`` is preferred by the JSONL writer (bytes are "
+        "spliced as a JSON fragment without a loads+dumps round-trip).",
+    )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Canonical pre-encoded JSON bytes of the request body, "
+        "inherited from ``RequestInfo.payload_bytes``. Spliced directly into "
+        "the JSONL line via ``orjson.Fragment`` to avoid the pointless "
+        "decode-then-encode round-trip ``payload: dict`` would require.",
     )
     request_headers: dict[str, str] | None = Field(
         default=None,

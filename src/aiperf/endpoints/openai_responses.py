@@ -3,45 +3,107 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
+import orjson
+
+from aiperf.common.enums import MediaType
 from aiperf.common.models import (
     InferenceServerResponse,
     ParsedResponse,
     ReasoningResponseData,
     RequestInfo,
+    RequestRecord,
     TextResponseData,
+    ToolCallResponseData,
     Turn,
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
-_DEFAULT_ROLE: str = "user"
-
 
 class ResponsesEndpoint(BaseEndpoint):
     """OpenAI Responses API endpoint.
 
-    Supports multi-modal inputs (text, images, audio) and both
-    streaming and non-streaming responses.
+    Message-array construction reuses the generic
+    ``BaseEndpoint.build_messages`` flow. Only the content-part type names
+    differ from chat (``input_text`` vs ``text``, ``input_image`` vs
+    ``image_url``), so we override those hooks and leave the iteration /
+    raw-messages pass-through skeleton alone.
+
+    The shared ``system_message`` lives on the top-level ``instructions``
+    field rather than inside the ``input`` array (Responses API contract),
+    and the per-conversation ``user_context_message`` is prepended as a
+    leading user item.
     """
 
-    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        """Format OpenAI Responses API request payload from RequestInfo.
+    # Responses API content-part type names. ``BaseEndpoint.extract_payload_inputs``
+    # walks the payload once and dispatches every part against this map —
+    # text parts contribute to the tokenisable text list, media parts
+    # bump their respective counts.
+    PART_TYPES: ClassVar[dict[MediaType, set[str]]] = {
+        MediaType.TEXT: {"input_text"},
+        MediaType.IMAGE: {"input_image"},
+        MediaType.AUDIO: {"input_audio"},
+        # Responses API does not currently support video input.
+        MediaType.VIDEO: set(),
+    }
 
-        Args:
-            request_info: Request context including model endpoint, metadata, and turns
+    def extract_payload_inputs(self, payload: dict[str, Any]):
+        """Responses-API single-pass extraction.
 
-        Returns:
-            OpenAI Responses API payload
+        Inherits the base-class walk (which dispatches content parts via
+        ``PART_TYPES``) and additionally prepends ``instructions`` — the
+        Responses-API equivalent of a system prompt that lives at the
+        top level of the payload rather than inside ``input``.
         """
+        result = super().extract_payload_inputs(payload)
+        instructions = payload.get("instructions")
+        if isinstance(instructions, str):
+            result.texts.insert(0, instructions)
+        return result
+
+    # --- Content-part hooks (override only the type names) -------------------
+
+    def _render_text_part(self, text: str) -> dict[str, Any]:
+        return {"type": "input_text", "text": text}
+
+    def _render_image_part(self, url_or_data_uri: str) -> dict[str, Any]:
+        # Responses API takes ``image_url`` as a plain string, not nested.
+        return {"type": "input_image", "image_url": url_or_data_uri}
+
+    def _render_audio_part(self, format_and_b64: str) -> dict[str, Any]:
+        if "," not in format_and_b64:
+            raise ValueError("Audio content must be in the format 'format,b64_audio'.")
+        fmt, b64 = format_and_b64.split(",", 1)
+        return {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}}
+
+    # NOTE: Responses API does not currently support video input.
+    # ``_render_video_part`` inherits the chat default and would only fire
+    # if a caller authored video turns against a Responses endpoint — the
+    # default output shape is structurally valid but the server will reject
+    # it. Leave the default so misuse surfaces loudly rather than silently.
+
+    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
+        """Format OpenAI Responses API request payload from RequestInfo."""
         if not request_info.turns:
             raise ValueError("Responses endpoint requires at least one turn.")
 
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        input_items = self._create_input_items(turns, request_info.user_context_message)
+        # Responses API doesn't nest the system prompt into ``input``; it
+        # lives in top-level ``instructions``. The per-conversation
+        # ``user_context_message`` is prepended as a leading user item.
+        input_items: list[dict[str, Any]] = []
+        if request_info.user_context_message:
+            input_items.append(
+                {
+                    "role": self.DEFAULT_TURN_ROLE,
+                    "content": request_info.user_context_message,
+                }
+            )
+        input_items.extend(self.build_messages(turns))
 
         payload: dict[str, Any] = {
             "input": input_items,
@@ -71,85 +133,6 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
-
-    def _create_input_items(
-        self,
-        turns: list[Turn],
-        user_context_message: str | None,
-    ) -> list[dict[str, Any]]:
-        """Create input items from turns for OpenAI Responses API.
-
-        Args:
-            turns: List of turns in the request
-            user_context_message: Optional per-conversation user context to prepend
-
-        Returns:
-            List of formatted input item dicts for OpenAI Responses API
-        """
-        items: list[dict[str, Any]] = []
-
-        if user_context_message:
-            items.append(
-                {
-                    "role": _DEFAULT_ROLE,
-                    "content": user_context_message,
-                }
-            )
-
-        for turn in turns:
-            item: dict[str, Any] = {
-                "role": turn.role or _DEFAULT_ROLE,
-            }
-            self._set_item_content(item, turn)
-            items.append(item)
-        return items
-
-    def _set_item_content(self, item: dict[str, Any], turn: Turn) -> None:
-        """Create input item content from turn for OpenAI Responses API."""
-        if (
-            len(turn.texts) == 1
-            and len(turn.texts[0].contents) == 1
-            and len(turn.images) == 0
-            and len(turn.audios) == 0
-            and len(turn.videos) == 0
-        ):
-            item["content"] = turn.texts[0].contents[0]
-            return
-
-        content: list[dict[str, Any]] = []
-
-        for text in turn.texts:
-            for c in text.contents:
-                if not c:
-                    continue
-                content.append({"type": "input_text", "text": c})
-
-        for image in turn.images:
-            for c in image.contents:
-                if not c:
-                    continue
-                content.append({"type": "input_image", "image_url": c})
-
-        for audio in turn.audios:
-            for c in audio.contents:
-                if not c:
-                    continue
-                if "," not in c:
-                    raise ValueError(
-                        "Audio content must be in the format 'format,b64_audio'."
-                    )
-                fmt, b64_audio = c.split(",", 1)
-                content.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": b64_audio,
-                            "format": fmt,
-                        },
-                    }
-                )
-
-        item["content"] = content
 
     def parse_response(
         self, response: InferenceServerResponse
@@ -183,6 +166,15 @@ class ResponsesEndpoint(BaseEndpoint):
         self, json_obj: JsonObject, perf_ns: int
     ) -> ParsedResponse | None:
         """Parse a streaming SSE event from the Responses API.
+
+        Surfaces ``response.function_call_arguments.delta`` and
+        ``response.function_call_arguments.done`` as text-bearing — without
+        this, ~64% of streaming turns in real agentic traffic have NO
+        data-bearing event, so the worker's first-token callback never
+        fires and client-side OSL is undercounted by every tool-using
+        turn. The arguments JSON is what the model generated on the wire,
+        so it goes into a ``TextResponseData`` and the existing tokeniser
+        treats it like any other generated text.
 
         Args:
             json_obj: Deserialized event JSON
@@ -220,6 +212,15 @@ class ResponsesEndpoint(BaseEndpoint):
                 )
             return None
 
+        if event_type == "response.function_call_arguments.delta":
+            delta = json_obj.get("delta")
+            if delta:
+                return ParsedResponse(
+                    perf_ns=perf_ns,
+                    data=ToolCallResponseData(tool_call_text=delta),
+                )
+            return None
+
         if event_type == "response.completed":
             resp = json_obj.get("response") or {}
             usage = resp.get("usage") or None
@@ -227,7 +228,9 @@ class ResponsesEndpoint(BaseEndpoint):
                 return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)
             return None
 
-        # All other events (response.created, response.in_progress, etc.)
+        # All other events (response.created, response.in_progress,
+        # response.output_item.added/done, content_part.added/done, etc.)
+        # carry no replayable token content — they're structural envelopes.
         return None
 
     def _parse_full_response(
@@ -252,12 +255,27 @@ class ResponsesEndpoint(BaseEndpoint):
 
     def _extract_response_content(
         self, json_obj: JsonObject
-    ) -> TextResponseData | ReasoningResponseData | None:
+    ) -> TextResponseData | ReasoningResponseData | ToolCallResponseData | None:
         """Extract content from a non-streaming Responses API response.
 
-        Looks for output items with ``type: "message"`` (text content) and
-        ``type: "reasoning"`` (summary text). Falls back to the top-level
-        ``output_text`` convenience field.
+        Walks ``output[]`` for every item type that carries model-generated
+        tokens:
+
+        - ``message`` items contribute their ``output_text`` parts.
+        - ``reasoning`` items contribute their ``summary_text`` parts.
+        - ``function_call`` items contribute ``name`` + ``arguments`` —
+          the model generated those tokens, and the server's
+          ``usage.completion_tokens`` already counts them, so client-side
+          OSL must too.
+
+        Precedence mirrors ``ChatEndpoint.extract_chat_response_data``
+        (PR #804): ``reasoning > message > function_call``. The first
+        non-empty source wins; the others are dropped from this single
+        ``ParsedResponse``. The full structured ``output[]`` is still
+        captured by ``build_assistant_turn`` for fork-mode replay.
+
+        Falls back to the top-level ``output_text`` convenience field when
+        ``output[]`` is absent.
 
         Args:
             json_obj: Deserialized response JSON
@@ -269,6 +287,7 @@ class ResponsesEndpoint(BaseEndpoint):
         if isinstance(output, list):
             text_parts: list[str] = []
             reasoning_parts: list[str] = []
+            tool_call_parts: list[str] = []
 
             for item in output:
                 if not isinstance(item, dict):
@@ -290,10 +309,23 @@ class ResponsesEndpoint(BaseEndpoint):
                         if part.get("type") == "output_text" and part.get("text"):
                             text_parts.append(part["text"])
 
+                elif item_type == "function_call":
+                    name = item.get("name")
+                    if isinstance(name, str) and name:
+                        tool_call_parts.append(name)
+                    arguments = item.get("arguments")
+                    if isinstance(arguments, str) and arguments:
+                        tool_call_parts.append(arguments)
+
             if reasoning_parts:
                 return ReasoningResponseData(
                     content="".join(text_parts) or None,
                     reasoning="".join(reasoning_parts),
+                )
+            if tool_call_parts:
+                return ToolCallResponseData(
+                    tool_call_text="".join(tool_call_parts),
+                    content="".join(text_parts) or None,
                 )
             if text_parts:
                 return TextResponseData(text="".join(text_parts))
@@ -304,3 +336,115 @@ class ResponsesEndpoint(BaseEndpoint):
             return TextResponseData(text=output_text)
 
         return None
+
+    def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
+        """Capture every output item — message, function_call, web_search_call,
+        image_generation_call, reasoning, etc. — for replay.
+
+        The Responses API accepts the same item shapes in ``input`` that it
+        emits in ``output``, so the captured items go into ``raw_messages``
+        and ``build_messages`` extends them onto the next request's ``input``
+        array verbatim. A FORK-mode DAG child therefore sees the parent's
+        full output (including tool/function calls), not just its text.
+
+        Captured via a **union** of two sources, deduplicated by item ``id``:
+
+        - ``response.completed.response.output[]`` — the assembled list
+          ordering and the canonical place to read items. Preferred for
+          ordering when present.
+        - ``response.output_item.done.item`` events — each carries one
+          fully-assembled output item.
+
+        Why the union and not just ``response.completed``? Real-world traces
+        show **both** sources can drop items the other captured: ~3% of
+        streaming turns have ``response.completed`` arrive with an empty or
+        partial ``output[]`` even though ``output_item.done`` fired for the
+        items, and a similar fraction has reasoning items appear in
+        ``response.completed`` without ever being announced via
+        ``output_item.done``. Taking the union — with item ``id`` as the
+        dedup key, falling back to a synthesised key when ``id`` is absent —
+        captures everything either source saw without double-counting.
+
+        Falls back to the base text-only behaviour when no items are
+        recoverable, so callers without tool-using workloads see no change.
+        """
+        # Items keyed by their canonical id (or a synthesised key when the
+        # item lacks an id). Insertion order matters: ``response.completed``
+        # sets the authoritative ordering when present, then any
+        # ``output_item.done`` items not already captured are appended.
+        items_by_key: dict[str, dict[str, Any]] = {}
+        # Items collected from ``output_item.done`` events that we'll merge
+        # in after we've seen ``response.completed`` (so completed wins for
+        # ordering when both are present).
+        done_items: list[dict[str, Any]] = []
+
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj:
+                continue
+
+            # Non-streaming: full response object carries ``output``.
+            if json_obj.get("object") == "response":
+                output = json_obj.get("output")
+                if isinstance(output, list):
+                    for item in output:
+                        if isinstance(item, dict):
+                            self._merge_item(items_by_key, item)
+                continue
+
+            event_type = json_obj.get("type")
+
+            # Streaming: ``response.completed`` carries the final response.
+            # Use it for ordering, then merge in any ``output_item.done``
+            # items not already represented.
+            if event_type == "response.completed":
+                resp = json_obj.get("response") or {}
+                output = resp.get("output")
+                if isinstance(output, list):
+                    for item in output:
+                        if isinstance(item, dict):
+                            self._merge_item(items_by_key, item)
+                continue
+
+            # Each ``response.output_item.done`` event carries one
+            # fully-assembled output item. Buffer until after we've seen
+            # ``response.completed`` so completed-ordering wins.
+            if event_type == "response.output_item.done":
+                item = json_obj.get("item")
+                if isinstance(item, dict):
+                    done_items.append(item)
+
+        # Merge buffered ``output_item.done`` items: skipped if already in
+        # ``items_by_key`` (deduplicated by id), otherwise appended in
+        # arrival order. This catches items the API dropped from the
+        # ``response.completed.response.output[]`` array (real-world: ~0.6%
+        # of streaming turns) plus all items when ``response.completed``
+        # never arrived.
+        for item in done_items:
+            self._merge_item(items_by_key, item)
+
+        if not items_by_key:
+            return super().build_assistant_turn(record)
+
+        return Turn(role="assistant", raw_messages=list(items_by_key.values()))
+
+    @staticmethod
+    def _merge_item(
+        items_by_key: dict[str, dict[str, Any]], item: dict[str, Any]
+    ) -> None:
+        """Insert ``item`` into ``items_by_key`` if its id is novel.
+
+        Dedup key precedence: ``id`` > ``call_id`` > ``item_id``. Items
+        that carry none of these three (rare but possible for a
+        not-yet-typed future item shape) get a synthesised key from
+        ``(type, hash(json))`` so structurally-identical duplicates still
+        collapse to one but distinct items don't collide.
+        """
+        key = item.get("id") or item.get("call_id") or item.get("item_id")
+        if not key:
+            try:
+                payload_hash = hash(orjson.dumps(item, option=orjson.OPT_SORT_KEYS))
+            except TypeError:
+                payload_hash = id(item)
+            key = f"{item.get('type', '?')}::{payload_hash}"
+        items_by_key.setdefault(key, item)

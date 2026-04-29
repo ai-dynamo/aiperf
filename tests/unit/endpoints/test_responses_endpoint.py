@@ -521,7 +521,7 @@ class TestResponsesEndpointParseResponse:
                 {
                     "object": "response",
                     "output": [
-                        {"type": "function_call", "name": "get_weather"},
+                        {"type": "speculative_future_thing", "name": "get_weather"},
                         _msg("Sunny."),
                     ],
                 },

@@ -96,6 +96,52 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
+class ConversationBranchMode(CaseInsensitiveStrEnum):
+    """Mode discriminator for ``ConversationBranchInfo``.
+
+    Distinguishes two kinds of DAG branches sharing one primitive:
+
+    - ``FORK``: child inherits the parent's accumulated message context and
+      sticky-routes to the parent's worker (prefix-cache locality). Used by
+      aiperf's native DAG conversation-forking semantics.
+    - ``SPAWN``: child starts with a fresh context, free routing. Used for
+      kv-cache-tester-v2-style agentic sub-agent scenarios where the child
+      is a distinct agent invocation, not a continuation.
+    """
+
+    FORK = "fork"
+    """Child inherits parent's turn_list (accumulated message history + captured
+    live responses); sticky-routes to parent's worker for prefix-cache locality."""
+
+    SPAWN = "spawn"
+    """Child gets a fresh context; free routing (no sticky pin to parent)."""
+
+
+class PrerequisiteKind(CaseInsensitiveStrEnum):
+    """Types of conditions that can gate a turn's dispatch.
+
+    Extensible: v1 orchestrator only honors SPAWN_JOIN; the remaining values
+    are reserved and rejected at load time by
+    ``validate_for_orchestrator_v1``. Each deferred value is pinned to a
+    future orchestrator capability in the DAG prereq-gating design doc.
+    """
+
+    SPAWN_JOIN = "spawn_join"
+    """All blocking children from a named branch have completed."""
+
+    CHILD_SESSION_COMPLETE = "child_session_complete"
+    """A specific child runtime session has completed (reserved)."""
+
+    TIMER = "timer"
+    """Wall-clock delay has elapsed (reserved)."""
+
+    EXTERNAL_EVENT = "external_event"
+    """Named external signal has been received (reserved)."""
+
+    BARRIER = "barrier"
+    """Runtime-diamond join on a shared barrier_id (reserved)."""
+
+
 class ConversationContextMode(CaseInsensitiveStrEnum):
     """Controls how prior turns are accumulated in multi-turn conversations.
 
@@ -234,6 +280,16 @@ class LifecycleState(CaseInsensitiveStrEnum):
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
+
+
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
 
 
 class MediaType(CaseInsensitiveStrEnum):
@@ -421,6 +477,24 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
+
+
+class SubagentType(CaseInsensitiveStrEnum):
+    """Optional sub-agent classification carried on DAG Conversation nodes.
+
+    Used for DAG-benchmark bucket metrics and future routing policies. Unused
+    by core aiperf today; present so manifests authored for kv-cache-tester-v2
+    can round-trip through aiperf models without validation errors.
+    """
+
+    EXPLORE = "explore"
+    """Exploratory agent branch (e.g. breadth-first search child)."""
+
+    GENERAL = "general"
+    """General-purpose agent branch (default when unspecified)."""
+
+    PLAN = "plan"
+    """Planning/decomposition agent branch."""
 
 
 class SystemState(CaseInsensitiveStrEnum):

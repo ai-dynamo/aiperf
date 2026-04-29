@@ -118,6 +118,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
       ""
     ],
@@ -179,6 +184,11 @@
     [
       "file-size",
       "src/aiperf/plugin/plugins.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/records/inference_result_parser.py",
       ""
     ],
     [
@@ -283,6 +293,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "function-size",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
       "render_comparison_text"
     ],
@@ -313,13 +333,38 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._configure_dataset"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/loader/base_trace_loader.py",
       "BaseTraceDatasetLoader.convert_to_conversations"
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._resolve_and_validate"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "function-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
+    ],
+    [
+      "function-size",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint._extract_response_content"
+    ],
+    [
+      "function-size",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint.build_assistant_turn"
     ],
     [
       "function-size",
@@ -863,6 +908,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.intercept"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner._wait_for_returning_complete"
+    ],
+    [
+      "function-size",
       "src/aiperf/timing/phase/runner.py",
       "PhaseRunner.run"
     ],
@@ -913,8 +968,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/workers/worker.py",
-      "Worker._process_credit"
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
     ],
     [
       "keyword-only-args",
@@ -1077,6 +1132,11 @@
       "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
+      "keyword-only-args",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
+    ],
+    [
       "module-state",
       "src/aiperf/common/aiperf_logger.py",
       "_ignored_files"
@@ -1118,8 +1178,33 @@
     ],
     [
       "nesting-depth",
+      "src/aiperf/common/config/user_config.py",
+      "UserConfig._count_dag_root_entries"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/common/config/user_config.py",
+      "UserConfig.validate_timing_mode"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint.build_assistant_turn"
     ],
     [
       "nesting-depth",

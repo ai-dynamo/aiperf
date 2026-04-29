@@ -196,18 +196,44 @@ class UserConfig(BaseConfig):
                 and self.input.conversation.num is None
                 and self.loadgen.benchmark_duration is None
             ):
-                # Use whichever concurrency is set for calculating default request count
-                effective_concurrency = (
-                    self.loadgen.concurrency or self.loadgen.prefill_concurrency
-                )
-                self.loadgen.request_count = max(
-                    LoadGeneratorDefaults.MIN_REQUEST_COUNT,
-                    effective_concurrency
-                    * LoadGeneratorDefaults.REQUEST_COUNT_MULTIPLIER,
-                )
-                _logger.warning(
-                    f"No request count value provided, setting to {self.loadgen.request_count}"
-                )
+                # Forking datasets (dag_jsonl): default to running the
+                # whole file once via --num-conversations rather than the
+                # generic concurrency-based wire-cap. ``--request-count``
+                # is now a literal cap on wire requests including
+                # fork-spawned children, so the generic default
+                # (``max(MIN, concurrency * MULT)``) would silently
+                # truncate the DAG mid-tree on every bare run. Sizing by
+                # *root* count instead keeps the natural "run the file
+                # once" expectation: only roots are sampled (children
+                # are seeded from their parent's worker context), so
+                # using the total entry count would over-run a file
+                # with fanout (1 root + 2 children = 3 entries should
+                # default to 1 conversation, not 3).
+                if self._is_forking_dataset():
+                    roots = self._count_dag_root_entries()
+                    if roots > 0:
+                        self.input.conversation.num = roots
+                        _logger.info(
+                            f"No request count or conversation count provided for forking dataset; "
+                            f"defaulting --num-conversations to {roots} (run each root in the file once). "
+                            f"Use --request-count for a literal wire-request cap instead."
+                        )
+                if (
+                    self.loadgen.request_count is None
+                    and self.input.conversation.num is None
+                ):
+                    # Use whichever concurrency is set for calculating default request count
+                    effective_concurrency = (
+                        self.loadgen.concurrency or self.loadgen.prefill_concurrency
+                    )
+                    self.loadgen.request_count = max(
+                        LoadGeneratorDefaults.MIN_REQUEST_COUNT,
+                        effective_concurrency
+                        * LoadGeneratorDefaults.REQUEST_COUNT_MULTIPLIER,
+                    )
+                    _logger.warning(
+                        f"No request count value provided, setting to {self.loadgen.request_count}"
+                    )
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
 
@@ -386,6 +412,18 @@ class UserConfig(BaseConfig):
 
         return self
 
+    def _is_forking_dataset(self) -> bool:
+        """True if the configured custom dataset can fork (DAG branches).
+
+        Today only ``dag_jsonl`` carries fork semantics; other custom
+        datasets (single-turn, raw_payload, inputs_json, mooncake_trace)
+        are linear. Used by the auto-default logic to size
+        ``--num-conversations`` rather than ``--request-count`` for
+        forking datasets, since the former lets the DAG run to
+        completion and the latter would truncate mid-tree.
+        """
+        return self.input.custom_dataset_type == "dag_jsonl"
+
     def _should_use_fixed_schedule_for_trace_dataset(self) -> bool:
         """Check if a trace dataset has timestamps and should use fixed schedule.
 
@@ -432,6 +470,47 @@ class UserConfig(BaseConfig):
         except (OSError, FileNotFoundError) as e:
             _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
             return 0
+
+    def _count_dag_root_entries(self) -> int:
+        """Count the number of root conversations in a dag_jsonl file.
+
+        Roots are conversations not referenced by any other conversation's
+        ``forks`` list. The loader only ever samples roots — non-root
+        entries (children) are seeded into the orchestrator from their
+        parent's worker context, so sizing ``--num-conversations`` by
+        total entry count would over-run a file with deep fanout (e.g.
+        a file with 1 root + 2 children = 3 entries should default to
+        1 conversation, not 3).
+        """
+        if not self.input.file:
+            return 0
+
+        all_ids: set[str] = set()
+        referenced_ids: set[str] = set()
+        try:
+            with open(self.input.file) as f:
+                for raw in f:
+                    if not (line := raw.strip()):
+                        continue
+                    try:
+                        data = load_json_str(line)
+                    except JSONDecodeError:
+                        continue
+                    sid = data.get("session_id")
+                    if isinstance(sid, str):
+                        all_ids.add(sid)
+                    for turn in data.get("turns", []) or []:
+                        if not isinstance(turn, dict):
+                            continue
+                        for fork_id in turn.get("forks", []) or []:
+                            if isinstance(fork_id, str):
+                                referenced_ids.add(fork_id)
+        except (OSError, FileNotFoundError) as e:
+            _logger.error(
+                f"Cannot read dag_jsonl file {self.input.file} for root counting: {e}"
+            )
+            return 0
+        return len(all_ids - referenced_ids)
 
     endpoint: Annotated[
         EndpointConfig,

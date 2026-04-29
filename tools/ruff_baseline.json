@@ -64,6 +64,11 @@
     ],
     [
       "ANN201",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint.extract_payload_inputs"
+    ],
+    [
+      "ANN201",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_all_callbacks"
     ],
@@ -354,6 +359,21 @@
     ],
     [
       "BLE001",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler._credit_will_dispatch_children"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/loader/inputs_json.py",
+      "InputsJsonPayloadLoader.can_load"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/loader/raw_payload.py",
+      "_dir_has_raw_payload_jsonl"
+    ],
+    [
+      "BLE001",
       "src/aiperf/dataset/memory_map_utils.py",
       "MemoryMapDatasetClient.close"
     ],
@@ -589,6 +609,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/post_processors/raw_record_writer_processor.py",
+      "RawRecordWriterProcessor.buffered_write"
+    ],
+    [
+      "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
     ],
@@ -820,6 +845,11 @@
     [
       "C901",
       "src/aiperf/common/config/user_config.py",
+      "UserConfig._count_dag_root_entries"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/config/user_config.py",
       "UserConfig._parse_gpu_telemetry_config"
     ],
     [
@@ -831,6 +861,21 @@
       "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/validators/orchestrator_v1.py",
+      "validate_for_orchestrator_v1"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "C901",
@@ -849,8 +894,18 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._preformat_payloads"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/generator/video.py",
       "VideoGenerator._get_ffmpeg_install_instructions"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._resolve_and_validate"
     ],
     [
       "C901",
@@ -859,13 +914,28 @@
     ],
     [
       "C901",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint._render_turn_content"
+    ],
+    [
+      "C901",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
+    ],
+    [
+      "C901",
       "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
+      "ChatEndpoint.build_assistant_turn"
     ],
     [
       "C901",
       "src/aiperf/endpoints/openai_chat.py",
       "ChatEndpoint.extract_chat_response_data"
+    ],
+    [
+      "C901",
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint.format_payload"
     ],
     [
       "C901",
@@ -875,7 +945,12 @@
     [
       "C901",
       "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._set_item_content"
+      "ResponsesEndpoint._parse_streaming_event"
+    ],
+    [
+      "C901",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint.build_assistant_turn"
     ],
     [
       "C901",
@@ -1109,6 +1184,11 @@
     ],
     [
       "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.intercept"
+    ],
+    [
+      "C901",
       "src/aiperf/timing/phase/runner.py",
       "PhaseRunner.run"
     ],
@@ -1229,6 +1309,21 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/common/validators/orchestrator_v1.py",
+      "validate_for_orchestrator_v1"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/dataset/agentic_code_gen/reporting/metrics.py",
       "compute_quality_report"
     ],
@@ -1244,18 +1339,38 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._resolve_and_validate"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
     [
       "PLR0912",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint._render_turn_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
+      "ChatEndpoint.build_assistant_turn"
     ],
     [
       "PLR0912",
       "src/aiperf/endpoints/openai_responses.py",
       "ResponsesEndpoint._extract_response_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint.build_assistant_turn"
     ],
     [
       "PLR0912",
@@ -1369,6 +1484,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.intercept"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1411,6 +1531,11 @@
       "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "PLR0915",
@@ -1544,6 +1669,16 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.intercept"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner.run"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/transports/aiohttp_client.py",
       "AioHttpClient._request"
     ],
@@ -1566,6 +1701,11 @@
       "S110",
       "src/aiperf/plot/core/plot_generator.py",
       "PlotGenerator._get_metric_direction"
+    ],
+    [
+      "S112",
+      "src/aiperf/dataset/loader/raw_payload.py",
+      "_dir_has_raw_payload_jsonl"
     ]
   ]
 }

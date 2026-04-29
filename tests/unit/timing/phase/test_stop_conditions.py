@@ -10,9 +10,10 @@ from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.credit_counter import CreditCounter
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.stop_conditions import (
+    CancellationStopCondition,
     DurationStopCondition,
-    LifecycleStopCondition,
     RequestCountStopCondition,
+    SendingCompleteStopCondition,
     SessionCountStopCondition,
     StopConditionChecker,
 )
@@ -48,27 +49,53 @@ def ctr(sent: int = 0, sessions: int = 0, turns: int = 0) -> MagicMock:
     return m
 
 
-class TestLifecycleStopCondition:
+class TestCancellationStopCondition:
     def test_should_use_always_true(self) -> None:
-        assert LifecycleStopCondition.should_use(cfg()) is True
+        assert CancellationStopCondition.should_use(cfg()) is True
 
-    def test_can_send_when_not_cancelled_and_not_complete(self) -> None:
-        cond = LifecycleStopCondition(
-            cfg(), lc(cancelled=False, sending_complete=False), ctr()
-        )
+    def test_can_send_when_not_cancelled(self) -> None:
+        cond = CancellationStopCondition(cfg(), lc(cancelled=False), ctr())
         assert cond.can_send_any_turn() is True
 
     def test_cannot_send_when_cancelled(self) -> None:
-        cond = LifecycleStopCondition(cfg(), lc(cancelled=True), ctr())
+        cond = CancellationStopCondition(cfg(), lc(cancelled=True), ctr())
         assert cond.can_send_any_turn() is False
+
+    def test_ignores_sending_complete_flag(self) -> None:
+        """Sending-complete is a separate concern — see
+        SendingCompleteStopCondition. Cancellation alone gates here."""
+        cond = CancellationStopCondition(
+            cfg(), lc(cancelled=False, sending_complete=True), ctr()
+        )
+        assert cond.can_send_any_turn() is True
+
+    def test_applies_to_dag_children(self) -> None:
+        assert CancellationStopCondition.applies_to_dag_children is True
+
+
+class TestSendingCompleteStopCondition:
+    def test_should_use_always_true(self) -> None:
+        assert SendingCompleteStopCondition.should_use(cfg()) is True
+
+    def test_can_send_when_not_sending_complete(self) -> None:
+        cond = SendingCompleteStopCondition(cfg(), lc(sending_complete=False), ctr())
+        assert cond.can_send_any_turn() is True
 
     def test_cannot_send_when_sending_complete(self) -> None:
-        cond = LifecycleStopCondition(cfg(), lc(sending_complete=True), ctr())
+        cond = SendingCompleteStopCondition(cfg(), lc(sending_complete=True), ctr())
         assert cond.can_send_any_turn() is False
 
-    def test_can_start_new_session_returns_true(self) -> None:
-        cond = LifecycleStopCondition(cfg(), lc(), ctr())
-        assert cond.can_start_new_session() is True
+    def test_ignores_cancellation(self) -> None:
+        """Cancellation is a separate concern — see CancellationStopCondition."""
+        cond = SendingCompleteStopCondition(
+            cfg(), lc(cancelled=True, sending_complete=False), ctr()
+        )
+        assert cond.can_send_any_turn() is True
+
+    def test_does_not_apply_to_dag_children(self) -> None:
+        """The whole reason this condition is split from CancellationStopCondition:
+        DAG children must bypass the root-sampler-done signal to drain."""
+        assert SendingCompleteStopCondition.applies_to_dag_children is False
 
 
 class TestRequestCountStopCondition:
@@ -182,6 +209,85 @@ class TestStopConditionChecker:
             checker.can_send_any_turn() is True
             and checker.can_start_new_session() is True
         )
+
+
+class TestStopConditionCheckerChildTurns:
+    """``can_send_child_turn`` is the narrow bypass used by
+    ``CreditIssuer`` for DAG children.
+
+    The two conditions children bypass are:
+    - ``SendingCompleteStopCondition`` (TimingStrategy loop done; flips
+      before children begin)
+    - ``SessionCountStopCondition`` (``--num-conversations`` is a
+      sampler-plan target; truncating mid-tree would produce partial
+      conversations that mismatch its stated semantics)
+
+    Children DO honor cancellation, duration, and ``--request-count``.
+    Children blocked at this gate get released from join tracking via
+    ``BranchOrchestrator.on_child_stopped``.
+    """
+
+    def test_child_can_send_past_sending_complete(self) -> None:
+        """The one condition children are supposed to bypass: the
+        phase's ``is_sending_complete`` flag flips the instant root
+        sampling finishes, but the DAG may still have in-flight
+        descendants that need to run."""
+        checker = StopConditionChecker(cfg(), lc(sending_complete=True), ctr())
+        assert checker.can_send_any_turn() is False  # roots stopped
+        assert checker.can_send_child_turn() is True  # children continue
+
+    def test_child_still_honors_cancellation(self) -> None:
+        """Regression guard: user Ctrl-C / explicit abort must stop
+        DAG children too, even though children bypass
+        is_sending_complete."""
+        checker = StopConditionChecker(cfg(), lc(cancelled=True), ctr())
+        assert checker.can_send_any_turn() is False
+        assert checker.can_send_child_turn() is False
+
+    def test_child_still_honors_duration_timeout(self) -> None:
+        """Children must stop when the benchmark duration expires —
+        we promised the user a time-bounded run."""
+        checker = StopConditionChecker(cfg(dur=60.0), lc(time_left=-1.0), ctr())
+        assert checker.can_send_any_turn() is False
+        assert checker.can_send_child_turn() is False
+
+    def test_child_honors_request_count_limit(self) -> None:
+        """``--request-count N`` is a literal cap on wire requests:
+        children count toward it the same way multi-turn continuations
+        do. A child blocked at this gate is released from join
+        tracking via ``BranchOrchestrator.on_child_stopped`` so the
+        parent's pending-join still drains."""
+        checker = StopConditionChecker(cfg(reqs=1), lc(), ctr(sent=1))
+        assert checker.can_send_any_turn() is False
+        assert checker.can_send_child_turn() is False
+
+    def test_child_honors_session_count_limit(self) -> None:
+        """``--num-conversations`` is a full-conversation plan target —
+        children belong to their parent's session and SHOULD continue
+        running even after the planned session count is reached. The
+        bypass keeps the DAG from truncating mid-tree.
+        """
+        checker = StopConditionChecker(
+            cfg(sessions=1), lc(), ctr(sessions=1, sent=5, turns=5)
+        )
+        assert checker.can_send_any_turn() is False
+        # Children bypass session-count: --num-conversations is a
+        # plan target, not a wire-cap. The DAG continues to drain.
+        assert checker.can_send_child_turn() is True
+
+    def test_child_honors_both_cancellation_and_sending_complete_combined(self) -> None:
+        """When both signals are set (cancel during DAG drain),
+        children must stop — cancellation dominates."""
+        checker = StopConditionChecker(
+            cfg(), lc(cancelled=True, sending_complete=True), ctr()
+        )
+        assert checker.can_send_any_turn() is False
+        assert checker.can_send_child_turn() is False
+
+    def test_child_allowed_when_all_conditions_happy(self) -> None:
+        checker = StopConditionChecker(cfg(reqs=100, dur=60.0), lc(), ctr(sent=5))
+        assert checker.can_send_any_turn() is True
+        assert checker.can_send_child_turn() is True
 
     # fmt: off
     @pytest.mark.parametrize("sent,sessions,turns,exp_any,exp_new", [

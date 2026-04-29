@@ -177,7 +177,7 @@ class TestTimeToFirstOutputMetric:
             start_ns=100,
             responses=[
                 ParsedResponse(
-                    perf_ns=115, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=115, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -196,7 +196,7 @@ class TestTimeToFirstOutputMetric:
                     data=ReasoningResponseData(reasoning="thinking", content=None),
                 ),
                 ParsedResponse(
-                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=120, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -212,7 +212,7 @@ class TestTimeToFirstOutputMetric:
             responses=[
                 ParsedResponse(perf_ns=110, data=TextResponseData(text="hello")),
                 ParsedResponse(
-                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                    perf_ns=120, data=ToolCallResponseData(tool_call_text="func_name{}")
                 ),
             ],
         )
@@ -226,7 +226,9 @@ class TestTimeToFirstOutputMetric:
         record = _create_record_with_responses(
             start_ns=100,
             responses=[
-                ParsedResponse(perf_ns=110, data=ToolCallResponseData(text="")),
+                ParsedResponse(
+                    perf_ns=110, data=ToolCallResponseData(tool_call_text="")
+                ),
                 ParsedResponse(perf_ns=120, data=TextResponseData(text="content")),
             ],
         )
@@ -234,6 +236,59 @@ class TestTimeToFirstOutputMetric:
             [record], TimeToFirstOutputTokenMetric.tag
         )
         assert metric_results[TimeToFirstOutputTokenMetric.tag] == [20]
+
+    def test_ttfo_tool_call_dual_field_content_or_tool_call_text_fires(self):
+        """Mixed turn — ``ToolCallResponseData`` carries both ``content``
+        (prose the model emitted alongside the dispatch) and
+        ``tool_call_text`` (the function name + arguments). TTFO must fire
+        on the FIRST event that has either populated, since the metric
+        checks ``response.data.get_text()`` (which returns
+        ``content + tool_call_text``).
+
+        Three sub-cases verify each branch:
+
+        - content only      → fires (mirrors a partial chunk where the
+                              prose arrives first, tool args still
+                              streaming)
+        - tool_call_text only → fires (Codex-shape pure dispatch chunk)
+        - both populated    → fires
+        """
+        # Each sub-case: TTFO should be the perf_ns delta from the FIRST
+        # event whose ToolCallResponseData carries any text in either
+        # field. We reuse perf_ns 110 across them; expected TTFO = 10.
+        for label, dual in [
+            ("content only", ToolCallResponseData(tool_call_text="", content="hi")),
+            ("tool_call_text only", ToolCallResponseData(tool_call_text="fn{}")),
+            ("both", ToolCallResponseData(tool_call_text="fn{}", content="ok ")),
+        ]:
+            record = _create_record_with_responses(
+                start_ns=100,
+                responses=[ParsedResponse(perf_ns=110, data=dual)],
+            )
+            metric_results = run_simple_metrics_pipeline(
+                [record], TimeToFirstOutputTokenMetric.tag
+            )
+            assert metric_results[TimeToFirstOutputTokenMetric.tag] == [10], (
+                f"TTFO failed to fire for sub-case: {label}"
+            )
+
+    def test_ttfo_tool_call_dual_field_both_empty_not_counted(self):
+        """Both fields empty → not data-bearing → TTFO must skip and use
+        the next non-empty event."""
+        record = _create_record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(
+                    perf_ns=110,
+                    data=ToolCallResponseData(tool_call_text="", content=""),
+                ),
+                ParsedResponse(perf_ns=125, data=TextResponseData(text="x")),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [25]
 
 
 def _create_record_with_responses(

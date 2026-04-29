@@ -76,22 +76,44 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces use pre-built messages."""
-        raw_msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
-        if raw_msg_trace_count == len(traces):
-            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-        if raw_msg_trace_count > 0:
+        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES for pre-built content.
+
+        Traces with ``messages`` or ``payload`` are self-contained and use
+        MESSAGE_ARRAY_WITH_RESPONSES. Mixing different input modes (payload vs
+        messages vs synthesized) in the same session is unsupported.
+        """
+        payload_count = sum(1 for t in traces if t.payload is not None)
+        messages_count = sum(1 for t in traces if t.messages is not None)
+
+        if payload_count and messages_count:
             raise ValueError(
-                "Mixed Mooncake sessions with both raw `messages` and synthesized prompts are unsupported."
+                "Mixed Mooncake sessions with both 'payload' and 'messages' "
+                "traces are unsupported. Use one mode per session."
+            )
+
+        self_contained = payload_count + messages_count
+        if self_contained == len(traces):
+            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        if self_contained > 0:
+            raise ValueError(
+                "Mixed Mooncake sessions with both raw content (messages/payload) "
+                "and synthesized prompts are unsupported."
             )
         return None
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
-        if trace.messages is not None:
+        if trace.messages is not None or trace.payload is not None:
             return ""
         return trace.text_input
 
     def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
+        if trace.payload is not None:
+            return Turn(
+                timestamp=trace.timestamp,
+                delay=trace.delay,
+                max_tokens=trace.output_length,
+                raw_payload=trace.payload,
+            )
         if trace.messages is not None:
             return Turn(
                 timestamp=trace.timestamp,

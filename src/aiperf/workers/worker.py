@@ -1,13 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
+from typing import TYPE_CHECKING
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import BYTES_PER_MIB
-from aiperf.common.enums import CommAddress, CommandType, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    MemoryMapFormat,
+    MessageType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import NotInitializedError
@@ -33,13 +43,13 @@ from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
+    MemoryMapClientMetadata,
     ModelEndpointInfo,
     ProcessHealth,
-    ReasoningResponseData,
+    RecordContext,
     RequestInfo,
     RequestRecord,
     SSEMessage,
-    Text,
     Turn,
     WorkerTaskStats,
 )
@@ -62,6 +72,9 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
+
+if TYPE_CHECKING:
+    from aiperf.transports.base_transports import FirstTokenCallback
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -188,6 +201,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        self._is_payload_bytes: bool = False
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
@@ -227,6 +241,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        if isinstance(msg.client_metadata, MemoryMapClientMetadata):
+            self._is_payload_bytes = (
+                msg.client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+            )
         self._dataset_configured_event.set()
         self.debug(
             lambda: (
@@ -405,145 +423,234 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _process_credit(self, credit_context: CreditContext) -> None:
         """Process a credit (1 credit = 1 request).
 
-        Flow:
-        1. Generate UUID for x_request_id (X-Request-ID header)
-        2. Check session cache using x_correlation_id:
-           - Cache hit: Reuse session (enables conversation caching on inference server)
-           - Cache miss: Retrieve conversation from DatasetManager, create new session
-        3. Advance session to current turn index
-        4. Process the turn (send request, collect response)
-        5. On error: Set error in pre-created result
-        6. Finally: Evict session from cache if this is the final turn
+        Orchestrates error handling and session eviction for both paths:
+        - **Payload bytes fast path**: pre-encoded bytes from mmap, bypasses
+          session/conversation deserialization entirely.
+        - **Normal path**: session-based conversation handling with turn
+          accumulation and response storage.
 
-        Session Lifecycle:
-        - First turn: Session created and cached under x_correlation_id
-        - Subsequent turns: Session retrieved from cache (sticky routing ensures same worker)
-        - Final turn: Session evicted from cache to free memory
+        Credit return is guaranteed by the caller (_on_credit_drop_message_task).
         """
         x_request_id = str(uuid.uuid4())
         x_correlation_id = credit_context.credit.x_correlation_id
-        credit = credit_context.credit
-
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
-        first_token_callback = None
-        if self._prefill_concurrency_enabled:
-
-            async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
-                parsed = self.inference_client.endpoint.parse_response(message)
-                if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
-
-                # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
-                    FirstToken(
-                        credit_id=credit.id,
-                        phase=credit.phase,
-                        ttft_ns=ttft_ns,
-                    )
-                )
-                # Track that FirstToken was sent so CreditReturn can report it
-                credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+        first_token_callback = self._make_first_token_callback(credit_context)
 
         try:
-            session = self.session_manager.get(x_correlation_id)
-            if session is None:
-                _conversation = await self._retrieve_conversation(
-                    conversation_id=credit_context.credit.conversation_id,
-                    credit_context=credit_context,
-                )
-                # Store url_index from first turn so all turns hit the same backend
-                session = self.session_manager.create_and_store(
-                    x_correlation_id,
-                    _conversation,
-                    credit_context.credit.num_turns,
-                    url_index=credit_context.credit.url_index,
-                )
-
-            session.advance_turn(credit_context.credit.turn_index)
-
-            self.task_stats.total += 1
-            request_info: RequestInfo = self._create_request_info(
-                session=session,
-                credit_context=credit_context,
-                x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
-                user_context_message=session.conversation.user_context_message,
-            )
-            record: RequestRecord = await self.inference_client.send_request(
-                request_info, first_token_callback=first_token_callback
-            )
-            await self._send_inference_result_message(record)
-
-            # Copy request-level errors to credit context for CreditReturn tracking
-            if record.error is not None:
-                credit_context.error = record.error
-
-            if session.should_store_response() and (
-                resp_turn := await self._process_response(record)
+            # Payload bytes fast path: bypass session/conversation deserialization.
+            # Skipped for DAG descendants (agent_depth > 0): their turn_list
+            # goes through session_manager — FORK children need parent-seeded
+            # accumulation and all multi-turn children need session state.
+            #
+            # FORK parents are handled upstream: ``DatasetManager`` refuses to
+            # produce PAYLOAD_BYTES storage for any dataset containing FORK
+            # branches, so the parent always lands on the slow path below and
+            # its full Conversation (with branches) is cached for evict's
+            # ``is_fork_parent`` check.
+            credit = credit_context.credit
+            if (
+                self._is_payload_bytes
+                and self._dataset_client is not None
+                and credit.agent_depth == 0
             ):
-                session.store_response(resp_turn)
+                conversation_id = credit_context.credit.conversation_id
+                turn_index = credit_context.credit.turn_index
+                payload_bytes = await self._dataset_client.get_payload_bytes(
+                    conversation_id, turn_index
+                )
+                if payload_bytes is not None:
+                    # The canonical wire payload is ``payload_bytes`` — it's
+                    # stashed on request_info and consumed verbatim by the
+                    # transport. Record-side consumers derive media counts
+                    # from the endpoint's ``extract_payload_inputs`` over
+                    # ``payload_bytes``; nothing reads ``turn.images``
+                    # downstream of this fast path.
+                    turns: list[Turn] = [Turn(role="user")]
+                    request_info = self._create_request_info(
+                        x_request_id=x_request_id,
+                        credit_context=credit_context,
+                        payload_bytes=payload_bytes,
+                        turns=turns,
+                    )
+                    await self._execute_request(
+                        credit_context, request_info, first_token_callback
+                    )
+                    return
+
+            # Normal path: session-based conversation handling.
+            await self._process_credit_with_session(
+                credit_context, x_request_id, x_correlation_id, first_token_callback
+            )
 
         except asyncio.CancelledError:
-            # Mark cancelled before re-raising so finally can evict session
             credit_context.cancelled = True
             raise
         except Exception as e:
             credit_context.error = ErrorDetails.from_exception(e)
             self.exception(f"Error processing credit: {e!r}")
         finally:
-            # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self.session_manager.evict(x_correlation_id)
+
+    def _make_first_token_callback(
+        self, credit_context: CreditContext
+    ) -> FirstTokenCallback | None:
+        """Build first-token callback when prefill concurrency limiting is active.
+
+        Detecting first token requires parsing each SSE chunk, so this overhead
+        is skipped when the orchestrator doesn't need TTFT events for slot management.
+
+        Returns:
+            Callback that sends FirstToken to the router on meaningful content,
+            or None when prefill concurrency is disabled.
+        """
+        if not self._prefill_concurrency_enabled:
+            return None
+
+        credit = credit_context.credit
+
+        async def on_first_token(ttft_ns: int, message: SSEMessage) -> bool:
+            parsed = self.inference_client.endpoint.parse_response(message)
+            if parsed is None or parsed.data is None:
+                return False
+
+            await self.credit_dealer_client.send(
+                FirstToken(
+                    credit_id=credit.id,
+                    phase=credit.phase,
+                    ttft_ns=ttft_ns,
+                )
+            )
+            credit_context.first_token_sent = True
+            return True
+
+        return on_first_token
+
+    async def _process_credit_with_session(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        x_correlation_id: str,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> None:
+        """Normal credit path: session-based conversation handling.
+
+        Flow:
+        1. Check session cache using x_correlation_id:
+           - Cache hit: Reuse session (enables conversation caching on inference server)
+           - Cache miss: Retrieve conversation from DatasetManager, create new session
+        2. Advance session to current turn index
+        3. Build RequestInfo from session state and send request
+        4. Store assistant response in session for multi-turn accumulation
+
+        Session Lifecycle:
+        - First turn: Session created and cached under x_correlation_id
+        - Subsequent turns: Retrieved from cache (sticky routing ensures same worker)
+        - Final turn: Evicted by caller (_process_credit) in its finally block
+        """
+        session = self.session_manager.get(x_correlation_id)
+        if session is None:
+            _conversation = await self._retrieve_conversation_for_session(
+                credit_context=credit_context,
+            )
+            session = self.session_manager.create_and_store(
+                x_correlation_id,
+                _conversation,
+                credit_context.credit.num_turns,
+                url_index=credit_context.credit.url_index,
+                parent_correlation_id=credit_context.credit.parent_correlation_id,
+                branch_mode=credit_context.credit.branch_mode,
+            )
+
+        session.advance_turn(credit_context.credit.turn_index)
+
+        request_info = self._create_request_info(
+            session=session,
+            credit_context=credit_context,
+            x_request_id=x_request_id,
+            system_message=session.conversation.system_message,
+            user_context_message=session.conversation.user_context_message,
+        )
+        record: RequestRecord = await self._execute_request(
+            credit_context, request_info, first_token_callback
+        )
+
+        if session.should_store_response() and (
+            resp_turn := await self._process_response(record)
+        ):
+            session.store_response(resp_turn)
+
+    async def _execute_request(
+        self,
+        credit_context: CreditContext,
+        request_info: RequestInfo,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> RequestRecord:
+        """Send request, record result, and propagate errors to credit context."""
+        self.task_stats.total += 1
+        record = await self.inference_client.send_request(
+            request_info, first_token_callback=first_token_callback
+        )
+        await self._send_inference_result_message(record)
+        if record.error is not None:
+            credit_context.error = record.error
+        return record
 
     def _create_request_info(
         self,
         *,
         x_request_id: str,
-        session: UserSession,
         credit_context: CreditContext,
+        session: UserSession | None = None,
         system_message: str | None = None,
         user_context_message: str | None = None,
+        payload_bytes: bytes | None = None,
+        turns: list[Turn] | None = None,
     ) -> RequestInfo:
-        """Create RequestInfo for inference request with session state and credit metadata.
+        """Create RequestInfo for inference request.
 
-        Consolidates all information needed by InferenceClient and endpoints to:
-        - Format the request payload (model, parameters, conversation history)
-        - Set HTTP headers (X-Request-ID, X-Correlation-ID, auth)
-        - Track request timing (drop_perf_ns for credit drop latency)
-        - Handle cancellation (cancel_after_ns if specified)
+        When ``session`` is provided (normal path), conversation state comes from
+        the session. When omitted (raw payload fast path), fields are taken
+        directly from the credit.
 
         Args:
             x_request_id: Unique ID for this request (X-Request-ID header)
-            session: Session containing conversation history and current turn index
             credit_context: Context with credit metadata (num, phase, timestamps)
+            session: Session with conversation history (None for raw payload path)
             system_message: Optional shared system message to prepend to first turn
             user_context_message: Optional per-conversation user context message
+            payload_bytes: Pre-encoded payload bytes from mmap (raw payload path)
+            turns: Explicit turns list (raw payload fast path with image metadata).
+                   Takes precedence over session-derived turns when provided.
 
         Returns:
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        if turns is None:
+            turns = session.turn_list if session else []
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
-            x_correlation_id=session.x_correlation_id,
-            conversation_id=session.conversation.session_id,
-            turn_index=session.turn_index,
-            turns=session.turn_list,
+            x_correlation_id=session.x_correlation_id
+            if session
+            else credit.x_correlation_id,
+            conversation_id=session.conversation.session_id
+            if session
+            else credit.conversation_id,
+            turn_index=session.turn_index if session else credit.turn_index,
+            turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
-            # Use session's url_index to ensure all turns hit the same backend
-            url_index=session.url_index,
+            url_index=session.url_index if session else credit.url_index,
+            payload_bytes=payload_bytes,
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
         )
 
     async def _retrieve_conversation(
@@ -577,6 +684,41 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             conversation_id, credit_context
         )
 
+    async def _retrieve_conversation_for_session(
+        self,
+        *,
+        credit_context: CreditContext,
+    ) -> Conversation:
+        """Retrieve a Conversation suitable for session-based processing.
+
+        In the PAYLOAD_BYTES memory-map format the client's ``get_conversation``
+        path raises because the full authoring shape is not persisted — only
+        the per-turn payload bytes. For session-mode processing we reconstruct
+        a minimal ``Conversation`` from per-turn payload bytes so
+        ``session_manager`` can still advance turns.
+        """
+        conversation_id = credit_context.credit.conversation_id
+        num_turns = credit_context.credit.num_turns
+
+        if self._is_payload_bytes and self._dataset_client is not None:
+            turns: list[Turn] = []
+            for turn_index in range(num_turns):
+                payload_bytes = await self._dataset_client.get_payload_bytes(
+                    conversation_id, turn_index
+                )
+                raw_payload = orjson.loads(payload_bytes) if payload_bytes else None
+                turns.append(Turn(role="user", raw_payload=raw_payload))
+            return Conversation(
+                session_id=conversation_id,
+                turns=turns,
+                context_mode=self.session_manager.default_context_mode,
+            )
+
+        return await self._retrieve_conversation(
+            conversation_id=conversation_id,
+            credit_context=credit_context,
+        )
+
     async def _request_conversation_from_dataset_manager(
         self, conversation_id: str, credit_context: CreditContext
     ) -> Conversation:
@@ -598,16 +740,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             error = conversation_response.error
             await self._send_inference_result_message(
                 RequestRecord(
-                    request_info=RequestInfo(
-                        model_endpoint=self.model_endpoint,
+                    request_info=RecordContext(
                         conversation_id=conversation_id,
                         turn_index=0,
-                        turns=[],
                         credit_num=credit_context.credit.id,
                         credit_phase=credit_context.credit.phase,
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,
-                        drop_perf_ns=credit_context.drop_perf_ns,
+                        agent_depth=credit_context.credit.agent_depth,
+                        parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
                     timestamp_ns=time.time_ns(),
@@ -621,38 +762,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         return conversation_response.conversation
 
     async def _process_response(self, record: RequestRecord) -> Turn | None:
-        """Extract assistant response from RequestRecord and convert to Turn for session.
+        """Capture the assistant response from a record as a replayable Turn.
 
-        Flow:
-        1. Use endpoint to parse responses into structured data
-        2. Extract text content from all responses
-        3. If text present: Create Turn with role="assistant"
-        4. If no text: Return None (error response or no content)
+        Delegates to ``endpoint.build_assistant_turn`` so endpoints with
+        structured response shapes (e.g. chat ``tool_calls``) can preserve
+        those fields verbatim. The returned Turn is appended to the
+        session's history; FORK-mode DAG children that inherit that history
+        see the captured response on the wire when they dispatch.
 
-        Args:
-            record: RequestRecord with raw responses from inference server
-
-        Returns:
-            Turn object for storing in session, or None if no content
+        Returns ``None`` when the record has no replayable content.
         """
-        resp = self.inference_client.endpoint.extract_response_data(record)
-        # Skip reasoning responses in multi-turn conversations
-        output_texts = []
-        for response in resp:
-            if not response.data:
-                continue
-            if isinstance(response.data, ReasoningResponseData):
-                if response.data.content:
-                    output_texts.append(response.data.content)
-            else:
-                output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
-
-        return (
-            Turn(role="assistant", texts=[Text(contents=[resp_text])])
-            if resp_text
-            else None
-        )
+        return self.inference_client.endpoint.build_assistant_turn(record)
 
     async def _send_inference_result_message(self, record: RequestRecord) -> None:
         """Send RequestRecord to RecordProcessor for metric calculation.

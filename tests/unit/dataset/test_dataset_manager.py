@@ -9,7 +9,9 @@ from pydantic import ValidationError
 
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
+from aiperf.common.config.conversation_config import ConversationConfig, TurnConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -433,10 +435,17 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with multiple entries.
+
+        Uses multi-turn conversations so the dataset uses CONVERSATION mmap
+        format (multi-turn without responses cannot be preformatted).
+        """
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(num_dataset_entries=3),
+            input=InputConfig(
+                num_dataset_entries=3,
+                conversation=ConversationConfig(turn=TurnConfig(mean=2, stddev=0)),
+            ),
         )
         service_config = ServiceConfig()
         dataset_manager = DatasetManager(service_config, user_config)
@@ -843,3 +852,346 @@ class TestConfigureDatasetInlineMediaGating:
 
         meta = plugins.get_endpoint_metadata("chat")
         assert meta.requires_inline_media is False
+
+
+class TestPreformatPayloads:
+    """Tests for DatasetManager._preformat_payloads."""
+
+    def test_preformat_sets_raw_payload_on_single_turn(
+        self, initialized_dataset_manager
+    ):
+        """Single-turn conversations get raw_payload set."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            ),
+            Conversation(
+                session_id="s2",
+                turns=[Turn(role="user", texts=[Text(contents=["bye"])])],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = iter(
+                [
+                    (
+                        "s1",
+                        0,
+                        {"model": "m", "messages": [{"role": "user", "content": "hi"}]},
+                    ),
+                    (
+                        "s2",
+                        0,
+                        {
+                            "model": "m",
+                            "messages": [{"role": "user", "content": "bye"}],
+                        },
+                    ),
+                ]
+            )
+            initialized_dataset_manager._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        assert conversations[1].turns[0].raw_payload == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "bye"}],
+        }
+
+    def test_preformat_skips_on_not_implemented(self, initialized_dataset_manager):
+        """Gracefully skips when endpoint raises NotImplementedError."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = MagicMock(
+                __iter__=MagicMock(side_effect=NotImplementedError)
+            )
+            initialized_dataset_manager._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload is None
+
+    def test_preformat_multi_turn_with_responses(self, initialized_dataset_manager):
+        """Multi-turn WITH_RESPONSES conversations get preformatted."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hello"])]),
+                    Turn(role="assistant", texts=[Text(contents=["hi"])]),
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            mock_fmt.return_value = iter(
+                [
+                    ("s1", 0, {"turn": 0}),
+                    ("s1", 1, {"turn": 1}),
+                ]
+            )
+            initialized_dataset_manager._preformat_payloads(conversations)
+
+        assert conversations[0].turns[0].raw_payload == {"turn": 0}
+        assert conversations[0].turns[1].raw_payload == {"turn": 1}
+
+    def test_preformat_skips_multi_turn_without_responses(
+        self, initialized_dataset_manager
+    ):
+        """Multi-turn WITHOUT_RESPONSES conversations are NOT preformatted."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hello"])]),
+                    Turn(role="user", texts=[Text(contents=["world"])]),
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert conversations[0].turns[0].raw_payload is None
+
+    def test_preformat_skips_conversations_with_existing_raw_payload(
+        self, initialized_dataset_manager
+    ):
+        """Conversations that already have raw_payload on all turns are skipped entirely."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", raw_payload={"already": "set"})],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert conversations[0].turns[0].raw_payload == {"already": "set"}
+
+    def test_preformat_skips_multi_turn_deltas_with_responses(
+        self, initialized_dataset_manager
+    ):
+        """Multi-turn DELTAS_WITH_RESPONSES is NOT preformatted.
+
+        Even though responses are present, delta mode requires the worker to
+        accumulate prior turns — preformatting with turns=[turn] would produce
+        incomplete payloads.
+        """
+        conversations = [
+            Conversation(
+                session_id="s1",
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["hello"])]),
+                    Turn(role="assistant", texts=[Text(contents=["hi"])]),
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert conversations[0].turns[0].raw_payload is None
+
+    def test_preformat_partial_raw_payload_checks_eligibility(
+        self, initialized_dataset_manager
+    ):
+        """Conversation with partial raw_payload still checks eligibility.
+
+        A conversation where only SOME turns have raw_payload is not considered
+        fully formatted and must pass the eligibility check.
+        """
+        conversations = [
+            Conversation(
+                session_id="s1",
+                context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+                turns=[
+                    Turn(role="user", raw_payload={"turn": 0}),
+                    Turn(role="user", texts=[Text(contents=["no payload"])]),
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert conversations[0].turns[1].raw_payload is None
+
+    def test_preformat_bails_if_any_multi_turn_without_responses(
+        self, initialized_dataset_manager
+    ):
+        """If any conversation is multi-turn without responses, no preformatting occurs."""
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["single"])])],
+            ),
+            Conversation(
+                session_id="s2",
+                context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+                turns=[
+                    Turn(role="user", texts=[Text(contents=["multi1"])]),
+                    Turn(role="user", texts=[Text(contents=["multi2"])]),
+                ],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert conversations[0].turns[0].raw_payload is None
+
+    def test_preformat_skips_when_any_conversation_has_fork_branches(
+        self, initialized_dataset_manager
+    ):
+        """FORK datasets must NOT be preformatted to PAYLOAD_BYTES.
+
+        Why: PAYLOAD_BYTES storage drops branch metadata. The worker would
+        rebuild a stub Conversation with empty ``branches``, the session
+        cache's evict path would see ``is_fork_parent=False``, and the
+        parent would be popped before children arrived — children then
+        route to a fresh worker and the FORK invariant blows up at
+        runtime ("FORK routing invariant violated: parent session ...
+        not found on this worker"). The dataset manager prevents this by
+        bailing out of preformat whenever any conversation declares a
+        FORK branch.
+        """
+        from aiperf.common.models import ConversationBranchInfo
+
+        conversations = [
+            Conversation(
+                session_id="root",
+                turns=[Turn(role="user", texts=[Text(contents=["root"])])],
+                branches=[
+                    ConversationBranchInfo(
+                        branch_id="b",
+                        mode=ConversationBranchMode.FORK,
+                        child_conversation_ids=["child"],
+                    )
+                ],
+            ),
+            Conversation(
+                session_id="child",
+                turns=[Turn(role="user", texts=[Text(contents=["c"])])],
+            ),
+        ]
+
+        with patch(
+            "aiperf.dataset.dataset_manager.format_conversation_payloads"
+        ) as mock_fmt:
+            initialized_dataset_manager._preformat_payloads(conversations)
+            mock_fmt.assert_not_called()
+
+        assert all(t.raw_payload is None for c in conversations for t in c.turns)
+
+
+# ============================================================================
+# DAG --request-count truncation warning
+# ============================================================================
+
+
+class TestDagRequestCountWarning:
+    """Pin the user-facing NOTICE that fires when ``--request-count`` is set
+    on a forking dataset. Without the warning, users may be surprised that
+    their DAG run gets truncated mid-tree (children count toward the cap
+    and the cap can fire before all branches reach their leaf).
+    """
+
+    @staticmethod
+    def _make_metadata(*, with_forks: bool):
+        from aiperf.common.enums import ConversationContextMode
+        from aiperf.common.models import (
+            ConversationMetadata,
+            DatasetMetadata,
+            TurnMetadata,
+        )
+        from aiperf.plugin.enums import DatasetSamplingStrategy
+
+        turn = TurnMetadata(timestamp_ms=0.0)
+        turn.has_forks = with_forks
+        return DatasetMetadata(
+            conversations=[
+                ConversationMetadata(conversation_id="c0", turns=[turn]),
+            ],
+            sampling_strategy=DatasetSamplingStrategy.RANDOM,
+            default_context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+
+    async def test_warning_fires_when_request_count_set_with_forking_dataset(
+        self, initialized_dataset_manager
+    ):
+        initialized_dataset_manager.user_config.loadgen.request_count = 30
+        initialized_dataset_manager.dataset_metadata = self._make_metadata(
+            with_forks=True
+        )
+        initialized_dataset_manager.notice = MagicMock()
+
+        initialized_dataset_manager._maybe_warn_dag_request_count_truncation()
+
+        initialized_dataset_manager.notice.assert_called_once()
+        msg = initialized_dataset_manager.notice.call_args.args[0]
+        assert "literal cap" in msg
+        assert "--num-conversations" in msg
+        assert "30" in msg
+
+    async def test_warning_skipped_when_request_count_unset(
+        self, initialized_dataset_manager
+    ):
+        initialized_dataset_manager.user_config.loadgen.request_count = None
+        initialized_dataset_manager.dataset_metadata = self._make_metadata(
+            with_forks=True
+        )
+        initialized_dataset_manager.notice = MagicMock()
+
+        initialized_dataset_manager._maybe_warn_dag_request_count_truncation()
+
+        initialized_dataset_manager.notice.assert_not_called()
+
+    async def test_warning_skipped_when_dataset_has_no_forks(
+        self, initialized_dataset_manager
+    ):
+        """Multi-turn / non-DAG datasets keep the original ``--request-count``
+        behavior (truncates a single in-flight session mid-stream). No
+        DAG-specific surprise to warn about.
+        """
+        initialized_dataset_manager.user_config.loadgen.request_count = 30
+        initialized_dataset_manager.dataset_metadata = self._make_metadata(
+            with_forks=False
+        )
+        initialized_dataset_manager.notice = MagicMock()
+
+        initialized_dataset_manager._maybe_warn_dag_request_count_truncation()
+
+        initialized_dataset_manager.notice.assert_not_called()

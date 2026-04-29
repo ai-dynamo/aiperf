@@ -19,6 +19,7 @@ from aiperf.timing.intervals import IntervalGeneratorConfig
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -91,6 +92,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         stop_checker: StopConditionChecker,
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
+        branch_orchestrator: BranchOrchestrator | None = None,
         **kwargs,
     ):
         """Initialize rate timing strategy with all dependencies."""
@@ -101,6 +103,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
+        self._branch_orchestrator = branch_orchestrator
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -216,12 +219,28 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         The delay_ms from turn metadata (if present) is honored before queuing,
         simulating user "think time" between turns in a conversation.
+
+        DAG sub-agent children (turns carrying ``parent_correlation_id``) are
+        dispatched directly here rather than queued: their continuation turns
+        arrive after the phase has been marked sending-complete for root
+        sampling, so the main rate loop may have already exited. Direct
+        dispatch avoids that race and keeps the DAG tree flowing.
         """
         if credit.is_final_turn:
             return
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit)
+        turn = TurnToSend.from_previous_credit(credit, meta)
+
+        if credit.agent_depth > 0:
+            if meta.delay_ms is not None:
+                self._scheduler.schedule_later(
+                    meta.delay_ms / MILLIS_PER_SECOND,
+                    self._issue_child_continuation_or_release(turn, credit),
+                )
+            else:
+                await self._issue_child_continuation_or_release(turn, credit)
+            return
 
         # Honor think-time delay from dataset metadata before queuing
         if meta.delay_ms is not None:
@@ -231,6 +250,46 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
         else:
             self._continuation_turns.put_nowait(turn)
+
+    async def _issue_child_continuation_or_release(
+        self, turn: TurnToSend, child_returning_credit: Credit
+    ) -> None:
+        """Issue a child continuation turn, releasing it from join tracking on refusal.
+
+        ``CreditCallbackHandler`` already gates non-final child returns behind
+        ``can_send_child_turn`` and routes stop-blocked ones to
+        ``BranchOrchestrator.on_child_stopped`` directly. This wrapper covers
+        the residual race where the cap is reached between that gate check
+        and this issuance (e.g. a delay-deferred continuation arrives after
+        the cap fires, or another in-flight credit pushes ``requests_sent``
+        past the cap during a yield window).
+
+        ``child_returning_credit`` is the just-returned credit whose
+        continuation we're about to issue — its ``x_correlation_id`` is
+        the *child*'s correlation id (the one tracked in
+        ``BranchOrchestrator._child_to_parent``).
+
+        We use ``dispatch_child_turn`` rather than ``issue_credit`` because
+        the latter's False return is overloaded — it conflates "gate refused,
+        credit NOT on wire" with "credit issued, was the final one". Calling
+        ``on_child_stopped`` in the latter case prematurely drains a child
+        whose return is still in flight, leading to a deadlock when that
+        return arrives at an empty join. ``dispatch_child_turn`` returns
+        True iff the credit was actually sent on the wire.
+        """
+        if (
+            not await self._credit_issuer.dispatch_child_turn(turn)
+            and self._branch_orchestrator is not None
+        ):
+            try:
+                await self._branch_orchestrator.on_child_stopped(
+                    child_returning_credit.x_correlation_id
+                )
+            except Exception:  # noqa: BLE001
+                self.exception(
+                    f"on_child_stopped failed for x_correlation_id="
+                    f"{child_returning_credit.x_correlation_id}"
+                )
 
     def set_request_rate(self, new_rate: float) -> None:
         """Update the request rate dynamically.

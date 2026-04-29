@@ -118,6 +118,7 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
 - Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
+- `dag_jsonl` input type: conversation DAG benchmarks (FORK mode only; SPAWN reserved for a future release); see `docs/benchmark-modes/dag.md`.
 
 ## Pre-Commit Checklist
 

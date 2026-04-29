@@ -77,7 +77,7 @@ class TestUserSessionManager:
         # Should reject turn 2 (out of range for num_turns=2)
         with pytest.raises(
             ValueError,
-            match="Turn index 2 is out of range for conversation with 2 turns",
+            match=r"turn_index=2 out of range \(num_turns=2\)",
         ):
             session.advance_turn(2)
 
@@ -421,3 +421,353 @@ class TestMessageArrayWithoutResponsesRejected:
                 sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
                 default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
             )
+
+
+# ============================================================
+# DAG child session seeding from parent (sticky-routing locality)
+# ============================================================
+
+
+class TestDAGChildSeeding:
+    """FORK-mode children inherit the parent's turn_list at creation time
+    (sticky routing guarantees parent and child live on the same worker)."""
+
+    def test_seed_turn_list_from_parent_session_under_fork(self, sample_conversation):
+        from aiperf.common.models.dataset_models import Text, Turn
+
+        mgr = UserSessionManager()
+        parent = mgr.create_and_store(
+            x_correlation_id="parent-1",
+            conversation=sample_conversation,
+            num_turns=2,
+        )
+        # Simulate the parent having completed a turn (advance + captured response).
+        parent.turn_list = [
+            Turn(role="user", texts=[Text(contents=["parent user"])]),
+            Turn(role="assistant", texts=[Text(contents=["parent response"])]),
+        ]
+
+        child = mgr.create_and_store(
+            x_correlation_id="child-1",
+            conversation=sample_conversation,
+            num_turns=1,
+            parent_correlation_id="parent-1",
+        )
+        assert [t.role for t in child.turn_list] == ["user", "assistant"]
+        assert child.turn_list == parent.turn_list
+        # Must be a clone, not a shared reference.
+        assert child.turn_list is not parent.turn_list
+
+    def test_missing_parent_raises_runtime_error(self, sample_conversation):
+        mgr = UserSessionManager()
+        with pytest.raises(RuntimeError, match="FORK routing invariant violated"):
+            mgr.create_and_store(
+                x_correlation_id="child-1",
+                conversation=sample_conversation,
+                num_turns=1,
+                parent_correlation_id="missing-parent",
+            )
+
+    def test_no_parent_corr_leaves_turn_list_empty(self, sample_conversation):
+        mgr = UserSessionManager()
+        session = mgr.create_and_store(
+            x_correlation_id="solo-1",
+            conversation=sample_conversation,
+            num_turns=1,
+        )
+        assert session.turn_list == []
+
+    def test_spawn_mode_does_not_require_parent_and_starts_empty(
+        self, sample_conversation
+    ):
+        """SPAWN-mode children start with a fresh context and do NOT trigger
+        the FORK-mode parent-lookup invariant, even when parent_correlation_id
+        is set (they may share sticky routing for unrelated reasons)."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        child = mgr.create_and_store(
+            x_correlation_id="spawn-child",
+            conversation=sample_conversation,
+            num_turns=1,
+            parent_correlation_id="never-registered-parent",
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
+        assert child.turn_list == []
+
+
+# ============================================================
+# FORK-pin eviction: refcount-based cache cleanup
+# ============================================================
+
+
+def _make_parent_conv_with_fork(child_ids: list[str]) -> Conversation:
+    """Build a Conversation that declares a FORK branch for pin-testing."""
+    from aiperf.common.enums import ConversationBranchMode
+    from aiperf.common.models.branch import ConversationBranchInfo
+
+    return Conversation(
+        conversation_id="parent-conv",
+        turns=[
+            Turn(messages=[{"role": "user", "content": "q"}]),
+            Turn(messages=[{"role": "user", "content": "final"}]),
+        ],
+        branches=[
+            ConversationBranchInfo(
+                branch_id="parent-conv:0",
+                child_conversation_ids=child_ids,
+                mode=ConversationBranchMode.FORK,
+            )
+        ],
+    )
+
+
+def _make_child_conv(session_id: str) -> Conversation:
+    return Conversation(
+        conversation_id=session_id,
+        turns=[Turn(messages=[{"role": "user", "content": "c"}])],
+    )
+
+
+class TestIsForkParentStamping:
+    """``UserSession.is_fork_parent`` is stamped at ``create_and_store`` time
+    from the conversation's branches, NOT derived at evict time. This is the
+    regression guard for the bug where PAYLOAD_BYTES storage stripped
+    ``conversation.branches``: the worker rebuilt a stub Conversation with
+    empty ``branches``, eviction (when it derived ``is_fork_parent`` from
+    ``session.conversation.branches``) saw ``False``, and the parent was
+    popped before children landed → ``FORK routing invariant violated``.
+    Stamping at creation makes eviction independent of any later mutation
+    or rehydration of the ``Conversation`` object.
+    """
+
+    def test_session_with_fork_branch_is_marked_fork_parent(self):
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["child-1"])
+        session = mgr.create_and_store(
+            x_correlation_id="parent",
+            conversation=parent_conv,
+            num_turns=2,
+        )
+        assert session.is_fork_parent is True
+
+    def test_session_without_fork_branch_is_not_fork_parent(self, sample_conversation):
+        mgr = UserSessionManager()
+        session = mgr.create_and_store(
+            x_correlation_id="solo",
+            conversation=sample_conversation,
+            num_turns=1,
+        )
+        assert session.is_fork_parent is False
+
+    def test_evict_uses_stamped_flag_not_live_branches(self):
+        """Mutating ``session.conversation.branches`` AFTER creation must NOT
+        change eviction behavior — the stamped ``is_fork_parent`` is the
+        source of truth. This is the bug class commit 1d51dfa1e patched at
+        the symptom level (DatasetManager bail-out)."""
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["child-1"])
+        session = mgr.create_and_store(
+            x_correlation_id="parent",
+            conversation=parent_conv,
+            num_turns=2,
+        )
+        assert session.is_fork_parent is True
+
+        # Simulate the PAYLOAD_BYTES round-trip dropping branches metadata.
+        session.conversation.branches = []
+
+        mgr.evict("parent")
+
+        # Stamped flag wins: parent stays pinned in pending_eviction even
+        # though the live ``branches`` list is now empty.
+        assert mgr.get("parent") is not None
+        assert "parent" in mgr._pending_eviction
+
+
+class TestForkPinEviction:
+    """FORK parents stay pinned in the cache while live FORK children
+    exist so late-arriving children can still seed from the parent's
+    ``turn_list``. The pin is released (and the parent evicted) once
+    the last child evicts — preventing the unbounded cache growth that
+    a naive never-evict pin would cause on long-running DAG benchmarks.
+    """
+
+    def test_parent_with_no_children_pins_until_teardown(self):
+        """A FORK-parent's ``evict`` unconditionally goes to pending — the
+        worker's credit-return path evicts the parent BEFORE children
+        have been dispatched back to this worker, so popping at evict
+        time would race the children's sticky-routing seed lookup. If
+        children truly never spawn, the parent stays pinned until
+        session-manager teardown."""
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["child-1"])
+        mgr.create_and_store(
+            x_correlation_id="parent",
+            conversation=parent_conv,
+            num_turns=2,
+        )
+        assert mgr.get("parent") is not None
+
+        mgr.evict("parent")
+
+        # Parent stays cached; pending_eviction holds it until the last
+        # (potential) child evicts.
+        assert mgr.get("parent") is not None
+        assert "parent" in mgr._pending_eviction
+
+    def test_parent_with_live_fork_child_is_pinned(self):
+        """FORK child in flight → parent goes to pending_eviction, not popped."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["child-1"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        mgr.create_and_store(
+            x_correlation_id="child-1",
+            conversation=_make_child_conv("child-1"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        mgr.evict("parent")
+
+        assert mgr.get("parent") is not None
+        assert "parent" in mgr._pending_eviction
+        assert mgr._fork_child_count["parent"] == 1
+
+    def test_child_evict_cascades_to_pending_parent(self):
+        """Last FORK child evicting drops the parent if it was pending."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["child-1"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        mgr.create_and_store(
+            x_correlation_id="child-1",
+            conversation=_make_child_conv("child-1"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        mgr.evict("parent")  # pending_eviction now
+
+        mgr.evict("child-1")
+
+        assert mgr.get("parent") is None
+        assert mgr.get("child-1") is None
+        assert "parent" not in mgr._pending_eviction
+        assert "parent" not in mgr._fork_child_count
+
+    def test_multiple_children_decrement_one_at_a_time(self):
+        """Parent stays pinned until the LAST FORK child evicts."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["c1", "c2", "c3"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        for cid in ("c1", "c2", "c3"):
+            mgr.create_and_store(
+                x_correlation_id=cid,
+                conversation=_make_child_conv(cid),
+                num_turns=1,
+                parent_correlation_id="parent",
+                branch_mode=ConversationBranchMode.FORK,
+            )
+        assert mgr._fork_child_count["parent"] == 3
+
+        mgr.evict("parent")
+        assert mgr.get("parent") is not None
+
+        mgr.evict("c1")
+        assert mgr.get("parent") is not None
+        assert mgr._fork_child_count["parent"] == 2
+
+        mgr.evict("c2")
+        assert mgr.get("parent") is not None
+        assert mgr._fork_child_count["parent"] == 1
+
+        mgr.evict("c3")
+        assert mgr.get("parent") is None
+        assert "parent" not in mgr._fork_child_count
+
+    def test_child_evict_before_parent_evict_does_not_pop_parent(self):
+        """Children evicting before the parent's own final turn must not
+        cascade-evict — the parent is still live."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["c1"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        mgr.create_and_store(
+            x_correlation_id="c1",
+            conversation=_make_child_conv("c1"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        # Parent hasn't reached its final turn yet, so no evict(parent) call.
+        mgr.evict("c1")
+
+        assert mgr.get("parent") is not None
+        assert "parent" not in mgr._pending_eviction
+        # Refcount drops even without a pending parent — safe.
+        assert mgr._fork_child_count.get("parent", 0) == 0
+
+        # Parent's final turn later: FORK parent always goes pending (no
+        # way to distinguish "children already done" from "children still
+        # en route" at evict time without coupling to the orchestrator).
+        # The pending set is cleaned up on phase teardown.
+        mgr.evict("parent")
+        assert "parent" in mgr._pending_eviction
+
+    def test_spawn_child_does_not_bump_parent_refcount(self):
+        """SPAWN children never seed from the parent's turn_list, so they
+        should not pin the parent in the cache."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["spawn-1"])
+        # NOTE: parent declares FORK branches (so the pin machinery runs),
+        # but the child uses SPAWN mode — it's the child's mode that
+        # determines whether the refcount is bumped.
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        mgr.create_and_store(
+            x_correlation_id="spawn-1",
+            conversation=_make_child_conv("spawn-1"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
+
+        assert "parent" not in mgr._fork_child_count
+
+        # Parent still goes pending (it declares FORK branches); SPAWN
+        # children alone can't cascade-drop it because they don't take
+        # a refcount. In practice the FORK children that the branches
+        # declare will be what cascades.
+        mgr.evict("parent")
+        assert "parent" in mgr._pending_eviction
+
+    def test_non_dag_session_still_evicts_cleanly(self, sample_conversation):
+        """The refactor must not regress plain-session eviction."""
+        mgr = UserSessionManager()
+        mgr.create_and_store(
+            x_correlation_id="solo",
+            conversation=sample_conversation,
+            num_turns=1,
+        )
+        mgr.evict("solo")
+        assert mgr.get("solo") is None

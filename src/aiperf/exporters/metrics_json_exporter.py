@@ -68,6 +68,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,
+            branch_stats=getattr(self._results, "branch_stats", None),
         )
 
         # Add all prepared metrics dynamically

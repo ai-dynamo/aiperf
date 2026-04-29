@@ -26,6 +26,7 @@ def mock_stop_checker():
     mock = MagicMock()
     mock.can_send_any_turn = MagicMock(return_value=True)
     mock.can_start_new_session = MagicMock(return_value=True)
+    mock.can_send_child_turn = MagicMock(return_value=True)
     return mock
 
 
@@ -102,6 +103,8 @@ def make_turn(
     conversation_id: str = "conv1",
     turn_index: int = 0,
     num_turns: int = 1,
+    agent_depth: int = 0,
+    parent_correlation_id: str | None = None,
 ) -> TurnToSend:
     """Create a TurnToSend for testing."""
     return TurnToSend(
@@ -109,6 +112,8 @@ def make_turn(
         x_correlation_id=f"corr-{conversation_id}",
         turn_index=turn_index,
         num_turns=num_turns,
+        agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
     )
 
 
@@ -272,6 +277,41 @@ class TestStopConditionChecking:
         call_args = mock_concurrency.acquire_prefill_slot.call_args
         check_fn = call_args[0][1]  # Second positional arg is the check function
         assert check_fn == mock_stop_checker.can_send_any_turn
+
+    async def test_child_credit_uses_can_send_child_turn_check(
+        self, credit_issuer, mock_concurrency, mock_stop_checker
+    ):
+        """DAG children must use ``can_send_child_turn`` — the narrow
+        bypass that skips only ``is_sending_complete`` while still
+        honoring cancellation, duration, and count limits.
+
+        Regression guard: an earlier version used ``lambda: True`` for
+        children, which silently ignored user Ctrl-C, benchmark duration,
+        and request-count limits for DAG descendants.
+        """
+        turn = make_turn(turn_index=0, agent_depth=1, parent_correlation_id="parent-x")
+
+        await credit_issuer.issue_credit(turn)
+
+        call_args = mock_concurrency.acquire_prefill_slot.call_args
+        check_fn = call_args[0][1]
+        assert check_fn == mock_stop_checker.can_send_child_turn
+
+    async def test_child_credit_blocked_when_can_send_child_turn_false(
+        self, credit_issuer, mock_concurrency, mock_stop_checker
+    ):
+        """When ``can_send_child_turn`` returns False (cancellation /
+        duration / count limit reached), prefill-slot acquisition is
+        called with the gate — and the slot manager is responsible for
+        declining. The issuer itself doesn't need to pre-check because
+        the gate is passed into acquire_prefill_slot directly."""
+        mock_stop_checker.can_send_child_turn = MagicMock(return_value=False)
+        mock_concurrency.acquire_prefill_slot = AsyncMock(return_value=False)
+
+        turn = make_turn(turn_index=0, agent_depth=1, parent_correlation_id="parent-x")
+
+        result = await credit_issuer.issue_credit(turn)
+        assert result is False
 
 
 # =============================================================================
@@ -676,3 +716,252 @@ class TestURLSelectionStrategy:
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.url_index is None
+
+
+# =============================================================================
+# Test: DAG fields propagation
+# =============================================================================
+
+
+class TestDagFieldsPropagation:
+    """Tests for agent_depth / parent_correlation_id propagation through Credit."""
+
+    async def test_credit_inherits_depth_and_parent_from_turn(
+        self, credit_issuer, mock_router
+    ):
+        """Credit should carry agent_depth / parent_correlation_id from TurnToSend."""
+        turn = TurnToSend(
+            conversation_id="child-conv",
+            x_correlation_id="child-xid",
+            turn_index=0,
+            num_turns=2,
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.agent_depth == 1
+        assert sent_credit.parent_correlation_id == "parent-xid"
+
+    async def test_credit_default_depth_and_parent_when_unset(
+        self, credit_issuer, mock_router
+    ):
+        """Credit should default to depth=0 / parent=None when TurnToSend does not set them."""
+        turn = make_turn(turn_index=0, num_turns=1)
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.agent_depth == 0
+        assert sent_credit.parent_correlation_id is None
+
+
+# =============================================================================
+# Test: dispatch_first_turn
+# =============================================================================
+
+
+class TestDispatchFirstTurn:
+    """Tests for CreditIssuer.dispatch_first_turn."""
+
+    async def test_dispatch_first_turn_issues_via_try_issue_credit(
+        self, credit_issuer, mock_router
+    ):
+        """dispatch_first_turn should issue via try_issue_credit with depth/parent propagated."""
+        from aiperf.common.models import ConversationMetadata, TurnMetadata
+        from aiperf.timing.conversation_source import SampledSession
+
+        metadata = ConversationMetadata(
+            conversation_id="child-conv",
+            turns=[TurnMetadata(timestamp_ms=0.0), TurnMetadata(timestamp_ms=1.0)],
+        )
+        session = SampledSession(
+            conversation_id="child-conv",
+            metadata=metadata,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+
+        result = await credit_issuer.dispatch_first_turn(session)
+
+        assert result is True
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.conversation_id == "child-conv"
+        assert sent_credit.x_correlation_id == "child-xid"
+        assert sent_credit.turn_index == 0
+        assert sent_credit.num_turns == 2
+        assert sent_credit.agent_depth == 1
+        assert sent_credit.parent_correlation_id == "parent-xid"
+
+    async def test_dispatch_first_turn_bypasses_session_slot_for_subagent(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        """dispatch_first_turn bypasses session-slot acquisition for DAG
+        children (agent_depth > 0).
+
+        Children inherit the root's session slot, so the issuer must never
+        attempt to acquire a new one. The prefill slot is still acquired
+        through the normal ``try_issue_credit`` flow — if the prefill limit
+        is saturated the dispatch returns False and the orchestrator is
+        responsible for rolling back its own bookkeeping (no double-release
+        of an unacquired slot).
+        """
+        from aiperf.common.models import ConversationMetadata, TurnMetadata
+        from aiperf.timing.conversation_source import SampledSession
+
+        # Session slot path would fail; prefill slot is available.
+        mock_concurrency.try_acquire_session_slot = MagicMock(return_value=False)
+        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=True)
+
+        metadata = ConversationMetadata(
+            conversation_id="child-conv",
+            turns=[TurnMetadata(timestamp_ms=0.0)],
+        )
+        session = SampledSession(
+            conversation_id="child-conv",
+            metadata=metadata,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+
+        result = await credit_issuer.dispatch_first_turn(session)
+
+        assert result is True
+        # Session-slot acquisition must NOT have been attempted: DAG children
+        # inherit the parent's session slot rather than acquiring a new one.
+        mock_concurrency.try_acquire_session_slot.assert_not_called()
+        # Prefill slot was acquired through the normal path.
+        mock_concurrency.try_acquire_prefill_slot.assert_called_once()
+        # The credit was sent to the router.
+        mock_router.send_credit.assert_called_once()
+
+    async def test_dispatch_first_turn_returns_false_when_prefill_saturated(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        """When the prefill slot is unavailable, dispatch_first_turn returns
+        False without sending a credit. The orchestrator's rollback path
+        then releases the prefill accounting it never took (symmetry)."""
+        from aiperf.common.models import ConversationMetadata, TurnMetadata
+        from aiperf.timing.conversation_source import SampledSession
+
+        mock_concurrency.try_acquire_session_slot = MagicMock(return_value=False)
+        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=False)
+
+        metadata = ConversationMetadata(
+            conversation_id="child-conv",
+            turns=[TurnMetadata(timestamp_ms=0.0)],
+        )
+        session = SampledSession(
+            conversation_id="child-conv",
+            metadata=metadata,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+
+        result = await credit_issuer.dispatch_first_turn(session)
+
+        assert result is False
+        mock_router.send_credit.assert_not_called()
+
+
+# =============================================================================
+# Test: dispatch_child_turn — race regression
+# =============================================================================
+
+
+class TestDispatchChildTurnRace:
+    """Regression coverage for the race that hung DAG runs at the
+    request-count cap.
+
+    The bug: ``CreditIssuer.issue_credit`` returned False for two
+    distinct cases — "gate refused, credit NOT on wire" and "credit
+    issued, was the final credit (is_final_credit=True)". The
+    orchestrator's first-turn dispatch read False as "credit not
+    issued" and rolled back the child from join tracking, even when
+    the credit was actually on the wire. When that credit's return
+    eventually arrived the child was no longer tracked, so the
+    parent's pending-join never drained → ``has_pending_branch_work``
+    stayed True forever → ``all_credits_returned_event`` never fired.
+
+    The fix: ``dispatch_child_turn`` (and its first-turn wrapper
+    ``dispatch_first_turn``) returns True iff the credit was actually
+    sent on the wire, regardless of ``is_final_credit``. These tests
+    pin that contract so a future regression that re-introduces the
+    overload will fail loudly here instead of intermittently hanging
+    end-to-end runs.
+    """
+
+    async def test_returns_true_when_issued_credit_was_the_cap_hitter(
+        self, credit_issuer, mock_concurrency, mock_router, mock_progress
+    ):
+        """Critical regression case: child credit IS issued and lands as
+        the final credit (cap-hitter, is_final_credit=True). Method must
+        return True so the caller knows a return is coming and does NOT
+        prematurely call on_child_stopped."""
+        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=True)
+        # Simulate "this child increment crossed the cap" — increment_sent
+        # returns is_final_credit=True for the child.
+        mock_progress.increment_sent = MagicMock(return_value=(7, True))
+
+        turn = TurnToSend(
+            conversation_id="child-conv",
+            turn_index=1,
+            num_turns=2,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+        result = await credit_issuer.dispatch_child_turn(turn)
+
+        assert result is True, (
+            "child whose increment was the cap-hitter must report 'issued' — "
+            "the credit is on the wire and a return is coming"
+        )
+        mock_router.send_credit.assert_called_once()
+
+    async def test_returns_false_when_gate_refused(
+        self, credit_issuer, mock_stop_checker, mock_concurrency, mock_router
+    ):
+        """Gate-refused path: cap was already at-limit when the child
+        arrived. No credit on the wire, no slot acquired, caller must
+        roll back."""
+        mock_stop_checker.can_send_child_turn = MagicMock(return_value=False)
+
+        turn = TurnToSend(
+            conversation_id="child-conv",
+            turn_index=0,
+            num_turns=2,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+        result = await credit_issuer.dispatch_child_turn(turn)
+
+        assert result is False
+        mock_router.send_credit.assert_not_called()
+        mock_concurrency.try_acquire_prefill_slot.assert_not_called()
+
+    async def test_returns_false_when_prefill_slot_unavailable(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        """Slot-saturation path: gate passed but no prefill slot. Same
+        observable behavior as the refused path — no credit on wire."""
+        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=False)
+
+        turn = TurnToSend(
+            conversation_id="child-conv",
+            turn_index=0,
+            num_turns=2,
+            x_correlation_id="child-xid",
+            agent_depth=1,
+            parent_correlation_id="parent-xid",
+        )
+        result = await credit_issuer.dispatch_child_turn(turn)
+
+        assert result is False
+        mock_router.send_credit.assert_not_called()

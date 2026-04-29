@@ -7,10 +7,13 @@ import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import orjson
+
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
     ModelEndpointInfo,
+    RecordContext,
     RequestInfo,
     RequestRecord,
 )
@@ -99,7 +102,21 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        formatted_payload = self.endpoint.format_payload(request_info)
+        if request_info.payload_bytes is not None:
+            formatted_payload = request_info.payload_bytes
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                formatted_payload = current_turn.raw_payload
+            else:
+                formatted_payload = self.endpoint.format_payload(request_info)
+        # Canonicalise to bytes and stash on request_info. Two wins: (1) the
+        # transport skips its own orjson.dumps on the dict path, (2) the
+        # record processor can drop request_info.turns before the ZMQ hop
+        # and still replay the exact wire payload for raw-export.
+        if isinstance(formatted_payload, dict):
+            formatted_payload = orjson.dumps(formatted_payload)
+        request_info.payload_bytes = formatted_payload
         return await self.transport.send_request(
             request_info,
             payload=formatted_payload,
@@ -162,12 +179,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if not request_info.turns:
+        if not request_info.turns and not request_info.payload_bytes:
             raise ValueError(
                 f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"
             )
-        if self.is_trace_enabled:
+        if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         # Redact sensitive headers on the request_info now that the transport has
@@ -184,15 +201,44 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info."""
-        record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
-        )
-        record.request_info = request_info
+        """Enrich a RequestRecord with a slim RecordContext.
 
-        # Copy turns with stripped multimodal data to avoid mutating original session
-        # and reduce memory usage (placeholders instead of large image/audio/video data)
-        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
+        Down-casts the full ``RequestInfo`` (which carries the
+        ``ModelEndpointInfo``, transport headers / URL params, and
+        pre-send-only timing fields) into a pure ``RecordContext`` before
+        attaching it to the record. Only the slim context crosses the ZMQ
+        hop to the record processor.
+
+        The tokeniser and the raw-record exporter both read
+        ``request_info.payload_bytes``; ``osl_mismatch`` reads
+        ``max_tokens``; image/audio/video metrics derive their counts from
+        the endpoint's single-pass ``extract_payload_inputs`` at
+        parse-time. ``turns`` is never populated on the attached context
+        — live records travel turn-less and consumers drive off
+        ``payload_bytes``.
+        """
+        turn_model = request_info.turns[-1].model if request_info.turns else None
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
+
+        max_tokens = request_info.turns[-1].max_tokens if request_info.turns else None
+
+        record.request_info = RecordContext(
+            credit_num=request_info.credit_num,
+            credit_phase=request_info.credit_phase,
+            conversation_id=request_info.conversation_id,
+            turn_index=request_info.turn_index,
+            x_request_id=request_info.x_request_id,
+            x_correlation_id=request_info.x_correlation_id,
+            credit_issued_ns=request_info.credit_issued_ns,
+            agent_depth=request_info.agent_depth,
+            parent_correlation_id=request_info.parent_correlation_id,
+            payload_bytes=request_info.payload_bytes,
+            max_tokens=max_tokens,
+            # system_message / user_context_message stay on RequestInfo —
+            # format_payload inlined them into payload_bytes before dispatch,
+            # so the record processor (which reads only payload_bytes) does
+            # not need them on the wire.
+        )
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

@@ -11,6 +11,7 @@ from pydantic import Field
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import BaseServiceMessage
 from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.types import MessageTypeT
 from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
@@ -52,6 +53,10 @@ class CreditPhaseCompleteMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.CREDIT_PHASE_COMPLETE
     stats: CreditPhaseStats = Field(..., description="The credit phase stats")
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="Orchestrator-emitted DAG sub-agent stats for this phase, if any children were spawned.",
+    )
 
 
 class CreditsCompleteMessage(BaseServiceMessage):

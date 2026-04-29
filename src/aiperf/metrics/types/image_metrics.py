@@ -20,12 +20,13 @@ class NumImagesMetric(BaseRecordMetric[int]):
     def _parse_record(
         self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> int:
-        """Parse the number of images from the record by summing the number of images in each turn."""
-        num_images = sum(
-            len(image.contents)
-            for turn in record.request.turns
-            for image in turn.images
-        )
+        """Read the image count from ``record.media_counts.images``.
+
+        ``InferenceResultParser`` computes this once per record via the
+        endpoint's single-pass ``extract_payload_inputs`` hook, so no
+        re-parsing of ``payload_bytes`` happens here.
+        """
+        num_images = record.media_counts.images
         if num_images == 0:
             raise NoMetricValue(
                 "Record must have at least one image in at least one turn."

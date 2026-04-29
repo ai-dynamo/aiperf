@@ -19,6 +19,7 @@ from aiperf.common.mixins import TaskManagerMixin
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
@@ -135,6 +136,12 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             url_selection_strategy=url_selection_strategy,
         )
+        self._branch_orchestrator = BranchOrchestrator(
+            conversation_source=self._conversation_source,
+            credit_issuer=self._credit_issuer,
+            sticky_router=self._credit_router,
+        )
+        self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
 
         # Execution state
         self._execution_task: asyncio.Task | None = None
@@ -209,6 +216,7 @@ class PhaseRunner(TaskManagerMixin):
             stop_checker=self._stop_checker,
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
+            branch_orchestrator=self._branch_orchestrator,
         )
 
         try:
@@ -253,6 +261,7 @@ class PhaseRunner(TaskManagerMixin):
                     self._lifecycle.mark_complete(grace_period_triggered=True)
                     self._progress.freeze_completed_counts()
                 self._progress.all_credits_returned_event.set()
+                self._branch_orchestrator.cleanup()
                 return self._progress.create_stats(self._lifecycle)
 
             # 11. Seamless mode: phase flows into next without waiting for returns
@@ -269,6 +278,7 @@ class PhaseRunner(TaskManagerMixin):
             for ramper in self._rampers:
                 ramper.stop()
             self._scheduler.cancel_all()
+            self._branch_orchestrator.cleanup()
 
             return self._progress.create_stats(self._lifecycle)
 
@@ -299,8 +309,12 @@ class PhaseRunner(TaskManagerMixin):
                 self._progress.freeze_completed_counts()
                 self._progress.all_credits_returned_event.set()
                 stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_complete(stats)
+                branch_stats = self._snapshot_branch_stats()
+                await self._phase_publisher.publish_phase_complete(
+                    stats, branch_stats=branch_stats
+                )
 
+            self._branch_orchestrator.cleanup()
             raise e
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
@@ -478,7 +492,17 @@ class PhaseRunner(TaskManagerMixin):
         """
         timed_out = False
         try:
-            if self._progress.check_all_returned_or_cancelled():
+            # Short-circuit only when the phase counters say done AND the
+            # DAG has drained. The counters are root-only (DAG children
+            # don't bump requests_completed — they inherit the parent's
+            # session slot), so ``check_all_returned_or_cancelled`` can
+            # return True the moment the last root returns even while
+            # children are still in flight. Consult the orchestrator to
+            # avoid declaring the phase complete mid-DAG.
+            if (
+                self._progress.check_all_returned_or_cancelled()
+                and not self._branch_orchestrator.has_pending_branch_work()
+            ):
                 self.info(
                     "All credits already returned. Setting all_credits_returned_event."
                 )
@@ -542,7 +566,10 @@ class PhaseRunner(TaskManagerMixin):
             stats = self._progress.create_stats(self._lifecycle)
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
-            await self._phase_publisher.publish_phase_complete(stats)
+            branch_stats = self._snapshot_branch_stats()
+            await self._phase_publisher.publish_phase_complete(
+                stats, branch_stats=branch_stats
+            )
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
@@ -554,6 +581,21 @@ class PhaseRunner(TaskManagerMixin):
                 f"Released stuck slots for phase {self._config.phase}: "
                 f"session={session_released}, prefill={prefill_released}"
             )
+
+    def _snapshot_branch_stats(self):
+        """Snapshot the orchestrator's BranchStats for cross-process publication.
+
+        Returns ``None`` when no orchestrator is attached (non-DAG runs) so the
+        message field stays absent. Returns a deep copy so downstream mutation of
+        the live orchestrator does not retroactively change the published stats.
+        """
+        orch = self._branch_orchestrator
+        if orch is None:
+            return None
+        stats = getattr(orch, "stats", None)
+        if stats is None:
+            return None
+        return stats.model_copy(deep=True) if hasattr(stats, "model_copy") else stats
 
     async def _wait_for_event_with_timeout(
         self,
