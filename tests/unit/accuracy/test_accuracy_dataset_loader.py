@@ -94,3 +94,49 @@ class TestAccuracyDatasetLoaderSystemPrompt:
 
         for i, conv in enumerate(conversations):
             assert conv.turns[0].texts[0].contents[0] == f"Be brief.\n\nQ{i}"
+
+
+class TestAccuracyDatasetLoaderRawMessages:
+    def test_prebuilt_raw_messages_passed_through_unchanged(self) -> None:
+        """When problem.raw_messages is set, Turn.raw_messages receives them as-is."""
+        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        problem = BenchmarkProblem(
+            prompt="What is 2+2?",
+            ground_truth="A",
+            task="math",
+            raw_messages=[
+                {"role": "user", "content": "Q1?"},
+                {"role": "assistant", "content": " A"},
+                {"role": "user", "content": "What is 2+2?"},
+            ],
+        )
+
+        conversations = loader._convert_to_conversations([problem])
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == [
+            {"role": "user", "content": "Q1?"},
+            {"role": "assistant", "content": " A"},
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+    def test_system_prompt_prepended_to_prebuilt_raw_messages(self) -> None:
+        """system_prompt is inserted at index 0 of pre-built raw_messages."""
+        loader = AccuracyDatasetLoader(
+            user_config=_make_user_config(system_prompt="Be concise.")
+        )
+        problem = BenchmarkProblem(
+            prompt="What is 2+2?",
+            ground_truth="A",
+            task="math",
+            raw_messages=[
+                {"role": "user", "content": "What is 2+2?"},
+            ],
+        )
+
+        conversations = loader._convert_to_conversations([problem])
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages is not None
+        assert turn.raw_messages[0] == {"role": "system", "content": "Be concise."}
+        assert turn.raw_messages[1] == {"role": "user", "content": "What is 2+2?"}
