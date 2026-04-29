@@ -68,49 +68,24 @@ def _is_offline_mode() -> bool:
 
 
 def _find_hf_cache_aliases(name: str) -> list[Path]:
-    """Find HF cache directories matching a model name alias.
+    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    from aiperf.common.tokenizer_cache import _find_hf_cache_aliases as _impl
 
-    Scans the HF hub cache for ``models--*--<name>`` directories
-    (case-insensitive suffix match).
-
-    Returns:
-        List of matching cache directory paths.
-    """
-    from huggingface_hub.constants import HF_HUB_CACHE
-
-    cache_dir = Path(HF_HUB_CACHE)
-    if not cache_dir.is_dir():
-        return []
-
-    suffix = f"--{name.lower()}"
-    return [
-        entry
-        for entry in cache_dir.iterdir()
-        if entry.is_dir()
-        and entry.name.startswith("models--")
-        and entry.name.lower().endswith(suffix)
-    ]
+    return _impl(name)
 
 
-def _is_hf_cached(name: str) -> bool:
-    """Check if a HuggingFace model is available in the local cache.
+def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
+    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    from aiperf.common.tokenizer_cache import _is_revision_snapshot_cached as _impl
 
-    Looks for ``models--<name>/`` (with ``/`` replaced by ``--``) inside the
-    HF hub cache directory.  Also handles alias-style short names, returning
-    True only when a single unambiguous match exists.
-    """
-    from huggingface_hub.constants import HF_HUB_CACHE
+    return _impl(model_dir, revision)
 
-    cache_dir = Path(HF_HUB_CACHE)
-    if not cache_dir.is_dir():
-        return False
 
-    # Exact match: "meta-llama/Llama-2-7b-hf" -> "models--meta-llama--Llama-2-7b-hf"
-    exact = cache_dir / f"models--{name.replace('/', '--')}"
-    if exact.is_dir():
-        return True
+def _is_hf_cached(name: str, revision: str | None = None) -> bool:
+    """Re-exported from :mod:`aiperf.common.tokenizer_cache` (split for file-size)."""
+    from aiperf.common.tokenizer_cache import _is_hf_cached as _impl
 
-    return len(_find_hf_cache_aliases(name)) == 1
+    return _impl(name, revision)
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:

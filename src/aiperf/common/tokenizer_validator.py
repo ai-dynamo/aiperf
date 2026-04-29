@@ -84,6 +84,51 @@ def _cache_tokenizer(
     return name, time.perf_counter() - begin
 
 
+def _partition_cached_names(
+    names: set[str],
+    *,
+    revision: str,
+    logger: AIPerfLogger,
+) -> tuple[set[str], set[str]]:
+    """Split *names* into (already_cached, to_fetch) using on-disk cache state.
+
+    Cache hits are registered with the bundle registry here so the downstream
+    TokenizerRouter/WGM can ship snapshot dirs to sibling pods without the
+    subprocess fetch step.
+    """
+    from pathlib import Path
+
+    from aiperf.common.tokenizer import _is_hf_cached
+
+    already_cached: set[str] = set()
+    to_fetch: set[str] = set()
+    for name in names:
+        if _is_hf_cached(name, revision):
+            already_cached.add(name)
+        else:
+            to_fetch.add(name)
+
+    if already_cached:
+        from huggingface_hub import snapshot_download
+
+        logger.info(f"HF cache hit (skipping prefetch): {sorted(already_cached)}")
+        registry = _DEFAULT_REGISTRY
+        if registry is not None:
+            for name in already_cached:
+                registry.register_pending(name)
+                snapshot_dir = Path(
+                    snapshot_download(
+                        repo_id=name,
+                        revision=revision,
+                        repo_type="model",
+                        local_files_only=True,
+                    )
+                )
+                registry.mark_ready(name, snapshot_dir)
+
+    return already_cached, to_fetch
+
+
 def _prefetch_tokenizers(
     names: set[str],
     *,
@@ -103,6 +148,11 @@ def _prefetch_tokenizers(
     from aiperf.common.models import ErrorDetails
     from aiperf.common.tokenizer_display import display_tokenizer_validation_error
 
+    _, to_fetch = _partition_cached_names(names, revision=revision, logger=logger)
+    if not to_fetch:
+        return
+
+    names = to_fetch
     count = len(names)
     log_level = _logging.getLevelName(_logging.getLogger().getEffectiveLevel())
     logger.info(
