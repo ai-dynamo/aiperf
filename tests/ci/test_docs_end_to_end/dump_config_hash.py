@@ -32,4 +32,4 @@ normalized = sorted(
     ],
     key=lambda d: d["name"],
 )
-print(hashlib.sha256(json.dumps(normalized).encode()).hexdigest())
+print(hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest())

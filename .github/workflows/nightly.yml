@@ -877,6 +877,7 @@ jobs:
             echo "| pre-commit | ${{ needs.pre-commit.result }} |"
             echo "| unit-tests | ${{ needs.unit-tests.result }} |"
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
+            echo "| test-docs-end-to-end | ${{ needs.test-docs-end-to-end.result }} |"
             echo ""
             echo "### Build + Upload"
             echo "| Job | Result |"
