@@ -399,14 +399,27 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
         from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 
-        loader = AccuracyDatasetLoader(user_config=self.user_config)
-        if (
-            "dataset_sampling_strategy" not in self.user_config.input.model_fields_set
-            and self.user_config.timing_mode != TimingMode.FIXED_SCHEDULE
-        ):
+        if self.user_config.timing_mode == TimingMode.FIXED_SCHEDULE:
+            raise self._service_error(
+                "Accuracy mode requires sequential request order; "
+                "fixed-schedule timing is not supported in accuracy mode."
+            )
+
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
                 DatasetSamplingStrategy.SEQUENTIAL
             )
+        elif (
+            self.user_config.input.dataset_sampling_strategy
+            != DatasetSamplingStrategy.SEQUENTIAL
+        ):
+            raise self._service_error(
+                f"Accuracy mode requires sequential request order; "
+                f"'{self.user_config.input.dataset_sampling_strategy}' sampling is not supported. "
+                f"Remove --dataset-sampling-strategy or set it to 'sequential'."
+            )
+
+        loader = AccuracyDatasetLoader(user_config=self.user_config)
         return await loader.load()
 
     async def _configure_dataset(self) -> None:
