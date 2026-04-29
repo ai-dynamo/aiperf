@@ -376,20 +376,28 @@ async def aggregate_sweep_and_export(
     aggregate_dir = base_dir / "sweep_aggregate"
     await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
 
+    # Mirror origin/main's SweepConfidenceStrategy.aggregate shape: stuff the
+    # sweep sections into AggregateResult.metadata + .metrics so the exporters
+    # share their constructor signature with sibling confidence exporters.
     failed_runs = [
         {"label": r.label, "error": r.error} for r in results if not r.success
     ]
-    aggregate_meta = AggregateResult(
+    sweep_metadata = dict(sweep_dict.get("metadata", {}))
+    sweep_metadata["best_configurations"] = sweep_dict.get("best_configurations", {})
+    sweep_metadata["pareto_optimal"] = sweep_dict.get("pareto_optimal", [])
+    aggregate_result = AggregateResult(
         aggregation_type="sweep",
         num_runs=len(results),
         num_successful_runs=sum(1 for r in results if r.success),
         failed_runs=failed_runs,
+        metadata=sweep_metadata,
+        metrics=sweep_dict.get("per_combination_metrics", []),
     )
     exporter_config = AggregateExporterConfig(
-        result=aggregate_meta, output_dir=aggregate_dir
+        result=aggregate_result, output_dir=aggregate_dir
     )
-    json_exporter = AggregateSweepJsonExporter(exporter_config, sweep_dict)
-    csv_exporter = AggregateSweepCsvExporter(exporter_config, sweep_dict)
+    json_exporter = AggregateSweepJsonExporter(exporter_config)
+    csv_exporter = AggregateSweepCsvExporter(exporter_config)
 
     json_path, csv_path = await asyncio.gather(
         json_exporter.export(), csv_exporter.export()

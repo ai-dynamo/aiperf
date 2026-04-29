@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for AggregateSweepCsvExporter and AggregateSweepJsonExporter.
 
-The HEAD constructor surface is ``(config, sweep_dict)`` — sweep sections
-flow through the dict; AggregateResult wrapper fields (aggregation_type,
-num_runs, num_successful_runs, failed_runs) flow through ``config.result``.
-Main's PR #699 surface is ``(config)`` only with sweep sections nested in
-``result.metadata`` / ``result.metrics``; tests below adapt that data
-shape to HEAD's constructor while still asserting the same byte-compatible
-output schema.
+The constructor surface matches sibling aggregate exporters:
+``(config)`` only, with sweep sections nested in
+``result.metadata`` (sweep_parameters, num_combinations,
+best_configurations, pareto_optimal) and ``result.metrics``
+(per_combination_metrics). Wrapper fields (aggregation_type,
+num_runs, num_successful_runs, failed_runs) live on the AggregateResult
+itself. Output JSON/CSV stays byte-compatible with PR #699.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from typing import Any
 
 import pytest
 
@@ -27,25 +28,49 @@ from aiperf.exporters.aggregate import (
 from aiperf.orchestrator.aggregation.base import AggregateResult
 
 
+def _build_result(
+    sweep_dict: dict[str, Any],
+    *,
+    num_runs: int = 2,
+    num_successful_runs: int = 2,
+    failed_runs: list[dict] | None = None,
+) -> AggregateResult:
+    """Build an AggregateResult from a sweep_dict shape (SweepAnalyzer.compute output).
+
+    Mirrors origin/main's SweepConfidenceStrategy.aggregate: lifts
+    best_configurations + pareto_optimal into metadata alongside the rest
+    of the sweep metadata, and stuffs per_combination_metrics into the
+    metrics field.
+    """
+    metadata = dict(sweep_dict.get("metadata", {}))
+    metadata["best_configurations"] = sweep_dict.get("best_configurations", {})
+    metadata["pareto_optimal"] = sweep_dict.get("pareto_optimal", [])
+    return AggregateResult(
+        aggregation_type="sweep",
+        num_runs=num_runs,
+        num_successful_runs=num_successful_runs,
+        failed_runs=failed_runs or [],
+        metadata=metadata,
+        metrics=sweep_dict.get("per_combination_metrics", []),
+    )
+
+
 def _exporter_config(
     tmp_path,  # noqa: ANN001
+    sweep_dict: dict[str, Any],
     *,
     num_runs: int = 2,
     num_successful_runs: int = 2,
     failed_runs: list[dict] | None = None,
     output_subdir: str | None = None,
 ) -> AggregateExporterConfig:
-    """Build an AggregateExporterConfig with an AggregateResult wrapper.
-
-    The wrapper now carries real run counts + failed_runs that the JSON
-    exporter emits at the top level (PR #699 schema).
-    """
+    """Build an AggregateExporterConfig with sweep sections wrapped on the result."""
     output_dir = tmp_path / output_subdir if output_subdir else tmp_path
-    result = AggregateResult(
-        aggregation_type="sweep",
+    result = _build_result(
+        sweep_dict,
         num_runs=num_runs,
         num_successful_runs=num_successful_runs,
-        failed_runs=failed_runs or [],
+        failed_runs=failed_runs,
     )
     return AggregateExporterConfig(result=result, output_dir=output_dir)
 
@@ -214,8 +239,8 @@ def three_combo_sweep_dict() -> dict:
 class TestAggregateSweepCsvExporter:
     def test_generate_content_has_header_and_rows(self, tmp_path):
         sweep_dict = _two_combo_sweep_dict()
-        cfg = _exporter_config(tmp_path)
-        exporter = AggregateSweepCsvExporter(cfg, sweep_dict)
+        cfg = _exporter_config(tmp_path, sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         content = exporter._generate_content()
 
@@ -242,8 +267,8 @@ class TestAggregateSweepCsvExporter:
     @pytest.mark.asyncio
     async def test_export_writes_file(self, tmp_path):
         sweep_dict = _two_combo_sweep_dict()
-        cfg = _exporter_config(tmp_path)
-        exporter = AggregateSweepCsvExporter(cfg, sweep_dict)
+        cfg = _exporter_config(tmp_path, sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         path = await exporter.export()
 
@@ -260,11 +285,12 @@ class TestAggregateSweepCsvExporter:
         """Test that CSV export creates the expected file."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
 
@@ -279,11 +305,12 @@ class TestAggregateSweepCsvExporter:
         """Test that CSV export has correct format and sections."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         csv_content = csv_path.read_text()
@@ -313,11 +340,12 @@ class TestAggregateSweepCsvExporter:
         """Per-combination metrics table is correctly formatted."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
 
@@ -341,11 +369,12 @@ class TestAggregateSweepCsvExporter:
         """Best configurations section is present and correct."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         csv_content = csv_path.read_text()
@@ -361,11 +390,12 @@ class TestAggregateSweepCsvExporter:
         """Pareto optimal section is present."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         csv_content = csv_path.read_text()
@@ -380,11 +410,12 @@ class TestAggregateSweepCsvExporter:
         and profile-run counts (PR #699 schema)."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         csv_content = csv_path.read_text()
@@ -403,11 +434,12 @@ class TestAggregateSweepCsvExporter:
         """Metadata section's run-count rows reflect the AggregateResult wrapper."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=12,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         with open(csv_path, newline="") as f:
@@ -427,11 +459,12 @@ class TestAggregateSweepCsvExporter:
         """Numbers in the per-combination table are formatted to two decimals."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
 
@@ -471,11 +504,12 @@ class TestAggregateSweepCsvExporter:
         }
         cfg = _exporter_config(
             tmp_path,
+            sweep_dict,
             num_runs=5,
             num_successful_runs=5,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepCsvExporter(cfg, sweep_dict)
+        exporter = AggregateSweepCsvExporter(cfg)
 
         csv_path = await exporter.export()
         csv_content = csv_path.read_text()
@@ -488,8 +522,8 @@ class TestAggregateSweepJsonExporter:
     @pytest.mark.asyncio
     async def test_export_writes_expected_schema(self, tmp_path):
         sweep_dict = _two_combo_sweep_dict()
-        cfg = _exporter_config(tmp_path)
-        exporter = AggregateSweepJsonExporter(cfg, sweep_dict)
+        cfg = _exporter_config(tmp_path, sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         path = await exporter.export()
 
@@ -513,6 +547,9 @@ class TestAggregateSweepJsonExporter:
         assert data["num_successful_runs"] == 2
         assert data["failed_runs"] == []
         assert data["metadata"]["num_combinations"] == 2
+        # best_configurations / pareto_optimal must NOT double-emit under metadata.
+        assert "best_configurations" not in data["metadata"]
+        assert "pareto_optimal" not in data["metadata"]
         assert len(data["per_combination_metrics"]) == 2
         assert data["best_configurations"]["best_throughput"]["parameters"] == {
             "concurrency": 20
@@ -531,8 +568,8 @@ class TestAggregateSweepJsonExporter:
         sweep_dict["per_combination_metrics"][0]["metrics"]["request_throughput_avg"][
             "mean"
         ] = np.float64(100.0)
-        cfg = _exporter_config(tmp_path)
-        exporter = AggregateSweepJsonExporter(cfg, sweep_dict)
+        cfg = _exporter_config(tmp_path, sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         content = exporter._generate_content()
         data = json.loads(content)
@@ -550,11 +587,12 @@ class TestAggregateSweepJsonExporter:
         """JSON export creates the expected file at the expected path."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepJsonExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         json_path = await exporter.export()
 
@@ -569,11 +607,12 @@ class TestAggregateSweepJsonExporter:
         """JSON export conforms to the full PR #699 schema."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepJsonExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         json_path = await exporter.export()
         with open(json_path) as f:
@@ -644,12 +683,13 @@ class TestAggregateSweepJsonExporter:
         ]
         cfg = _exporter_config(
             tmp_path,
+            sweep_dict,
             num_runs=10,
             num_successful_runs=5,
             failed_runs=failed,
             output_subdir="sweep_aggregate",
         )
-        exporter = AggregateSweepJsonExporter(cfg, sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         json_path = await exporter.export()
         with open(json_path) as f:
@@ -667,13 +707,11 @@ class TestAggregateSweepJsonExporter:
         output_dir = tmp_path / "nested" / "sweep_aggregate"
         assert not output_dir.exists()
 
-        result = AggregateResult(
-            aggregation_type="sweep",
-            num_runs=15,
-            num_successful_runs=15,
+        result = _build_result(
+            three_combo_sweep_dict, num_runs=15, num_successful_runs=15
         )
         cfg = AggregateExporterConfig(result=result, output_dir=output_dir)
-        exporter = AggregateSweepJsonExporter(cfg, three_combo_sweep_dict)
+        exporter = AggregateSweepJsonExporter(cfg)
 
         json_path = await exporter.export()
 
@@ -691,12 +729,13 @@ class TestSweepExportersIntegration:
         """JSON and CSV exporters produce consistent data for the same input."""
         cfg = _exporter_config(
             tmp_path,
+            three_combo_sweep_dict,
             num_runs=15,
             num_successful_runs=15,
             output_subdir="sweep_aggregate",
         )
-        json_exporter = AggregateSweepJsonExporter(cfg, three_combo_sweep_dict)
-        csv_exporter = AggregateSweepCsvExporter(cfg, three_combo_sweep_dict)
+        json_exporter = AggregateSweepJsonExporter(cfg)
+        csv_exporter = AggregateSweepCsvExporter(cfg)
 
         json_path = await json_exporter.export()
         csv_path = await csv_exporter.export()
@@ -726,12 +765,13 @@ class TestSweepExportersIntegration:
 
         cfg = _exporter_config(
             tmp_path,
+            minimal_sweep_dict,
             num_runs=1,
             num_successful_runs=1,
             output_subdir="sweep_aggregate",
         )
-        json_exporter = AggregateSweepJsonExporter(cfg, minimal_sweep_dict)
-        csv_exporter = AggregateSweepCsvExporter(cfg, minimal_sweep_dict)
+        json_exporter = AggregateSweepJsonExporter(cfg)
+        csv_exporter = AggregateSweepCsvExporter(cfg)
 
         json_path = await json_exporter.export()
         csv_path = await csv_exporter.export()

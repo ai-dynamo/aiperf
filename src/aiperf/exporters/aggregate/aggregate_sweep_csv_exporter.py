@@ -3,8 +3,8 @@
 """CSV exporter for sweep aggregate results.
 
 Multi-section CSV layout (matches PR #699 schema, byte-compatible with
-main's :class:`AggregateSweepCsvExporter`). Reads the dict returned by
-:meth:`aiperf.orchestrator.aggregation.sweep.SweepAnalyzer.compute`.
+main's :class:`AggregateSweepCsvExporter`). Reads sweep sections directly
+from the enclosing :class:`~aiperf.orchestrator.aggregation.base.AggregateResult`.
 """
 
 from __future__ import annotations
@@ -27,38 +27,39 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
 
     Layout (blank-line separated):
 
-    1. Per-combination metrics table — one row per parameter combination
+    1. Per-combination metrics table -- one row per parameter combination
        with ``mean``/``std``/``min``/``max``/``cv`` columns per metric.
-    2. Best configurations — one row per objective
+    2. Best configurations -- one row per objective
        (``best_throughput``, ``best_latency_p99``).
-    3. Pareto optimal points — one row per non-dominated combination.
-    4. Metadata — aggregation type, sweep parameters, combination count,
+    3. Pareto optimal points -- one row per non-dominated combination.
+    4. Metadata -- aggregation type, sweep parameters, combination count,
        profile-run counts (matches PR #699 schema).
 
-    Constructor surface deliberately differs from siblings: takes the
-    sweep dict (output of :meth:`SweepAnalyzer.compute`) directly so
-    callers don't need to wrap it in an :class:`AggregateResult` first.
+    Constructor surface matches sibling aggregate exporters
+    (``AggregateConfidenceCsvExporter`` etc.): just ``(config, **kwargs)``.
+    Sweep sections are read from ``self._result.metadata`` (sweep_parameters,
+    num_combinations, best_configurations, pareto_optimal) and from
+    ``self._result.metrics`` (per_combination_metrics).
 
     Example:
-        >>> sweep_dict = {
-        ...     "metadata": {
+        >>> result = AggregateResult(
+        ...     aggregation_type="sweep",
+        ...     num_runs=2,
+        ...     num_successful_runs=2,
+        ...     metadata={
         ...         "sweep_parameters": [{"name": "concurrency", "values": [10, 20]}],
         ...         "num_combinations": 2,
+        ...         "best_configurations": {},
+        ...         "pareto_optimal": [],
         ...     },
-        ...     "per_combination_metrics": [
+        ...     metrics=[
         ...         {"parameters": {"concurrency": 10},
         ...          "metrics": {"request_throughput_avg": {"mean": 100.0}}},
         ...     ],
-        ...     "best_configurations": {},
-        ...     "pareto_optimal": [],
-        ... }
-        >>> exp = AggregateSweepCsvExporter(config, sweep_dict)  # doctest: +SKIP
+        ... )  # doctest: +SKIP
+        >>> exp = AggregateSweepCsvExporter(AggregateExporterConfig(result, dir))  # doctest: +SKIP
         >>> await exp.export()  # doctest: +SKIP
     """
-
-    def __init__(self, config, sweep_dict: dict[str, Any], **kwargs) -> None:
-        super().__init__(config, **kwargs)
-        self._sweep_dict = sweep_dict
 
     def get_file_name(self) -> str:
         """Return ``"profile_export_aiperf_sweep.csv"``."""
@@ -69,27 +70,30 @@ class AggregateSweepCsvExporter(AggregateBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        metadata = self._sweep_dict.get("metadata", {})
-        sweep_parameters = metadata.get("sweep_parameters", [])
+        sweep_parameters = self._result.metadata.get("sweep_parameters", [])
         param_names = [p["name"] for p in sweep_parameters]
-        per_combination_metrics = self._sweep_dict.get("per_combination_metrics", [])
+        per_combination_metrics = self._result.metrics or []
 
         _write_per_combination_section(writer, per_combination_metrics, param_names)
 
         writer.writerow([])
         _write_best_configurations_section(
             writer,
-            self._sweep_dict.get("best_configurations", {}),
+            self._result.metadata.get("best_configurations", {}),
             param_names,
         )
 
         writer.writerow([])
         _write_pareto_section(
-            writer, self._sweep_dict.get("pareto_optimal", []), param_names
+            writer,
+            self._result.metadata.get("pareto_optimal", []),
+            param_names,
         )
 
         writer.writerow([])
-        _write_metadata_section(writer, metadata, param_names, self._result)
+        _write_metadata_section(
+            writer, self._result.metadata, param_names, self._result
+        )
 
         return buf.getvalue()
 

@@ -202,13 +202,20 @@ class MultiRunOrchestrator:
             f"{len(plan.configs)} variations"
         )
 
-        # One strategy per variation cell. FixedTrialsStrategy.get_next_config
-        # keys disable_warmup_after_first off len(prior) > 0 - so we must pass
-        # each variation's growing prior-results list across the outer trial
-        # loop. Passing [] every trial would re-enable warmup on every trial,
-        # silently diverging from main's _execute_trials_then_sweep semantic
-        # where warmup runs only in trial 1. Strategy only inspects the list
-        # length, never its contents.
+        # Why we track per-variation history:
+        # FixedTrialsStrategy.get_next_config keys disable_warmup_after_first
+        # off `len(prior_results) > 0`. In repeated mode each (variation,
+        # trial) cell fires exactly once, so the natural per-cell results
+        # list is always [] and warmup would re-enable on every trial -
+        # silently diverging from main's _execute_trials_then_sweep
+        # semantics where warmup runs only on trial 1 across all
+        # variations. We thread per-variation history across the outer
+        # trial loop so the strategy sees prior_results growing as it
+        # would in independent mode. Strategy contract only inspects
+        # len(prior); contents are not read - so we never have to keep
+        # this list pruned or even successful-only. Do NOT replace with
+        # `[]` per call: the silent re-enable is unobservable in unit
+        # tests but corrupts wall-clock comparisons across modes.
         strategies = [build_strategy(plan, logger) for _ in plan.configs]
         for strategy, cfg in zip(strategies, plan.configs, strict=True):
             strategy.validate_config(cfg)
