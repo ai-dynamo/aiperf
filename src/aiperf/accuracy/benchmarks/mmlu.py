@@ -147,7 +147,8 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         for t in tasks:
             if t not in MMLU_SUBJECTS:
                 raise ValueError(
-                    f"Unknown MMLU subject '{t}'. Valid subjects: {MMLU_SUBJECTS}"
+                    f"Unknown MMLU subject '{t}'. "
+                    f"See docs/accuracy/accuracy_benchmarking.md for the list of {len(MMLU_SUBJECTS)} valid subjects."
                 )
             resolved.append(t)
         return resolved
