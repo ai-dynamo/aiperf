@@ -28,9 +28,17 @@
 #    - On PRs: only validates (preview lives in a separate, non-blocking job)
 #    - Preserves versioned documentation (products[0]) from docs-website's docs.yml
 #
-# 3. PREVIEW (PRs, non-blocking): Generates a preview URL and comments on the PR.
+# 3. PREVIEW (non-blocking): Generates a preview URL and comments on the PR.
 #    - `continue-on-error: true` so flaky `fern generate --preview` failures never
 #      block PR merges. Validation correctness is enforced by job (2).
+#    - On same-repo PRs: runs on the `pull_request` event with full secret access.
+#    - On fork PRs (no secrets in `pull_request` events): skipped on the
+#      `pull_request` event, then re-runs on push to `pull-request/<N>` after a
+#      maintainer approves the PR via copy-pr-bot (`/ok to test`). The mirror
+#      branch is in the trusted org repo, so it gets `FERN_TOKEN` and can post
+#      the preview URL back to the original PR.
+#    - On un-mirrored fork PRs: simply skipped — no fake yellow continue-on-error
+#      check, just no preview link until a maintainer kicks off copy-pr-bot.
 #
 # 4. VERSION RELEASE (tags): Creates versioned documentation snapshot
 #    - Triggers on new version tags (vX.Y.Z format)
@@ -52,6 +60,10 @@ on:
   push:
     branches:
       - main
+      # copy-pr-bot mirror branches for fork PRs; pushes here run in trusted
+      # context with FERN_TOKEN, letting `preview-docs` generate previews for
+      # fork PRs after a maintainer approves via `/ok to test`.
+      - 'pull-request/*'
     tags:
       # Match only clean semver tags: vX.Y.Z
       - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -99,7 +111,8 @@ jobs:
     name: Validate (and publish on main) synced docs
     if: |
       github.ref_type != 'tag' &&
-      (github.event.inputs.tag == '' || github.event.inputs.tag == null)
+      (github.event.inputs.tag == '' || github.event.inputs.tag == null) &&
+      !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
     runs-on: ubuntu-latest
     steps:
       - name: Determine context
@@ -269,10 +282,29 @@ jobs:
 
   preview-docs:
     name: Preview docs (non-blocking)
-    if: github.event_name == 'pull_request'
+    # Run on:
+    #   1. same-repo PRs (have FERN_TOKEN), OR
+    #   2. push to copy-pr-bot mirror branches `pull-request/<N>` (also have
+    #      FERN_TOKEN, used for fork PRs after maintainer `/ok to test`).
+    # Un-mirrored fork PRs don't match either condition, so they're cleanly
+    # skipped — no fake yellow continue-on-error check on the PR.
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            # push to copy-pr-bot mirror branch refs/heads/pull-request/<N>
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            echo "number=${BRANCH#pull-request/}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout source branch
         uses: actions/checkout@v4
         with:
@@ -380,7 +412,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.issue.number;
+            const prNumber = ${{ steps.pr.outputs.number }};
             const commentIdentifier = '<!-- fern-docs-preview -->';
             const body = `${commentIdentifier}\n**Fern Docs Preview:** ${{ steps.preview.outputs.url }}/dev`;
 
