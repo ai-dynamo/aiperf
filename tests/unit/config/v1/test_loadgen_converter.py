@@ -10,8 +10,7 @@ sees the list.
 
 from __future__ import annotations
 
-import pytest
-
+from aiperf.common.enums import SweepMode
 from aiperf.config.loader import build_benchmark_plan
 from aiperf.config.v1 import ServiceConfig, UserConfig
 from aiperf.config.v1.converter import convert_user_to_aiperf
@@ -84,16 +83,21 @@ def test_seed_derivation_same_seed_pinned() -> None:
     assert seeds == [100, 100, 100]
 
 
-def test_repeated_sweep_mode_rejected_if_present() -> None:
-    """If a repeated sweep mode were ever set on loadgen, the converter rejects it.
+def test_repeated_sweep_mode_flows_through_to_multi_run() -> None:
+    """``--parameter-sweep-mode=repeated`` lands as ``multi_run.mode='repeated'``."""
+    cfg = _convert(
+        loadgen={
+            "concurrency": [10, 20],
+            "num_profile_runs": 2,
+            "parameter_sweep_mode": "repeated",
+        },
+    )
+    assert cfg.multi_run.mode == SweepMode.REPEATED
 
-    The field is not currently exposed on v1, but the converter guards
-    defensively so a future field rename does not silently activate the
-    unimplemented REPEATED execution path.
-    """
-    user = UserConfig.model_validate({**_BASE, "loadgen": {"concurrency": 10}})
-    # Inject a repeated sentinel post-construction since v1 doesn't expose it
-    object.__setattr__(user.loadgen, "parameter_sweep_mode", "repeated")
-    user.loadgen.model_fields_set.add("parameter_sweep_mode")
-    with pytest.raises(ValueError, match="repeated"):
-        convert_user_to_aiperf(user, ServiceConfig())
+
+def test_parameter_sweep_mode_default_is_independent() -> None:
+    """Omitted flag yields ``multi_run.mode == INDEPENDENT`` (the v2 default)."""
+    cfg = _convert(
+        loadgen={"concurrency": [10, 20], "num_profile_runs": 2},
+    )
+    assert cfg.multi_run.mode == SweepMode.INDEPENDENT

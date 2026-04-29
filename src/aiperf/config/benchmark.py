@@ -9,7 +9,12 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat, GPUTelemetryMode
+from aiperf.common.enums import (
+    ConvergenceMode,
+    ConvergenceStat,
+    GPUTelemetryMode,
+    SweepMode,
+)
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation
 from aiperf.config.zmq import BaseZMQCommunicationConfig
@@ -133,6 +138,14 @@ class BenchmarkPlan(BaseModel):
             "If true, every sweep variation reuses the same seed for "
             "correlated comparisons. If false (default), each variation "
             "derives a unique seed (base_seed + variation.index)."
+        ),
+    )
+    parameter_sweep_mode: SweepMode = Field(
+        default=SweepMode.INDEPENDENT,
+        description=(
+            "Iteration order for sweep + multi-trial. 'independent' (default) "
+            "iterates variations outer, trials inner. 'repeated' iterates "
+            "trials outer, variations inner. Honored by MultiRunOrchestrator."
         ),
     )
 

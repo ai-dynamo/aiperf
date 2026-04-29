@@ -88,6 +88,7 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
         "convergence_stat": "convergence_stat",
         "parameter_sweep_cooldown_seconds": "parameter_sweep_cooldown_seconds",
         "parameter_sweep_same_seed": "parameter_sweep_same_seed",
+        "parameter_sweep_mode": "mode",
     }
     out: dict[str, Any] = {}
     for field, key in mapping.items():

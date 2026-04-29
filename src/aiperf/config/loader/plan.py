@@ -78,6 +78,7 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
             "parameter_sweep_cooldown_seconds", 0.0
         ),
         parameter_sweep_same_seed=multi_run.get("parameter_sweep_same_seed", False),
+        parameter_sweep_mode=multi_run.get("mode", "independent"),
     )
     for key in (
         "convergence_metric",

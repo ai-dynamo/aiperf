@@ -13,7 +13,7 @@ from typing import Annotated
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat
+from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
 
@@ -140,6 +140,19 @@ class MultiRunConfig(BaseConfig):
             "unique seed `base_seed + variation.index`. Surfaced via "
             "--parameter-sweep-same-seed; the cross-field validator on AIPerfConfig "
             "requires --random-seed when true.",
+        ),
+    ]
+
+    mode: Annotated[
+        SweepMode,
+        Field(
+            default=SweepMode.INDEPENDENT,
+            description="Execution order for sweep + multi-trial composition. "
+            "'independent' (default): variations outer, trials inner — artifact "
+            "tree is <base>/<variation>/profile_runs/run_NNNN/. 'repeated': "
+            "trials outer, variations inner — artifact tree is "
+            "<base>/profile_runs/trial_NNNN/<variation>/. Mode-dispatch lives "
+            "in MultiRunOrchestrator.execute.",
         ),
     ]
 

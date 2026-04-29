@@ -116,28 +116,6 @@ def _promote_magic_lists_to_sweep_block(nested: dict[str, Any]) -> None:
             nested["sweep"] = {"type": "grid", "variables": sweep_variables}
 
 
-def _reject_unsupported_sweep_mode(user: UserConfig) -> None:
-    """Reject ``--parameter-sweep-mode=repeated`` per Path-A.
-
-    The k8s sweep port keeps INDEPENDENT semantics only — variations form the
-    outer loop, trials form the inner loop, matching ``expand_sweep`` +
-    ``FixedTrialsStrategy``. REPEATED would require an outer trial loop the
-    orchestrator does not support; defer to a follow-up phase if needed.
-    """
-    loadgen = getattr(user, "loadgen", None)
-    if loadgen is None:
-        return
-    mode = getattr(loadgen, "parameter_sweep_mode", None)
-    if mode is None:
-        return
-    mode_str = str(mode).lower()
-    if "repeated" in mode_str:
-        raise ValueError(
-            "--parameter-sweep-mode=repeated is not supported in this release; "
-            "use 'independent' (the default)."
-        )
-
-
 def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfConfig:
     """Convert a parsed v1 ``UserConfig`` + ``ServiceConfig`` into ``AIPerfConfig``.
 
@@ -180,7 +158,6 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
         nested["runtime"] = runtime_dict
 
     _assemble_optional(nested, user)
-    _reject_unsupported_sweep_mode(user)
     _promote_magic_lists_to_sweep_block(nested)
 
     return AIPerfConfig(**nested)
