@@ -551,3 +551,59 @@ class AIPerfConfig(BenchmarkConfig):
                 f"got {self.multi_run.parameter_sweep_cooldown_seconds}."
             )
         return self
+
+    @model_validator(mode="after")
+    def validate_sweep_flags_require_sweep(self) -> Self:
+        """Reject parameter-sweep flags when no sweep is configured.
+
+        The v1->v2 converter (``build_multi_run`` in
+        ``aiperf.config.v1._converter_optionals``) only emits ``mode``,
+        ``parameter_sweep_cooldown_seconds``, and ``parameter_sweep_same_seed``
+        into the multi_run dict when the user explicitly set the corresponding
+        ``--parameter-sweep-*`` CLI flag. Pydantic's ``model_fields_set`` on
+        ``MultiRunConfig`` therefore reflects "user passed this flag" rather
+        than "field has its default value".
+
+        We additionally require the value differs from the field default so
+        that a YAML round-trip with ``exclude_defaults=False`` (which writes
+        every field, then re-loads them as "set") doesn't trip this check —
+        only a non-default value actually expresses sweep-specific intent.
+        Mirrors origin/main's ``LoadGeneratorConfig.validate_sweep_params``.
+        """
+        from aiperf.common.enums import SweepMode
+
+        if self.sweep is not None:
+            return self
+
+        mr = self.multi_run
+        set_fields = mr.model_fields_set
+
+        # mode default flipped to REPEATED; only flag explicit non-default
+        # picks (i.e., INDEPENDENT) without a sweep.
+        if "mode" in set_fields and mr.mode != SweepMode.REPEATED:
+            raise ValueError(
+                "--parameter-sweep-mode only applies when sweeping parameters "
+                "(e.g., --concurrency 10,20,30); with a single value the flag "
+                "has no effect. Either remove --parameter-sweep-mode or "
+                "provide a comma-separated list: --concurrency 10,20,30."
+            )
+        if (
+            "parameter_sweep_cooldown_seconds" in set_fields
+            and mr.parameter_sweep_cooldown_seconds != 0.0
+        ):
+            raise ValueError(
+                "--parameter-sweep-cooldown-seconds only applies when sweeping "
+                "parameters (e.g., --concurrency 10,20,30); with a single "
+                "value there is no inter-variation gap to insert. Either "
+                "remove --parameter-sweep-cooldown-seconds or provide a "
+                "comma-separated list: --concurrency 10,20,30."
+            )
+        if "parameter_sweep_same_seed" in set_fields and mr.parameter_sweep_same_seed:
+            raise ValueError(
+                "--parameter-sweep-same-seed only applies when sweeping "
+                "parameters (e.g., --concurrency 10,20,30); with a single "
+                "value there is only one seed to choose. Either remove "
+                "--parameter-sweep-same-seed or provide a comma-separated "
+                "list: --concurrency 10,20,30."
+            )
+        return self
