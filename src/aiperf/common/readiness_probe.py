@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiohttp
 import orjson
@@ -83,125 +83,118 @@ def _model_in_payload(payload_text: str, model_name: str) -> bool:
     )
 
 
-async def _wait_models(
+def _models_timeout(
+    *,
+    deadline: float,
+    request_timeout_base: float,
+    timeout_s: float,
+    model_name: str,
+    url: str,
+    checked_attempts: int,
+) -> aiohttp.ClientTimeout:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError(
+            f"Timed out after {timeout_s:.1f}s waiting for model "
+            f"'{model_name}' to become ready at {url} "
+            f"(checked {checked_attempts} time(s))"
+        )
+    return aiohttp.ClientTimeout(total=min(request_timeout_base, remaining))
+
+
+def _inference_timeout(
+    *,
+    deadline: float,
+    request_timeout_base: float,
+    timeout_s: float,
+    request_url: str,
+    model_name: str,
+    checked_attempts: int,
+) -> aiohttp.ClientTimeout:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError(
+            f"Timed out after {timeout_s:.1f}s probing {request_url} "
+            f"with model '{model_name}' (checked {checked_attempts} time(s))"
+        )
+    return aiohttp.ClientTimeout(total=min(request_timeout_base, remaining))
+
+
+async def _sleep_until_next_attempt(*, deadline: float, interval_s: float) -> None:
+    sleep_for = min(interval_s, max(0.0, deadline - time.monotonic()))
+    await asyncio.sleep(sleep_for)
+
+
+def _response_status_and_error(record: Any) -> tuple[int | str, str]:
+    status_repr = record.status if record.status is not None else "connection error"
+    error_repr = record.error.message if record.error else ""
+    return status_repr, error_repr
+
+
+def _models_response_ready(
+    *,
+    record: Any,
+    model_name: str,
+    url: str,
+    models_url: str,
+    attempt: int,
+    interval_s: float,
+) -> bool:
+    body = record.responses[0].text if hasattr(record.responses[0], "text") else ""
+    if _model_in_payload(body, model_name):
+        _logger.info(f"Model '{model_name}' ready at {url} after {attempt} attempt(s)")
+        return True
+    _logger.info(
+        f"Model '{model_name}' not yet in {models_url} (attempt {attempt}), "
+        f"retrying in {interval_s}s"
+    )
+    return False
+
+
+async def _base_url_ready_after_models_404(
+    *,
     client: AioHttpClient,
     url: str,
     model_name: str,
+    deadline: float,
     timeout_s: float,
+    request_timeout_base: float,
+    attempt: int,
     interval_s: float,
     headers: dict[str, str],
-) -> None:
-    """Poll ``{url}/v1/models`` until ``model_name`` appears in ``data[]``.
-
-    Falls back to a single GET on the base URL if ``/v1/models`` returns 404
-    on any attempt — so servers that don't expose a model list still pass
-    when they respond at all.
-    """
-    deadline = time.monotonic() + timeout_s
-    models_url = url.rstrip("/") + "/v1/models"
-    request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
-    attempt = 0
-
-    while True:
-        attempt += 1
-
-        # Cap the per-request timeout by the remaining budget so a slow or
-        # hung response can never run past the global deadline.
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError(
-                f"Timed out after {timeout_s:.1f}s waiting for model "
-                f"'{model_name}' to become ready at {url} "
-                f"(checked {attempt - 1} time(s))"
-            )
-        request_timeout = aiohttp.ClientTimeout(
-            total=min(request_timeout_base, remaining)
+) -> bool:
+    fallback_timeout = _models_timeout(
+        deadline=deadline,
+        request_timeout_base=request_timeout_base,
+        timeout_s=timeout_s,
+        model_name=model_name,
+        url=url,
+        checked_attempts=attempt,
+    )
+    fallback = await client.get_request(url, headers=headers, timeout=fallback_timeout)
+    if fallback.status is not None and 200 <= fallback.status < 300:
+        _logger.info(
+            f"/v1/models not available at {url}; base URL responded "
+            f"{fallback.status} — accepting as ready"
         )
-        record = await client.get_request(
-            models_url, headers=headers, timeout=request_timeout
-        )
-
-        if record.status == 200 and record.responses:
-            body = (
-                record.responses[0].text if hasattr(record.responses[0], "text") else ""
-            )
-            if _model_in_payload(body, model_name):
-                _logger.info(
-                    f"Model '{model_name}' ready at {url} after {attempt} attempt(s)"
-                )
-                return
-            _logger.info(
-                f"Model '{model_name}' not yet in {models_url} (attempt {attempt}), "
-                f"retrying in {interval_s}s"
-            )
-        elif record.status == 404:
-            # Fallback: server doesn't expose /v1/models. Try the base URL; if
-            # it answers 2xx we accept it as "server up" and move on. Cap the
-            # fallback request by the same per-request budget.
-            fallback_remaining = deadline - time.monotonic()
-            if fallback_remaining <= 0:
-                raise TimeoutError(
-                    f"Timed out after {timeout_s:.1f}s waiting for model "
-                    f"'{model_name}' to become ready at {url} "
-                    f"(checked {attempt} time(s))"
-                )
-            fallback_timeout = aiohttp.ClientTimeout(
-                total=min(request_timeout_base, fallback_remaining)
-            )
-            fallback = await client.get_request(
-                url, headers=headers, timeout=fallback_timeout
-            )
-            if fallback.status is not None and 200 <= fallback.status < 300:
-                _logger.info(
-                    f"/v1/models not available at {url}; base URL responded "
-                    f"{fallback.status} — accepting as ready"
-                )
-                return
-            _logger.info(
-                f"/v1/models returned 404 and base URL returned "
-                f"{fallback.status or 'error'} at {url} (attempt {attempt}), "
-                f"retrying in {interval_s}s"
-            )
-        else:
-            status_repr = (
-                record.status if record.status is not None else "connection error"
-            )
-            error_repr = record.error.message if record.error else ""
-            _logger.info(
-                f"Probe to {models_url} returned {status_repr} "
-                f"{('(' + error_repr + ') ') if error_repr else ''}"
-                f"(attempt {attempt}), retrying in {interval_s}s"
-            )
-
-        # Pre-check at the top of the loop raises on deadline; here we only
-        # need to sleep before the next attempt, capped so we never sleep
-        # past the deadline.
-        sleep_for = min(interval_s, max(0.0, deadline - time.monotonic()))
-        await asyncio.sleep(sleep_for)
+        return True
+    _logger.info(
+        f"/v1/models returned 404 and base URL returned "
+        f"{fallback.status or 'error'} at {url} (attempt {attempt}), "
+        f"retrying in {interval_s}s"
+    )
+    return False
 
 
-async def _wait_inference(
-    client: AioHttpClient,
+def _build_inference_probe_request(
+    *,
     url: str,
     model_name: str,
     endpoint_type: str,
     custom_endpoint: str | None,
-    timeout_s: float,
-    interval_s: float,
-    headers: dict[str, str],
-) -> None:
-    """POST a canned 1-token request to the inference endpoint until it works.
-
-    Any response with ``status < 500`` counts as ready — 4xx means the
-    server is live but our payload was rejected (bad auth / bad model /
-    bad path), which surfaces the same way on the first real benchmark
-    request. Only 5xx and connection errors trigger retries.
-    """
+) -> tuple[str, bytes]:
     from urllib.parse import urlparse
 
-    # Respect a caller-supplied path (e.g. --custom-endpoint), otherwise if
-    # the URL already carries a non-root path use that, otherwise append
-    # the OpenAI default for the endpoint type.
     parsed = urlparse(url)
     endpoint_path = _DEFAULT_PATHS.get(endpoint_type)
     payload_template = _CANNED_PAYLOADS.get(endpoint_type)
@@ -222,8 +215,101 @@ async def _wait_inference(
 
     payload = dict(payload_template or _CANNED_PAYLOADS["chat"])
     payload["model"] = model_name
-    body = orjson.dumps(payload)
+    return request_url, orjson.dumps(payload)
 
+
+async def _wait_models(
+    *,
+    client: AioHttpClient,
+    url: str,
+    model_name: str,
+    timeout_s: float,
+    interval_s: float,
+    headers: dict[str, str],
+) -> None:
+    """Poll ``{url}/v1/models`` until ``model_name`` appears in ``data[]``.
+
+    Falls back to a single GET on the base URL if ``/v1/models`` returns 404
+    on any attempt — so servers that don't expose a model list still pass
+    when they respond at all.
+    """
+    deadline = time.monotonic() + timeout_s
+    models_url = url.rstrip("/") + "/v1/models"
+    request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
+    attempt = 0
+
+    while True:
+        attempt += 1
+        request_timeout = _models_timeout(
+            deadline=deadline,
+            request_timeout_base=request_timeout_base,
+            timeout_s=timeout_s,
+            model_name=model_name,
+            url=url,
+            checked_attempts=attempt - 1,
+        )
+        record = await client.get_request(
+            models_url, headers=headers, timeout=request_timeout
+        )
+
+        if record.status == 200 and record.responses:
+            if _models_response_ready(
+                record=record,
+                model_name=model_name,
+                url=url,
+                models_url=models_url,
+                attempt=attempt,
+                interval_s=interval_s,
+            ):
+                return
+        elif record.status == 404:
+            if await _base_url_ready_after_models_404(
+                client=client,
+                url=url,
+                model_name=model_name,
+                deadline=deadline,
+                timeout_s=timeout_s,
+                request_timeout_base=request_timeout_base,
+                attempt=attempt,
+                interval_s=interval_s,
+                headers=headers,
+            ):
+                return
+        else:
+            status_repr, error_repr = _response_status_and_error(record)
+            _logger.info(
+                f"Probe to {models_url} returned {status_repr} "
+                f"{('(' + error_repr + ') ') if error_repr else ''}"
+                f"(attempt {attempt}), retrying in {interval_s}s"
+            )
+
+        await _sleep_until_next_attempt(deadline=deadline, interval_s=interval_s)
+
+
+async def _wait_inference(
+    *,
+    client: AioHttpClient,
+    url: str,
+    model_name: str,
+    endpoint_type: str,
+    custom_endpoint: str | None,
+    timeout_s: float,
+    interval_s: float,
+    headers: dict[str, str],
+) -> None:
+    """POST a canned 1-token request to the inference endpoint until it works.
+
+    Any response with ``status < 500`` counts as ready — 4xx means the
+    server is live but our payload was rejected (bad auth / bad model /
+    bad path), which surfaces the same way on the first real benchmark
+    request. Only 5xx and connection errors trigger retries.
+    """
+    request_url, body = _build_inference_probe_request(
+        url=url,
+        model_name=model_name,
+        endpoint_type=endpoint_type,
+        custom_endpoint=custom_endpoint,
+    )
     # Inference requests need more breathing room than a trivial models GET:
     # model load can push even a 1-token forward pass into the seconds range
     # on first request. Floor higher than the models probe.
@@ -235,14 +321,13 @@ async def _wait_inference(
 
     while True:
         attempt += 1
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError(
-                f"Timed out after {timeout_s:.1f}s probing {request_url} "
-                f"with model '{model_name}' (checked {attempt - 1} time(s))"
-            )
-        request_timeout = aiohttp.ClientTimeout(
-            total=min(request_timeout_base, remaining)
+        request_timeout = _inference_timeout(
+            deadline=deadline,
+            request_timeout_base=request_timeout_base,
+            timeout_s=timeout_s,
+            request_url=request_url,
+            model_name=model_name,
+            checked_attempts=attempt - 1,
         )
         record = await client.post_request(
             request_url,
@@ -259,19 +344,18 @@ async def _wait_inference(
             )
             return
 
-        status_repr = status if status is not None else "connection error"
-        error_repr = record.error.message if record.error else ""
+        status_repr, error_repr = _response_status_and_error(record)
         _logger.info(
             f"Inference probe to {request_url} returned {status_repr} "
             f"{('(' + error_repr + ') ') if error_repr else ''}"
             f"(attempt {attempt}), retrying in {interval_s}s"
         )
 
-        sleep_for = min(interval_s, max(0.0, deadline - time.monotonic()))
-        await asyncio.sleep(sleep_for)
+        await _sleep_until_next_attempt(deadline=deadline, interval_s=interval_s)
 
 
 async def wait_for_endpoint(
+    *,
     urls: list[str],
     model_names: list[str],
     mode: ReadyCheckMode,
