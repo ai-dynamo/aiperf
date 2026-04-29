@@ -231,7 +231,7 @@ class TestEnsureProblemsLoadedEmptyGuard:
                 "aiperf.accuracy.accuracy_record_processor.load_benchmark_problems",
                 return_value=[],
             ),
-            pytest.raises(ValueError, match="no problems"),
+            pytest.raises(ValueError, match="returned 0 problems"),
         ):
             await processor._ensure_problems_loaded()
 
@@ -246,7 +246,7 @@ class TestEnsureProblemsLoadedEmptyGuard:
                 "aiperf.accuracy.accuracy_results_processor.load_benchmark_problems",
                 return_value=[],
             ),
-            pytest.raises(ValueError, match="no problems"),
+            pytest.raises(ValueError, match="returned 0 problems"),
         ):
             await processor._ensure_problems_loaded()
 

@@ -44,7 +44,14 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         if self._problems is None:
             problems = await load_benchmark_problems(self.user_config)
             if not problems:
-                msg = "Benchmark loaded no problems; check accuracy task configuration"
+                acc_cfg = self.user_config.accuracy
+                msg = (
+                    f"Benchmark '{acc_cfg.benchmark}' returned 0 problems "
+                    f"(tasks={acc_cfg.tasks}, n_shots={acc_cfg.n_shots}). "
+                    f"Check that --accuracy-tasks names a valid subtask "
+                    f"(see docs/accuracy/accuracy_benchmarking.md) or omit "
+                    f"the flag to evaluate all tasks."
+                )
                 self.error(msg)
                 raise ValueError(msg)
             self._problems = problems
