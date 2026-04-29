@@ -404,7 +404,7 @@ class TestMultiRunOrchestrator:
             json.dump(json_content, f)
 
         # Extract metrics
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Verify metrics were extracted with full JsonMetricResult structure
         assert "time_to_first_token" in metrics
@@ -428,7 +428,7 @@ class TestMultiRunOrchestrator:
         config.output.artifact_directory = artifacts_path
 
         # Extract metrics (file doesn't exist)
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Should return empty dict
         assert metrics == {}
@@ -450,7 +450,7 @@ class TestMultiRunOrchestrator:
             f.write("{ invalid json }")
 
         # Extract metrics (invalid JSON)
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Should return empty dict
         assert metrics == {}
@@ -481,7 +481,7 @@ class TestMultiRunOrchestrator:
         with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
             json.dump(json_content, f)
 
-        metrics = orchestrator._extract_summary_metrics(artifacts_path)
+        metrics = orchestrator._extract_summary_metrics(config)
 
         # Verify the full structure is preserved
         assert "time_to_first_token" in metrics
@@ -490,6 +490,58 @@ class TestMultiRunOrchestrator:
         assert metrics["time_to_first_token"].avg == 150.5
         assert metrics["time_to_first_token"].p50 == 145.0
         assert metrics["time_to_first_token"].p99 == 195.0
+
+    def test_extract_summary_metrics_respects_profile_export_prefix(
+        self, mock_service_config, tmp_path
+    ):
+        """Regression: --profile-export-prefix must be honored when reading the export JSON.
+
+        Without resolving the path via config.output.profile_export_json_file, the
+        orchestrator looks for the default profile_export_aiperf.json and returns {},
+        which marks the run failed. See PR #801 (fix) reverted by PR #699 (sweep feature).
+        """
+        orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
+
+        artifacts_path = tmp_path / "run_0001"
+        artifacts_path.mkdir(parents=True)
+
+        from aiperf.common.config import EndpointConfig, OutputConfig
+
+        # Construct OutputConfig with prefix at init so the model_validator runs and
+        # rebuilds _profile_export_json_file from the prefix.
+        output = OutputConfig(
+            artifact_directory=artifacts_path,
+            profile_export_prefix=Path("custom"),
+        )
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            output=output,
+        )
+
+        # Sanity: the resolved file should respect the prefix, not the default
+        assert config.output.profile_export_json_file == artifacts_path / "custom.json"
+
+        json_content = {
+            "time_to_first_token": {
+                "unit": "ms",
+                "avg": 150.5,
+                "p99": 195.0,
+            },
+        }
+
+        # Write to the prefix-aware location, NOT the default profile_export_aiperf.json
+        with open(artifacts_path / "custom.json", "w") as f:
+            json.dump(json_content, f)
+
+        metrics = orchestrator._extract_summary_metrics(config)
+
+        # Without #801's fix this dict would be empty (file looked up at the wrong path)
+        assert metrics, (
+            "Expected metrics extracted from prefix-aware file, got empty dict"
+        )
+        assert "time_to_first_token" in metrics
+        assert metrics["time_to_first_token"].avg == 150.5
+        assert metrics["time_to_first_token"].unit == "ms"
 
     def test_warmup_disabled_after_first_run(
         self, mock_service_config, mock_user_config, tmp_path

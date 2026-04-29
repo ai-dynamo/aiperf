@@ -370,7 +370,7 @@ class MultiRunOrchestrator:
                 )
 
             # Extract summary metrics from the artifacts
-            summary_metrics = self._extract_summary_metrics(artifact_path)
+            summary_metrics = self._extract_summary_metrics(config)
 
             if not summary_metrics:
                 error_msg = (
@@ -425,7 +425,7 @@ class MultiRunOrchestrator:
             )
 
     def _extract_summary_metrics(
-        self, artifacts_path: Path
+        self, config: UserConfig
     ) -> dict[str, "JsonMetricResult"]:
         """Extract run-level summary statistics from artifacts.
 
@@ -433,14 +433,16 @@ class MultiRunOrchestrator:
         and extracts the summary metrics, preserving the full structure with units.
 
         Args:
-            artifacts_path: Path to run artifacts directory
+            config: Benchmark configuration for this run (used to resolve the actual output path)
 
         Returns:
             Dict mapping metric name to JsonMetricResult
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        json_file = artifacts_path / "profile_export_aiperf.json"
+        # Resolve the JSON file path from the config — do not hardcode the default filename
+        # since --profile-export-prefix changes it (regression fixed in PR #801, re-fixed here).
+        json_file = config.output.profile_export_json_file
 
         if not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
