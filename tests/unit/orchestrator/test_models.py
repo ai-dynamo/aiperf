@@ -57,3 +57,31 @@ class TestRunResult:
         )
 
         assert result.summary_metrics == {}
+
+    def test_run_result_default_variation_fields_are_safe(self):
+        """RunResult built without variation fields exposes empty/zero defaults."""
+        result = RunResult(label="run_default", success=True)
+
+        assert result.variation_label == ""
+        assert result.variation_values == {}
+        assert result.trial_index == 0
+
+    def test_run_result_round_trips_variation_fields(self):
+        """Variation fields populated at construction round-trip via model_dump."""
+        result = RunResult(
+            label="run_v0_t1",
+            success=True,
+            variation_label="concurrency=10",
+            variation_values={"concurrency": 10},
+            trial_index=1,
+        )
+
+        dumped = result.model_dump()
+        assert dumped["variation_label"] == "concurrency=10"
+        assert dumped["variation_values"] == {"concurrency": 10}
+        assert dumped["trial_index"] == 1
+
+        round_tripped = RunResult.model_validate(dumped)
+        assert round_tripped.variation_label == "concurrency=10"
+        assert round_tripped.variation_values == {"concurrency": 10}
+        assert round_tripped.trial_index == 1

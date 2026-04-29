@@ -84,6 +84,38 @@ async def test_orchestrator_iterates_all_variations_x_trials(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_stamps_variation_metadata_on_each_result(tmp_path):
+    """Each RunResult carries variation_label, variation_values, and trial_index."""
+    plan = _make_plan(num_variations=2, trials=2)
+    # Override variations to carry meaningful values for the assertion.
+    plan = plan.model_copy(
+        update={
+            "variations": [
+                SweepVariation(
+                    index=0, label="concurrency=10", values={"concurrency": 10}
+                ),
+                SweepVariation(
+                    index=1, label="concurrency=20", values={"concurrency": 20}
+                ),
+            ]
+        }
+    )
+    executor = FakeExecutor()
+    orchestrator = MultiRunOrchestrator(base_dir=tmp_path)
+
+    results = await orchestrator.execute(plan, executor)
+
+    assert [r.variation_label for r in results] == [
+        "concurrency=10",
+        "concurrency=10",
+        "concurrency=20",
+        "concurrency=20",
+    ]
+    assert [r.variation_values["concurrency"] for r in results] == [10, 10, 20, 20]
+    assert [r.trial_index for r in results] == [0, 1, 0, 1]
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_single_variation_single_trial(tmp_path):
     """Trivial case: one variation, one trial."""
     plan = _make_plan(num_variations=1, trials=1)

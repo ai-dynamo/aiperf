@@ -20,7 +20,7 @@ from aiperf.orchestrator.models import RunResult
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from aiperf.config.benchmark import BenchmarkPlan
+    from aiperf.config.benchmark import BenchmarkPlan, BenchmarkRun
     from aiperf.orchestrator.executor import RunExecutor
 
 
@@ -109,6 +109,7 @@ class MultiRunOrchestrator:
                 )
                 logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
                 result = await executor.execute(run)
+                self._stamp_variation_metadata(result, run, trial)
                 cell_results.append(result)
                 trial += 1
 
@@ -146,3 +147,13 @@ class MultiRunOrchestrator:
             failed = sum(1 for r in results if not r.success)
             return failed >= max_fail
         return False
+
+    @staticmethod
+    def _stamp_variation_metadata(
+        result: RunResult, run: BenchmarkRun, trial_index: int
+    ) -> None:
+        """Populate sweep-aggregation fields on result from the originating run."""
+        if run.variation is not None:
+            result.variation_label = run.variation.label
+            result.variation_values = dict(run.variation.values)
+        result.trial_index = trial_index

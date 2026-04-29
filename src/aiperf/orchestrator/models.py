@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 
@@ -24,4 +25,15 @@ class RunResult(AIPerfBaseModel):
     error: str | None = Field(default=None, description="Error message if run failed")
     artifacts_path: Path | None = Field(
         default=None, description="Path to run artifacts directory"
+    )
+    variation_label: str = Field(
+        default="",
+        description="Sweep variation label (matches BenchmarkRun.variation.label).",
+    )
+    variation_values: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameter values for this run's variation; mirror of variation.values.",
+    )
+    trial_index: int = Field(
+        default=0, description="Zero-based trial index within the variation."
     )
