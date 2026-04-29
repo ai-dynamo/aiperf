@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BeforeValidator,
@@ -55,6 +55,29 @@ class EndpointConfig(BaseConfig):
                 f"Streaming is not supported for --endpoint-type {self.type}, setting streaming to False"
             )
             self.streaming = False
+        return self
+
+    @model_validator(mode="after")
+    def validate_wait_for_model_coherent(self) -> Self:
+        """Reject configurations where probe sub-options are set without
+        enabling the probe itself (timeout > 0). Catches typos like
+        `--wait-for-model-interval 1` without a timeout value.
+        """
+        if self.wait_for_model_timeout > 0:
+            return self
+        dependent = {"wait_for_model_interval", "wait_for_model_mode"}
+        set_without_enable = sorted(dependent & self.model_fields_set)
+        if set_without_enable:
+            flag_names = {
+                "wait_for_model_interval": "--wait-for-model-interval",
+                "wait_for_model_mode": "--wait-for-model-mode",
+            }
+            shown = ", ".join(flag_names[f] for f in set_without_enable)
+            raise ValueError(
+                f"{shown} has no effect unless --wait-for-model-timeout is set "
+                f"to a positive value. Set --wait-for-model-timeout to enable "
+                f"the readiness probe."
+            )
         return self
 
     model_names: Annotated[
@@ -196,6 +219,55 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.API_KEY
+
+    wait_for_model_timeout: Annotated[
+        float,
+        Field(
+            description="Enable a pre-flight readiness probe by setting this to a positive value (seconds). "
+            "aiperf applies this timeout to each URL/model probe before starting the benchmark, "
+            "aborting with a non-zero exit if any probe times out. For multiple URLs or models, "
+            "worst-case wall-clock time can be roughly this timeout multiplied by the number of "
+            "URL/model probes. The probe strategy is controlled by `--wait-for-model-mode`, which "
+            "defaults to sending a 1-token inference request. 0 (default) disables the probe. "
+            "Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",
+            ge=0.0,
+        ),
+        CLIParameter(
+            name=("--wait-for-model-timeout",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_TIMEOUT
+
+    wait_for_model_interval: Annotated[
+        float,
+        Field(
+            description="Seconds between readiness probe attempts. "
+            "Only consulted when `--wait-for-model-timeout` is positive.",
+            gt=0.0,
+        ),
+        CLIParameter(
+            name=("--wait-for-model-interval",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
+
+    wait_for_model_mode: Annotated[
+        Literal["models", "inference", "both"],
+        Field(
+            description="Strategy for the readiness probe. "
+            "'inference' (default): POST a 1-token inference request to the configured endpoint; "
+            "this is the strongest signal — it proves the full stack (frontend, scheduler, worker, "
+            "forward pass) is live. Any HTTP status < 500 counts as ready. "
+            "'models': GET `/v1/models` and verify the model id appears in `data[]` "
+            "(cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). "
+            "'both': run 'models' first, then 'inference'. "
+            "Only consulted when `--wait-for-model-timeout` is positive.",
+        ),
+        CLIParameter(
+            name=("--wait-for-model-mode",),
+            group=_CLI_GROUP,
+        ),
+    ] = EndpointDefaults.WAIT_FOR_MODEL_MODE
 
     transport: Annotated[
         TransportType | None,
