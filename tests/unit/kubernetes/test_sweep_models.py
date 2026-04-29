@@ -63,6 +63,14 @@ def test_multirun_config_mode_repeated_round_trips():
     assert cfg.mode == SweepMode.REPEATED
 
 
+def test_multirun_config_mode_independent_round_trips():
+    """`mode: independent` round-trips through CR validation as SweepMode.INDEPENDENT."""
+    from aiperf.common.enums import SweepMode
+
+    cfg = MultiRunConfig.model_validate({"trials": 3, "mode": "independent"})
+    assert cfg.mode == SweepMode.INDEPENDENT
+
+
 def test_multirun_config_mode_invalid_string_rejected():
     """Unknown mode strings are rejected by Pydantic enum validation."""
     with pytest.raises(ValidationError, match=r"(?i)mode|fortnightly"):

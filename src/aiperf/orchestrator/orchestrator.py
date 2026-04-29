@@ -103,7 +103,7 @@ class MultiRunOrchestrator:
 
         all_results: list[RunResult] = []
         logger.info(
-            f"Starting multi-run benchmark: {len(plan.configs)} variations, "
+            f"Starting multi-run benchmark (independent): {len(plan.configs)} variations x "
             f"{plan.trials} trials per variation"
         )
 

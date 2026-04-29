@@ -422,7 +422,10 @@ def _summarize_and_export(
     failed_runs = [r for r in results if not r.success]
 
     logger.info("=" * 80)
-    logger.info(f"All runs complete: {len(successful_runs)}/{total_runs} successful")
+    if not plan.is_sweep:
+        logger.info(
+            f"All runs complete: {len(successful_runs)}/{total_runs} successful"
+        )
     if failed_runs:
         if plan.is_sweep:
             # Group by variation_values to surface which sweep values failed,
@@ -433,7 +436,7 @@ def _summarize_and_export(
                 key = tuple(sorted((r.variation_values or {}).items()))
                 by_variation.setdefault(key, []).append(r)
             failed_values_str = [
-                ", ".join(f"{k}={v}" for k, v in vals) for vals in by_variation
+                ", ".join(f"{k}={v}" for k, v in key) for key in by_variation
             ]
             logger.warning(f"Some sweep variations failed: {failed_values_str}")
             for key, group in by_variation.items():
