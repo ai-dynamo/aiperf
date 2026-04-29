@@ -13,6 +13,9 @@ lighteval reference: lighteval/src/lighteval/tasks/tasks/mmlu.py
 from __future__ import annotations
 
 import asyncio
+import random
+from collections import defaultdict
+from itertools import cycle
 from string import ascii_uppercase
 
 from datasets import DatasetDict, load_dataset
@@ -173,10 +176,6 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         groups to ensure answer-label diversity. Matches lighteval's
         FewShotSampler with sorting="balanced" and variance_seed=0.
         """
-        import random as _rng
-        from collections import defaultdict
-        from itertools import cycle
-
         label_to_indices: dict[str, list[int]] = defaultdict(list)
         for i, row in enumerate(source):
             gold_ix = (
@@ -190,7 +189,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         for label, indices in sorted(label_to_indices.items()):
             counts_to_labels[len(indices)].append(label)
 
-        rng = _rng.Random(0)
+        rng = random.Random(0)
         sorted_labels: list[str] = []
         for count in sorted(counts_to_labels, reverse=True):
             labels = counts_to_labels[count]
