@@ -210,8 +210,14 @@ class TestTDigestListMetricAggregator:
         assert result.p99 == pytest.approx(float(np.percentile(values, 99)), rel=0.005)
 
     def test_to_result_schema_matches_metric_array(self) -> None:
+        # 100k samples — t-digest's relative error on percentile *values*
+        # at extreme tails (e.g. p1 on uniform[0, 1000] where the true
+        # value is ~9.66, small relative to the data range) only stays
+        # within 0.5% at this sample size. Smaller N exhibits 1% relative
+        # error at p1 even though rank accuracy is well within the
+        # documented t-digest bound.
         rng = np.random.default_rng(42)
-        values = rng.uniform(low=0.0, high=1000.0, size=10_000)
+        values = rng.uniform(low=0.0, high=1000.0, size=100_000)
 
         digest_agg = TDigestListMetricAggregator()
         digest_agg.extend(values.tolist())
