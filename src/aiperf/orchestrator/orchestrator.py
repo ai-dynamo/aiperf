@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.orchestrator.models import RunResult
 
@@ -58,9 +58,9 @@ class MultiRunOrchestrator:
 
         Iteration order honors plan.parameter_sweep_mode:
 
-        - INDEPENDENT (default): variations outer, trials inner. Artifact
+        - INDEPENDENT: variations outer, trials inner. Artifact
           tree is <base>/<variation>/profile_runs/run_NNNN/.
-        - REPEATED: trials outer, variations inner. Artifact tree is
+        - REPEATED (default): trials outer, variations inner. Artifact tree is
           <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_0001/.
           The trailing run_0001 segment comes from the per-cell strategy
           and is unconditional; trial-NNNN is the orchestrator's prefix.
@@ -93,14 +93,13 @@ class MultiRunOrchestrator:
         *,
         cancel_check: Callable[[], bool] | None,
     ) -> list[RunResult]:
-        """Variations-outer, trials-inner iteration (the default mode).
+        """Variations-outer, trials-inner iteration.
 
         Each variation gets a fresh ExecutionStrategy; adaptive convergence
         operates on cell-local results only. Artifact tree:
         <base>/<variation>/profile_runs/run_NNNN/.
         """
         from aiperf._cli_runner_helpers import build_strategy
-        from aiperf.config.benchmark import BenchmarkRun
 
         all_results: list[RunResult] = []
         logger.info(
@@ -122,49 +121,20 @@ class MultiRunOrchestrator:
                 await asyncio.sleep(plan.parameter_sweep_cooldown_seconds)
             strategy = build_strategy(plan, logger)  # fresh per-cell strategy
             strategy.validate_config(cfg)
-            cell_results: list[RunResult] = []
-            trial = 0
 
-            while strategy.should_continue(cell_results):
-                if cancel_check is not None and cancel_check():
-                    logger.info(
-                        f"Sweep cancelled mid-cell at v{var_idx} t{trial}; aborting"
-                    )
-                    all_results.extend(cell_results)
-                    return all_results
-                next_cfg = strategy.get_next_config(cfg, cell_results)
-                label = strategy.get_run_label(trial)
-                cell_dir = self.base_dir / variation.label
-                artifact_dir = strategy.get_run_path(cell_dir, trial)
-
-                run = BenchmarkRun(
-                    benchmark_id=executor.derive_id(plan, var_idx, trial),
-                    cfg=next_cfg,
-                    variation=variation,
-                    trial=trial,
-                    label=label,
-                    artifact_dir=artifact_dir,
-                )
-                logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
-                result = await executor.execute(run)
-                self._stamp_variation_metadata(result, run, trial)
-                cell_results.append(result)
-                trial += 1
-
-                if self._sweep_failure_threshold_exceeded(
-                    all_results + cell_results, plan
-                ):
-                    logger.warning("Failure threshold exceeded; aborting sweep")
-                    all_results.extend(cell_results)
-                    return all_results
-
-                if strategy.should_continue(cell_results):
-                    cooldown = strategy.get_cooldown_seconds()
-                    if cooldown > 0:
-                        logger.info(f"Cooldown: {cooldown}s")
-                        await asyncio.sleep(cooldown)
-
+            cell_results, aborted = await self._run_independent_cell(
+                plan,
+                executor,
+                strategy=strategy,
+                cfg=cfg,
+                variation=variation,
+                var_idx=var_idx,
+                prior_all_results=all_results,
+                cancel_check=cancel_check,
+            )
             all_results.extend(cell_results)
+            if aborted:
+                return all_results
 
         successful = sum(1 for r in all_results if r.success)
         if plan.is_sweep:
@@ -176,6 +146,69 @@ class MultiRunOrchestrator:
                 f"All runs complete: {successful}/{len(all_results)} successful"
             )
         return all_results
+
+    async def _run_independent_cell(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        strategy: Any,
+        cfg: Any,
+        variation: Any,
+        var_idx: int,
+        prior_all_results: list[RunResult],
+        cancel_check: Callable[[], bool] | None,
+    ) -> tuple[list[RunResult], bool]:
+        """Run all trials for one variation cell in independent mode.
+
+        Factored out of :meth:`_execute_independent` to keep that function
+        under the 80-line ergonomics cap; the cell loop is the natural
+        per-iteration body. Returns ``(cell_results, aborted)`` where
+        ``aborted`` signals the caller to stop iterating further variations
+        (cancel-check fired mid-cell, or sweep failure threshold tripped).
+        """
+        from aiperf.config.benchmark import BenchmarkRun
+
+        cell_results: list[RunResult] = []
+        trial = 0
+        while strategy.should_continue(cell_results):
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Sweep cancelled mid-cell at v{var_idx} t{trial}; aborting"
+                )
+                return cell_results, True
+            next_cfg = strategy.get_next_config(cfg, cell_results)
+            label = strategy.get_run_label(trial)
+            cell_dir = self.base_dir / variation.label
+            artifact_dir = strategy.get_run_path(cell_dir, trial)
+
+            run = BenchmarkRun(
+                benchmark_id=executor.derive_id(plan, var_idx, trial),
+                cfg=next_cfg,
+                variation=variation,
+                trial=trial,
+                label=label,
+                artifact_dir=artifact_dir,
+            )
+            logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
+            result = await executor.execute(run)
+            self._stamp_variation_metadata(result, run, trial)
+            cell_results.append(result)
+            trial += 1
+
+            if self._sweep_failure_threshold_exceeded(
+                prior_all_results + cell_results, plan
+            ):
+                logger.warning("Failure threshold exceeded; aborting sweep")
+                return cell_results, True
+
+            if strategy.should_continue(cell_results):
+                cooldown = strategy.get_cooldown_seconds()
+                if cooldown > 0:
+                    logger.info(f"Cooldown: {cooldown}s")
+                    await asyncio.sleep(cooldown)
+
+        return cell_results, False
 
     async def _execute_repeated(
         self,
@@ -191,9 +224,6 @@ class MultiRunOrchestrator:
         Artifact tree:
         <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_0001/.
         """
-        from aiperf._cli_runner_helpers import build_strategy
-        from aiperf.config.benchmark import BenchmarkRun
-
         if plan.use_adaptive:
             raise ValueError(
                 "parameter_sweep_mode='repeated' is incompatible with "
@@ -208,79 +238,23 @@ class MultiRunOrchestrator:
             f"Starting multi-run benchmark (repeated): {plan.trials} trials x "
             f"{len(plan.configs)} variations"
         )
-
-        # Why we track per-variation history:
-        # FixedTrialsStrategy.get_next_config keys disable_warmup_after_first
-        # off `len(prior_results) > 0`. In repeated mode each (variation,
-        # trial) cell fires exactly once, so the natural per-cell results
-        # list is always [] and warmup would re-enable on every trial -
-        # silently diverging from main's _execute_trials_then_sweep
-        # semantics where warmup runs only on trial 1 across all
-        # variations. We thread per-variation history across the outer
-        # trial loop so the strategy sees prior_results growing as it
-        # would in independent mode. Strategy contract only inspects
-        # len(prior); contents are not read - so we never have to keep
-        # this list pruned or even successful-only. Do NOT replace with
-        # `[]` per call: the silent re-enable is unobservable in production
-        # logs but corrupts wall-clock comparisons across modes.
-        # Regression-locked by tests/unit/orchestrator/test_multi_run_orchestrator.py
-        # ::test_repeated_mode_passes_growing_prior_results_to_strategy.
-        strategies = [build_strategy(plan, logger) for _ in plan.configs]
-        for strategy, cfg in zip(strategies, plan.configs, strict=True):
-            strategy.validate_config(cfg)
-        per_variation_history: list[list[RunResult]] = [[] for _ in plan.configs]
+        strategies, per_variation_history = self._build_repeated_state(plan)
 
         for trial in range(plan.trials):
             if cancel_check is not None and cancel_check():
                 logger.info(f"Sweep cancelled at trial {trial}; aborting")
                 return all_results
-            for var_idx, (cfg, variation) in enumerate(
-                zip(plan.configs, plan.variations, strict=False)
-            ):
-                if cancel_check is not None and cancel_check():
-                    logger.info(
-                        f"Sweep cancelled mid-trial at [v{var_idx} t{trial}]; aborting"
-                    )
-                    return all_results
-                strategy = strategies[var_idx]
-                next_cfg = strategy.get_next_config(cfg, per_variation_history[var_idx])
-                label = strategy.get_run_label(trial)
-                cell_dir = (
-                    self.base_dir
-                    / "profile_runs"
-                    / f"trial_{trial + 1:04d}"
-                    / variation.label
-                )
-                artifact_dir = strategy.get_run_path(cell_dir, trial)
-
-                run = BenchmarkRun(
-                    benchmark_id=executor.derive_id(plan, var_idx, trial),
-                    cfg=next_cfg,
-                    variation=variation,
-                    trial=trial,
-                    label=label,
-                    artifact_dir=artifact_dir,
-                )
-                logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
-                result = await executor.execute(run)
-                self._stamp_variation_metadata(result, run, trial)
-                all_results.append(result)
-                per_variation_history[var_idx].append(result)
-
-                if self._sweep_failure_threshold_exceeded(all_results, plan):
-                    logger.warning("Failure threshold exceeded; aborting sweep")
-                    return all_results
-
-                if (
-                    var_idx + 1 < len(plan.configs)
-                    and plan.parameter_sweep_cooldown_seconds > 0
-                ):
-                    logger.debug(
-                        f"Inter-variation cooldown (within trial {trial}): "
-                        f"{plan.parameter_sweep_cooldown_seconds}s"
-                    )
-                    await asyncio.sleep(plan.parameter_sweep_cooldown_seconds)
-
+            cancelled = await self._run_repeated_trial(
+                plan,
+                executor,
+                strategies=strategies,
+                trial=trial,
+                per_variation_history=per_variation_history,
+                all_results=all_results,
+                cancel_check=cancel_check,
+            )
+            if cancelled:
+                return all_results
             if trial + 1 < plan.trials:
                 cooldown = strategies[0].get_cooldown_seconds()
                 if cooldown > 0:
@@ -297,6 +271,108 @@ class MultiRunOrchestrator:
                 f"All runs complete: {successful}/{len(all_results)} successful"
             )
         return all_results
+
+    @staticmethod
+    def _build_repeated_state(
+        plan: BenchmarkPlan,
+    ) -> tuple[list[Any], list[list[RunResult]]]:
+        """Build per-variation strategies and prior-results history for repeated mode.
+
+        Why we track per-variation history:
+        FixedTrialsStrategy.get_next_config keys disable_warmup_after_first
+        off `len(prior_results) > 0`. In repeated mode each (variation,
+        trial) cell fires exactly once, so the natural per-cell results
+        list is always [] and warmup would re-enable on every trial -
+        silently diverging from main's _execute_trials_then_sweep
+        semantics where warmup runs only on trial 1 across all
+        variations. We thread per-variation history across the outer
+        trial loop so the strategy sees prior_results growing as it
+        would in independent mode. Strategy contract only inspects
+        len(prior); contents are not read - so we never have to keep
+        this list pruned or even successful-only. Do NOT replace with
+        `[]` per call: the silent re-enable is unobservable in production
+        logs but corrupts wall-clock comparisons across modes.
+        Regression-locked by tests/unit/orchestrator/test_multi_run_orchestrator.py
+        ::test_repeated_mode_passes_growing_prior_results_to_strategy.
+        """
+        from aiperf._cli_runner_helpers import build_strategy
+
+        strategies = [build_strategy(plan, logger) for _ in plan.configs]
+        for strategy, cfg in zip(strategies, plan.configs, strict=True):
+            strategy.validate_config(cfg)
+        per_variation_history: list[list[RunResult]] = [[] for _ in plan.configs]
+        return strategies, per_variation_history
+
+    async def _run_repeated_trial(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        *,
+        strategies: list[Any],
+        trial: int,
+        per_variation_history: list[list[RunResult]],
+        all_results: list[RunResult],
+        cancel_check: Callable[[], bool] | None,
+    ) -> bool:
+        """Run all variations for one trial in repeated mode.
+
+        Factored out of :meth:`_execute_repeated` to land both the line and
+        complexity budgets; the per-trial body owns the inner variation
+        loop, the cancel/threshold checks, and the inter-variation cooldown.
+        Mutates ``all_results`` and ``per_variation_history`` in place.
+        Returns True when the caller must abort the outer trial loop
+        (cancelled, or sweep failure threshold tripped).
+        """
+        from aiperf.config.benchmark import BenchmarkRun
+
+        for var_idx, (cfg, variation) in enumerate(
+            zip(plan.configs, plan.variations, strict=False)
+        ):
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Sweep cancelled mid-trial at [v{var_idx} t{trial}]; aborting"
+                )
+                return True
+            strategy = strategies[var_idx]
+            next_cfg = strategy.get_next_config(cfg, per_variation_history[var_idx])
+            label = strategy.get_run_label(trial)
+            cell_dir = (
+                self.base_dir
+                / "profile_runs"
+                / f"trial_{trial + 1:04d}"
+                / variation.label
+            )
+            artifact_dir = strategy.get_run_path(cell_dir, trial)
+
+            run = BenchmarkRun(
+                benchmark_id=executor.derive_id(plan, var_idx, trial),
+                cfg=next_cfg,
+                variation=variation,
+                trial=trial,
+                label=label,
+                artifact_dir=artifact_dir,
+            )
+            logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
+            result = await executor.execute(run)
+            self._stamp_variation_metadata(result, run, trial)
+            all_results.append(result)
+            per_variation_history[var_idx].append(result)
+
+            if self._sweep_failure_threshold_exceeded(all_results, plan):
+                logger.warning("Failure threshold exceeded; aborting sweep")
+                return True
+
+            if (
+                var_idx + 1 < len(plan.configs)
+                and plan.parameter_sweep_cooldown_seconds > 0
+            ):
+                logger.debug(
+                    f"Inter-variation cooldown (within trial {trial}): "
+                    f"{plan.parameter_sweep_cooldown_seconds}s"
+                )
+                await asyncio.sleep(plan.parameter_sweep_cooldown_seconds)
+
+        return False
 
     @staticmethod
     def _sweep_failure_threshold_exceeded(

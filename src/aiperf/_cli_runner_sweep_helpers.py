@@ -218,6 +218,82 @@ def _per_variation_aggregate_dir(
     return base_dir / variation_label / "aggregate"
 
 
+async def _export_one_variation_aggregate(
+    *,
+    group: list[RunResult],
+    key: VariationKey,
+    plan: BenchmarkPlan,
+    base_dir: Path,
+    logger: AIPerfLogger,
+) -> Path | None:
+    """Aggregate one variation's runs and write the per-cell JSON+CSV pair.
+
+    Factored out of :func:`aggregate_per_variation_and_export` to keep
+    that function under the 80-line ergonomics cap; one variation's work
+    is the natural per-iteration body. Returns the directory written, or
+    ``None`` when the cell was skipped (insufficient successful runs or
+    aggregator rejected the group).
+    """
+    import asyncio
+
+    from aiperf.exporters.aggregate import (
+        AggregateConfidenceCsvExporter,
+        AggregateConfidenceJsonExporter,
+        AggregateExporterConfig,
+    )
+    from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
+
+    successful = [r for r in group if r.success]
+    # Use the first result's pre-stamped variation_label (set by
+    # orchestrator._stamp_variation_metadata); fall back to a
+    # reconstructed key=value form if it was never stamped (shouldn't
+    # happen in practice, but keeps this helper crash-free).
+    variation_label = next(
+        (r.variation_label for r in group if r.variation_label),
+        ",".join(f"{k}={v}" for k, v in key),
+    )
+
+    if len(successful) < 2:
+        logger.warning(
+            f"Skipping per-variation aggregate for {variation_label!r}: "
+            f"{len(successful)} successful run(s), need at least 2."
+        )
+        return None
+
+    aggregation = ConfidenceAggregation(confidence_level=plan.confidence_level)
+    try:
+        aggregate_result = aggregation.aggregate(group)
+    except ValueError as exc:
+        logger.warning(
+            f"Skipping per-variation aggregate for {variation_label!r}: "
+            f"ConfidenceAggregation raised {exc}"
+        )
+        return None
+    aggregate_result.metadata["cooldown_seconds"] = plan.cooldown_seconds
+    aggregate_result.metadata["variation_label"] = variation_label
+    aggregate_result.metadata["variation_values"] = dict(key)
+    aggregate_result.metadata["sweep_mode"] = str(plan.parameter_sweep_mode)
+
+    aggregate_dir = _per_variation_aggregate_dir(
+        base_dir, variation_label, plan.parameter_sweep_mode
+    )
+    await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
+
+    exporter_config = AggregateExporterConfig(
+        result=aggregate_result,
+        output_dir=aggregate_dir,
+    )
+    json_exporter = AggregateConfidenceJsonExporter(exporter_config)
+    csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
+    json_path, csv_path = await asyncio.gather(
+        json_exporter.export(), csv_exporter.export()
+    )
+    logger.info(
+        f"Per-variation aggregate ({variation_label}) JSON: {json_path}; CSV: {csv_path}"
+    )
+    return aggregate_dir
+
+
 async def aggregate_per_variation_and_export(
     results: list[RunResult],
     plan: BenchmarkPlan,
@@ -253,15 +329,6 @@ async def aggregate_per_variation_and_export(
         >>> #   <base>/phases.profiling.concurrency=20/aggregate/profile_export_aiperf_aggregate.csv
         >>> await aggregate_per_variation_and_export(results, plan, base, logger)  # doctest: +SKIP
     """
-    import asyncio
-
-    from aiperf.exporters.aggregate import (
-        AggregateConfidenceCsvExporter,
-        AggregateConfidenceJsonExporter,
-        AggregateExporterConfig,
-    )
-    from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
-
     if not results:
         return []
 
@@ -269,57 +336,76 @@ async def aggregate_per_variation_and_export(
     written: list[Path] = []
 
     for key, group in groups.items():
-        successful = [r for r in group if r.success]
-        # Use the first result's pre-stamped variation_label (set by
-        # orchestrator._stamp_variation_metadata); fall back to a
-        # reconstructed key=value form if it was never stamped (shouldn't
-        # happen in practice, but keeps this helper crash-free).
-        variation_label = next(
-            (r.variation_label for r in group if r.variation_label),
-            ",".join(f"{k}={v}" for k, v in key),
+        aggregate_dir = await _export_one_variation_aggregate(
+            group=group,
+            key=key,
+            plan=plan,
+            base_dir=base_dir,
+            logger=logger,
         )
-
-        if len(successful) < 2:
-            logger.warning(
-                f"Skipping per-variation aggregate for {variation_label!r}: "
-                f"{len(successful)} successful run(s), need at least 2."
-            )
-            continue
-
-        aggregation = ConfidenceAggregation(confidence_level=plan.confidence_level)
-        try:
-            aggregate_result = aggregation.aggregate(group)
-        except ValueError as exc:
-            logger.warning(
-                f"Skipping per-variation aggregate for {variation_label!r}: "
-                f"ConfidenceAggregation raised {exc}"
-            )
-            continue
-        aggregate_result.metadata["cooldown_seconds"] = plan.cooldown_seconds
-        aggregate_result.metadata["variation_label"] = variation_label
-        aggregate_result.metadata["variation_values"] = dict(key)
-        aggregate_result.metadata["sweep_mode"] = str(plan.parameter_sweep_mode)
-
-        aggregate_dir = _per_variation_aggregate_dir(
-            base_dir, variation_label, plan.parameter_sweep_mode
-        )
-        await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
-
-        exporter_config = AggregateExporterConfig(
-            result=aggregate_result,
-            output_dir=aggregate_dir,
-        )
-        json_exporter = AggregateConfidenceJsonExporter(exporter_config)
-        csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
-        json_path, csv_path = await asyncio.gather(
-            json_exporter.export(), csv_exporter.export()
-        )
-        logger.info(
-            f"Per-variation aggregate ({variation_label}) JSON: {json_path}; CSV: {csv_path}"
-        )
-        written.append(aggregate_dir)
+        if aggregate_dir is not None:
+            written.append(aggregate_dir)
 
     return written
+
+
+def _build_sweep_aggregate_result(
+    results: list[RunResult],
+    sweep_dict: dict[str, Any],
+) -> Any:
+    """Assemble the :class:`AggregateResult` consumed by the sweep exporters.
+
+    Mirrors origin/main's ``SweepConfidenceStrategy.aggregate`` shape:
+    stuffs the sweep sections (``best_configurations``, ``pareto_optimal``)
+    into ``metadata`` and the per-cell rows into ``metrics``, so the
+    exporters share their constructor with the sibling confidence
+    exporters. Factored out of :func:`aggregate_sweep_and_export` to keep
+    that function under the 80-line ergonomics cap.
+    """
+    from aiperf.orchestrator.aggregation.base import AggregateResult
+
+    failed_runs = [
+        {"label": r.label, "error": r.error} for r in results if not r.success
+    ]
+    sweep_metadata = dict(sweep_dict.get("metadata", {}))
+    sweep_metadata["best_configurations"] = sweep_dict.get("best_configurations", {})
+    sweep_metadata["pareto_optimal"] = sweep_dict.get("pareto_optimal", [])
+    return AggregateResult(
+        aggregation_type="sweep",
+        num_runs=len(results),
+        num_successful_runs=sum(1 for r in results if r.success),
+        failed_runs=failed_runs,
+        metadata=sweep_metadata,
+        metrics=sweep_dict.get("per_combination_metrics", []),
+    )
+
+
+def _log_sweep_summary(aggregate_result: Any, logger: AIPerfLogger) -> None:
+    """Stdout summary of best configurations and Pareto frontier.
+
+    Factored out of :func:`aggregate_sweep_and_export` so the export
+    pipeline stays inside the line budget; the stdout format is unchanged.
+    """
+    best_configs = aggregate_result.metadata.get("best_configurations", {})
+    if best_configs:
+        logger.info("")
+        logger.info("Best Configurations:")
+        if "best_throughput" in best_configs:
+            bt = best_configs["best_throughput"]
+            params_str = ", ".join(f"{k}={v}" for k, v in bt["parameters"].items())
+            logger.info(
+                f"  Best throughput: {params_str} ({bt['metric']:.2f} {bt['unit']})"
+            )
+        if "best_latency_p99" in best_configs:
+            bl = best_configs["best_latency_p99"]
+            params_str = ", ".join(f"{k}={v}" for k, v in bl["parameters"].items())
+            logger.info(
+                f"  Best latency (p99): {params_str} ({bl['metric']:.2f} {bl['unit']})"
+            )
+
+    pareto_optimal = aggregate_result.metadata.get("pareto_optimal", [])
+    if pareto_optimal:
+        logger.info(f"  Pareto optimal points: {pareto_optimal}")
 
 
 async def aggregate_sweep_and_export(
@@ -354,7 +440,6 @@ async def aggregate_sweep_and_export(
         AggregateSweepCsvExporter,
         AggregateSweepJsonExporter,
     )
-    from aiperf.orchestrator.aggregation.base import AggregateResult
     from aiperf.orchestrator.aggregation.sweep import SweepAnalyzer
 
     if not results:
@@ -376,23 +461,7 @@ async def aggregate_sweep_and_export(
     aggregate_dir = base_dir / "sweep_aggregate"
     await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
 
-    # Mirror origin/main's SweepConfidenceStrategy.aggregate shape: stuff the
-    # sweep sections into AggregateResult.metadata + .metrics so the exporters
-    # share their constructor signature with sibling confidence exporters.
-    failed_runs = [
-        {"label": r.label, "error": r.error} for r in results if not r.success
-    ]
-    sweep_metadata = dict(sweep_dict.get("metadata", {}))
-    sweep_metadata["best_configurations"] = sweep_dict.get("best_configurations", {})
-    sweep_metadata["pareto_optimal"] = sweep_dict.get("pareto_optimal", [])
-    aggregate_result = AggregateResult(
-        aggregation_type="sweep",
-        num_runs=len(results),
-        num_successful_runs=sum(1 for r in results if r.success),
-        failed_runs=failed_runs,
-        metadata=sweep_metadata,
-        metrics=sweep_dict.get("per_combination_metrics", []),
-    )
+    aggregate_result = _build_sweep_aggregate_result(results, sweep_dict)
     exporter_config = AggregateExporterConfig(
         result=aggregate_result, output_dir=aggregate_dir
     )
@@ -405,25 +474,6 @@ async def aggregate_sweep_and_export(
     logger.info(f"Sweep aggregate JSON written to: {json_path}")
     logger.info(f"Sweep aggregate CSV written to: {csv_path}")
 
-    best_configs = aggregate_result.metadata.get("best_configurations", {})
-    if best_configs:
-        logger.info("")
-        logger.info("Best Configurations:")
-        if "best_throughput" in best_configs:
-            bt = best_configs["best_throughput"]
-            params_str = ", ".join(f"{k}={v}" for k, v in bt["parameters"].items())
-            logger.info(
-                f"  Best throughput: {params_str} ({bt['metric']:.2f} {bt['unit']})"
-            )
-        if "best_latency_p99" in best_configs:
-            bl = best_configs["best_latency_p99"]
-            params_str = ", ".join(f"{k}={v}" for k, v in bl["parameters"].items())
-            logger.info(
-                f"  Best latency (p99): {params_str} ({bl['metric']:.2f} {bl['unit']})"
-            )
-
-    pareto_optimal = aggregate_result.metadata.get("pareto_optimal", [])
-    if pareto_optimal:
-        logger.info(f"  Pareto optimal points: {pareto_optimal}")
+    _log_sweep_summary(aggregate_result, logger)
 
     return aggregate_dir
