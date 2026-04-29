@@ -29,16 +29,21 @@
 #    - Preserves versioned documentation (products[0]) from docs-website's docs.yml
 #
 # 3. PREVIEW (non-blocking): Generates a preview URL and comments on the PR.
-#    - `continue-on-error: true` so flaky `fern generate --preview` failures never
-#      block PR merges. Validation correctness is enforced by job (2).
-#    - On same-repo PRs: runs on the `pull_request` event with full secret access.
-#    - On fork PRs (no secrets in `pull_request` events): skipped on the
-#      `pull_request` event, then re-runs on push to `pull-request/<N>` after a
-#      maintainer approves the PR via copy-pr-bot (`/ok to test`). The mirror
-#      branch is in the trusted org repo, so it gets `FERN_TOKEN` and can post
-#      the preview URL back to the original PR.
-#    - On un-mirrored fork PRs: simply skipped — no fake yellow continue-on-error
-#      check, just no preview link until a maintainer kicks off copy-pr-bot.
+#    - A small `preview-context` job decides whether the actual `preview-docs`
+#      job should run for this event, then `preview-docs` does the work.
+#    - The `Generate docs preview` step never `exit 1`s — failures emit a
+#      ::warning:: and the comment step posts a "preview unavailable" message
+#      instead. continue-on-error stays as belt-and-suspenders for any other
+#      unexpected failure (sync, network, rate limit at sync time, etc.).
+#    - On same-repo PRs: runs on the `pull_request` event with FERN_TOKEN.
+#    - On fork PRs: skipped on `pull_request` (no secrets in untrusted
+#      context); re-runs on push to `pull-request/<N>` after a maintainer
+#      approves the PR via copy-pr-bot (`/ok to test`). The mirror branch is
+#      in the trusted org repo, so it gets FERN_TOKEN and posts the preview
+#      URL back to the original PR.
+#    - On un-mirrored fork PRs: simply skipped — no fake yellow check on the PR.
+#    - On same-repo PRs that copy-pr-bot also mirrors: the mirror push event
+#      is skipped (the original `pull_request` already ran preview).
 #
 # 4. VERSION RELEASE (tags): Creates versioned documentation snapshot
 #    - Triggers on new version tags (vX.Y.Z format)
@@ -273,38 +278,76 @@ jobs:
         run: fern generate --docs
 
   #############################################################################
-  # PREVIEW (PRs, non-blocking) - Generates a preview URL and comments on PR.
-  # Runs in parallel with validate-and-publish-docs and is marked
-  # `continue-on-error: true` so flaky `fern generate --preview` failures don't
-  # block PR merges. Validation correctness is enforced by the job above; this
-  # job only provides the preview-link convenience.
+  # PREVIEW CONTEXT - resolves the PR number and decides whether `preview-docs`
+  # should run for this event. Always succeeds (it's just a lookup job), so
+  # it stays out of the way of branch protection. preview-docs `needs:` this.
+  #
+  # Decision logic:
+  #   - same-repo PR on `pull_request`: run (has FERN_TOKEN).
+  #   - fork PR on `pull_request`: skip (no secrets in untrusted context;
+  #     copy-pr-bot will mirror after `/ok to test` and we'll catch the push).
+  #   - mirror push (`pull-request/<N>`) for a fork PR: run (trusted context).
+  #   - mirror push for a same-repo PR: skip (the original `pull_request`
+  #     event already ran preview — avoids duplicate preview generation).
+  #############################################################################
+
+  preview-context:
+    name: Preview docs context
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      pr_number: ${{ steps.decide.outputs.pr_number }}
+    steps:
+      - name: Decide whether preview should run
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER_FROM_EVENT: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_NUMBER="$PR_NUMBER_FROM_EVENT"
+            HEAD_REPO="$PR_HEAD_REPO"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            PR_NUMBER="${BRANCH#pull-request/}"
+            HEAD_REPO=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name' 2>/dev/null || echo "")
+          fi
+
+          SHOULD_RUN=false
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" = "$REPO" ]; then
+            SHOULD_RUN=true
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$REPO" ]; then
+            SHOULD_RUN=true
+          fi
+
+          echo "Resolved PR #$PR_NUMBER (head=$HEAD_REPO) should_run=$SHOULD_RUN"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
+  #############################################################################
+  # PREVIEW (non-blocking) - Generates a preview URL and comments on the PR.
+  # Skipped entirely when preview-context says it shouldn't run, so the only
+  # check that ever appears on a PR is the matching one (no fake yellow). The
+  # actual preview-generate step never `exit 1`s — failures emit a warning,
+  # set no URL output, and the comment step posts a "preview unavailable"
+  # message instead. continue-on-error stays as belt-and-suspenders for any
+  # other unexpected failure (sync, network, rate limit at sync time, etc.).
   #############################################################################
 
   preview-docs:
     name: Preview docs (non-blocking)
-    # Run on:
-    #   1. same-repo PRs (have FERN_TOKEN), OR
-    #   2. push to copy-pr-bot mirror branches `pull-request/<N>` (also have
-    #      FERN_TOKEN, used for fork PRs after maintainer `/ok to test`).
-    # Un-mirrored fork PRs don't match either condition, so they're cleanly
-    # skipped — no fake yellow continue-on-error check on the PR.
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
+    needs: preview-context
+    if: needs.preview-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - name: Determine PR number
-        id: pr
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          else
-            # push to copy-pr-bot mirror branch refs/heads/pull-request/<N>
-            BRANCH="${GITHUB_REF#refs/heads/}"
-            echo "number=${BRANCH#pull-request/}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Checkout source branch
         uses: actions/checkout@v4
         with:
@@ -392,29 +435,39 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         run: |
+          # Never `exit 1` here — preview is best-effort. On failure we emit a
+          # ::warning::, leave the `url` output empty, and let the comment
+          # step post a "preview unavailable" message. This keeps the job
+          # genuinely green (so the per-job check is a real check, not the
+          # not-quite-green of `continue-on-error: true` masking failure).
           if OUTPUT=$(fern generate --docs --preview 2>&1); then
             FERN_EXIT=0
           else
             FERN_EXIT=$?
           fi
           echo "$OUTPUT"
-          if [ $FERN_EXIT -ne 0 ]; then
-            echo "::error::Fern docs preview generation failed (exit $FERN_EXIT)"
-            exit 1
-          fi
           URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K\S+') || true
           if [ -n "$URL" ]; then
-            echo "url=$URL" >> $GITHUB_OUTPUT
+            echo "url=$URL" >> "$GITHUB_OUTPUT"
+          elif [ $FERN_EXIT -ne 0 ]; then
+            echo "::warning::Fern docs preview generation failed (exit $FERN_EXIT) — preview will be unavailable for this run."
           fi
 
-      - name: Comment preview URL on PR
-        if: steps.preview.outputs.url != ''
+      - name: Comment preview status on PR
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.preview-context.outputs.pr_number }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
-            const prNumber = ${{ steps.pr.outputs.number }};
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const url = process.env.PREVIEW_URL;
+            const runUrl = process.env.RUN_URL;
             const commentIdentifier = '<!-- fern-docs-preview -->';
-            const body = `${commentIdentifier}\n**Fern Docs Preview:** ${{ steps.preview.outputs.url }}/dev`;
+            const body = url
+              ? `${commentIdentifier}\n**Fern Docs Preview:** ${url}/dev`
+              : `${commentIdentifier}\n**Fern Docs Preview:** generation failed — see the [Actions log](${runUrl}) for details. This does not block merge; ask a maintainer to retry if needed.`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
