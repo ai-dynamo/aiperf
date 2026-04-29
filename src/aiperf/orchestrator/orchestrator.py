@@ -429,8 +429,9 @@ class MultiRunOrchestrator:
     ) -> dict[str, "JsonMetricResult"]:
         """Extract run-level summary statistics from artifacts.
 
-        Reads the profile_export_aiperf.json file written by the SystemController
-        and extracts the summary metrics, preserving the full structure with units.
+        Reads the profile export JSON file resolved from run config
+        (`config.output.profile_export_json_file`) and extracts summary metrics,
+        preserving the full structure with units.
 
         Args:
             config: Benchmark configuration for this run (used to resolve the actual output path)
