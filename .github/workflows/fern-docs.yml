@@ -21,13 +21,31 @@
 #    - Triggers on PRs when docs/** or fern/** files change
 #    - Runs `fern check` and `fern docs broken-links`
 #
-# 2. SYNC & PUBLISH/PREVIEW: Syncs docs/ from source branch to fern/ on docs-website
+# 2. VALIDATE & PUBLISH: Syncs docs/ from source branch to fern/ on docs-website,
+#    validates the synced content, and on main publishes via `fern generate --docs`
 #    - Triggers on push to main or PRs when docs/** or fern/** files change
 #    - On main: commits and pushes to docs-website, then publishes via `fern generate --docs`
-#    - On PRs: generates a preview URL via `fern generate --docs --preview` and comments on PR
+#    - On PRs: only validates (preview lives in a separate, non-blocking job)
 #    - Preserves versioned documentation (products[0]) from docs-website's docs.yml
 #
-# 3. VERSION RELEASE (tags): Creates versioned documentation snapshot
+# 3. PREVIEW (non-blocking): Generates a preview URL and comments on the PR.
+#    - A small `preview-context` job decides whether the actual `preview-docs`
+#      job should run for this event, then `preview-docs` does the work.
+#    - The `Generate docs preview` step never `exit 1`s — failures emit a
+#      ::warning:: and the comment step posts a "preview unavailable" message
+#      instead. continue-on-error stays as belt-and-suspenders for any other
+#      unexpected failure (sync, network, rate limit at sync time, etc.).
+#    - On same-repo PRs: runs on the `pull_request` event with FERN_TOKEN.
+#    - On fork PRs: skipped on `pull_request` (no secrets in untrusted
+#      context); re-runs on push to `pull-request/<N>` after a maintainer
+#      approves the PR via copy-pr-bot (`/ok to test`). The mirror branch is
+#      in the trusted org repo, so it gets FERN_TOKEN and posts the preview
+#      URL back to the original PR.
+#    - On un-mirrored fork PRs: simply skipped — no fake yellow check on the PR.
+#    - On same-repo PRs that copy-pr-bot also mirrors: the mirror push event
+#      is skipped (the original `pull_request` already ran preview).
+#
+# 4. VERSION RELEASE (tags): Creates versioned documentation snapshot
 #    - Triggers on new version tags (vX.Y.Z format)
 #    - Creates fern/pages-vX.Y.Z/ directory on docs-website branch
 #    - Updates fern/docs.yml with new version entry
@@ -44,9 +62,15 @@ on:
     paths:
       - 'docs/**'
       - 'fern/**'
+      # Self-validate when the workflow itself is edited.
+      - '.github/workflows/fern-docs.yml'
   push:
     branches:
       - main
+      # copy-pr-bot mirror branches for fork PRs; pushes here run in trusted
+      # context with FERN_TOKEN, letting `preview-docs` generate previews for
+      # fork PRs after a maintainer approves via `/ok to test`.
+      - 'pull-request/*'
     tags:
       # Match only clean semver tags: vX.Y.Z
       - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -84,16 +108,18 @@ jobs:
 
 
   #############################################################################
-  # SYNC & PUBLISH/PREVIEW - Syncs docs content to docs-website structure
-  # On main: commits, pushes to docs-website, then publishes via `fern generate --docs`
-  # On PRs: generates a preview URL via `fern generate --docs --preview` and comments on PR
+  # VALIDATE & PUBLISH - Syncs docs content to docs-website structure and
+  # validates the result. On main: commits, pushes, and publishes via
+  # `fern generate --docs`. On PRs: validation only — preview is a separate,
+  # non-blocking job below so flaky preview failures don't gate PR merges.
   #############################################################################
 
-  preview-or-publish-docs:
-    name: Preview or publish docs
+  validate-and-publish-docs:
+    name: Validate (and publish on main) synced docs
     if: |
       github.ref_type != 'tag' &&
-      (github.event.inputs.tag == '' || github.event.inputs.tag == null)
+      (github.event.inputs.tag == '' || github.event.inputs.tag == null) &&
+      !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
     runs-on: ubuntu-latest
     steps:
       - name: Determine context
@@ -222,83 +248,6 @@ jobs:
             git status --short
           fi
 
-      - name: Setup Node.js
-        if: steps.changes.outputs.has_changes == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Fern CLI
-        if: steps.changes.outputs.has_changes == 'true'
-        run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
-
-      ##########################################################################
-      # PREVIEW - Generate a preview URL for docs changes on PRs
-      ##########################################################################
-
-      - name: Generate docs preview
-        if: steps.ctx.outputs.is_main != 'true' && steps.changes.outputs.has_changes == 'true'
-        id: preview
-        working-directory: docs-checkout/fern
-        env:
-          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: |
-          if OUTPUT=$(fern generate --docs --preview 2>&1); then
-            FERN_EXIT=0
-          else
-            FERN_EXIT=$?
-          fi
-          echo "$OUTPUT"
-          if [ $FERN_EXIT -ne 0 ]; then
-            echo "::error::Fern docs preview generation failed (exit $FERN_EXIT)"
-            exit 1
-          fi
-          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K\S+') || true
-          if [ -n "$URL" ]; then
-            echo "url=$URL" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Comment preview URL on PR
-        if: steps.ctx.outputs.is_main != 'true' && steps.preview.outputs.url != '' && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = context.issue.number;
-            const commentIdentifier = '<!-- fern-docs-preview -->';
-            const body = `${commentIdentifier}\n**Fern Docs Preview:** ${{ steps.preview.outputs.url }}/dev`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-            });
-
-            const botComment = comments.find(comment =>
-              comment.user.type === 'Bot' &&
-              comment.body.includes(commentIdentifier)
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: body
-              });
-            }
-
-      ##########################################################################
-      # PUSH AND PUBLISH - push changes to docs-website branch and publish docs
-      # TODO(AIP-855): Re-enable once convert_mdx_comments.py transform is wired in (PR 2)
-      ##########################################################################
-
       - name: Setup Git
         if: steps.ctx.outputs.is_main == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
@@ -329,6 +278,237 @@ jobs:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         working-directory: docs-checkout/fern
         run: fern generate --docs
+
+  #############################################################################
+  # PREVIEW CONTEXT - resolves the PR number and decides whether `preview-docs`
+  # should run for this event. Always succeeds (it's just a lookup job), so
+  # it stays out of the way of branch protection. preview-docs `needs:` this.
+  #
+  # Decision logic:
+  #   - same-repo PR on `pull_request`: run (has FERN_TOKEN).
+  #   - fork PR on `pull_request`: skip (no secrets in untrusted context;
+  #     copy-pr-bot will mirror after `/ok to test` and we'll catch the push).
+  #   - mirror push (`pull-request/<N>`) for a fork PR: run (trusted context).
+  #   - mirror push for a same-repo PR: skip (the original `pull_request`
+  #     event already ran preview — avoids duplicate preview generation).
+  #############################################################################
+
+  preview-context:
+    name: Preview docs context
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      pr_number: ${{ steps.decide.outputs.pr_number }}
+    steps:
+      - name: Decide whether preview should run
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER_FROM_EVENT: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_NUMBER="$PR_NUMBER_FROM_EVENT"
+            HEAD_REPO="$PR_HEAD_REPO"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            PR_NUMBER="${BRANCH#pull-request/}"
+            # Surface lookup failures rather than silently routing as same-repo
+            # (which would skip the preview entirely, leaving no PR comment).
+            if ! HEAD_REPO=$(gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name'); then
+              echo "::error::Unable to resolve head repo for PR #$PR_NUMBER — preview routing failed"
+              exit 1
+            fi
+          fi
+
+          SHOULD_RUN=false
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" = "$REPO" ]; then
+            SHOULD_RUN=true
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$REPO" ]; then
+            SHOULD_RUN=true
+          fi
+
+          echo "Resolved PR #$PR_NUMBER (head=$HEAD_REPO) should_run=$SHOULD_RUN"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
+  #############################################################################
+  # PREVIEW (non-blocking) - Generates a preview URL and comments on the PR.
+  # Skipped entirely when preview-context says it shouldn't run, so the only
+  # check that ever appears on a PR is the matching one (no fake yellow). The
+  # actual preview-generate step never `exit 1`s — failures emit a warning,
+  # set no URL output, and the comment step posts a "preview unavailable"
+  # message instead. continue-on-error stays as belt-and-suspenders for any
+  # other unexpected failure (sync, network, rate limit at sync time, etc.).
+  #############################################################################
+
+  preview-docs:
+    name: Preview docs (non-blocking)
+    needs: preview-context
+    if: needs.preview-context.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          path: source-checkout
+          fetch-depth: 1
+
+      - name: Checkout docs-website branch
+        uses: actions/checkout@v4
+        with:
+          ref: docs-website
+          path: docs-checkout
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync dev content from source
+        run: |
+          # Sync content directories from docs/ to fern/pages-dev/ on docs-website
+          rm -rf docs-checkout/fern/pages-dev
+          mkdir -p docs-checkout/fern/pages-dev
+          rsync -a \
+            --exclude='index.yml' \
+            source-checkout/docs/ docs-checkout/fern/pages-dev/
+
+          # Sync index.yml as versions/dev.yml and transform paths for docs-website layout
+          cp source-checkout/docs/index.yml docs-checkout/fern/versions/dev.yml
+
+          # Sync fern.config.json
+          cp source-checkout/fern/fern.config.json docs-checkout/fern/fern.config.json
+
+          # Sync .gitignore if it exists
+          if [ -f source-checkout/fern/.gitignore ]; then
+            cp source-checkout/fern/.gitignore docs-checkout/fern/.gitignore
+          fi
+
+          # Sync md_to_mdx.py script (required — fail fast if missing)
+          cp source-checkout/fern/md_to_mdx.py docs-checkout/fern/md_to_mdx.py
+
+          # Sync components/ directory (e.g., CustomFooter.tsx)
+          if [ -d source-checkout/fern/components ]; then
+            rm -rf docs-checkout/fern/components
+            cp -r source-checkout/fern/components docs-checkout/fern/components
+          fi
+
+          # Sync main.css
+          if [ -f source-checkout/fern/main.css ]; then
+            cp source-checkout/fern/main.css docs-checkout/fern/main.css
+          fi
+
+      - name: Transform paths in dev.yml for docs-website layout
+        run: |
+          yq -i '(.. | select(has("path")).path) |= sub("^([a-zA-Z])", "../pages-dev/${1}")' docs-checkout/fern/versions/dev.yml
+
+      - name: Convert Markdown to Fern MDX format
+        run: python3 docs-checkout/fern/md_to_mdx.py --dir docs-checkout/fern/pages-dev
+
+      - name: Update docs.yml preserving products
+        run: |
+          cd docs-checkout/fern
+          yq '.products[0]' docs.yml > /tmp/preserved_product.yml
+          cp ../../source-checkout/fern/docs.yml docs.yml
+          yq -i '.products[0] = load("/tmp/preserved_product.yml")' docs.yml
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Fern CLI
+        run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
+
+      - name: Check for changes
+        id: changes
+        run: |
+          cd docs-checkout
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate docs preview
+        if: steps.changes.outputs.has_changes == 'true'
+        id: preview
+        working-directory: docs-checkout/fern
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          # Never `exit 1` here — preview is best-effort. On failure we emit a
+          # ::warning::, set `status=failed`, and let the comment step post a
+          # "preview unavailable" message. On success we set `status=success`
+          # plus the URL. This keeps the job genuinely green.
+          if OUTPUT=$(fern generate --docs --preview 2>&1); then
+            FERN_EXIT=0
+          else
+            FERN_EXIT=$?
+          fi
+          echo "$OUTPUT"
+          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K\S+') || true
+          if [ -n "$URL" ]; then
+            echo "url=$URL" >> "$GITHUB_OUTPUT"
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Fern docs preview generation failed (exit $FERN_EXIT) — preview will be unavailable for this run."
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment preview status on PR
+        # Run on success or failure of preceding steps, but skip the comment
+        # entirely when the preview step itself was skipped (has_changes=false)
+        # so we don't post a misleading "preview unavailable" on doc-untouched
+        # synced runs. Early-step failures (sync/checkout) are covered by
+        # validate-and-publish-docs being red, so no comment needed there either.
+        if: always() && steps.preview.outputs.status != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.preview-context.outputs.pr_number }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const url = process.env.PREVIEW_URL;
+            const runUrl = process.env.RUN_URL;
+            const commentIdentifier = '<!-- fern-docs-preview -->';
+            const body = url
+              ? `${commentIdentifier}\n**Fern Docs Preview:** ${url}/dev`
+              : `${commentIdentifier}\n**Fern Docs Preview:** generation failed — see the [Actions log](${runUrl}) for details. This does not block merge; ask a maintainer to retry if needed.`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes(commentIdentifier)
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+            }
 
   #############################################################################
   # VERSION RELEASE - Run on new version tags (vX.Y.Z)

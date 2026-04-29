@@ -52,4 +52,38 @@ def profile(
         from aiperf.common.config.loader import load_service_config
 
         service_config = service_config or load_service_config()
+
+        if user_config.endpoint.wait_for_model_timeout > 0:
+            import asyncio
+            import logging
+
+            from aiperf.common.readiness_probe import wait_for_endpoint
+
+            # The probe runs before `run_system_controller` (which installs
+            # rich logging), so there are no handlers attached yet. Install
+            # a basic stderr handler so probe log messages are visible.
+            if not logging.getLogger().handlers:
+                logging.basicConfig(
+                    level=logging.INFO,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                )
+
+            raw_headers = user_config.input.headers or []
+            headers = {str(k): str(v) for k, v in raw_headers}
+            if user_config.endpoint.api_key:
+                headers["Authorization"] = f"Bearer {user_config.endpoint.api_key}"
+
+            asyncio.run(
+                wait_for_endpoint(
+                    urls=user_config.endpoint.urls,
+                    model_names=user_config.endpoint.model_names,
+                    mode=user_config.endpoint.wait_for_model_mode,
+                    endpoint_type=str(user_config.endpoint.type),
+                    custom_endpoint=user_config.endpoint.custom_endpoint,
+                    timeout_s=user_config.endpoint.wait_for_model_timeout,
+                    interval_s=user_config.endpoint.wait_for_model_interval,
+                    headers=headers,
+                )
+            )
+
         run_system_controller(user_config, service_config)
