@@ -17,8 +17,9 @@ import random
 from collections import defaultdict
 from itertools import cycle
 from string import ascii_uppercase
+from typing import Any
 
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.config import UserConfig
@@ -169,7 +170,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         return [self._format_example(source[i]) for i in indices]
 
     @staticmethod
-    def _balanced_sample_indices(source, n_shots: int) -> list[int]:
+    def _balanced_sample_indices(source: Dataset, n_shots: int) -> list[int]:
         """Select few-shot indices using lighteval's balanced strategy.
 
         Groups examples by gold answer text, then round-robin samples across
@@ -212,7 +213,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
 
         return result[:n_shots]
 
-    def _format_example(self, row: dict) -> dict[str, str]:
+    def _format_example(self, row: dict[str, Any]) -> dict[str, str]:
         """Format a single dataset row as a few-shot example.
 
         Mirrors lighteval's approach: query + choices[gold_index].
@@ -238,7 +239,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
 
     def _format_prompt(
         self,
-        row: dict,
+        row: dict[str, Any],
         subject: str,
         few_shots: list[dict[str, str]],
         enable_cot: bool,
@@ -270,7 +271,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
 
     def _build_chat_messages(
         self,
-        row: dict,
+        row: dict[str, Any],
         subject: str,
         few_shots: list[dict[str, str]],
         enable_cot: bool,
