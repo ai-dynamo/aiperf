@@ -158,6 +158,11 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    audio_duration_seconds: float | None = Field(
+        default=None,
+        description="Duration of the audio content in seconds. Used by ASR-specific "
+        "metrics like RTFx. Set by ASR dataset loaders.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -209,6 +214,7 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            audio_duration_seconds=self.audio_duration_seconds,
         )
 
 
