@@ -8,8 +8,9 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_pull_message
+from aiperf.common.hooks import on_command, on_message, on_pull_message
 from aiperf.common.messages import (
+    DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
     ProfileConfigureCommand,
@@ -90,6 +91,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Error creating record processor: {e!r}")
                 raise
+
+    @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
+    async def _on_dataset_configured(
+        self, message: DatasetConfiguredNotification
+    ) -> None:
+        for processor in self.records_processors:
+            if hasattr(processor, "on_dataset_configured"):
+                processor.on_dataset_configured(message.metadata)
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(

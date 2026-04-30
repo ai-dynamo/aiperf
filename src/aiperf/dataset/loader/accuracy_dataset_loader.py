@@ -9,11 +9,15 @@ Each BenchmarkProblem becomes a single-turn Conversation with pre-formatted
 OpenAI-compatible messages in Turn.raw_messages.
 
 The problem ordering is deterministic: Conversation i corresponds to
-BenchmarkProblem i. AccuracyRecordProcessor maps each response back to its
-problem via session_num % len(problems), which handles both single-pass and
-multi-pass (num_requests > dataset size) runs correctly. This mapping is only
-valid when the dataset is sampled sequentially; DatasetManager enforces that
-invariant and rejects non-sequential strategies in accuracy mode.
+BenchmarkProblem i. Each Conversation carries accuracy_ground_truth and
+accuracy_task so that DatasetManager can propagate them through
+ConversationMetadata inside DatasetConfiguredNotification. Processors
+(AccuracyRecordProcessor, AccuracyResultsProcessor) receive these values
+from the notification instead of independently re-loading the benchmark.
+The session_num % len(conversations) mapping handles both single-pass and
+multi-pass (num_requests > dataset size) runs and is only valid when the
+dataset is sampled sequentially; DatasetManager enforces that invariant and
+rejects non-sequential strategies in accuracy mode.
 """
 
 from __future__ import annotations
@@ -41,12 +45,22 @@ class AccuracyDatasetLoader:
         self.user_config = user_config
 
     async def load(self) -> list[Conversation]:
-        """Load benchmark problems and convert to Conversations."""
-        problems = await self._load_problems()
-        return self._convert_to_conversations(problems)
+        """Load benchmark problems and convert to Conversations.
 
-    async def _load_problems(self) -> list[BenchmarkProblem]:
-        return await load_benchmark_problems(self.user_config)
+        Raises:
+            ValueError: if the benchmark returns 0 problems (e.g. bad --accuracy-tasks).
+        """
+        problems = await load_benchmark_problems(self.user_config)
+        if not problems:
+            acc_cfg = self.user_config.accuracy
+            raise ValueError(
+                f"Benchmark '{acc_cfg.benchmark}' returned 0 problems "
+                f"(tasks={acc_cfg.tasks}, n_shots={acc_cfg.n_shots}). "
+                f"Check that --accuracy-tasks names a valid subtask "
+                f"(see docs/accuracy/accuracy_benchmarking.md) or omit "
+                f"the flag to evaluate all tasks."
+            )
+        return self._convert_to_conversations(problems)
 
     def _convert_to_conversations(
         self, problems: list[BenchmarkProblem]
@@ -85,6 +99,13 @@ class AccuracyDatasetLoader:
                 texts=[Text(contents=[prompt_text])],
             )
 
-            conversations.append(Conversation(session_id=session_id, turns=[turn]))
+            conversations.append(
+                Conversation(
+                    session_id=session_id,
+                    turns=[turn],
+                    accuracy_ground_truth=problem.ground_truth,
+                    accuracy_task=problem.task,
+                )
+            )
 
         return conversations

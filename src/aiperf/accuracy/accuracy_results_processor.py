@@ -6,11 +6,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import (
     ACCURACY_OVERALL_TAG,
     ACCURACY_UNPARSED_TAG,
-    BenchmarkProblem,
     accuracy_task_tag,
     accuracy_unparsed_task_tag,
 )
@@ -21,14 +19,16 @@ from aiperf.common.models import MetricResult
 
 if TYPE_CHECKING:
     from aiperf.common.messages.inference_messages import MetricRecordsData
+    from aiperf.common.models.dataset_models import DatasetMetadata
 
 
 class AccuracyResultsProcessor(AIPerfLifecycleMixin):
     """Results processor for accuracy benchmarking.
 
-    Loads benchmark problems to resolve task names via session_num.
-    Accumulates per-record grading results from AccuracyRecordProcessor,
-    then summarizes into per-task and overall accuracy MetricResult objects.
+    Receives task names via on_dataset_configured (called by RecordsManager
+    when DatasetConfiguredNotification arrives). Accumulates per-record grading
+    results from AccuracyRecordProcessor, then summarizes into per-task and
+    overall accuracy MetricResult objects.
     """
 
     def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
@@ -40,7 +40,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         super().__init__(user_config=user_config, **kwargs)
         self.user_config = user_config
 
-        self._problems: list[BenchmarkProblem] | None = None
+        self._tasks: list[str] | None = None
         self._task_correct: dict[str, int] = defaultdict(int)
         self._task_total: dict[str, int] = defaultdict(int)
         self._task_unparsed: dict[str, int] = defaultdict(int)
@@ -48,21 +48,18 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         self._overall_total: int = 0
         self._overall_unparsed: int = 0
 
-    async def _ensure_problems_loaded(self) -> None:
-        if self._problems is None:
-            problems = await load_benchmark_problems(self.user_config)
-            if not problems:
-                acc_cfg = self.user_config.accuracy
-                msg = (
-                    f"Benchmark '{acc_cfg.benchmark}' returned 0 problems "
-                    f"(tasks={acc_cfg.tasks}, n_shots={acc_cfg.n_shots}). "
-                    f"Check that --accuracy-tasks names a valid subtask "
-                    f"(see docs/accuracy/accuracy_benchmarking.md) or omit "
-                    f"the flag to evaluate all tasks."
-                )
-                self.error(msg)
-                raise ValueError(msg)
-            self._problems = problems
+    def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
+        """Receive task names from the DatasetConfiguredNotification.
+
+        Called by RecordsManager before any records are processed. Builds the
+        ordered list of task names from ConversationMetadata so that
+        process_result can bucket results without re-loading the benchmark.
+        """
+        self._tasks = [
+            c.accuracy_task
+            for c in metadata.conversations
+            if c.accuracy_task is not None
+        ]
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         """Accumulate per-task accuracy counts from a single record's metrics.
@@ -72,17 +69,19 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         Records missing the ``accuracy.correct`` key are silently skipped.
 
         Raises:
-            ValueError: if the benchmark returned 0 problems (e.g., bad --accuracy-tasks).
+            RuntimeError: if on_dataset_configured was not called before processing.
         """
-        await self._ensure_problems_loaded()
+        if self._tasks is None:
+            raise RuntimeError(
+                "AccuracyResultsProcessor: dataset not configured; "
+                "on_dataset_configured must be called before process_result"
+            )
         metrics = record_data.metrics
         correct = metrics.get("accuracy.correct")
         if correct is None:
             return
 
-        task = self._problems[
-            record_data.metadata.session_num % len(self._problems)
-        ].task
+        task = self._tasks[record_data.metadata.session_num % len(self._tasks)]
         is_correct = float(correct) >= 0.5
         is_unparsed = float(metrics.get("accuracy.unparsed", 0.0)) >= 0.5
 

@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
+import pytest
 
 from aiperf.accuracy.models import BenchmarkProblem
 from aiperf.common.config import EndpointConfig, UserConfig
@@ -84,6 +87,20 @@ class TestAccuracyDatasetLoaderSystemPrompt:
         roles = [m["role"] for m in turn.raw_messages]
         assert "system" not in roles
 
+    @pytest.mark.asyncio
+    async def test_load_raises_on_empty_problems(self) -> None:
+        """load() raises ValueError when the benchmark returns no problems."""
+        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+
+        with (
+            patch(
+                "aiperf.dataset.loader.accuracy_dataset_loader.load_benchmark_problems",
+                return_value=[],
+            ),
+            pytest.raises(ValueError, match="returned 0 problems"),
+        ):
+            await loader.load()
+
     def test_system_prompt_applied_to_all_problems(self) -> None:
         """system_prompt is prepended to every problem's texts, not just the first."""
         loader = AccuracyDatasetLoader(
@@ -119,6 +136,37 @@ class TestAccuracyDatasetLoaderRawMessages:
             {"role": "assistant", "content": " A"},
             {"role": "user", "content": "What is 2+2?"},
         ]
+
+    def test_accuracy_ground_truth_stamped_on_conversation(self) -> None:
+        """_convert_to_conversations stamps problem.ground_truth onto Conversation."""
+        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        problem = _make_problem(ground_truth="C")
+
+        conversations = loader._convert_to_conversations([problem])
+
+        assert conversations[0].accuracy_ground_truth == "C"
+
+    def test_accuracy_task_stamped_on_conversation(self) -> None:
+        """_convert_to_conversations stamps problem.task onto Conversation."""
+        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        problem = BenchmarkProblem(
+            prompt="Q?", ground_truth="B", task="abstract_algebra"
+        )
+
+        conversations = loader._convert_to_conversations([problem])
+
+        assert conversations[0].accuracy_task == "abstract_algebra"
+
+    def test_metadata_propagates_accuracy_fields(self) -> None:
+        """Conversation.metadata() carries accuracy fields into ConversationMetadata."""
+        loader = AccuracyDatasetLoader(user_config=_make_user_config())
+        problem = BenchmarkProblem(prompt="Q?", ground_truth="D", task="virology")
+
+        conversations = loader._convert_to_conversations([problem])
+        meta = conversations[0].metadata()
+
+        assert meta.accuracy_ground_truth == "D"
+        assert meta.accuracy_task == "virology"
 
     def test_system_prompt_prepended_to_prebuilt_raw_messages(self) -> None:
         """system_prompt is inserted at index 0 of pre-built raw_messages."""

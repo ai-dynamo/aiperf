@@ -227,6 +227,16 @@ class ConversationMetadata(AIPerfBaseModel):
         default_factory=list,
         description="The metadata of the turns in the conversation.",
     )
+    accuracy_ground_truth: str | None = Field(
+        default=None,
+        description="Ground-truth answer for this conversation (accuracy mode only). "
+        "Set by AccuracyDatasetLoader; None for all other dataset types.",
+    )
+    accuracy_task: str | None = Field(
+        default=None,
+        description="Benchmark sub-task name for this conversation (accuracy mode only). "
+        "Set by AccuracyDatasetLoader; None for all other dataset types.",
+    )
 
 
 class DatasetMetadata(AIPerfBaseModel):
@@ -323,12 +333,26 @@ class Conversation(AIPerfBaseModel):
         description="Optional per-conversation user context prepended to the first turn. "
         "Unique for each conversation when using --user-context-prompt-length.",
     )
+    accuracy_ground_truth: str | None = Field(
+        default=None,
+        description="Ground-truth answer for this conversation (accuracy mode only). "
+        "Propagated to ConversationMetadata so processors receive it via "
+        "DatasetConfiguredNotification without re-loading the benchmark.",
+    )
+    accuracy_task: str | None = Field(
+        default=None,
+        description="Benchmark sub-task name for this conversation (accuracy mode only). "
+        "Propagated to ConversationMetadata so processors receive it via "
+        "DatasetConfiguredNotification without re-loading the benchmark.",
+    )
 
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=[turn.metadata() for turn in self.turns],
+            accuracy_ground_truth=self.accuracy_ground_truth,
+            accuracy_task=self.accuracy_task,
         )
 
 

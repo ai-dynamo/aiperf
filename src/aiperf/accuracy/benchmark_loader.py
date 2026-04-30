@@ -12,9 +12,9 @@ from aiperf.plugin.enums import PluginType
 async def load_benchmark_problems(user_config: UserConfig) -> list[BenchmarkProblem]:
     """Load benchmark problems from the configured benchmark, resolving n_shots defaults.
 
-    Single source of truth used by AccuracyDatasetLoader, AccuracyRecordProcessor,
-    and AccuracyResultsProcessor so the dataset is loaded with identical parameters
-    across all three components.
+    Called once by AccuracyDatasetLoader. Ground-truth answers and task names
+    are stamped onto each Conversation and shipped to processors via
+    DatasetConfiguredNotification, so processors never call this directly.
     """
     acc_cfg = user_config.accuracy
     benchmark_cls = plugins.get_class(PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark)
