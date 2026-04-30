@@ -56,6 +56,7 @@ The sidecar reads result files from the shared PVC and queries the Kubernetes AP
 | GET | `/api/v1/jobs` | jobs | List active AIPerfJob CRs |
 | GET | `/api/v1/jobs/{namespace}/{name}` | jobs | Single CR + pods + raw status |
 | POST | `/api/v1/jobs/{namespace}/{name}/cancel` | jobs | Set `spec.cancel=true` |
+| WS  | `/api/v1/jobs/{namespace}/{name}/ws` | jobs-ws | Live realtime feed (proxied to controller pod) |
 | GET | `/api/v1/cluster` | jobs | Node count, GPU total, K8s version |
 | GET | `/api/v1/results` | results-files | List every stored job |
 | GET | `/api/v1/results/{namespace}/{job_id}` | results-files | List files for one job |
@@ -202,6 +203,41 @@ curl http://localhost:8081/api/v1/cluster
 ```
 
 Both the node list and version query are best-effort: if RBAC is insufficient or the call fails, `kubernetes_version` is reported as `"unknown"` and `nodes`/`gpus` fall back to `0`. The endpoint does not surface errors for these sub-queries.
+
+### `WS /api/v1/jobs/{namespace}/{name}/ws`
+
+Per-job WebSocket proxy. The browser dashboard's per-job detail page uses this to subscribe to the same realtime message stream the controller pod publishes (e.g. `realtime_metrics`, `credit_phase_progress`, `worker_group_stats`), so KPI tiles update at the controller's emit cadence (~1Hz) instead of the page's REST poll interval.
+
+The proxy is transparent: it does not subscribe on the client's behalf. After the WS opens, the browser sends the controller's standard subscribe frame:
+
+```json
+{"type": "subscribe", "message_types": ["realtime_metrics"]}
+```
+
+…and from then on receives upstream frames verbatim. Implementation: `src/aiperf/operator/routers/jobs_ws.py`.
+
+**Topology**
+
+```mermaid
+flowchart LR
+    browser[browser<br/>job-detail page] -->|WS /api/v1/jobs/{ns}/{name}/ws| op[operator<br/>results-server]
+    op -->|reads CR status.jobSetName| api[Kubernetes API]
+    op -->|WS controller-svc:API_SERVICE/ws| ctl[controller pod]
+```
+
+The operator looks up the AIPerfJob CR's `status.jobSetName`, derives the controller pod's headless-service DNS via `controller_dns_name(jobset_name, namespace)`, and opens an `aiohttp` WebSocket to `ws://<controller-dns>:<API_SERVICE>/ws`. Two `asyncio` pumps then bridge frames in both directions until either side closes.
+
+**Refusal close codes**
+
+The proxy refuses connections with private-use (`4xxx`) WebSocket close codes so the browser can distinguish causes:
+
+| Code | Meaning |
+|---:|---|
+| `4503` | Operator's Kubernetes API client is not yet initialized (lifespan startup race). Retrying after a moment is correct. |
+| `4404` | The CR has no `status.jobSetName` yet — either the job is still being created or it doesn't exist. The dashboard only opens this WS when `phase === 'running'`, so this should be rare. |
+| `4502` | Upstream WS to the controller pod failed (DNS, connection refused, timeout). Typically means the controller pod isn't running. |
+| `1000` | Normal close (either side hung up). |
+
 
 ---
 
