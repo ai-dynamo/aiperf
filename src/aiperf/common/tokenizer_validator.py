@@ -316,6 +316,17 @@ def validate_tokenizer_early(
     if not (tokenizer_cfg and tokenizer_cfg.name):
         fake_to_builtin, real_models = _partition_fake_models(model_names, logger)
         if not real_models:
+            # All models are placeholders. Mutate config.tokenizer so every
+            # downstream consumer (forkserver preload env, child processes
+            # that read cfg.tokenizer.name directly, the dataset_manager's
+            # tokenizer loader) sees `builtin` without depending on
+            # run.resolved.tokenizer_names propagation.
+            from aiperf.config.v1 import TokenizerConfig
+
+            if tokenizer_cfg is None:
+                config.tokenizer = TokenizerConfig(name=BUILTIN_TOKENIZER_NAME)
+            else:
+                tokenizer_cfg.name = BUILTIN_TOKENIZER_NAME
             return fake_to_builtin
         names = real_models
 

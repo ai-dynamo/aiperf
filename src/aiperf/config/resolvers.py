@@ -239,14 +239,10 @@ class TokenizerResolver:
     """Validate tokenizer early (before spawning services) to fail fast."""
 
     def resolve(self, run: BenchmarkRun) -> None:
-        config = run.cfg
-        if not config.tokenizer:
-            return
-
         from aiperf.common.tokenizer_validator import validate_tokenizer_early
 
         aiperf_logger = _get_aiperf_logger()
-        run.resolved.tokenizer_names = validate_tokenizer_early(config, aiperf_logger)
+        run.resolved.tokenizer_names = validate_tokenizer_early(run.cfg, aiperf_logger)
 
 
 class GpuMetricsResolver:

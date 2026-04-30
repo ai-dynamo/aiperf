@@ -221,11 +221,20 @@ phases:
 
 
 class TestTokenizerResolver:
-    def test_skips_when_no_tokenizer(self, run_with_config):
+    def test_runs_validator_even_when_tokenizer_unset(self, run_with_config):
+        """Resolver always invokes the validator so fake-model detection fires
+        even when the user passed no `--tokenizer*` flags (and v1 left
+        ``cfg.tokenizer`` as None).
+        """
         run_with_config.cfg = run_with_config.cfg.model_copy(update={"tokenizer": None})
 
-        TokenizerResolver().resolve(run_with_config)
+        with patch(
+            "aiperf.common.tokenizer_validator.validate_tokenizer_early",
+            return_value=None,
+        ) as mock_validate:
+            TokenizerResolver().resolve(run_with_config)
 
+        mock_validate.assert_called_once()
         assert run_with_config.resolved.tokenizer_names is None
 
     def test_calls_validator_when_tokenizer_set(self, minimal_config, tmp_path):
