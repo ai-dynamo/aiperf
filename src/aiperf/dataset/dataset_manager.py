@@ -427,6 +427,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
+        self._default_context_mode = None
 
         if self.user_config.accuracy.enabled:
             conversations = await self._load_accuracy_dataset()
