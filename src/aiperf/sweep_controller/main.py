@@ -46,6 +46,57 @@ def aggregate_marker_exists(base_dir: Path) -> bool:
     return (base_dir / AGGREGATE_READY_MARKER).exists()
 
 
+def resolve_terminal_phase(*, completed: int, failed: int, max_failures: int) -> str:
+    """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
+
+    Three-way classification keeps a single bad trial in a 6-trial sweep from
+    masquerading as a total run-failure:
+
+    * ``Succeeded`` — no failures.
+    * ``Failed`` — every result failed (no successful trial), OR
+      ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget).
+    * ``PartiallyFailed`` — some failed, some succeeded, and the explicit
+      budget (if any) was not exceeded.
+
+    The CRD enum (``crd-aiperfsweep.yaml``) has carried ``PartiallyFailed``
+    since the schema was first written, but every prior call site collapsed
+    "any failure" → ``Failed``. ``aiperf kube watch`` and ``list`` already
+    accept the enum verbatim because the CRD declared it.
+
+    Args:
+        completed: Count of successful child results across all (variation,
+            trial) cells. Sourced from ``RunResult.success`` truthiness.
+        failed: Count of failed child results across all cells. Includes
+            both child Job ``Failed`` and child ``Cancelled``.
+        max_failures: ``spec.failurePolicy.maxFailures`` from the CR.
+            ``0`` = unbounded (no explicit threshold; use the all-failed
+            rule). ``>0`` = treat ``failed >= max_failures`` as
+            non-recoverable.
+
+    Returns:
+        One of ``"Succeeded"``, ``"PartiallyFailed"``, ``"Failed"`` —
+        members of ``PARENT_TERMINAL_PHASES`` in
+        ``aiperf.operator.handlers.sweep.child_rollup``.
+
+    Example:
+        >>> resolve_terminal_phase(completed=5, failed=1, max_failures=0)
+        'PartiallyFailed'
+        >>> resolve_terminal_phase(completed=0, failed=6, max_failures=0)
+        'Failed'
+        >>> resolve_terminal_phase(completed=6, failed=0, max_failures=0)
+        'Succeeded'
+        >>> resolve_terminal_phase(completed=4, failed=2, max_failures=2)
+        'Failed'
+    """
+    if failed <= 0:
+        return "Succeeded"
+    if max_failures > 0 and failed >= max_failures:
+        return "Failed"
+    if completed <= 0:
+        return "Failed"
+    return "PartiallyFailed"
+
+
 def write_aggregate_marker(base_dir: Path) -> None:
     """Atomically write the aggregation ready marker."""
     marker = base_dir / AGGREGATE_READY_MARKER
@@ -415,7 +466,12 @@ async def main() -> int:
                 RESULTS_DIR, sweep_namespace, sweep_name, sweep_run_epoch
             )
             failed_count = sum(1 for r in all_results if not r.success)
-            terminal_phase = "Failed" if failed_count > 0 else "Succeeded"
+            completed_count = len(all_results) - failed_count
+            terminal_phase = resolve_terminal_phase(
+                completed=completed_count,
+                failed=failed_count,
+                max_failures=spec.failure_policy.max_failures,
+            )
             await status_writer.aggregation_complete(
                 aggregate_path=(
                     f"/api/v1/results/{sweep_namespace}/{sweep_name}/aggregate"

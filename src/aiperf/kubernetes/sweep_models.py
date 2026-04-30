@@ -142,7 +142,14 @@ class FailurePolicy(BaseConfig):
     max_failures: int = Field(
         default=0,
         ge=0,
-        description="0 = unbounded. Otherwise, terminate sweep when failed count reaches this value.",
+        description=(
+            "Hard failure budget for the entire sweep. 0 = unbounded "
+            "(no early-abort on count). When >0, the orchestrator stops "
+            "scheduling new children once failedRuns >= maxFailures and "
+            "the sweep terminates with phase=Failed. Independent of "
+            "terminal-phase resolution: a sweep with 0 < failedRuns < total "
+            "and the threshold not exceeded ends as PartiallyFailed."
+        ),
     )
 
 
