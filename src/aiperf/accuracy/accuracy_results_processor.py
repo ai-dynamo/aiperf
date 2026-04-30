@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING, Any
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import (
     ACCURACY_OVERALL_TAG,
+    ACCURACY_UNPARSED_TAG,
     BenchmarkProblem,
     accuracy_task_tag,
+    accuracy_unparsed_task_tag,
 )
 from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -41,8 +43,10 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         self._problems: list[BenchmarkProblem] | None = None
         self._task_correct: dict[str, int] = defaultdict(int)
         self._task_total: dict[str, int] = defaultdict(int)
+        self._task_unparsed: dict[str, int] = defaultdict(int)
         self._overall_correct: int = 0
         self._overall_total: int = 0
+        self._overall_unparsed: int = 0
 
     async def _ensure_problems_loaded(self) -> None:
         if self._problems is None:
@@ -80,20 +84,29 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             record_data.metadata.session_num % len(self._problems)
         ].task
         is_correct = float(correct) >= 0.5
+        is_unparsed = float(metrics.get("accuracy.unparsed", 0.0)) >= 0.5
 
         self._overall_total += 1
         if is_correct:
             self._overall_correct += 1
+        if is_unparsed:
+            self._overall_unparsed += 1
 
         self._task_total[task] += 1
         if is_correct:
             self._task_correct[task] += 1
+        if is_unparsed:
+            self._task_unparsed[task] += 1
 
     async def summarize(self) -> list[MetricResult]:
-        """Return overall and per-task accuracy as a list of MetricResult.
+        """Return overall and per-task accuracy and unparsed counts as MetricResult list.
 
-        Emits one ``accuracy.overall`` entry followed by one ``accuracy.task.<name>``
-        entry per task, both sorted and expressed as ratios (correct / total).
+        Emits:
+        - ``accuracy.overall``: overall correct/total ratio
+        - ``accuracy.task.<name>``: per-task correct/total ratio (sorted alphabetically)
+        - ``accuracy.unparsed``: overall count of responses that required regex fallback
+        - ``accuracy.unparsed.task.<name>``: per-task unparsed counts (sorted alphabetically)
+
         Returns an empty list if no records were processed.
         """
         results: list[MetricResult] = []
@@ -123,6 +136,32 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                     count=total,
                     current=acc,
                     sum=correct,
+                )
+            )
+
+        if self._overall_total > 0:
+            results.append(
+                MetricResult(
+                    tag=ACCURACY_UNPARSED_TAG,
+                    header="Accuracy Unparsed (Overall)",
+                    unit="ratio",
+                    count=self._overall_total,
+                    current=self._overall_unparsed / self._overall_total,
+                    sum=self._overall_unparsed,
+                )
+            )
+
+        for task in sorted(self._task_total.keys()):
+            total = self._task_total[task]
+            unparsed = self._task_unparsed.get(task, 0)
+            results.append(
+                MetricResult(
+                    tag=accuracy_unparsed_task_tag(task),
+                    header=f"Accuracy Unparsed ({task})",
+                    unit="ratio",
+                    count=total,
+                    current=unparsed / total if total > 0 else 0.0,
+                    sum=unparsed,
                 )
             )
 

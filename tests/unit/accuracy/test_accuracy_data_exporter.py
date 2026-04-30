@@ -58,16 +58,23 @@ class TestAccuracyDataExporterExport:
             _make_metric("accuracy.overall", correct=8, total=10, accuracy=0.8),
             _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
             _make_metric("accuracy.task.history", correct=5, total=5, accuracy=1.0),
+            _make_metric("accuracy.unparsed", correct=1, total=10, accuracy=0.1),
+            _make_metric(
+                "accuracy.unparsed.task.algebra", correct=1, total=5, accuracy=0.2
+            ),
+            _make_metric(
+                "accuracy.unparsed.task.history", correct=0, total=5, accuracy=0.0
+            ),
         ]
         exporter = _make_exporter(tmp_path, records)
 
         await exporter.export()
 
         rows = list(csv.reader(exporter._csv_path.open()))
-        assert rows[0] == ["task", "correct", "total", "accuracy"]
-        assert rows[1] == ["OVERALL", "8", "10", "0.8000"]
-        assert rows[2] == ["algebra", "3", "5", "0.6000"]
-        assert rows[3] == ["history", "5", "5", "1.0000"]
+        assert rows[0] == ["task", "correct", "total", "unparsed", "accuracy"]
+        assert rows[1] == ["OVERALL", "8", "10", "1", "0.8000"]
+        assert rows[2] == ["algebra", "3", "5", "1", "0.6000"]
+        assert rows[3] == ["history", "5", "5", "0", "1.0000"]
 
     async def test_export_skips_non_accuracy_metrics(self, tmp_path: Path) -> None:
         records = [

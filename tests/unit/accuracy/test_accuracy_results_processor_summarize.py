@@ -80,6 +80,7 @@ class TestAccuracyResultsProcessorSummarize:
 
         tags = [r.tag for r in results]
         assert "accuracy.overall" not in tags
+        assert "accuracy.unparsed" not in tags
         assert "accuracy.task.math" in tags
 
     async def test_multiple_tasks_each_get_own_metric(self) -> None:
@@ -98,3 +99,46 @@ class TestAccuracyResultsProcessorSummarize:
             "accuracy.task.biology",
             "accuracy.task.physics",
         }
+
+    async def test_unparsed_overall_emitted_when_records_processed(self) -> None:
+        processor = _make_processor()
+        processor._overall_total = 10
+        processor._overall_correct = 7
+        processor._overall_unparsed = 3
+
+        results = await processor.summarize()
+
+        unparsed = next(r for r in results if r.tag == "accuracy.unparsed")
+        assert unparsed.sum == 3
+        assert unparsed.count == 10
+        assert unparsed.current == pytest.approx(0.3)
+
+    async def test_unparsed_per_task_emitted(self) -> None:
+        processor = _make_processor()
+        processor._overall_total = 5
+        processor._overall_correct = 3
+        processor._task_total["math"] = 5
+        processor._task_correct["math"] = 3
+        processor._task_unparsed["math"] = 2
+
+        results = await processor.summarize()
+
+        unparsed_task = next(
+            r for r in results if r.tag == "accuracy.unparsed.task.math"
+        )
+        assert unparsed_task.sum == 2
+        assert unparsed_task.count == 5
+        assert unparsed_task.current == pytest.approx(0.4)
+
+    async def test_unparsed_zero_when_all_conforming(self) -> None:
+        processor = _make_processor()
+        processor._overall_total = 5
+        processor._overall_correct = 5
+        processor._task_total["math"] = 5
+        processor._task_correct["math"] = 5
+
+        results = await processor.summarize()
+
+        unparsed = next(r for r in results if r.tag == "accuracy.unparsed")
+        assert unparsed.sum == 0
+        assert unparsed.current == pytest.approx(0.0)

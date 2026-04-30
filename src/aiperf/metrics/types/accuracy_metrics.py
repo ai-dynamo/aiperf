@@ -33,3 +33,29 @@ class AccuracyCorrectSumMetric(BaseAggregateMetric[float]):
 
     def _aggregate_value(self, value: float) -> None:
         self._value += value
+
+
+class AccuracyUnparsedSumMetric(BaseAggregateMetric[float]):
+    """Running sum of per-record accuracy.unparsed values (1.0 unparsed, 0.0 conforming).
+
+    AccuracyRecordProcessor writes this tag when the model output required the
+    regex fallback (e.g. 'The answer is B.' instead of 'B').
+    Marked NO_CONSOLE | INTERNAL so it does not appear in the standard table.
+    """
+
+    tag = "accuracy.unparsed"
+    header = "Accuracy Unparsed"
+    unit = GenericMetricUnit.RATIO
+    flags = MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL
+    required_metrics = None
+
+    def _parse_record(
+        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+    ) -> float:
+        value = record_metrics.get("accuracy.unparsed")
+        if value is None:
+            raise NoMetricValue("accuracy.unparsed not in record_metrics")
+        return float(value)
+
+    def _aggregate_value(self, value: float) -> None:
+        self._value += value

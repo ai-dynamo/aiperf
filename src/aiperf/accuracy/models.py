@@ -10,12 +10,19 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 
 ACCURACY_OVERALL_TAG = "accuracy.overall"
 ACCURACY_TASK_TAG_PREFIX = "accuracy.task."
+ACCURACY_UNPARSED_TAG = "accuracy.unparsed"
+ACCURACY_UNPARSED_TASK_TAG_PREFIX = "accuracy.unparsed.task."
 ACCURACY_METRIC_PREFIX = "accuracy."
 
 
 def accuracy_task_tag(task: str) -> str:
     """Build the MetricResult.tag for a per-task accuracy result."""
     return f"{ACCURACY_TASK_TAG_PREFIX}{task}"
+
+
+def accuracy_unparsed_task_tag(task: str) -> str:
+    """Build the MetricResult.tag for a per-task unparsed-count result."""
+    return f"{ACCURACY_UNPARSED_TASK_TAG_PREFIX}{task}"
 
 
 class AccuracyChatMessage(TypedDict):
@@ -29,6 +36,12 @@ class GradingResult(AIPerfBaseModel):
     """Result of grading a single LLM response against ground truth."""
 
     correct: bool = Field(description="Whether the response was graded as correct")
+    unparsed: bool = Field(
+        default=False,
+        description="True when the model output did not match the expected format "
+        "(e.g. 'The answer is B.' instead of 'B') and a regex fallback was used. "
+        "A correct unparsed response is still scored as correct.",
+    )
     confidence: float = Field(
         ge=0, le=1, description="Confidence score of the grading (0.0 to 1.0)"
     )

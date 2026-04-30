@@ -99,6 +99,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         )
 
         record_metrics["accuracy.correct"] = 1.0 if result.correct else 0.0
+        record_metrics["accuracy.unparsed"] = 1.0 if result.unparsed else 0.0
 
         return record_metrics
 

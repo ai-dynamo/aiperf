@@ -58,6 +58,13 @@ class TestAccuracyConsoleExporterExport:
                 _make_metric("accuracy.overall", correct=8, total=10, accuracy=0.8),
                 _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
                 _make_metric("accuracy.task.history", correct=5, total=5, accuracy=1.0),
+                _make_metric("accuracy.unparsed", correct=1, total=10, accuracy=0.1),
+                _make_metric(
+                    "accuracy.unparsed.task.algebra", correct=1, total=5, accuracy=0.2
+                ),
+                _make_metric(
+                    "accuracy.unparsed.task.history", correct=0, total=5, accuracy=0.0
+                ),
             ]
         )
         buf = io.StringIO()
@@ -68,6 +75,7 @@ class TestAccuracyConsoleExporterExport:
         assert "algebra" in output
         assert "history" in output
         assert "OVERALL" in output
+        assert "Unparsed" in output
 
     async def test_no_output_when_results_is_none(self) -> None:
         exporter = _make_exporter(records=None)
