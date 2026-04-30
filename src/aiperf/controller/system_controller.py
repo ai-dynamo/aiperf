@@ -184,7 +184,11 @@ class SystemController(SignalHandlerMixin, BaseService):
         extra_inputs = self.user_config.input.extra
         if not extra_inputs:
             return True
-        return dict(extra_inputs).get("temperature") != 0
+        val = dict(extra_inputs).get("temperature")
+        try:
+            return float(val) != 0.0
+        except (TypeError, ValueError):
+            return True
 
     async def request_realtime_metrics(self) -> None:
         """Request real-time metrics from the RecordsManager."""

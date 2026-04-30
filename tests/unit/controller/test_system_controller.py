@@ -397,6 +397,22 @@ class TestAccuracyTemperatureWarning:
         )
         assert not system_controller._should_warn_accuracy_temperature()
 
+    def test_no_warning_when_temperature_stringified_zero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", "0")]
+        )
+        assert not system_controller._should_warn_accuracy_temperature()
+
+    def test_warning_when_temperature_stringified_nonzero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", "0.5")]
+        )
+        assert system_controller._should_warn_accuracy_temperature()
+
 
 class TestSSLVerificationWarning:
     """Test SSL verification warning in SystemController."""
