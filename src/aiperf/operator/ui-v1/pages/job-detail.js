@@ -13,6 +13,7 @@ import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
+import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
@@ -72,45 +73,173 @@ function fmtNum(val, decimals = 1) {
   return fmtNumber(val, decimals);
 }
 
-// Metrics table: group definitions
+// Metrics table: column set and group definitions.
+//
+// METRIC_COLUMNS is the full numeric column list rendered in every group's
+// table header. Each row's `cols` whitelist gates which cells render data
+// vs `---` so noisy aggregates (counts, totals) don't pretend to have
+// percentiles. Auto-discovery rows in the "Other Metrics" tail group bypass
+// the whitelist and show every column where the value is non-null.
+const METRIC_COLUMNS = ['avg', 'std', 'p1', 'p10', 'p50', 'p90', 'p95', 'p99', 'min', 'max'];
+
+const METRIC_COL_TITLES = {
+  avg: 'Arithmetic mean across all requests',
+  std: 'Standard deviation across observations',
+  p1: '1st percentile — best-case (only 1% of requests faster/below)',
+  p10: '10th percentile — 10% of requests at or below this value',
+  p50: '50th percentile (median) — half of requests at or below this value',
+  p90: '90th percentile — 90% of requests at or below this value',
+  p95: '95th percentile — 95% of requests at or below this value',
+  p99: '99th percentile — 99% of requests at or below this value (tail latency)',
+  min: 'Minimum observed value',
+  max: 'Maximum observed value',
+};
+
+const FULL_PERCENTILES = ['avg', 'std', 'p1', 'p10', 'p50', 'p90', 'p95', 'p99', 'min', 'max'];
+
 const METRIC_GROUPS = [
   {
     label: 'Throughput',
     color: palette.blue,
     rows: [
-      { key: 'request_throughput', label: 'Request Throughput', cols: ['avg'], colLabels: ['avg'] },
-      { key: 'output_token_throughput', label: 'Output Token Throughput', cols: ['avg'], colLabels: ['avg'] },
-      { key: 'total_token_throughput', label: 'Total Token Throughput', cols: ['avg'], colLabels: ['avg'] },
+      { key: 'request_throughput', label: 'Request Throughput', cols: ['avg'] },
+      { key: 'output_token_throughput', label: 'Output Token Throughput', cols: ['avg'] },
+      { key: 'total_token_throughput', label: 'Total Token Throughput', cols: ['avg'] },
+      { key: 'goodput', label: 'Goodput', cols: ['avg'] },
+      { key: 'output_token_throughput_per_user', label: 'Output Token Throughput per User', cols: ['avg', 'p50', 'p99'] },
+      { key: 'e2e_output_token_throughput', label: 'E2E Output Token Throughput', cols: ['avg'] },
+      { key: 'prefill_throughput_per_user', label: 'Prefill Throughput per User', cols: ['avg', 'p50', 'p99'] },
     ],
   },
   {
     label: 'Latency',
     color: palette.peach,
     rows: [
-      { key: 'request_latency', label: 'Request Latency', cols: ['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'], colLabels: ['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'] },
-      { key: 'time_to_first_token', label: 'Time to First Token', cols: ['avg', 'p50', 'p90', 'p95', 'p99'], colLabels: ['avg', 'p50', 'p90', 'p95', 'p99'] },
-      { key: 'inter_token_latency', label: 'Inter-Token Latency', cols: ['avg', 'p50', 'p90', 'p95', 'p99'], colLabels: ['avg', 'p50', 'p90', 'p95', 'p99'] },
-      { key: 'time_to_second_token', label: 'Time to Second Token', cols: ['avg', 'p50', 'p95', 'p99'], colLabels: ['avg', 'p50', 'p95', 'p99'] },
+      { key: 'request_latency', label: 'Request Latency', cols: FULL_PERCENTILES },
+      { key: 'time_to_first_token', label: 'Time to First Token', cols: FULL_PERCENTILES },
+      { key: 'inter_token_latency', label: 'Inter-Token Latency', cols: FULL_PERCENTILES },
+      { key: 'time_to_second_token', label: 'Time to Second Token', cols: ['avg', 'p50', 'p95', 'p99'] },
+      { key: 'inter_chunk_latency', label: 'Inter-Chunk Latency', cols: ['avg', 'p50', 'p90', 'p99'] },
+      { key: 'time_to_first_output_token', label: 'Time to First Output Token', cols: ['avg', 'p50', 'p90', 'p99'] },
+      { key: 'stream_setup_latency', label: 'Stream Setup Latency', cols: ['avg', 'p50', 'p99'] },
+      { key: 'stream_prefill_latency', label: 'Stream Prefill Latency', cols: ['avg', 'p50', 'p99'] },
+      { key: 'image_latency', label: 'Image Latency', cols: ['avg', 'p50', 'p99'] },
+    ],
+  },
+  {
+    label: 'Tokens',
+    color: palette.mauve,
+    rows: [
+      { key: 'usage_prompt_tokens', label: 'Usage Prompt Tokens', cols: ['avg', 'p50', 'p99'] },
+      { key: 'usage_completion_tokens', label: 'Usage Completion Tokens', cols: ['avg', 'p50', 'p99'] },
+      { key: 'usage_total_tokens', label: 'Usage Total Tokens', cols: ['avg', 'p50', 'p99'] },
+      { key: 'reasoning_token_count', label: 'Reasoning Tokens', cols: ['avg', 'p50', 'p99'] },
+      { key: 'output_token_count', label: 'Output Tokens', cols: ['avg', 'p50', 'p99'] },
     ],
   },
   {
     label: 'Sequence Lengths',
     color: palette.teal,
     rows: [
-      { key: 'input_sequence_length', label: 'Input Sequence Length', cols: ['avg', 'p50', 'p99'], colLabels: ['avg', 'p50', 'p99'] },
-      { key: 'output_sequence_length', label: 'Output Sequence Length', cols: ['avg', 'p50', 'p99'], colLabels: ['avg', 'p50', 'p99'] },
+      { key: 'input_sequence_length', label: 'Input Sequence Length', cols: ['avg', 'p50', 'p99'] },
+      { key: 'output_sequence_length', label: 'Output Sequence Length', cols: ['avg', 'p50', 'p99'] },
+      { key: 'requested_osl', label: 'Requested OSL', cols: ['avg', 'p50'] },
+      { key: 'osl_mismatch_diff_pct', label: 'OSL Mismatch (diff %)', cols: ['avg'] },
+      { key: 'error_isl', label: 'Error ISL', cols: ['avg'] },
+    ],
+  },
+  {
+    label: 'Counts & Totals',
+    color: palette.amber,
+    rows: [
+      { key: 'request_count', label: 'Request Count', cols: ['avg'] },
+      { key: 'good_request_count', label: 'Good Request Count', cols: ['avg'] },
+      { key: 'error_request_count', label: 'Error Request Count', cols: ['avg'] },
+      { key: 'total_output_tokens', label: 'Total Output Tokens', cols: ['avg'] },
+      { key: 'total_isl', label: 'Total ISL', cols: ['avg'] },
+      { key: 'total_osl', label: 'Total OSL', cols: ['avg'] },
+      { key: 'total_error_isl', label: 'Total Error ISL', cols: ['avg'] },
+      { key: 'total_usage_prompt_tokens', label: 'Total Usage Prompt Tokens', cols: ['avg'] },
+      { key: 'total_usage_completion_tokens', label: 'Total Usage Completion Tokens', cols: ['avg'] },
+      { key: 'total_usage_total_tokens', label: 'Total Usage Total Tokens', cols: ['avg'] },
+      { key: 'total_reasoning_tokens', label: 'Total Reasoning Tokens', cols: ['avg'] },
+      { key: 'benchmark_duration', label: 'Benchmark Duration', cols: ['avg'] },
     ],
   },
   {
     label: 'HTTP',
-    color: palette.mauve,
+    color: palette.pink,
     rows: [
-      { key: 'request_duration', label: 'Request Duration', cols: ['avg', 'p50', 'p99'], colLabels: ['avg', 'p50', 'p99'] },
-      { key: 'connection_overhead', label: 'Connection Overhead', cols: ['avg'], colLabels: ['avg'] },
-      { key: 'dns_lookup', label: 'DNS Lookup', cols: ['avg'], colLabels: ['avg'] },
+      { key: 'http_req_duration', label: 'HTTP Request Duration', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_total', label: 'HTTP Request Total', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_waiting', label: 'HTTP Waiting (TTFB)', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_connecting', label: 'HTTP Connecting', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_sending', label: 'HTTP Sending', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_receiving', label: 'HTTP Receiving', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_blocked', label: 'HTTP Blocked', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_dns_lookup', label: 'HTTP DNS Lookup', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_connection_overhead', label: 'HTTP Connection Overhead', cols: ['avg', 'p50', 'p99'] },
+      { key: 'http_req_data_sent', label: 'HTTP Data Sent', cols: ['avg', 'min', 'max'] },
+      { key: 'http_req_data_received', label: 'HTTP Data Received', cols: ['avg', 'min', 'max'] },
+      { key: 'http_req_chunks_sent', label: 'HTTP Chunks Sent', cols: ['avg', 'min', 'max'] },
+      { key: 'http_req_chunks_received', label: 'HTTP Chunks Received', cols: ['avg', 'min', 'max'] },
+      { key: 'http_req_connection_reused', label: 'HTTP Connection Reused', cols: ['avg', 'min', 'max'] },
+    ],
+  },
+  {
+    label: 'Reasoning',
+    color: palette.lavender,
+    rows: [
+      { key: 'thinking_efficiency', label: 'Thinking Efficiency', cols: ['avg', 'p50', 'p99'] },
+      { key: 'overall_thinking_efficiency', label: 'Overall Thinking Efficiency', cols: ['avg'] },
+    ],
+  },
+  {
+    label: 'Vision',
+    color: palette.green,
+    rows: [
+      { key: 'num_images', label: 'Images per Request', cols: ['avg'] },
+      { key: 'image_throughput', label: 'Image Throughput', cols: ['avg'] },
+      { key: 'video_inference_time', label: 'Video Inference Time', cols: ['avg', 'p50', 'p99'] },
+      { key: 'video_peak_memory', label: 'Video Peak Memory', cols: ['avg', 'max'] },
     ],
   },
 ];
+
+// Tags claimed by curated groups; the auto-discovery tail subtracts these
+// from the full results key set so each metric appears at most once.
+const CURATED_KEYS = new Set(
+  METRIC_GROUPS.flatMap(g => g.rows.map(r => r.key)),
+);
+
+function isMetricStruct(v) {
+  // A metric entry is an object carrying at least one stat field. Filters
+  // out scalars (error_rate is a bare number) and meta-structs that don't
+  // belong in a percentile table.
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return false;
+  return v.avg != null || v.p50 != null || v.sum != null || v.count != null;
+}
+
+function prettifyTag(tag) {
+  return tag
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function buildOtherMetricsRows(results) {
+  const rows = [];
+  for (const [key, value] of Object.entries(results ?? {})) {
+    if (CURATED_KEYS.has(key)) continue;
+    if (!isMetricStruct(value)) continue;
+    // Show every column where the metric actually has data; auto-discovery
+    // doesn't know what's meaningful so it just surfaces what's there.
+    const cols = METRIC_COLUMNS.filter(c => value[c] != null);
+    if (cols.length === 0) continue;
+    rows.push({ key, label: prettifyTag(key), cols });
+  }
+  rows.sort((a, b) => a.key.localeCompare(b.key));
+  return rows;
+}
 
 function MetricsTable({ results }) {
   const [collapsed, setCollapsed] = useState({});
@@ -119,10 +248,15 @@ function MetricsTable({ results }) {
     setCollapsed(prev => ({ ...prev, [label]: !prev[label] }));
   }
 
+  const otherRows = buildOtherMetricsRows(results);
+  const allGroups = otherRows.length > 0
+    ? [...METRIC_GROUPS, { label: 'Other Metrics', color: palette.overlay1, rows: otherRows }]
+    : METRIC_GROUPS;
+
   return html`
     <div class="card" style="margin-top: var(--space-4)">
       <div class="card-title">Full Metrics Breakdown</div>
-      ${METRIC_GROUPS.map(group => {
+      ${allGroups.map(group => {
         const visibleRows = group.rows.filter(row => results[row.key] != null);
         if (visibleRows.length === 0) return null;
         const isOpen = !collapsed[group.label];
@@ -142,20 +276,9 @@ function MetricsTable({ results }) {
                     <tr>
                       <th style=${'text-align: left; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>Metric</th>
                       <th style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>Unit</th>
-                      ${['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'].map(col => {
-                        const colTitle = {
-                          avg: 'Arithmetic mean across all requests',
-                          p50: '50th percentile (median) — half of requests at or below this value',
-                          p90: '90th percentile — 90% of requests at or below this value',
-                          p95: '95th percentile — 95% of requests at or below this value',
-                          p99: '99th percentile — 99% of requests at or below this value (tail latency)',
-                          min: 'Minimum observed value',
-                          max: 'Maximum observed value',
-                        }[col];
-                        return html`
-                          <th key=${col} title=${colTitle} style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0 + '; cursor: help'}>${col}</th>
-                        `;
-                      })}
+                      ${METRIC_COLUMNS.map(col => html`
+                        <th key=${col} title=${METRIC_COL_TITLES[col]} style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0 + '; cursor: help'}>${col}</th>
+                      `)}
                     </tr>
                   </thead>
                   <tbody>
@@ -167,7 +290,7 @@ function MetricsTable({ results }) {
                         <tr key=${row.key} style=${'background: ' + bg}>
                           <td style=${'padding: var(--space-2) var(--space-3); color: ' + palette.text}>${row.label}</td>
                           <td style=${'padding: var(--space-2) var(--space-3); text-align: right; color: ' + palette.overlay0 + '; font-size: var(--font-size-xs)'}>${m.unit ?? ''}</td>
-                          ${['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'].map(col => {
+                          ${METRIC_COLUMNS.map(col => {
                             const val = m[col];
                             const shown = row.cols.includes(col);
                             return html`
@@ -1537,10 +1660,72 @@ function PerRecordAnalysis({ records }) {
   `;
 }
 
+// "Similar runs" chip — ports the legacy ui's `IdentityStrip` sibling
+// counter (``src/aiperf/operator/ui/views/run.js::siblingCount``).
+//
+// Definition of "similar": same namespace AND same model, excluding the
+// current run itself. Comparability is count-only — we never aggregate
+// metrics across independent benchmarks (the legacy comment is verbatim
+// here on purpose). Clicking the chip jumps to ``/compare?cluster=<ns>·<model>``
+// where the compare page auto-selects every matching run.
+//
+// The ns·model URL shape (with the spaced middle-dot) matches the
+// legacy ui exactly so deep-links shared between the two UIs resolve to
+// the same set of jobs.
+function SimilarRunsLink({ namespace, model, currentName }) {
+  if (!namespace || !model) return null;
+  const all = jobsSignal.value ?? [];
+  let n = 0;
+  for (const r of all) {
+    if (r.namespace === namespace && r.model === model && r.name !== currentName) n++;
+  }
+  if (n === 0) return null;
+
+  const clusterKey = `${namespace} · ${model}`;
+  const onClick = (e) => {
+    e.preventDefault();
+    navigate('/compare?cluster=' + encodeURIComponent(clusterKey));
+  };
+
+  return html`
+    <a
+      href=${'#/compare?cluster=' + encodeURIComponent(clusterKey)}
+      onclick=${onClick}
+      data-testid="job-detail-similar-runs"
+      title=${`Compare against the other ${n} run${n === 1 ? '' : 's'} in ${clusterKey}`}
+      style=${'display: inline-flex; align-items: center; gap: var(--space-1);'
+        + ' padding: 2px var(--space-2);'
+        + ' border-radius: 999px;'
+        + ' font-size: var(--font-size-xs);'
+        + ' font-weight: 600;'
+        + ' background: ' + palette.accent + '14;'
+        + ' color: ' + palette.accent + ';'
+        + ' border: 1px solid ' + palette.accent + '33;'
+        + ' text-decoration: none;'
+        + ' cursor: pointer'}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
+      </svg>
+      <span>+${n} similar run${n === 1 ? '' : 's'}</span>
+      <span aria-hidden="true" style="opacity: 0.7; font-size: 10px">→</span>
+    </a>
+  `;
+}
+
+
 export function JobDetail({ namespace, name, epoch }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState(null);
   const [files, setFiles] = useState([]);
+  // ``filesLoaded`` flips to true once the first /results listing fetch
+  // resolves (success OR 404/error). Lets the Artifacts section
+  // distinguish "still fetching" from "fetched, empty" so an always-on
+  // card can show a real message instead of a permanent loader.
+  const [filesLoaded, setFilesLoaded] = useState(false);
   const [polling, setPolling] = useState(true);
   const [serverMetrics, setServerMetrics] = useState(null);
   const [fileViewer, setFileViewer] = useState(null); // { filename, url }
@@ -1596,6 +1781,10 @@ export function JobDetail({ namespace, name, epoch }) {
     throughputPoints.current = { labels: [], values: [] };
     setChartData(null);
     setPolling(true);
+    // Reset the artifact state so navigating between jobs doesn't briefly
+    // show the previous job's file list under the new header.
+    setFiles([]);
+    setFilesLoaded(false);
 
     poll(
       async () => {
@@ -1654,9 +1843,13 @@ export function JobDetail({ namespace, name, epoch }) {
     fetch(resultsBase, { signal: ac.signal })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (!d) return;
+        if (!d) {
+          setFilesLoaded(true);
+          return;
+        }
         const fileList = d?.files ?? [];
         setFiles(fileList);
+        setFilesLoaded(true);
         if (fileList.some(f => f.name === 'server_metrics_export.json')) {
           fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })
             .then(r => r.ok ? r.json() : null)
@@ -1694,7 +1887,7 @@ export function JobDetail({ namespace, name, epoch }) {
             .catch(() => { setJsonlProgress(null); });
         }
       })
-      .catch(() => {});
+      .catch(() => { setFilesLoaded(true); });
 
     return () => ac.abort();
   }, [namespace, name, epoch]);
@@ -1896,7 +2089,8 @@ export function JobDetail({ namespace, name, epoch }) {
                 ${phase}
               </span>
               <${NsPill} ns=${namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId="job-detail-ns-pill" />
-              ${model && html`<${ModelPill} model=${model} testId="job-detail-model-pill" />`}
+              ${model && html`<${ModelPill} model=${model} onClick=${m => navigate('/jobs?model=' + encodeURIComponent(m))} testId="job-detail-model-pill" />`}
+              ${model && model !== '---' && html`<${SimilarRunsLink} namespace=${namespace} model=${model} currentName=${name} />`}
               ${startTime && html`<${RelativeTime} ts=${startTime} mode="elapsed" className="text-dim" />`}
               <!-- Live / Completed indicator -->
               ${polling
@@ -2038,36 +2232,43 @@ export function JobDetail({ namespace, name, epoch }) {
       <div class="kpi-row" style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
         <${KpiCard}
           label="Throughput"
+          icon="speed"
+          tone=${isRunning ? 'live' : 'accent'}
           value=${fmtRps(throughput) ?? '---'}
           unit=${throughput != null ? 'req/s' : ''}
-          color=${colors.phaseRunning}
           title="Requests per second (avg). Higher is better."
         />
         <${KpiCard}
           label="Token Throughput"
+          icon="trending-up"
+          tone="accent"
           value=${outputTokenThroughput != null ? fmtNum(outputTokenThroughput, 0) : '---'}
           unit=${outputTokenThroughput != null ? 'tok/s' : ''}
-          color=${palette.sapphire}
           title="Output tokens generated per second across all in-flight requests (avg). Higher is better."
         />
         <${KpiCard}
           label="TTFT avg"
+          icon="clock"
+          tone="ok"
           value=${fmtMs(ttftAvg) ?? '---'}
           unit=${ttftAvg != null ? 'ms' : ''}
-          color=${palette.teal}
           title="Time To First Token: latency from request send to the first streamed token (avg). Lower is better."
         />
         <${KpiCard}
           label="Latency P99"
+          icon="timer"
+          tone="warn"
           value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
           unit=${latP99 != null ? 'ms' : ''}
-          color=${palette.peach}
           title="End-to-end request latency at the 99th percentile — 99% of requests completed at or below this value. Lower is better."
         />
         <${KpiCard}
           label="Errors"
+          icon="errors"
+          tone=${errorCount ? 'bad' : 'neutral'}
           value=${errorCount ?? '---'}
-          color=${errorCount ? colors.error : colors.textMuted}
+          progress=${errorRate != null ? errorRate * 100 : null}
+          progressTone="bad"
           title="Percentage of requests that failed (HTTP error, timeout, or invalid response)."
         />
         <!-- Feature 5: Token Efficiency -->
@@ -2144,7 +2345,7 @@ export function JobDetail({ namespace, name, epoch }) {
       ${isCompleted && serverMetrics
         ? html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`
         : (isCompleted && files.some(f => f.name === 'server_metrics_export.json') && html`
-          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">Loading server metrics…</span>
           </div>
@@ -2155,7 +2356,7 @@ export function JobDetail({ namespace, name, epoch }) {
       ${jobConfig
         ? html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`
         : html`
-          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">Loading job configuration…</span>
           </div>
@@ -2169,7 +2370,7 @@ export function JobDetail({ namespace, name, epoch }) {
       ${isCompleted && jsonlRecords
         ? html`<${PerRecordAnalysis} records=${jsonlRecords} />`
         : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && html`
-          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">
               ${jsonlProgress
@@ -2192,11 +2393,14 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Full metrics breakdown (completed only) -->
       ${isCompleted && results && html`<${MetricsTable} results=${results} />`}
 
-      <!-- Artifacts -->
-      ${files.length > 0 && html`
-        <div class="card" style="margin-top: var(--space-4)">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
-            <div class="card-title" style="margin: 0">Artifacts</div>
+      <!-- Artifacts — always rendered so the section's existence and
+           location are predictable; falls back to a contextual empty/
+           loading message instead of disappearing while the job is
+           still producing files. -->
+      <div class="card" style="margin-top: var(--space-4)" data-testid="artifacts-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
+          <div class="card-title" style="margin: 0">Result Files</div>
+          ${files.length > 0 && html`
             <div style="display: flex; gap: var(--space-2)">
               ${hasExportFile && html`
                 <button
@@ -2213,7 +2417,43 @@ export function JobDetail({ namespace, name, epoch }) {
                 Download All
               </button>
             </div>
+          `}
+        </div>
+
+        ${!filesLoaded && html`
+          <${LoadingPanel} label="Looking up result files…" inline=${true} testid="artifacts-loading" />
+        `}
+
+        ${filesLoaded && files.length === 0 && html`
+          <div data-testid="artifacts-empty" style=${'padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); border: 1px dashed ' + palette.surface0 + '; color: ' + palette.subtext0 + '; font-size: var(--font-size-sm); display: flex; align-items: center; gap: var(--space-3)'}>
+            <span style=${'flex-shrink: 0; color: ' + palette.overlay0}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 3 H7 a2 2 0 0 0 -2 2 v14 a2 2 0 0 0 2 2 h10 a2 2 0 0 0 2 -2 V8 z" />
+                <polyline points="14,3 14,8 19,8" />
+                <line x1="9" y1="13" x2="15" y2="13" />
+                <line x1="9" y1="17" x2="13" y2="17" />
+              </svg>
+            </span>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <div style=${'font-weight: 600; color: ' + palette.text}>
+                ${isCompleted
+                  ? 'No result files persisted for this run.'
+                  : isRunning
+                    ? 'No result files yet.'
+                    : 'No result files available.'}
+              </div>
+              <div class="text-dim" style="font-size: var(--font-size-xs)">
+                ${isCompleted
+                  ? 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.'
+                  : isRunning
+                    ? 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.'
+                    : 'Artifacts will appear here after the run starts producing output.'}
+              </div>
+            </div>
           </div>
+        `}
+
+        ${filesLoaded && files.length > 0 && html`
           <div style="display: flex; flex-direction: column; gap: var(--space-1)">
             ${files.map(f => {
               const ext = f.name.split('.').pop().toLowerCase();
@@ -2248,8 +2488,8 @@ export function JobDetail({ namespace, name, epoch }) {
               `;
             })}
           </div>
-        </div>
-      `}
+        `}
+      </div>
     </div>
     ${fileViewer && html`
       <${FileViewerModal}
