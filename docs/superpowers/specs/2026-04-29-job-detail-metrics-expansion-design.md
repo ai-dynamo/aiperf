@@ -32,7 +32,7 @@ The existing horizontal-scroll wrapper (`overflow-x: auto`) handles the wider ta
 
 ## Curated groups
 
-Group order: Throughput → Latency → Tokens → Sequence Lengths → Counts & Totals → HTTP → Reasoning → Vision → Other Metrics.
+Group order: Throughput → Latency → Tokens → Sequence Lengths → Counts & Totals → HTTP → Vision → Other Metrics.
 
 ### Throughput (palette.blue)
 
@@ -56,8 +56,6 @@ Group order: Throughput → Latency → Tokens → Sequence Lengths → Counts &
 | `time_to_second_token` | avg, p50, p95, p99 |
 | `inter_chunk_latency` | avg, p50, p90, p99 |
 | `time_to_first_output_token` | avg, p50, p90, p99 |
-| `stream_setup_latency` | avg, p50, p99 |
-| `stream_prefill_latency` | avg, p50, p99 |
 | `image_latency` | avg, p50, p99 |
 
 ### Tokens (palette.mauve, NEW)
@@ -76,7 +74,6 @@ Usage-token counts per request (model-reported). All rows: `avg, p50, p99`.
 |---|---|
 | `input_sequence_length` | avg, p50, p99 |
 | `output_sequence_length` | avg, p50, p99 |
-| `requested_osl` | avg, p50 |
 | `osl_mismatch_diff_pct` | avg |
 | `error_isl` | avg |
 
@@ -99,14 +96,11 @@ Timing rows (`avg, p50, p99`):
 Data/chunk rows (`avg, min, max`):
 - `http_req_data_sent`, `http_req_data_received`, `http_req_chunks_sent`, `http_req_chunks_received`, `http_req_connection_reused`
 
-### Reasoning (palette.lavender, NEW)
+### Reasoning
 
-Hidden when results contain none of these tags.
-
-| key | cols |
-|---|---|
-| `thinking_efficiency` | avg, p50, p99 |
-| `overall_thinking_efficiency` | avg |
+Omitted. The two reasoning metrics in the registry (`thinking_efficiency`,
+`overall_thinking_efficiency`) carry `MetricFlags.EXPERIMENTAL` and are
+filtered out — see "Internal & experimental exclusion" below.
 
 ### Vision (palette.green, NEW)
 
@@ -121,17 +115,45 @@ Hidden when results contain none of these tags.
 
 ### Other Metrics (palette.overlay1, NEW — auto-discovery tail)
 
-Catches every key in `results` not claimed by a curated row. Behavior:
+Catches every key in `results` not claimed by a curated row and not in
+the internal/experimental excluded set. Behavior:
 
 1. Build `curatedKeys: Set<string>` from every row's `key` across all curated groups.
 2. For each `[k, v]` in `Object.entries(results)`:
    - Skip if `curatedKeys.has(k)`.
+   - Skip if `EXCLUDED_KEYS.has(k)` (internal/experimental — see below).
    - Skip if `v` is not an object (filters scalars like `error_rate`).
    - Skip if `v` has none of `avg, p50, sum, count` (filters non-metric structs).
 3. Render rows alphabetized by key.
 4. `cols` for each tail row: every column where the value is non-null in the data — i.e. show whatever the metric provided.
 5. `label`: prettify the tag (replace `_` with space, title-case).
 6. Group is hidden when no rows survive the filter.
+
+## Internal & experimental exclusion
+
+Metrics flagged `MetricFlags.INTERNAL` or `MetricFlags.EXPERIMENTAL` in the
+registry are deliberately omitted from both the curated groups and the
+auto-discovery tail. This keeps internal scaffolding (timestamps the
+registry uses to derive other metrics) and not-yet-stable experimental
+metrics out of the user-facing UI.
+
+Excluded set (sourced from `MetricRegistry.all_classes()` filtered by
+`flags & (INTERNAL | EXPERIMENTAL)`):
+
+- `credit_drop_latency` — INTERNAL
+- `max_response_timestamp` — INTERNAL
+- `min_request_timestamp` — INTERNAL
+- `requested_osl` — INTERNAL
+- `stream_setup_latency` — EXPERIMENTAL
+- `stream_prefill_latency` — EXPERIMENTAL
+- `thinking_efficiency` — EXPERIMENTAL
+- `overall_thinking_efficiency` — EXPERIMENTAL
+
+The set is hardcoded in JS rather than derived from the registry at
+runtime: the operator response carries metric values keyed by tag, not
+the flag set, so the UI has no way to query flags from the browser.
+When the registry adds or reclassifies a metric with one of these flags,
+this set must be updated to match — there is no automatic sync.
 
 ## Auto-empty-hide
 

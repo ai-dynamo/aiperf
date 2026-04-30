@@ -15,6 +15,7 @@ import { RelativeTime } from '../components/time.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
+import { ServerMetricsSection } from '../components/server-metrics/index.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -121,8 +122,6 @@ const METRIC_GROUPS = [
       { key: 'time_to_second_token', label: 'Time to Second Token', cols: ['avg', 'p50', 'p95', 'p99'] },
       { key: 'inter_chunk_latency', label: 'Inter-Chunk Latency', cols: ['avg', 'p50', 'p90', 'p99'] },
       { key: 'time_to_first_output_token', label: 'Time to First Output Token', cols: ['avg', 'p50', 'p90', 'p99'] },
-      { key: 'stream_setup_latency', label: 'Stream Setup Latency', cols: ['avg', 'p50', 'p99'] },
-      { key: 'stream_prefill_latency', label: 'Stream Prefill Latency', cols: ['avg', 'p50', 'p99'] },
       { key: 'image_latency', label: 'Image Latency', cols: ['avg', 'p50', 'p99'] },
     ],
   },
@@ -143,7 +142,6 @@ const METRIC_GROUPS = [
     rows: [
       { key: 'input_sequence_length', label: 'Input Sequence Length', cols: ['avg', 'p50', 'p99'] },
       { key: 'output_sequence_length', label: 'Output Sequence Length', cols: ['avg', 'p50', 'p99'] },
-      { key: 'requested_osl', label: 'Requested OSL', cols: ['avg', 'p50'] },
       { key: 'osl_mismatch_diff_pct', label: 'OSL Mismatch (diff %)', cols: ['avg'] },
       { key: 'error_isl', label: 'Error ISL', cols: ['avg'] },
     ],
@@ -187,14 +185,6 @@ const METRIC_GROUPS = [
     ],
   },
   {
-    label: 'Reasoning',
-    color: palette.lavender,
-    rows: [
-      { key: 'thinking_efficiency', label: 'Thinking Efficiency', cols: ['avg', 'p50', 'p99'] },
-      { key: 'overall_thinking_efficiency', label: 'Overall Thinking Efficiency', cols: ['avg'] },
-    ],
-  },
-  {
     label: 'Vision',
     color: palette.green,
     rows: [
@@ -205,6 +195,24 @@ const METRIC_GROUPS = [
     ],
   },
 ];
+
+// Tags carrying MetricFlags.INTERNAL or MetricFlags.EXPERIMENTAL in the
+// metric registry. These are deliberately omitted from the curated groups
+// and also filtered out of the auto-discovery tail so that internal
+// scaffolding metrics (timestamps used to derive other metrics) and
+// not-yet-stable experimental ones don't appear in the user-facing UI.
+// Sourced from `MetricRegistry.all_classes()` filtered by
+// `flags & (INTERNAL | EXPERIMENTAL)`.
+const EXCLUDED_KEYS = new Set([
+  'credit_drop_latency',
+  'max_response_timestamp',
+  'min_request_timestamp',
+  'requested_osl',
+  'stream_setup_latency',
+  'stream_prefill_latency',
+  'thinking_efficiency',
+  'overall_thinking_efficiency',
+]);
 
 // Tags claimed by curated groups; the auto-discovery tail subtracts these
 // from the full results key set so each metric appears at most once.
@@ -230,6 +238,7 @@ function buildOtherMetricsRows(results) {
   const rows = [];
   for (const [key, value] of Object.entries(results ?? {})) {
     if (CURATED_KEYS.has(key)) continue;
+    if (EXCLUDED_KEYS.has(key)) continue;
     if (!isMetricStruct(value)) continue;
     // Show every column where the metric actually has data; auto-discovery
     // doesn't know what's meaningful so it just surfaces what's there.
@@ -1202,209 +1211,6 @@ function SpecViewerModal({ filename, content, onClose }) {
   `;
 }
 
-// --- Server Metrics Section ---
-
-function getSeriesValue(metric) {
-  // Server metrics store stats under series[0].stats.avg (or series[0].value for simple counters)
-  const series = metric?.series;
-  if (!Array.isArray(series) || series.length === 0) return null;
-  const s = series[0];
-  return s.stats?.avg ?? s.value ?? s.avg ?? null;
-}
-
-function buildHistogramChartData(metric, color) {
-  const series = metric?.series;
-  if (!Array.isArray(series) || series.length === 0) return null;
-  const raw = series[0].buckets;
-  if (!raw) return null;
-
-  // Buckets can be a dict {"0.001": count, ...} or array [{le, count}]
-  let labels, counts;
-  if (Array.isArray(raw)) {
-    if (raw.length === 0) return null;
-    labels = raw.map(b => {
-      // JSON cannot carry Infinity; backends typically send +Inf as null
-      // or a large sentinel. Normalize them all.
-      if (b.le == null || b.le === Infinity || b.le === '+Inf' || b.le === 'Inf') return '+Inf';
-      if (typeof b.le === 'number' && b.le >= 1e10) return '+Inf';
-      return String(b.le);
-    });
-    counts = raw.map(b => b.count ?? 0);
-  } else if (typeof raw === 'object') {
-    const entries = Object.entries(raw);
-    if (entries.length === 0) return null;
-    labels = entries.map(([k]) => k);
-    counts = entries.map(([, v]) => v);
-  } else {
-    return null;
-  }
-
-  // Convert cumulative histogram to deltas (Prometheus histograms are cumulative)
-  const isCumulative = counts.length > 1 && counts.every((v, i) => i === 0 || v >= counts[i - 1]);
-  if (isCumulative) {
-    for (let i = counts.length - 1; i > 0; i--) {
-      counts[i] = counts[i] - counts[i - 1];
-    }
-  }
-
-  // Filter out zero-count buckets at the tails for cleaner charts
-  let start = 0;
-  while (start < counts.length && counts[start] === 0) start++;
-  let end = counts.length - 1;
-  while (end > start && counts[end] === 0) end--;
-  labels = labels.slice(start, end + 1);
-  counts = counts.slice(start, end + 1);
-  return {
-    labels,
-    datasets: [{
-      label: 'Count',
-      data: counts,
-      backgroundColor: color + '88',
-      borderColor: color,
-      borderWidth: 1,
-      borderRadius: 2,
-    }],
-  };
-}
-
-function ServerMetricsSection({ serverMetrics }) {
-  if (!serverMetrics) return null;
-  const metrics = serverMetrics.metrics ?? {};
-
-  const kvCacheRaw = getSeriesValue(metrics['vllm:kv_cache_usage_perc']);
-  const reqRunning = getSeriesValue(metrics['vllm:num_requests_running']);
-  const reqWaiting = getSeriesValue(metrics['vllm:num_requests_waiting']);
-  const preemptions = getSeriesValue(metrics['vllm:num_preemptions']);
-
-  const prefixHits = getSeriesValue(metrics['vllm:prefix_cache_hits']);
-  const prefixQueries = getSeriesValue(metrics['vllm:prefix_cache_queries']);
-  const prefixHitRate = prefixHits != null && prefixQueries != null && prefixQueries > 0
-    ? prefixHits / prefixQueries
-    : null;
-
-  const kpiCards = [];
-  if (kvCacheRaw != null) {
-    kpiCards.push(html`
-      <${KpiCard}
-        key="kv"
-        label="KV Cache Usage"
-        value=${fmtNumber(kvCacheRaw * 100, 1)}
-        unit="%"
-        color=${palette.peach}
-      />
-    `);
-  }
-  if (reqRunning != null) {
-    kpiCards.push(html`
-      <${KpiCard}
-        key="running"
-        label="Requests Running"
-        value=${fmtInt(reqRunning)}
-        color=${palette.blue}
-      />
-    `);
-  }
-  if (reqWaiting != null) {
-    kpiCards.push(html`
-      <${KpiCard}
-        key="waiting"
-        label="Requests Waiting"
-        value=${fmtInt(reqWaiting)}
-        color=${palette.yellow}
-      />
-    `);
-  }
-  if (preemptions != null) {
-    kpiCards.push(html`
-      <${KpiCard}
-        key="preempt"
-        label="Preemptions"
-        value=${fmtInt(preemptions)}
-        color=${palette.maroon}
-      />
-    `);
-  }
-  if (prefixHitRate != null) {
-    kpiCards.push(html`
-      <${KpiCard}
-        key="prefix"
-        label="Prefix Cache Hit Rate"
-        value=${fmtNumber(prefixHitRate * 100, 1)}
-        unit="%"
-        color=${palette.teal}
-      />
-    `);
-  }
-
-  const histogramDefs = [
-    { key: 'vllm:time_to_first_token_seconds', label: 'Server-Side TTFT', color: palette.teal, unit: 's' },
-    { key: 'vllm:e2e_request_latency_seconds', label: 'Server-Side E2E Latency', color: palette.mauve, unit: 's' },
-    { key: 'vllm:request_queue_time_seconds', label: 'Queue Time', color: palette.sapphire, unit: 's' },
-  ];
-
-  const histogramChartOptions = (unit) => ({
-    plugins: {
-      legend: { display: false },
-      tooltip: { callbacks: { label: ctx => ` ${fmtInt(ctx.parsed.y)} requests` } },
-    },
-    scales: {
-      x: {
-        ticks: { color: palette.overlay0, font: { size: 10 }, maxRotation: 45 },
-        grid: { color: palette.surface0 },
-        title: { display: true, text: `Bucket (${unit})`, color: palette.overlay1, font: { size: 10 } },
-      },
-      y: {
-        ticks: { color: palette.overlay0, font: { size: 10 } },
-        grid: { color: palette.surface0 },
-        title: { display: true, text: 'Count', color: palette.overlay1, font: { size: 10 } },
-      },
-    },
-  });
-
-  const histogramCharts = histogramDefs
-    .map(def => {
-      const data = buildHistogramChartData(metrics[def.key], def.color);
-      if (!data) return null;
-      return html`
-        <div key=${def.key} class="card" style="margin-top: var(--space-4)">
-          <div class="card-title">${def.label}</div>
-          <${ChartWrapper} type="bar" data=${data} options=${histogramChartOptions(def.unit)} height=${200} />
-        </div>
-      `;
-    })
-    .filter(Boolean);
-
-  if (kpiCards.length === 0 && histogramCharts.length === 0) {
-    // The export file existed but no series carried scrape points (server
-    // wasn't emitting vllm metrics, or the scrape interval missed the run).
-    // Show an explicit notice instead of silently dropping the section so users
-    // know the absence is observed, not a UI bug.
-    return html`
-      <div style="margin-top: var(--space-4)">
-        <div class="card" data-testid="job-detail-server-metrics-empty">
-          <div class="card-title">Server Metrics</div>
-          <div class="text-dim" style="font-size: var(--font-size-sm); padding: var(--space-2) 0">
-            No server metrics collected for this run. The endpoint did not expose vLLM-compatible metrics, or the scrape interval did not capture any points.
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  return html`
-    <div style="margin-top: var(--space-4)">
-      <div class="card">
-        <div class="card-title">Server Metrics</div>
-        ${kpiCards.length > 0 && html`
-          <div class="kpi-row" style="margin-top: var(--space-3)">
-            ${kpiCards}
-          </div>
-        `}
-      </div>
-      ${histogramCharts}
-    </div>
-  `;
-}
 
 // --- Per-Record Analysis (Feature 3 from spec) ---
 
