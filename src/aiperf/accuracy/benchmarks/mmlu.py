@@ -114,34 +114,46 @@ class MMLUBenchmark(AIPerfLoggerMixin):
             ds: DatasetDict = await asyncio.to_thread(
                 load_dataset, DATASET_NAME, subject
             )
-            test_split = ds["test"]
-            few_shots = self._build_few_shots(ds, n_shots)
+            subject_problems = await asyncio.to_thread(
+                self._build_subject_problems, ds, subject, n_shots, enable_cot
+            )
+            problems.extend(subject_problems)
 
-            for row in test_split:
-                prompt = self._format_prompt(row, subject, few_shots, enable_cot)
-                raw_messages = self._build_chat_messages(
-                    row, subject, few_shots, enable_cot
-                )
-                gold_ix = (
-                    ascii_uppercase.index(row["answer"])
-                    if isinstance(row["answer"], str)
-                    else row["answer"]
-                )
-                problems.append(
-                    BenchmarkProblem(
-                        prompt=prompt,
-                        ground_truth=CHOICES[gold_ix],
-                        task=subject,
-                        metadata={
-                            "subject": subject,
-                            "generation_size": GENERATION_SIZE,
-                            "stop_sequence": STOP_SEQUENCE,
-                        },
-                        few_shot_examples=few_shots,
-                        raw_messages=raw_messages,
-                    )
-                )
+        return problems
 
+    def _build_subject_problems(
+        self,
+        ds: DatasetDict,
+        subject: str,
+        n_shots: int,
+        enable_cot: bool,
+    ) -> list[BenchmarkProblem]:
+        few_shots = self._build_few_shots(ds, n_shots)
+        problems: list[BenchmarkProblem] = []
+        for row in ds["test"]:
+            prompt = self._format_prompt(row, subject, few_shots, enable_cot)
+            raw_messages = self._build_chat_messages(
+                row, subject, few_shots, enable_cot
+            )
+            gold_ix = (
+                ascii_uppercase.index(row["answer"])
+                if isinstance(row["answer"], str)
+                else row["answer"]
+            )
+            problems.append(
+                BenchmarkProblem(
+                    prompt=prompt,
+                    ground_truth=CHOICES[gold_ix],
+                    task=subject,
+                    metadata={
+                        "subject": subject,
+                        "generation_size": GENERATION_SIZE,
+                        "stop_sequence": STOP_SEQUENCE,
+                    },
+                    few_shot_examples=few_shots,
+                    raw_messages=raw_messages,
+                )
+            )
         return problems
 
     def _resolve_subjects(self, tasks: list[str] | None) -> list[str]:
