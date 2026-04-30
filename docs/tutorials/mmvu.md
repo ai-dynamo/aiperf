@@ -24,7 +24,8 @@ Launch a vLLM server with a video-capable vision language model:
 ```bash
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
-  --model Qwen/Qwen2-VL-2B-Instruct
+  --model Qwen/Qwen2-VL-2B-Instruct \
+  --enforce-eager
 ```
 <!-- /setup-vllm-video-openai-endpoint-server -->
 

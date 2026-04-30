@@ -16,6 +16,7 @@ models using various inference solutions.
 docker pull vllm/vllm-openai:latest
 docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
   --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
   --reasoning-parser qwen3 \
   --host 0.0.0.0 --port 8000
 ```

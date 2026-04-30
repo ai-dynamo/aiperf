@@ -27,6 +27,7 @@ EOF
 # Run the server
 docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm-audio \
   --model Qwen/Qwen2.5-Omni-3B \
+  --enforce-eager \
   --trust-remote-code
 ```
 <!-- /setup-vllm-audio-openai-endpoint-server -->
