@@ -78,3 +78,8 @@ app.command(
     name="dashboard",
     help="Open the operator results server UI in your browser",
 )
+app.command(
+    "aiperf.cli_commands.kube.index:app",
+    name="index",
+    help="Manage the operator's runs/sweep_variations SQLite index",
+)

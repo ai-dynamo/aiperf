@@ -152,6 +152,18 @@ Open the operator results server UI in your browser
 
 [Kubernetes](#kubernetes) • [Parameters](#parameters)
 
+### [`kube index rebuild`](#aiperf-kube-index-rebuild)
+
+Rebuild the operator's runs index from the PVC.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
+
+### [`kube index stats`](#aiperf-kube-index-stats)
+
+Show runs index statistics.
+
+[Parameters](#parameters) • [Kubernetes](#kubernetes)
+
 ### [`synthesize`](#aiperf-synthesize)
 
 Synthesize a dataset workload (e.g. agentic-code)
@@ -6080,6 +6092,70 @@ Namespace where the operator is deployed. Auto-detected (cluster-wide pod search
 #### `--no-browser`, `--no-no-browser`
 
 Print the URL instead of opening a browser.
+
+<hr/>
+
+## `aiperf kube index rebuild`
+
+Rebuild the operator's runs index from the PVC.
+
+### Parameters
+
+#### `--output` `<str>`
+
+Output format.
+<br/>_Default: `text`_
+
+#### `--api-url` `<str>`
+
+Operator HTTP API base URL.
+<br/>_Default: `http://localhost:38465`_
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `-n`, `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
+
+<hr/>
+
+## `aiperf kube index stats`
+
+Show runs index statistics.
+
+### Parameters
+
+#### `--output` `<str>`
+
+Output format.
+<br/>_Default: `text`_
+
+#### `--api-url` `<str>`
+
+Operator HTTP API base URL.
+<br/>_Default: `http://localhost:38465`_
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `-n`, `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
 
 <hr/>
 

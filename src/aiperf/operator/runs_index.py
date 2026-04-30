@@ -237,6 +237,29 @@ async def set_meta(key: str, value: str) -> None:
     )
 
 
+async def stats(db_path: Path) -> dict[str, Any]:
+    """Return summary counts + on-disk size of the runs index.
+
+    Backs ``GET /admin/index/stats`` and ``aiperf kube index stats``. Reads
+    from the open connection (not from ``db_path``); ``db_path`` is used only
+    for ``stat().st_size``.
+    """
+    cur = await _conn().execute("SELECT COUNT(*) FROM runs")
+    runs_count = (await cur.fetchone())[0]
+    await cur.close()
+    cur = await _conn().execute("SELECT COUNT(*) FROM sweep_variations")
+    sweep_count = (await cur.fetchone())[0]
+    await cur.close()
+    last = await get_meta("last_bootstrap_unix")
+    return {
+        "runs_count": runs_count,
+        "sweep_variations_count": sweep_count,
+        "db_bytes": db_path.stat().st_size if db_path.exists() else 0,
+        "last_bootstrap_unix": int(last) if last else None,
+        "schema_version": SCHEMA_VERSION,
+    }
+
+
 async def integrity_check(path: Path | None = None) -> bool:
     """Run ``PRAGMA integrity_check`` against ``path`` (or the open DB).
 

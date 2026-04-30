@@ -188,6 +188,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     from kubernetes_asyncio.client import ApiClient
 
     from aiperf.operator.results_db import ResultsDB
+    from aiperf.operator.routers.admin import create_admin_router
     from aiperf.operator.routers.config import create_config_router
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.jobs_ws import create_jobs_ws_router
@@ -214,6 +215,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     app.include_router(create_sweeps_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
     app.include_router(create_config_router())
+    app.include_router(create_admin_router(base_dir, base_dir / ".aiperf_index.sqlite"))
 
     def _get_db() -> ResultsDB:
         db = db_holder[0]
