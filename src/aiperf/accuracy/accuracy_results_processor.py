@@ -57,6 +57,15 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             self._problems = problems
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
+        """Accumulate per-task accuracy counts from a single record's metrics.
+
+        Reads ``accuracy.correct`` from ``record_data.metrics`` (produced by
+        AccuracyRecordProcessor) and increments per-task and overall counters.
+        Records missing the ``accuracy.correct`` key are silently skipped.
+
+        Raises:
+            ValueError: if the benchmark returned 0 problems (e.g., bad --accuracy-tasks).
+        """
         await self._ensure_problems_loaded()
         metrics = record_data.metrics
         correct = metrics.get("accuracy.correct")
@@ -77,6 +86,12 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             self._task_correct[task] += 1
 
     async def summarize(self) -> list[MetricResult]:
+        """Return overall and per-task accuracy as a list of MetricResult.
+
+        Emits one ``accuracy.overall`` entry followed by one ``accuracy.task.<name>``
+        entry per task, both sorted and expressed as ratios (correct / total).
+        Returns an empty list if no records were processed.
+        """
         results: list[MetricResult] = []
 
         if self._overall_total > 0:

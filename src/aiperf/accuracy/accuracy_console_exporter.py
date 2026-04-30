@@ -29,6 +29,12 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
         self.exporter_config = exporter_config
 
     async def export(self, console: Console) -> None:
+        """Render accuracy results as a Rich table to the given console.
+
+        Prints a per-task breakdown (correct / total / accuracy%) followed by an
+        OVERALL row. Does nothing if no ``accuracy.*`` metrics are present in
+        ``exporter_config.results``.
+        """
         from rich.table import Table
 
         results = self.exporter_config.results

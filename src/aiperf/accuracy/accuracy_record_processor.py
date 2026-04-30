@@ -79,6 +79,15 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> MetricRecordDict:
+        """Grade a single response against its corresponding benchmark problem.
+
+        Maps ``metadata.session_num % len(self.problems)`` to a BenchmarkProblem,
+        runs the configured grader, and returns a MetricRecordDict containing
+        ``accuracy.correct`` (1.0 if correct, 0.0 otherwise).
+
+        Raises:
+            ValueError: if the benchmark returned 0 problems (e.g., bad --accuracy-tasks).
+        """
         await self._ensure_problems_loaded()
         record_metrics = MetricRecordDict()
 

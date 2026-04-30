@@ -31,12 +31,19 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         self._csv_path = artifact_dir / "accuracy_results.csv"
 
     def get_export_info(self) -> FileExportInfo:
+        """Return the export path for the accuracy CSV written by ``export``."""
         return FileExportInfo(
             export_type="accuracy_csv",
             file_path=self._csv_path,
         )
 
     async def export(self) -> None:
+        """Write per-task accuracy summary to CSV at the path from ``get_export_info``.
+
+        Columns: task, correct, total, accuracy (4 decimal places). Rows are
+        emitted for each ``accuracy.task.*`` metric plus a final OVERALL row.
+        Does nothing if no ``accuracy.*`` metrics are present in results.
+        """
         results = self.exporter_config.results
         if results is None or results.records is None:
             return
