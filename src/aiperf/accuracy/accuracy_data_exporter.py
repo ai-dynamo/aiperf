@@ -17,6 +17,8 @@ from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
+AccuracyCsvRow = tuple[str, int, int, str]  # (task, correct, total, accuracy)
+
 
 class AccuracyDataExporter(AIPerfLoggerMixin):
     """Data exporter for accuracy benchmarking results.
@@ -60,7 +62,7 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         if not accuracy_metrics:
             return
 
-        rows: list[list] = []
+        rows: list[AccuracyCsvRow] = []
         for m in accuracy_metrics:
             if m.tag == ACCURACY_OVERALL_TAG:
                 task_name = "OVERALL"
@@ -69,18 +71,18 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
             else:
                 continue
             rows.append(
-                [
+                (
                     task_name,
                     int(m.sum or 0),
                     int(m.count or 0),
                     f"{m.current:.4f}" if m.current is not None else "",
-                ]
+                )
             )
 
         await asyncio.to_thread(self._write_csv, rows)
         self.info(f"Accuracy results exported to {self._csv_path}")
 
-    def _write_csv(self, rows: list[list]) -> None:
+    def _write_csv(self, rows: list[AccuracyCsvRow]) -> None:
         self._csv_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._csv_path, "w", newline="") as f:
             writer = csv.writer(f)
