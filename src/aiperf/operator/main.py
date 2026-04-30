@@ -156,6 +156,9 @@ async def on_aiperfjob_phase_transition(
     await sweep_rollup.on_child_phase_transition(
         body=body, status=status, name=name, namespace=namespace
     )
+    await lifecycle.record_phase_transition(
+        namespace=namespace, name=name, status=status
+    )
 
 
 @kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)

@@ -141,6 +141,14 @@ async def on_child_phase_transition(
         parent_cr = await _read_parent_status(namespace, sweep_name, api=api)
         parent_phase = (parent_cr.get("phase") if parent_cr else "") or ""
         if parent_phase in PARENT_TERMINAL_PHASES:
+            # Sweep-controller has already written the terminal phase and
+            # (presumably) the aggregate.json. Best-effort: ingest the
+            # aggregate into runs_index so analytics queries hit the index
+            # rather than re-reading aggregate.json on every request.
+            # Underscore-internal _index_sweep_from_disk is reused here as
+            # the canonical "ingest one sweep epoch" entry point — see
+            # plan 2026-04-29-fast-job-sweep-index.md Task 8 Step 4.
+            await _ingest_sweep_aggregate(namespace, sweep_name)
             return
         max_total_runs = (parent_cr or {}).get("maxTotalRuns")
         if isinstance(max_total_runs, int) and max_total_runs > 0:
@@ -162,6 +170,39 @@ def _find_sweep_owner(child_body: dict[str, Any]) -> tuple[str, str] | None:
         if ref.get("kind") == "AIPerfSweep" and ref.get("name") and ref.get("uid"):
             return ref["name"], ref["uid"]
     return None
+
+
+async def _ingest_sweep_aggregate(namespace: str, sweep_name: str) -> None:
+    """Best-effort ingest of ``aggregate.json`` for the sweep's latest epoch.
+
+    Imported lazily (``runs_index`` and ``results_layout`` import paths)
+    to keep this handler module slim and avoid pulling the index code
+    into pure-rollup unit tests that don't need it. Failures log and
+    swallow so the rollup tick never fails on index-side issues.
+    """
+    try:
+        from aiperf.operator import runs_index
+        from aiperf.operator.environment import OperatorEnvironment
+        from aiperf.operator.results_layout import resolve_sweep_dir
+    except ImportError as exc:  # pragma: no cover - defensive
+        logger.warning("runs_index unavailable for sweep aggregate ingest: %s", exc)
+        return
+
+    base = OperatorEnvironment.RESULTS.DIR
+    sweep_epoch_dir = resolve_sweep_dir(base, namespace, sweep_name)
+    if sweep_epoch_dir is None:
+        return
+    try:
+        await runs_index._index_sweep_from_disk(
+            namespace, sweep_name, sweep_epoch_dir.name, sweep_epoch_dir
+        )
+    except Exception as exc:  # noqa: BLE001 - index path must never break the rollup
+        logger.warning(
+            "runs_index sweep aggregate ingest failed for %s/%s: %s",
+            namespace,
+            sweep_name,
+            exc,
+        )
 
 
 async def _count_owned_children(

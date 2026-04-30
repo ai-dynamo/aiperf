@@ -20,7 +20,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.operator import events
+from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
     close_progress_client,
     get_or_create_progress_client,
@@ -29,6 +29,7 @@ from aiperf.operator.client_cache import (
     request_cancellation,
     try_claim_completion,
 )
+from aiperf.operator.handlers.cleanup import on_aiperfjob_delete_index_cleanup
 from aiperf.operator.handlers.completion import handle_completion
 from aiperf.operator.status import Phase, StatusBuilder
 
@@ -45,6 +46,8 @@ async def on_delete(
           in-flight monitor/completion coroutines short-circuit at their
           next await boundary (avoids blocking delete on fetch backoff).
         - Closes the cached ProgressClient (releases aiohttp session).
+        - Drops every ``runs_index`` row for this job so the index does
+          not retain orphaned entries pointing at a deleted CR.
         - Relies on Kubernetes ownerReferences GC to reap the JobSet,
           ConfigMap, Role, and RoleBinding — this handler does NOT delete
           them directly.
@@ -59,6 +62,7 @@ async def on_delete(
     # clears the cancellation event, so the request must be made first.
     request_cancellation(key)
     await close_progress_client(key)
+    await on_aiperfjob_delete_index_cleanup(namespace, name, status)
     logger.info(f"Deleting AIPerfJob {namespace}/{name}")
 
 
@@ -195,3 +199,36 @@ async def on_benchmark_complete(
         )
 
     await close_progress_client(key)
+
+
+async def record_phase_transition(
+    namespace: str,
+    name: str,
+    status: dict[str, Any],
+) -> None:
+    """Mirror an AIPerfJob phase transition into ``runs_index``.
+
+    Wired from ``main.on_aiperfjob_phase_transition`` (the kopf
+    ``status.phase`` field watcher). Best-effort: any failure logs and
+    swallows so the index path never blocks a kopf handler tick.
+
+    The index needs ``(namespace, job_id, epoch)`` as the row key.
+    ``job_id`` falls back to ``name`` when the controller has not yet
+    written ``status.jobId``; ``runEpoch`` is the canonical run-key on the
+    CR (set by ``handle_completion`` once results land). Phases observed
+    before ``runEpoch`` is set (e.g. ``Pending`` at create) are skipped —
+    the create handler already wrote a row with the correct epoch via
+    ``upsert_run_created``.
+    """
+    phase = status.get("phase")
+    if not phase:
+        return
+    job_id = status.get("jobId", name)
+    run_epoch = status.get("runEpoch")
+    if run_epoch is None:
+        return
+    epoch = str(run_epoch)
+    try:
+        await runs_index.upsert_run_phase(namespace, job_id, epoch, phase=phase)
+    except Exception as exc:  # noqa: BLE001 - index path must never break the handler
+        logger.warning("runs_index.upsert_run_phase failed: %s", exc)

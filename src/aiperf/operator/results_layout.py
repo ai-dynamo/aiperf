@@ -22,6 +22,7 @@ PosixPath('/data/aiperf/bench/warmup-7f2a/1714069323')
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -381,6 +382,7 @@ def enforce_retention(
         try:
             shutil.rmtree(child)
             deleted.append(child.name)
+            _schedule_index_drop(namespace, name, child.name)
         except OSError as exc:
             logger.warning(
                 "retention: failed to remove %s/%s/%s: %s",
@@ -390,6 +392,41 @@ def enforce_retention(
                 exc,
             )
     return deleted
+
+
+def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
+    """Best-effort fire-and-forget ``runs_index.delete_run`` after retention rmtree.
+
+    ``enforce_retention`` is sync (called from the sync helper in
+    ``handlers/completion._run_retention_pass`` inside an async kopf
+    handler) so we cannot ``await``. Schedule onto the running loop via
+    ``create_task``; if there's no running loop (sync test or CLI dry
+    run) we simply skip — the disk is the source of truth and the next
+    bootstrap pass will re-converge the index.
+
+    Imported lazily to keep ``results_layout`` import-cycle-free; the
+    operator package re-exports ``runs_index`` so a lazy attribute load
+    is the cheapest way to avoid a top-level circular import.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        from aiperf.operator import runs_index as _runs_index
+    except ImportError as exc:  # pragma: no cover - defensive
+        logger.warning("runs_index unavailable for retention drop: %s", exc)
+        return
+    try:
+        loop.create_task(_runs_index.delete_run(namespace, name, epoch))
+    except Exception as exc:  # noqa: BLE001 - index path must never break retention
+        logger.warning(
+            "runs_index.delete_run task failed during retention for %s/%s/%s: %s",
+            namespace,
+            name,
+            epoch,
+            exc,
+        )
 
 
 def epoch_key_from_body(body: dict) -> str:
