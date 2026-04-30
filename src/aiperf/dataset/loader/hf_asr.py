@@ -131,6 +131,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
                         Turn(
                             texts=[Text(contents=[_ASR_PROMPT])],
                             audios=audios,
+                            audio_duration_seconds=duration,
                         )
                     ],
                 )
