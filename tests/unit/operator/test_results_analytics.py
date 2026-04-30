@@ -13,13 +13,25 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aiperf.operator import runs_index
 from aiperf.operator.results_db import ResultsDB
 from aiperf.operator.routers import results_analytics as mod
 from aiperf.operator.routers.results_analytics import create_results_analytics_router
 
 
+@pytest.fixture
+async def _open_runs_index(tmp_path):
+    """Open an empty runs_index DB so the get_run_spec lookup returns None
+    cleanly instead of erroring on the unopened singleton."""
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    yield
+    await runs_index.close()
+
+
 @pytest.mark.asyncio
-async def test_get_job_config_falls_back_to_live_cr_spec(tmp_path, monkeypatch):
+async def test_get_job_config_falls_back_to_live_cr_spec(
+    tmp_path, monkeypatch, _open_runs_index
+):
     """When no file + no summary, config endpoint returns the live CR spec."""
     fake_cr = {
         "apiVersion": "aiperf.nvidia.com/v1alpha1",
@@ -58,7 +70,9 @@ async def test_get_job_config_falls_back_to_live_cr_spec(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_job_config_returns_404_when_cr_missing(tmp_path, monkeypatch):
+async def test_get_job_config_returns_404_when_cr_missing(
+    tmp_path, monkeypatch, _open_runs_index
+):
     """When all fallbacks miss (no file, no summary, no live CR), still 404."""
 
     async def fake_get_raw(api, namespace, name):

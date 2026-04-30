@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from kubernetes_asyncio.client import ApiClient
 
 from aiperf.kubernetes.client import get_raw_aiperfjob
+from aiperf.operator import runs_index
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers.results_schemas import (
@@ -221,16 +222,29 @@ def _register_index_routes(
     @router.get("/index")
     async def get_index() -> dict[str, Any]:
         """Get the full job index for fast lookups."""
-        from aiperf.operator.job_index import get_index as _get_idx
-
-        return await _get_idx()
+        rows = await runs_index.list_all_latest()
+        out: dict[str, Any] = {}
+        for r in rows:
+            out[f"{r.namespace}/{r.job_id}"] = {
+                "namespace": r.namespace,
+                "job_id": r.job_id,
+                "epoch": r.epoch,
+                "phase": r.phase,
+                "model": r.model,
+                "endpoint": r.endpoint,
+                "start_time": r.start_time,
+                "end_time": r.end_time,
+                "error": r.error,
+                "file_count": r.file_count,
+            }
+        return out
 
     @router.get("/config/{namespace}/{job_id}")
     async def get_job_config(namespace: str, job_id: str) -> dict[str, Any]:
         """Get the original CR spec/config for a job.
 
         Fallback chain (first hit wins):
-        1. In-memory index (``get_job_spec``) — populated as jobs land.
+        1. ``runs_index`` SQLite cache (``get_run_spec``) — populated as jobs land.
         2. Standalone ``<base>/<ns>/<job>/job_spec.json`` file — written by
            the operator after the controller starts.
         3. ``input_config`` from the DuckDB summary — requires a finished run.
@@ -238,9 +252,7 @@ def _register_index_routes(
            whose artifacts haven't been persisted yet (e.g. dashboard hero
            SLO chips for the currently-running CR).
         """
-        from aiperf.operator.job_index import get_job_spec
-
-        spec = await get_job_spec(namespace, job_id)
+        spec = await runs_index.get_run_spec(namespace, job_id)
         if spec is not None:
             return {"source": "index", "spec": spec}
 

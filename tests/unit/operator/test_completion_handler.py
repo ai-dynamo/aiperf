@@ -142,7 +142,7 @@ async def test_handle_completion_has_files_with_error_marks_failed(
 async def test_handle_completion_index_failure_sets_condition_and_event(
     tmp_path: Path,
 ) -> None:
-    """M1: index_job_completed failure should set INDEX_UPDATED=False and warn.
+    """M1: runs_index upsert failure should set INDEX_UPDATED=False and warn.
 
     Results are already on disk, so we must not retry the completion handler;
     instead surface the failure via a condition + Warning event.

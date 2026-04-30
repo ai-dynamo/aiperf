@@ -193,7 +193,7 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
 def _extract_model_endpoint(latest_dir: Path) -> tuple[str | None, str | None]:
     """Read ``job_spec.json`` from the run dir and extract (model, endpoint).
 
-    Mirrors the extraction in ``operator/job_index.py`` so the in-memory
+    Mirrors the extraction in ``operator/runs_index.py`` so the SQLite
     index and the on-disk fallback agree on what a job's "model" is.
     Returns ``(None, None)`` for any failure — older jobs predate
     ``job_spec.json`` and we don't want to fail the entire ``/results``
@@ -215,7 +215,7 @@ def _extract_model_endpoint(latest_dir: Path) -> tuple[str | None, str | None]:
         return None, None
     models_cfg = benchmark.get("models", {})
     # models can be: {"items": [{"name": "x"}]}, {"modelNames": ["x"]}, or
-    # just ["x"]. Match the shape-tolerance in operator/job_index.py.
+    # just ["x"]. Match the shape-tolerance in operator/runs_index.py.
     model_items: list[Any]
     if isinstance(models_cfg, list):
         model_items = models_cfg
