@@ -20,9 +20,15 @@ corrupt or stale index degrades to slower, never wrong.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
+import orjson
+import zstandard
+
+from aiperf.operator.runs_index_models import RunIndexRow
 
 logger = logging.getLogger(__name__)
 
@@ -233,3 +239,305 @@ async def integrity_check(path: Path | None = None) -> bool:
     except (aiosqlite.Error, OSError) as exc:
         logger.warning("integrity_check failed for %s: %s", target, exc)
         return False
+
+
+_NARROW_METRICS = (
+    "request_throughput",
+    "request_latency",
+    "time_to_first_token",
+    "output_token_throughput",
+    "output_token_throughput_per_user",
+    "inter_token_latency",
+)
+
+
+def _summarize_telemetry(telemetry: Any) -> tuple[int, str | None]:
+    """Extract (gpu_count, representative_gpu_name) from a telemetry payload.
+
+    Equivalent to the legacy ``_summarize_telemetry`` in results_db.py — moved
+    to the write side so analytics never parse telemetry per request.
+    """
+    if not telemetry:
+        return 0, None
+    endpoints = telemetry.get("endpoints") or {}
+    if not isinstance(endpoints, dict):
+        return 0, None
+    count = 0
+    name: str | None = None
+    for ep in endpoints.values():
+        gpus = (ep or {}).get("gpus") or {}
+        if not isinstance(gpus, dict):
+            continue
+        count += len(gpus)
+        if name is None:
+            for gpu in gpus.values():
+                if gpu and gpu.get("gpu_name"):
+                    name = gpu["gpu_name"]
+                    break
+    return count, name
+
+
+def _extract_model_endpoint(spec: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Pull (model_name, endpoint_url) out of a CR spec, tolerant of shape variance."""
+    benchmark = spec.get("benchmark", spec)
+    endpoint_cfg = benchmark.get("endpoint", {}) or {}
+    models_cfg = benchmark.get("models", {}) or {}
+    if isinstance(models_cfg, list):
+        items = models_cfg
+    else:
+        items = models_cfg.get("items", models_cfg.get("modelNames", [])) or []
+    model: str | None = None
+    if isinstance(items, list) and items:
+        first = items[0]
+        model = first.get("name", first) if isinstance(first, dict) else str(first)
+    urls = endpoint_cfg.get("urls", endpoint_cfg.get("url", []))
+    endpoint = (
+        urls[0]
+        if isinstance(urls, list) and urls
+        else (urls if isinstance(urls, str) else None)
+    )
+    return model, endpoint
+
+
+def _zstd_compress(payload: dict[str, Any]) -> bytes:
+    return zstandard.ZstdCompressor().compress(orjson.dumps(payload))
+
+
+def _narrow_metric_columns(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Flatten the six DEFAULT_COMPARE_METRICS into the 24 flat-column dict."""
+    out: dict[str, Any] = {}
+    for name in _NARROW_METRICS:
+        m = metrics.get(name) or {}
+        out[f"{name}_avg"] = m.get("avg")
+        out[f"{name}_p50"] = m.get("p50")
+        out[f"{name}_p99"] = m.get("p99")
+        out[f"{name}_unit"] = m.get("unit")
+    return out
+
+
+async def upsert_run_created(
+    namespace: str, job_id: str, epoch: str, *, spec: dict[str, Any]
+) -> None:
+    """Insert (or refresh-on-conflict) the row for a newly-observed AIPerfJob.
+
+    Sets ``phase='Pending'`` and ``created_unix=now``. Pre-existing fields
+    populated by a previous completion (e.g. on operator restart) are preserved
+    via ``COALESCE`` so an out-of-order create event after completion does not
+    erase metrics.
+    """
+    model, endpoint = _extract_model_endpoint(spec)
+    spec_blob = _zstd_compress(spec)
+    now = int(time.time())
+    await _conn().execute(
+        """
+        INSERT INTO runs (
+            namespace, job_id, epoch, phase, is_latest, created_unix,
+            model, endpoint, spec_json
+        )
+        VALUES (?, ?, ?, 'Pending', 0, ?, ?, ?, ?)
+        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
+            model      = COALESCE(runs.model, excluded.model),
+            endpoint   = COALESCE(runs.endpoint, excluded.endpoint),
+            spec_json  = COALESCE(runs.spec_json, excluded.spec_json)
+        """,
+        (namespace, job_id, epoch, now, model, endpoint, spec_blob),
+    )
+
+
+async def upsert_run_phase(
+    namespace: str, job_id: str, epoch: str, *, phase: str
+) -> None:
+    """Update phase only — no metric or completion-time mutation.
+
+    Inserts a stub row if the create event was missed (e.g. controller saw
+    the job before the operator did).
+    """
+    now = int(time.time())
+    await _conn().execute(
+        """
+        INSERT INTO runs (namespace, job_id, epoch, phase, created_unix)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET phase = excluded.phase
+        """,
+        (namespace, job_id, epoch, phase, now),
+    )
+
+
+async def upsert_run_completed(
+    namespace: str,
+    job_id: str,
+    epoch: str,
+    *,
+    summary_blob: bytes,
+    metrics: dict[str, Any],
+    files: list[str],
+    mtime_epoch: int,
+    end_time: str | None = None,
+    start_time: str | None = None,
+    total_size_bytes: int = 0,
+    phase: str = "Succeeded",
+) -> None:
+    """Record the post-run state: phase, metrics, blob, file inventory."""
+    gpu_count, gpu_name = _summarize_telemetry(metrics.get("telemetry_data"))
+    narrow = _narrow_metric_columns(metrics)
+
+    cols = [
+        "namespace",
+        "job_id",
+        "epoch",
+        "phase",
+        "created_unix",
+        "start_time",
+        "end_time",
+        "mtime_epoch",
+        "gpu_count",
+        "gpu_name",
+        "file_count",
+        "total_size_bytes",
+        "metrics_json",
+    ]
+    vals: list[Any] = [
+        namespace,
+        job_id,
+        epoch,
+        phase,
+        int(time.time()),
+        start_time,
+        end_time,
+        mtime_epoch,
+        gpu_count,
+        gpu_name,
+        len(files),
+        total_size_bytes,
+        summary_blob,
+    ]
+    for k, v in narrow.items():
+        cols.append(k)
+        vals.append(v)
+
+    placeholders = ", ".join("?" * len(cols))
+    update_assignments = ", ".join(
+        f"{c} = excluded.{c}"
+        for c in cols
+        if c not in ("namespace", "job_id", "epoch", "created_unix")
+    )
+
+    sql = (
+        f"INSERT INTO runs ({', '.join(cols)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET {update_assignments}"
+    )
+    await _conn().execute(sql, vals)
+
+
+async def upsert_run_failed(
+    namespace: str, job_id: str, epoch: str, *, error: str, phase: str = "Failed"
+) -> None:
+    """Record a failure — phase + error string, end_time stamped now."""
+    now = int(time.time())
+    await _conn().execute(
+        """
+        INSERT INTO runs (namespace, job_id, epoch, phase, error, created_unix, end_time)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
+            phase    = excluded.phase,
+            error    = excluded.error,
+            end_time = excluded.end_time
+        """,
+        (namespace, job_id, epoch, phase, error, now),
+    )
+
+
+async def set_latest(namespace: str, job_id: str, epoch: str) -> None:
+    """Atomically flip ``is_latest`` so exactly one row per (ns, job) is latest.
+
+    Uses a single transaction: clear all is_latest rows for the job, then set
+    the target. The ``runs_one_latest`` partial unique index turns any race
+    into a hard error rather than silent dual-latest.
+    """
+    db = _conn()
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        await db.execute(
+            "UPDATE runs SET is_latest = 0 WHERE namespace = ? AND job_id = ? AND is_latest = 1",
+            (namespace, job_id),
+        )
+        await db.execute(
+            "UPDATE runs SET is_latest = 1 WHERE namespace = ? AND job_id = ? AND epoch = ?",
+            (namespace, job_id, epoch),
+        )
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+
+
+async def delete_run(namespace: str, job_id: str, epoch: str) -> None:
+    """Remove one run row. Used by retention and on_delete handlers."""
+    await _conn().execute(
+        "DELETE FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
+        (namespace, job_id, epoch),
+    )
+
+
+_RUN_ROW_COLS = (
+    "namespace, job_id, epoch, phase, is_latest, start_time, end_time, "
+    "created_unix, mtime_epoch, error, model, endpoint, gpu_count, gpu_name, "
+    "file_count, total_size_bytes, sweep_namespace, sweep_name, sweep_epoch, "
+    "sweep_variation_idx"
+)
+
+
+def _row_to_run(row: tuple) -> RunIndexRow:
+    return RunIndexRow(
+        namespace=row[0],
+        job_id=row[1],
+        epoch=row[2],
+        phase=row[3],
+        is_latest=bool(row[4]),
+        start_time=row[5],
+        end_time=row[6],
+        created_unix=row[7],
+        mtime_epoch=row[8],
+        error=row[9],
+        model=row[10],
+        endpoint=row[11],
+        gpu_count=row[12],
+        gpu_name=row[13],
+        file_count=row[14],
+        total_size_bytes=row[15],
+        sweep_namespace=row[16],
+        sweep_name=row[17],
+        sweep_epoch=row[18],
+        sweep_variation_idx=row[19],
+    )
+
+
+async def get_run(namespace: str, job_id: str, epoch: str) -> RunIndexRow | None:
+    cur = await _conn().execute(
+        f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
+        (namespace, job_id, epoch),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+    return _row_to_run(row) if row else None
+
+
+async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
+    cur = await _conn().execute(
+        f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? "
+        "ORDER BY mtime_epoch DESC NULLS LAST, epoch DESC",
+        (namespace, job_id),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return [_row_to_run(r) for r in rows]
+
+
+async def get_summary_blob(namespace: str, job_id: str, epoch: str) -> bytes | None:
+    cur = await _conn().execute(
+        "SELECT metrics_json FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
+        (namespace, job_id, epoch),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+    return row[0] if row and row[0] else None
