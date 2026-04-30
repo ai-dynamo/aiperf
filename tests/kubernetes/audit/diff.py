@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from tests.kubernetes.audit.cases import AuditCase
 
-Bucket = Literal["exact", "tolerance", "structural"]
+Bucket = Literal["exact", "tolerance", "structural", "index_consistency"]
 
 
 @dataclass(frozen=True)
@@ -259,6 +259,110 @@ def diff_tolerance(
                     reason=f"relative diff {rel:.1%} exceeds band {band:.1%} for stat '{stat_key}'",
                 )
             )
+
+    return findings
+
+
+_NARROW_METRICS = (
+    "request_throughput",
+    "request_latency",
+    "time_to_first_token",
+    "output_token_throughput",
+    "output_token_throughput_per_user",
+    "inter_token_latency",
+)
+_NARROW_STATS = ("avg", "p50", "p99")
+_INDEX_FLOAT_TOL = 1e-9
+
+
+def diff_index_consistency(
+    *,
+    operator_dir: Path,
+    index_row: dict[str, Any] | None,
+) -> list[Finding]:
+    """Bucket 4: runs-index row vs on-disk summary, narrow metric columns only.
+
+    The index is a cache mirroring disk: every flat column in the ``runs``
+    table must equal the matching ``profile_export_aiperf.json`` stat. Any
+    drift is silent corruption of the read API (leaderboard, history,
+    compare) so the audit always gates on this bucket.
+
+    ``index_row`` is the JSON payload returned by
+    ``GET /admin/index/run/{ns}/{job_id}`` (the narrow-column projection).
+    Pass ``None`` to record a finding when the index has no row at all.
+    """
+    findings: list[Finding] = []
+
+    if index_row is None:
+        findings.append(
+            Finding(
+                bucket="index_consistency",
+                field="row",
+                expected="present",
+                actual="missing",
+                reason="runs_index has no row for this operator-side run",
+            )
+        )
+        return findings
+
+    summary_path = _summary_path(operator_dir)
+    if summary_path is None:
+        findings.append(
+            Finding(
+                bucket="index_consistency",
+                field="profile_export_aiperf.json",
+                expected="present",
+                actual="missing",
+                reason="operator-side summary JSON missing; cannot verify index row",
+            )
+        )
+        return findings
+
+    try:
+        summary = json.loads(summary_path.read_text())
+    except json.JSONDecodeError as exc:
+        findings.append(
+            Finding(
+                bucket="index_consistency",
+                field=summary_path.name,
+                expected="parseable JSON",
+                actual=f"decode error: {exc}",
+                reason="cannot decode operator-side summary; index check skipped",
+            )
+        )
+        return findings
+
+    for metric in _NARROW_METRICS:
+        m = summary.get(metric) or {}
+        for stat in _NARROW_STATS:
+            disk_val = m.get(stat)
+            row_val = index_row.get(f"{metric}_{stat}")
+            if disk_val is None and row_val is None:
+                continue
+            if disk_val is None or row_val is None:
+                findings.append(
+                    Finding(
+                        bucket="index_consistency",
+                        field=f"{metric}.{stat}",
+                        expected=disk_val,
+                        actual=row_val,
+                        reason="one side has a value and the other is null",
+                    )
+                )
+                continue
+            if abs(float(disk_val) - float(row_val)) > _INDEX_FLOAT_TOL:
+                findings.append(
+                    Finding(
+                        bucket="index_consistency",
+                        field=f"{metric}.{stat}",
+                        expected=disk_val,
+                        actual=row_val,
+                        reason=(
+                            f"runs index row diverges from disk by "
+                            f"{abs(float(disk_val) - float(row_val)):.3e}"
+                        ),
+                    )
+                )
 
     return findings
 

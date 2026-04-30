@@ -562,6 +562,48 @@ async def get_run(namespace: str, job_id: str, epoch: str) -> RunIndexRow | None
     return _row_to_run(row) if row else None
 
 
+async def get_run_narrow_metrics(
+    namespace: str, job_id: str, epoch: str | None = None
+) -> dict[str, Any] | None:
+    """Return the narrow metric columns for a single run row.
+
+    Used by the K8s-vs-local audit suite's ``index_consistency`` check to
+    confirm that the flat-column projection in ``runs`` matches the on-disk
+    ``profile_export_aiperf.json``. If ``epoch`` is None the latest run for
+    the job is selected. Returns None when no row exists.
+
+    The keys mirror the narrow column names: ``epoch`` plus 18 metric/stat
+    pairs of the form ``<metric>_<stat>`` for stats avg/p50/p99 across the
+    six ``DEFAULT_COMPARE_METRICS``.
+    """
+    metric_cols = ", ".join(
+        f"{name}_{stat}" for name in _NARROW_METRICS for stat in ("avg", "p50", "p99")
+    )
+    if epoch is None:
+        cur = await _conn().execute(
+            f"SELECT epoch, phase, {metric_cols} FROM runs "
+            "WHERE namespace = ? AND job_id = ? AND is_latest = 1",
+            (namespace, job_id),
+        )
+    else:
+        cur = await _conn().execute(
+            f"SELECT epoch, phase, {metric_cols} FROM runs "
+            "WHERE namespace = ? AND job_id = ? AND epoch = ?",
+            (namespace, job_id, epoch),
+        )
+    row = await cur.fetchone()
+    await cur.close()
+    if row is None:
+        return None
+    out: dict[str, Any] = {"epoch": row[0], "phase": row[1]}
+    idx = 2
+    for name in _NARROW_METRICS:
+        for stat in ("avg", "p50", "p99"):
+            out[f"{name}_{stat}"] = row[idx]
+            idx += 1
+    return out
+
+
 async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
     cur = await _conn().execute(
         f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? "
