@@ -95,8 +95,8 @@ async def test_on_create_persistence_failure_raises_temporary_error_and_skips_jo
             new=AsyncMock(side_effect=OSError("PVC write failed")),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.index_job_created",
-            new=AsyncMock(),
+            "aiperf.operator.handlers.create.runs_index",
+            new=MagicMock(upsert_run_created=AsyncMock()),
         ),
         mock_patch("aiperf.operator.handlers.create.events.spec_valid"),
         mock_patch("aiperf.operator.handlers.create.events.endpoint_reachable"),
@@ -176,8 +176,8 @@ async def test_on_create_persistence_success_then_jobset_created():
             new=AsyncMock(side_effect=record_save),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.index_job_created",
-            new=AsyncMock(side_effect=record_index),
+            "aiperf.operator.handlers.create.runs_index",
+            new=MagicMock(upsert_run_created=AsyncMock(side_effect=record_index)),
         ),
         mock_patch("aiperf.operator.handlers.create.events.spec_valid"),
         mock_patch("aiperf.operator.handlers.create.events.endpoint_reachable"),
@@ -283,8 +283,8 @@ async def _run_on_create_with_preflight(preflight_result: MagicMock) -> MagicMoc
             new=AsyncMock(),
         ),
         mock_patch(
-            "aiperf.operator.handlers.create.index_job_created",
-            new=AsyncMock(),
+            "aiperf.operator.handlers.create.runs_index",
+            new=MagicMock(upsert_run_created=AsyncMock()),
         ),
         mock_patch("aiperf.operator.handlers.create.events.spec_valid"),
         mock_patch("aiperf.operator.handlers.create.events.endpoint_reachable"),

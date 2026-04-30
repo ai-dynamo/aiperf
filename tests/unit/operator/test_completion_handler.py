@@ -44,7 +44,12 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(
@@ -101,7 +106,12 @@ async def test_handle_completion_has_files_with_error_marks_failed(
             "aiperf.operator.handlers.completion.events.results_stored",
         ),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(
@@ -157,8 +167,12 @@ async def test_handle_completion_index_failure_sets_condition_and_event(
         patch("aiperf.operator.handlers.completion.events.results_stored"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed",
-            new=AsyncMock(side_effect=RuntimeError("disk full")),
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(side_effect=RuntimeError("disk full")),
+                upsert_run_failed=AsyncMock(side_effect=RuntimeError("disk full")),
+                set_latest=AsyncMock(),
+            ),
         ),
         patch(
             "aiperf.operator.events.kopf.warn",
@@ -267,7 +281,12 @@ async def test_handle_completion_transient_fetch_failure_raises_temporary_error(
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
         pytest.raises(kopf.TemporaryError) as exc_info,
     ):
@@ -324,7 +343,12 @@ async def test_handle_completion_transient_fetch_failure_after_budget_marks_fail
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(
@@ -374,7 +398,12 @@ async def test_handle_completion_transient_fetch_no_claim_annotation_falls_throu
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(
@@ -419,7 +448,12 @@ async def test_handle_completion_transient_retry_disabled_marks_failed(
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(
@@ -468,7 +502,12 @@ async def test_handle_completion_partial_fetch_with_files_does_not_retry(
         patch("aiperf.operator.handlers.completion.events.completed"),
         patch("aiperf.operator.handlers.completion.events.results_stored"),
         patch(
-            "aiperf.operator.handlers.completion.index_job_completed", new=AsyncMock()
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
         ),
     ):
         await handle_completion(

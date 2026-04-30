@@ -19,7 +19,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.operator import events
+from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
     get_or_create_progress_client,
     is_cancellation_requested,
@@ -35,7 +35,6 @@ from aiperf.operator.handlers._completion_fetch import (
 from aiperf.operator.handlers._completion_retry import (
     maybe_raise_for_transient_fetch_failure,
 )
-from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.models import ControllerFetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient  # re-exported for tests
 from aiperf.operator.results_layout import (
@@ -164,14 +163,77 @@ async def _apply_completion_results(
         has_error=flags.has_error,
         success=flags.success,
     )
+    epoch = epoch_key_from_body(body)
+    summary_blob, mtime_epoch, end_time, total_size_bytes = _gather_index_inputs(
+        namespace, job_id, epoch
+    )
+    phase = "Succeeded" if flags.success else "Failed"
     await _update_job_index_safe(
-        body=body,
         namespace=namespace,
         job_id=job_id,
-        result=result,
+        epoch=epoch,
+        body=body,
         sb=sb,
-        success=flags.success,
+        phase=phase,
+        summary_blob=summary_blob,
+        metrics=result.metrics,
+        downloaded_files=result.downloaded,
+        error=result.error or None,
+        mtime_epoch=mtime_epoch,
+        end_time=end_time,
+        total_size_bytes=total_size_bytes,
     )
+
+
+def _gather_index_inputs(
+    namespace: str,
+    job_id: str,
+    epoch: str,
+) -> tuple[bytes | None, int, str | None, int]:
+    """Read the on-disk summary file and compute (summary_blob, mtime_epoch,
+    end_time, total_size_bytes) for the runs_index upsert. Returns
+    (None, 0, None, 0) if nothing on disk yet (e.g. fetch failed).
+
+    summary_blob is always the zstd-compressed bytes of the
+    profile_export_aiperf.json payload — matches the on-disk .json.zst when
+    present, or compresses the raw .json otherwise.
+    """
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+    if not dest_dir.exists():
+        return None, 0, None, 0
+
+    summary_blob: bytes | None = None
+    end_time: str | None = None
+
+    summary_zst = dest_dir / "profile_export_aiperf.json.zst"
+    summary_raw = dest_dir / "profile_export_aiperf.json"
+    try:
+        if summary_zst.exists():
+            blob = summary_zst.read_bytes()
+            summary_blob = blob
+            metrics = orjson.loads(zstandard.ZstdDecompressor().decompress(blob))
+            end_time = metrics.get("end_time")
+        elif summary_raw.exists():
+            raw = summary_raw.read_bytes()
+            summary_blob = zstandard.ZstdCompressor().compress(raw)
+            metrics = orjson.loads(raw)
+            end_time = metrics.get("end_time")
+    except (OSError, orjson.JSONDecodeError, zstandard.ZstdError) as exc:
+        logger.warning(
+            "completion: cannot read summary at %s for index update: %s",
+            dest_dir,
+            exc,
+        )
+
+    try:
+        files = [f for f in dest_dir.iterdir() if f.is_file()]
+        total_size = sum(f.stat().st_size for f in files)
+        mtime_epoch = int(dest_dir.stat().st_mtime)
+    except OSError:
+        total_size = 0
+        mtime_epoch = 0
+
+    return summary_blob, mtime_epoch, end_time, total_size
 
 
 async def _maybe_delete_jobset_after_success(
@@ -386,30 +448,53 @@ def _set_results_phase_and_condition(
 
 async def _update_job_index_safe(
     *,
-    body: dict[str, Any],
     namespace: str,
     job_id: str,
-    result: ControllerFetchResult,
+    epoch: str,
+    body: dict[str, Any],
     sb: StatusBuilder,
-    success: bool,
+    phase: str,
+    summary_blob: bytes | None,
+    metrics: dict[str, Any] | None,
+    downloaded_files: list[str],
+    error: str | None,
+    mtime_epoch: int,
+    end_time: str | None,
+    total_size_bytes: int,
 ) -> None:
-    """Update the job index; on failure, degrade gracefully.
+    """Update the runs_index; on failure, degrade gracefully.
 
     Results are already persisted to disk, so a failure here only affects
     discoverability via the index/history API - don't retry the whole
     completion handler, but set a status condition and event so operators
-    can see the gap.
+    can see the gap. Always calls ``set_latest`` after a successful upsert
+    so the in-DB latest pointer matches latest.txt on disk.
     """
     try:
-        await index_job_completed(
-            namespace=namespace,
-            job_id=job_id,
-            phase="Completed" if success else "Failed",
-            metrics=result.metrics,
-            downloaded_files=result.downloaded,
-        )
+        if phase in ("Succeeded", "PartiallyFailed") and summary_blob is not None:
+            await runs_index.upsert_run_completed(
+                namespace,
+                job_id,
+                epoch,
+                summary_blob=summary_blob,
+                metrics=metrics or {},
+                files=downloaded_files,
+                mtime_epoch=mtime_epoch,
+                end_time=end_time,
+                total_size_bytes=total_size_bytes,
+                phase=phase,
+            )
+        else:
+            await runs_index.upsert_run_failed(
+                namespace,
+                job_id,
+                epoch,
+                error=error or "unknown",
+                phase=phase,
+            )
+        await runs_index.set_latest(namespace, job_id, epoch)
     except Exception as e:
-        logger.exception(f"Failed to update job index for {job_id}")
+        logger.exception(f"Failed to update runs_index for {job_id}")
         sb.conditions.set_false(
             ConditionType.INDEX_UPDATED,
             "IndexUpdateFailed",

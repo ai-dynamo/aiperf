@@ -740,8 +740,8 @@ class TestOnCreateHandler:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.index_job_created",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.create.runs_index",
+                new=MagicMock(upsert_run_created=AsyncMock()),
             ),
         ):
             yield
@@ -1810,8 +1810,12 @@ class TestHandleCompletion:
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_stored"),
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.completion.k8s_client",
@@ -1862,8 +1866,12 @@ class TestHandleCompletion:
             mock_patch("aiperf.operator.events.results_stored") as mock_results_stored,
             mock_patch("aiperf.operator.events.results_failed") as mock_results_failed,
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.completion.k8s_client",
@@ -1918,8 +1926,12 @@ class TestHandleCompletion:
             mock_patch("aiperf.operator.events.results_stored"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.completion.client.CustomObjectsApi",
@@ -1968,8 +1980,12 @@ class TestHandleCompletion:
             mock_patch("aiperf.operator.events.results_stored"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
             mock_patch(
                 "aiperf.operator.handlers.completion.client.CustomObjectsApi",
@@ -3108,8 +3124,12 @@ class TestHandleCompletionBackfill:
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
         ):
             await _handle_completion(
@@ -3148,8 +3168,12 @@ class TestHandleCompletionBackfill:
             mock_patch("aiperf.operator.events.completed"),
             mock_patch("aiperf.operator.events.results_failed"),
             mock_patch(
-                "aiperf.operator.handlers.completion.index_job_completed",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.completion.runs_index",
+                new=MagicMock(
+                    upsert_run_completed=AsyncMock(),
+                    upsert_run_failed=AsyncMock(),
+                    set_latest=AsyncMock(),
+                ),
             ),
         ):
             await _handle_completion(
@@ -3187,8 +3211,8 @@ class TestOnCreatePreflightIntegration:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.index_job_created",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.create.runs_index",
+                new=MagicMock(upsert_run_created=AsyncMock()),
             ),
         ):
             yield

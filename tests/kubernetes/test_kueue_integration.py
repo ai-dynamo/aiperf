@@ -506,8 +506,8 @@ class TestKueueOperatorFlow:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.create.index_job_created",
-                new_callable=AsyncMock,
+                "aiperf.operator.handlers.create.runs_index",
+                new=MagicMock(upsert_run_created=AsyncMock()),
             ),
             mock_patch(
                 "aiperf.operator.handlers.create.create_idempotent_custom_object",

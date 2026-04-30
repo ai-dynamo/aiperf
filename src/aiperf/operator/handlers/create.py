@@ -24,10 +24,10 @@ from aiperf.kubernetes.cr_refs import (
     JOBSET_VERSION,
 )
 from aiperf.kubernetes.resources import KubernetesDeployment
-from aiperf.operator import events
+from aiperf.operator import events, runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.health import check_endpoint_health
-from aiperf.operator.job_index import index_job_created, save_job_spec_file
+from aiperf.operator.job_spec_file import save_job_spec_file
 from aiperf.operator.k8s_helpers import (
     create_idempotent_config_map,
     create_idempotent_custom_object,
@@ -289,7 +289,7 @@ async def _persist_spec_and_index(
         plain_spec = _to_plain(spec)
         epoch = epoch_key_from_body(body)
         await save_job_spec_file(namespace, job_id, plain_spec, epoch=epoch)
-        await index_job_created(namespace, job_id, plain_spec)
+        await runs_index.upsert_run_created(namespace, job_id, epoch, spec=plain_spec)
     except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
         raise kopf.TemporaryError(
