@@ -312,7 +312,8 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_audio_data(self) -> bytes:
         """Generate Gaussian noise audio data matching video duration as WAV bytes."""
-        num_samples = int(self.config.duration * self.config.audio.sample_rate)
+        sample_rate_hz = int(self.config.audio.sample_rate * 1000)
+        num_samples = int(self.config.duration * sample_rate_hz)
         signal = generate_noise_signal(
             self._audio_rng, num_samples, self.config.audio.channels
         )
@@ -329,7 +330,7 @@ class VideoGenerator(BaseGenerator):
         sf.write(
             output_buffer,
             audio_data,
-            self.config.audio.sample_rate,
+            sample_rate_hz,
             format="WAV",
             subtype=subtype,
         )

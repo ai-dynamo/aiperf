@@ -10,6 +10,7 @@ from aiperf.dataset.agentic_code_gen.models import PercentileStats
 
 def render_comparison_text(
     quality: dict,
+    *,
     session_duration_stats: PercentileStats | None = None,
     prefill_tps: float = 20_000,
     decode_tps: float = 60,

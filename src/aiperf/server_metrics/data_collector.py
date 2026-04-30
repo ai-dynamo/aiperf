@@ -100,6 +100,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
     def __init__(
         self,
         endpoint_url: str,
+        *,
         collection_interval: float | None = None,
         reachability_timeout: float | None = None,
         record_callback: Callable[[list[ServerMetricsRecord], str], Awaitable[None]] | None = None,

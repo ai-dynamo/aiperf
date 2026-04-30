@@ -418,19 +418,28 @@ class UserConfig(BaseConfig):
         return False
 
     def _count_dataset_entries(self) -> int:
-        """Count the number of valid entries in a custom dataset file.
+        """Count the number of valid entries in a custom dataset file or directory.
+
+        For directories, recursively counts non-empty lines across all .jsonl files.
 
         Returns:
-            int: Number of non-empty lines in the file
+            int: Number of non-empty lines
         """
         if not self.input.file:
             return 0
 
+        path = self.input.file
         try:
-            with open(self.input.file) as f:
+            if path.is_dir():
+                count = 0
+                for jsonl_file in path.rglob("*.jsonl"):
+                    with open(jsonl_file) as f:
+                        count += sum(1 for line in f if line.strip())
+                return count
+            with open(path) as f:
                 return sum(1 for line in f if line.strip())
         except (OSError, FileNotFoundError) as e:
-            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            _logger.error(f"Cannot read dataset file {path}: {e}")
             return 0
 
     endpoint: Annotated[
@@ -1047,7 +1056,7 @@ class UserConfig(BaseConfig):
             "mean" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.mean > 0
         ):
-            raise err("--synthetic-input-tokens-mean")
+            raise err("Synthetic input token mean (--synthetic-input-tokens-mean)")
         else:
             self.input.prompt.input_tokens.mean = 0
 
@@ -1055,7 +1064,7 @@ class UserConfig(BaseConfig):
             "stddev" in self.input.prompt.input_tokens.model_fields_set
             and self.input.prompt.input_tokens.stddev > 0
         ):
-            raise err("--synthetic-input-tokens-stddev")
+            raise err("Synthetic input token stddev (--synthetic-input-tokens-stddev)")
         else:
             self.input.prompt.input_tokens.stddev = 0
 
@@ -1063,12 +1072,12 @@ class UserConfig(BaseConfig):
             "batch_size" in self.input.prompt.model_fields_set
             and self.input.prompt.batch_size > 0
         ):
-            raise err("--batch-size-text")
+            raise err("Text batch size (--batch-size-text)")
         else:
             self.input.prompt.batch_size = 0
 
         if self.input.prompt.sequence_distribution is not None:
-            raise err("--sequence-distribution")
+            raise err("Sequence distribution (--sequence-distribution)")
 
         if self.input.prompt.prefix_prompt.model_fields_set:
             raise err("Prefix prompt options")

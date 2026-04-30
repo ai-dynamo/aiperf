@@ -5,12 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.common.config.accuracy_config import AccuracyConfig
 from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
+from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -346,6 +349,69 @@ class TestSignalHandling:
             await system_controller._handle_signal(signal.SIGINT)
 
         system_controller._kill.assert_called_once()
+
+
+class TestAccuracyTemperatureWarning:
+    """Tests for _should_warn_accuracy_temperature."""
+
+    def _make_controller_with_accuracy(
+        self,
+        system_controller: SystemController,
+        extra_inputs=None,
+    ) -> SystemController:
+        system_controller.user_config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"], type=EndpointType.COMPLETIONS
+            ),
+            accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+            input=system_controller.user_config.input.model_copy(
+                update={"extra": extra_inputs}
+            ),
+        )
+        return system_controller
+
+    def test_no_warning_when_accuracy_disabled(
+        self, system_controller: SystemController
+    ) -> None:
+        assert not system_controller._should_warn_accuracy_temperature()
+
+    def test_warning_when_accuracy_enabled_no_extra_inputs(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(system_controller, extra_inputs=None)
+        assert system_controller._should_warn_accuracy_temperature()
+
+    def test_warning_when_temperature_nonzero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", 1.0)]
+        )
+        assert system_controller._should_warn_accuracy_temperature()
+
+    def test_no_warning_when_temperature_zero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", 0)]
+        )
+        assert not system_controller._should_warn_accuracy_temperature()
+
+    def test_no_warning_when_temperature_stringified_zero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", "0")]
+        )
+        assert not system_controller._should_warn_accuracy_temperature()
+
+    def test_warning_when_temperature_stringified_nonzero(
+        self, system_controller: SystemController
+    ) -> None:
+        self._make_controller_with_accuracy(
+            system_controller, extra_inputs=[("temperature", "0.5")]
+        )
+        assert system_controller._should_warn_accuracy_temperature()
 
 
 class TestSSLVerificationWarning:

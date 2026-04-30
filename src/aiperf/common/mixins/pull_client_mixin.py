@@ -25,6 +25,7 @@ class PullClientMixin(CommunicationMixin, ABC):
 
     def __init__(
         self,
+        *,
         service_config: ServiceConfig,
         pull_client_address: CommAddress,
         pull_client_bind: bool = False,

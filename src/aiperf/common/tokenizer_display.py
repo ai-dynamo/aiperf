@@ -327,6 +327,7 @@ def _reproduce_traceback(name: str) -> str | None:
 
 def display_tokenizer_validation_error(
     name: str,
+    *,
     cause_chain: list[str] | None = None,
     error_message: str | None = None,
     cause_message: str | None = None,

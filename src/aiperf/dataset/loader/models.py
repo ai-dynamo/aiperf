@@ -366,6 +366,58 @@ class BurstGPTTrace(AIPerfBaseModel):
     output_length: int = Field(description="Output token count (Response tokens)")
 
 
+class SageMakerDataCaptureTrace(AIPerfBaseModel):
+    """Trace entry parsed from a SageMaker Data Capture JSONL record.
+
+    SageMaker Data Capture records every inference request and response from
+    real-time endpoints to S3 as JSONL files. This model represents a single
+    parsed record with the request messages and token counts extracted from
+    the captured payloads.
+
+    Only OpenAI-compatible chat endpoints are supported (payload must contain
+    a ``messages`` array).
+
+    See https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-data-capture-endpoint.html
+
+    Example source JSONL record::
+
+        {"captureData": {"endpointInput": {"data": "{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":50}", "encoding": "JSON"}, "endpointOutput": {"data": "{\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":8}}", "encoding": "JSON"}}, "eventMetadata": {"eventId": "abc-123", "inferenceTime": "2026-04-29T00:03:18Z"}, "eventVersion": "0"}
+
+    Resulting parsed instance::
+
+        SageMakerDataCaptureTrace(
+            timestamp=1777420998000.0,
+            input_length=12,
+            output_length=50,
+            messages=[{"role": "user", "content": "Hello"}],
+            event_id="abc-123",
+        )
+    """
+
+    timestamp: float = Field(
+        description="Request arrival time in milliseconds (converted from ISO 8601 inferenceTime).",
+    )
+    input_length: int | None = Field(
+        None,
+        description="Input token count from usage.prompt_tokens in the captured response.",
+    )
+    output_length: int | None = Field(
+        None,
+        description="Output token limit from max_tokens in the captured request.",
+    )
+    messages: list[dict[str, Any]] = Field(
+        description="OpenAI-compatible messages array extracted from the captured request payload.",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        None,
+        description="OpenAI-compatible tool definitions from the captured request payload.",
+    )
+    event_id: str | None = Field(
+        None,
+        description="Original SageMaker eventId UUID for traceability.",
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
     bound=SingleTurn
@@ -373,6 +425,7 @@ CustomDatasetT = TypeVar(
     | RandomPool
     | MooncakeTrace
     | BailianTrace
-    | BurstGPTTrace,
+    | BurstGPTTrace
+    | SageMakerDataCaptureTrace,
 )
 """A union type of all custom data types."""

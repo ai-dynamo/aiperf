@@ -251,6 +251,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        *,
         max_pull_concurrency: int | None = None,
         **kwargs: Any,
     ) -> CommunicationClientProtocol:
@@ -291,6 +292,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_pull_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = False,
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,

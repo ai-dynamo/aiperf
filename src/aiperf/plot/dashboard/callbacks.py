@@ -9,7 +9,6 @@ and update the dashboard dynamically.
 """
 
 import io
-import json
 import logging
 import sys
 import time
@@ -21,6 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 import dash
+import orjson
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, ctx, dcc, html
@@ -1007,7 +1007,7 @@ def register_hide_show_plot_callbacks(app: dash.Dash):
             raise PreventUpdate
 
         # Extract plot ID from button ID
-        button_id = json.loads(trigger_id.split(".")[0])
+        button_id = orjson.loads(trigger_id.split(".")[0])
         plot_id = button_id["index"]
 
         # Move plot from visible to hidden - create NEW lists to trigger Dash change detection
@@ -1052,7 +1052,7 @@ def register_hide_show_plot_callbacks(app: dash.Dash):
             raise PreventUpdate
 
         # Extract plot ID
-        button_id = json.loads(trigger_id.split(".")[0])
+        button_id = orjson.loads(trigger_id.split(".")[0])
         plot_id = button_id["index"]
 
         # Move plot from hidden to visible - create NEW lists to trigger Dash change detection
@@ -1165,7 +1165,7 @@ def register_hide_show_plot_callbacks(app: dash.Dash):
         if "hide-plot-btn-direct" not in trigger_id:
             raise PreventUpdate
 
-        button_id = json.loads(trigger_id.split(".")[0])
+        button_id = orjson.loads(trigger_id.split(".")[0])
         plot_id = button_id["index"]
 
         visible = list(plot_state.get("visible_plots", []))
@@ -2980,7 +2980,7 @@ def register_single_run_plot_edit_callbacks(app: dash.Dash, runs: list):
 
         # Parse the plot_id from triggered ID
         button_id_str = triggered_id.split(".")[0]
-        button_id = json.loads(button_id_str)
+        button_id = orjson.loads(button_id_str)
         plot_id = button_id["index"]
 
         # Get plot configuration from state
@@ -3528,7 +3528,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
 
         # Parse the plot_id from triggered ID
         button_id_str = triggered_id.split(".")[0]
-        button_id = json.loads(button_id_str)
+        button_id = orjson.loads(button_id_str)
         plot_id = button_id["index"]
 
         # Get plot configuration from state
@@ -4856,6 +4856,7 @@ def _render_single_run_plots(
     theme: PlotTheme,
     runs: list[RunData],
     plot_specs: list,
+    *,
     default_plot_order: list[str],
 ):
     """Render plots for single-run mode with caching.
@@ -5330,7 +5331,7 @@ def register_collapsible_sections_callback(app: dash.Dash):
 
         # Parse the triggered ID to get the index
         try:
-            id_dict = json.loads(triggered_id.split(".")[0])
+            id_dict = orjson.loads(triggered_id.split(".")[0])
             clicked_index = None
             for i, input_id in enumerate(ctx.inputs_list[0]):
                 if input_id["id"] == id_dict:
@@ -5340,7 +5341,7 @@ def register_collapsible_sections_callback(app: dash.Dash):
             if clicked_index is None:
                 raise PreventUpdate
 
-        except (json.JSONDecodeError, KeyError, IndexError):
+        except (orjson.JSONDecodeError, KeyError, IndexError):
             raise PreventUpdate from None
 
         # Toggle the clicked section

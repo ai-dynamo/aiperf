@@ -27,6 +27,7 @@ warnings.filterwarnings(
 
 def bootstrap_and_run_service(
     service_type: ServiceType,
+    *,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,

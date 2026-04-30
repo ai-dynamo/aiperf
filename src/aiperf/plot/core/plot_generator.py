@@ -198,6 +198,7 @@ class PlotGenerator:
         title: str,
         x_label: str,
         y_label: str,
+        *,
         hovermode: str | None = None,
         autoscale: str = "none",
     ) -> dict:
@@ -531,6 +532,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_metric: str,
         y_metric: str,
+        *,
         label_by: str = "concurrency",
         group_by: str | None = "model",
         title: str | None = None,
@@ -712,6 +714,7 @@ class PlotGenerator:
         df: pd.DataFrame,
         x_metric: str,
         y_metric: str,
+        *,
         label_by: str = "concurrency",
         group_by: str | None = "model",
         title: str | None = None,
@@ -823,6 +826,7 @@ class PlotGenerator:
     def create_multi_run_bar_chart(
         self,
         df: pd.DataFrame,
+        *,
         x_metric: str,
         y_metric: str,
         group_by: str | None = None,
@@ -904,6 +908,7 @@ class PlotGenerator:
     def create_time_series_scatter(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         y_metric: str,
         title: str | None = None,
@@ -957,6 +962,7 @@ class PlotGenerator:
     def create_time_series_area(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         y_metric: str,
         title: str | None = None,
@@ -1016,6 +1022,7 @@ class PlotGenerator:
     def create_time_series_histogram(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         y_col: str,
         title: str | None = None,
@@ -1220,6 +1227,7 @@ class PlotGenerator:
     def create_timeslice_scatter(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         y_col: str,
         metric_name: str,
@@ -1541,6 +1549,7 @@ class PlotGenerator:
     def create_dual_axis_plot(
         self,
         df_primary: pd.DataFrame,
+        *,
         df_secondary: pd.DataFrame,
         x_col_primary: str,
         x_col_secondary: str,
@@ -1711,6 +1720,7 @@ class PlotGenerator:
     def create_latency_scatter_with_percentiles(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         y_metric: str,
         percentile_cols: list[str],
@@ -1800,6 +1810,7 @@ class PlotGenerator:
     def create_request_timeline(
         self,
         df: pd.DataFrame,
+        *,
         y_metric: str,
         title: str | None = None,
         x_label: str | None = None,
@@ -1903,6 +1914,7 @@ class PlotGenerator:
     def create_percentile_bands(
         self,
         df: pd.DataFrame,
+        *,
         x_col: str,
         percentile_cols: list[str],
         lower_col: str | None,
@@ -2027,6 +2039,7 @@ class PlotGenerator:
     def create_bucket_histogram(
         self,
         buckets: dict[str, int],
+        *,
         metric_name: str,
         title: str,
         x_label: str,

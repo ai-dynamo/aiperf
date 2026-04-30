@@ -313,6 +313,7 @@ def build_single_run_plot_config(
     custom_x_label: str | None = None,
     custom_y_label: str | None = None,
     size: str = "half",
+    *,
     is_default: bool = False,
 ) -> dict:
     """

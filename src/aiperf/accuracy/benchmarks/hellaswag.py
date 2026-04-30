@@ -16,4 +16,6 @@ class HellaSwagBenchmark(AIPerfLoggerMixin):
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool
     ) -> list[BenchmarkProblem]:
-        raise NotImplementedError
+        raise NotImplementedError(
+            "hellaswag benchmark is not yet implemented; only 'mmlu' is available in this release."
+        )

@@ -60,6 +60,7 @@ def create_plot_container_component(
     resizable: bool = True,
     size: int = 400,
     size_class: str = "half",
+    *,
     visible: bool = True,
 ) -> html.Div:
     """
