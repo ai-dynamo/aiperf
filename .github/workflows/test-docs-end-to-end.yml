@@ -23,6 +23,11 @@ on:
       - 'tests/ci/test_docs_end_to_end/**'
   workflow_dispatch:
   workflow_call:
+    inputs:
+      source_ref:
+        description: "Commit SHA or ref to checkout when invoked from another workflow."
+        required: false
+        type: string
 
 jobs:
   detect-changes:
@@ -34,6 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -95,6 +101,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Run test_docs_end_to_end
         env:

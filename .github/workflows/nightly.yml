@@ -292,6 +292,9 @@ jobs:
     name: Test Docs End-to-End
     needs: [prepare-nightly]
     uses: ./.github/workflows/test-docs-end-to-end.yml
+    with:
+      source_ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+    secrets: inherit
 
   # ============================================================================
   # PHASE 3: BUILD
