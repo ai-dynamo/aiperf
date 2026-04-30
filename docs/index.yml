@@ -150,7 +150,7 @@ navigation:
   collapsed: true
   contents:
   - page: Accuracy Benchmarking
-    path: accuracy/accuracy_benchmarking.md
+    path: accuracy/accuracy-benchmarking.md
 
 - section: Reference
   collapsed: true
