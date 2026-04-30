@@ -20,6 +20,7 @@ corrupt or stale index degrades to slower, never wrong.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,11 @@ async def close() -> None:
         await _DB.close()
     _DB = None
     _DB_PATH = None
+
+
+def is_open() -> bool:
+    """Return True iff a runs_index DB is currently open."""
+    return _DB is not None
 
 
 def _conn() -> aiosqlite.Connection:
@@ -1061,7 +1067,21 @@ async def compare(
 
 
 async def _select_dicts(sql: str, params: tuple) -> list[dict[str, Any]]:
-    cur = await _conn().execute(sql, params)
+    """Run a SELECT and return rows as dicts. Empty list on column-not-found.
+
+    Analytics callers pass user-supplied metric names as column references
+    (e.g. ``request_throughput_avg``) — when a metric does not exist as a
+    column, SQLite raises ``OperationalError``. The legacy DuckDB read path
+    swallowed the equivalent error and returned an empty list, and routers
+    rely on that contract; preserve it here.
+    """
+    try:
+        cur = await _conn().execute(sql, params)
+    except sqlite3.OperationalError as exc:
+        if "no such column" in str(exc):
+            logger.debug("select returned no rows (no such column): %s", exc)
+            return []
+        raise
     cols = [d[0] for d in cur.description]
     rows = await cur.fetchall()
     await cur.close()

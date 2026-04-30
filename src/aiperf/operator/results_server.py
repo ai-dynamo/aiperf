@@ -6,8 +6,8 @@ Runs as a sidecar container alongside the kopf operator, sharing the results
 PVC volume. Provides two layers:
 
 1. **File serving** - download raw result files with zstd content negotiation
-2. **Analytics** - DuckDB-powered query endpoints for leaderboards, history,
-   and cross-job comparisons (reads result files directly, no ETL)
+2. **Analytics** - SQLite-backed query endpoints (via ``runs_index``) for
+   leaderboards, history, and cross-job comparisons.
 
 Endpoints:
     GET /healthz                                        - health check
@@ -73,12 +73,21 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
     """Build the FastAPI lifespan context manager for DB + k8s client setup/teardown."""
     from kubernetes_asyncio.client import ApiClient
 
+    from aiperf.operator import runs_index
     from aiperf.operator.results_db import ResultsDB
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # The runs_index SQLite DB is opened here when results_server runs
+        # standalone; in the kopf operator process it's already opened by the
+        # @kopf.on.startup hook in operator/main.py. open() is idempotent only
+        # via the global singleton — guard with a no-op when already open.
+        index_owned_here = False
+        if not runs_index.is_open():
+            await runs_index.open(base_dir / ".aiperf_index.sqlite")
+            index_owned_here = True
         db_holder[0] = ResultsDB(base_dir)
-        logger.info(f"DuckDB analytics engine initialized (results_dir={base_dir})")
+        logger.info(f"runs_index analytics facade initialized (results_dir={base_dir})")
 
         try:
             from kubernetes_asyncio import config
@@ -105,7 +114,9 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
         yield
 
         db_holder[0].close()
-        logger.info("DuckDB analytics engine closed")
+        if index_owned_here:
+            await runs_index.close()
+        logger.info("runs_index analytics facade closed")
 
         api = api_holder[0]
         if api is not None:
@@ -133,6 +144,16 @@ def _register_k8s_exception_handler(app: FastAPI) -> None:
             status_code=exc.status or 500,
             content={"detail": str(exc.body or exc.reason or "Kubernetes API error")},
         )
+
+    @app.exception_handler(ValueError)
+    async def _value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+        # Analytics endpoints validate metric/stat identifiers via
+        # runs_index._validate_identifier — adversarial input raises
+        # ValueError, which we surface as 422 instead of 500.
+        logger.info(
+            f"Rejected invalid input on {request.method} {request.url.path}: {exc}"
+        )
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 def _mount_dashboard(app: FastAPI, base_dir: Path) -> None:
@@ -169,6 +190,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     from aiperf.operator.results_db import ResultsDB
     from aiperf.operator.routers.config import create_config_router
     from aiperf.operator.routers.jobs import create_jobs_router
+    from aiperf.operator.routers.jobs_ws import create_jobs_ws_router
     from aiperf.operator.routers.results_analytics import (
         create_results_analytics_router,
     )
@@ -188,6 +210,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     _register_k8s_exception_handler(app)
 
     app.include_router(create_jobs_router(api_holder, base_dir))
+    app.include_router(create_jobs_ws_router(api_holder))
     app.include_router(create_sweeps_router(api_holder, base_dir))
     app.include_router(create_results_files_router(base_dir))
     app.include_router(create_config_router())

@@ -26,6 +26,7 @@ from pytest import param
 
 pytest.importorskip("duckdb", reason="duckdb required for results_server tests")
 
+from aiperf.operator import runs_index
 from aiperf.operator.results_server import (
     _display_name,
     _safe_resolve,
@@ -50,8 +51,12 @@ def _create_result_file(
 
     Uses a synthetic default epoch so pre-existing flat-layout tests keep
     exercising the latest-run code path. Also mirrors the file at the
-    legacy flat path so DuckDB analytics globs (``<ns>/<job>/*``) still
-    match during the transition.
+    legacy flat path so file-listing tests still see results at the
+    legacy ``<ns>/<job>/`` level.
+
+    When ``filename`` is ``profile_export_aiperf.json``, also writes the
+    ``.aiperf_results_ready.json`` marker so ``runs_index.bootstrap`` will
+    pick the run up — the analytics endpoints read from runs_index now.
     """
     from aiperf.operator.results_layout import run_dir, write_latest
 
@@ -70,7 +75,20 @@ def _create_result_file(
         file_path.write_bytes(content)
         (flat_dir / filename).write_bytes(content)
     write_latest(base_dir, namespace, job_id, default_epoch)
+    if filename == "profile_export_aiperf.json":
+        (job_dir / ".aiperf_results_ready.json").write_bytes(b"{}")
     return file_path
+
+
+async def _ingest_runs(base_dir: Path) -> None:
+    """Drive a runs_index bootstrap walk so analytics endpoints see the runs.
+
+    Tests write summary JSONs after the lifespan opens runs_index, so the
+    in-memory index is empty until we explicitly walk the PVC. Calling
+    bootstrap with ``force=True`` makes the walk idempotent across multiple
+    writes within a single test.
+    """
+    await runs_index.bootstrap(base_dir, force=True)
 
 
 def _summary_json(
@@ -545,6 +563,7 @@ class TestLeaderboardEndpoint:
             "profile_export_aiperf.json",
             _summary_json(metric_val=100.0),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/leaderboard")
         assert resp.status_code == 200
@@ -571,6 +590,7 @@ class TestLeaderboardEndpoint:
             "profile_export_aiperf.json",
             _summary_json(metric_val=100.0),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/leaderboard?order=asc")
         entries = resp.json()["entries"]
@@ -587,6 +607,7 @@ class TestLeaderboardEndpoint:
             "profile_export_aiperf.json",
             _summary_json(),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get(
             "/api/v1/analytics/leaderboard?metric=request_latency&stat=p99"
@@ -607,6 +628,7 @@ class TestLeaderboardEndpoint:
             "profile_export_aiperf.json",
             _summary_json(),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get(
             "/api/v1/analytics/leaderboard?metric=nonexistent_metric"
@@ -626,6 +648,7 @@ class TestLeaderboardEndpoint:
                 "profile_export_aiperf.json",
                 _summary_json(metric_val=float(i * 10)),
             )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/leaderboard?limit=2")
         assert resp.status_code == 200
@@ -643,6 +666,7 @@ class TestLeaderboardEndpoint:
             _summary_json(metric_val=300.0),
             compress=True,
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/leaderboard")
         assert resp.status_code == 200
@@ -678,6 +702,7 @@ class TestHistoryEndpoint:
             "profile_export_aiperf.json",
             _summary_json(),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/history")
         assert resp.status_code == 200
@@ -703,6 +728,7 @@ class TestHistoryEndpoint:
             "profile_export_aiperf.json",
             _summary_json(model="gpt-2"),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/history?model=llama")
         entries = resp.json()["entries"]
@@ -736,6 +762,7 @@ class TestCompareEndpoint:
             "profile_export_aiperf.json",
             _summary_json(metric_val=200.0),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get(
             "/api/v1/analytics/compare",
@@ -768,6 +795,7 @@ class TestCompareEndpoint:
             "profile_export_aiperf.json",
             _summary_json(),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get(
             "/api/v1/analytics/compare",
@@ -796,6 +824,7 @@ class TestSummaryEndpoint:
             "profile_export_aiperf.json",
             _summary_json(),
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/summary/ns/job-1")
         assert resp.status_code == 200
@@ -821,6 +850,7 @@ class TestSummaryEndpoint:
             _summary_json(),
             compress=True,
         )
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/summary/ns/job-1")
         assert resp.status_code == 200
@@ -831,6 +861,7 @@ class TestSummaryEndpoint:
         self, results_dir: Path, client: httpx.AsyncClient
     ) -> None:
         _create_result_file(results_dir, "ns", "job-1", "other_file.json")
+        await _ingest_runs(results_dir)
 
         resp = await client.get("/api/v1/analytics/summary/ns/job-1")
         assert resp.status_code == 404
