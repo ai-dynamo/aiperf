@@ -441,8 +441,7 @@ class MultiRunOrchestrator:
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        # Resolve the JSON file path from the config — do not hardcode the default filename
-        # since --profile-export-prefix changes it (regression fixed in PR #801, re-fixed here).
+        # Resolve the JSON file path from the config since --profile-export-prefix changes it.
         json_file = config.output.profile_export_json_file
 
         if not json_file.exists():

@@ -234,14 +234,7 @@ class TestMultiRunOrchestrator:
     def test_execute_single_run_success_with_custom_profile_export_prefix(
         self, mock_service_config, tmp_path
     ):
-        """Regression: a successful run with --profile-export-prefix must NOT be marked failed.
-
-        Pins the higher-level surface where #699 reverting #801 caused user-visible damage:
-        the SystemController writes <artifact>/<prefix>.json, but if the orchestrator looks
-        for the default profile_export_aiperf.json it gets {} from _extract_summary_metrics,
-        falls into the "No metrics found" branch, and marks the run failed. Sweeps with a
-        custom prefix would then end with 0/N successful runs.
-        """
+        """Verify successful runs read metrics from the configured export path."""
         from aiperf.common.config import EndpointConfig, OutputConfig
 
         orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
@@ -263,14 +256,12 @@ class TestMultiRunOrchestrator:
         config.loadgen.warmup_num_sessions = None
         config.loadgen.warmup_duration = None
 
-        # Sanity: SystemController would write here under the prefix
         assert config.output.profile_export_json_file == artifacts_path / "custom.json"
 
         json_content = {
             "time_to_first_token": {"unit": "ms", "avg": 150.5, "p99": 195.0},
             "request_count": {"unit": "requests", "avg": 10.0},
         }
-        # Write ONLY to the prefix-aware path. No profile_export_aiperf.json fallback.
         with open(artifacts_path / "custom.json", "w") as f:
             json.dump(json_content, f)
 
@@ -284,9 +275,6 @@ class TestMultiRunOrchestrator:
                 config, "run_0001", artifacts_path
             )
 
-        # Without the fix: result.success is False with "No metrics found" because the
-        # orchestrator looked for profile_export_aiperf.json (which we deliberately did
-        # not create) instead of custom.json.
         assert result.success is True, (
             f"Run with --profile-export-prefix should be successful, got error: {result.error}"
         )
@@ -556,12 +544,7 @@ class TestMultiRunOrchestrator:
     def test_extract_summary_metrics_respects_profile_export_prefix(
         self, mock_service_config, tmp_path
     ):
-        """Regression: --profile-export-prefix must be honored when reading the export JSON.
-
-        Without resolving the path via config.output.profile_export_json_file, the
-        orchestrator looks for the default profile_export_aiperf.json and returns {},
-        which marks the run failed. See PR #801 (fix) reverted by PR #699 (sweep feature).
-        """
+        """Verify summary metrics are read from the configured export path."""
         orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
 
         artifacts_path = tmp_path / "run_0001"
@@ -580,7 +563,6 @@ class TestMultiRunOrchestrator:
             output=output,
         )
 
-        # Sanity: the resolved file should respect the prefix, not the default
         assert config.output.profile_export_json_file == artifacts_path / "custom.json"
 
         json_content = {
@@ -591,13 +573,11 @@ class TestMultiRunOrchestrator:
             },
         }
 
-        # Write to the prefix-aware location, NOT the default profile_export_aiperf.json
         with open(artifacts_path / "custom.json", "w") as f:
             json.dump(json_content, f)
 
         metrics = orchestrator._extract_summary_metrics(config)
 
-        # Without #801's fix this dict would be empty (file looked up at the wrong path)
         assert metrics, (
             "Expected metrics extracted from prefix-aware file, got empty dict"
         )
