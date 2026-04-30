@@ -925,7 +925,7 @@ Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accur
 
 #### `--accuracy-tasks` `<list>`
 
-Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.
+Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). Accepts comma-separated values (e.g. abstract_algebra,anatomy) or repeated flags. If not set, all tasks are included.
 
 #### `--accuracy-n-shots` `<int>`
 

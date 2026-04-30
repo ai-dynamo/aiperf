@@ -21,8 +21,8 @@ aiperf profile Qwen/Qwen2.5-1.5B-Instruct \
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--accuracy-benchmark` | Benchmark name (`mmlu`, `aime`, `hellaswag`, ...) | — |
-| `--accuracy-tasks` | Specific subtasks (e.g., MMLU subjects). Omit for all. | all |
-| `--accuracy-n-shots` | Few-shot example count (0–8) | 0 |
+| `--accuracy-tasks` | Specific subtasks (e.g., MMLU subjects). Accepts comma-separated values (`abstract_algebra,anatomy`) or repeated flags. Omit for all. | all |
+| `--accuracy-n-shots` | Few-shot example count (0–32). `None` uses the benchmark default (e.g. MMLU=5). | benchmark default |
 | `--accuracy-enable-cot` | Enable chain-of-thought prompting | false |
 | `--accuracy-grader` | Override default grader (`multiple_choice`, `exact_match`, ...) | auto |
 | `--accuracy-system-prompt` | Custom system prompt | — |

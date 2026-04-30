@@ -3,10 +3,11 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
 from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
 
@@ -30,9 +31,11 @@ class AccuracyConfig(BaseConfig):
 
     tasks: Annotated[
         list[str] | None,
+        BeforeValidator(parse_str_or_list),
         Field(
             description="Specific tasks or subtasks within the benchmark to evaluate "
-            "(e.g., specific MMLU subjects). If not set, all tasks are included.",
+            "(e.g., specific MMLU subjects). Accepts comma-separated values "
+            "(e.g. abstract_algebra,anatomy) or repeated flags. If not set, all tasks are included.",
         ),
         CLIParameter(
             name=("--accuracy-tasks",),
