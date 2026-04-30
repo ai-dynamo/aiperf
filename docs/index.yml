@@ -146,6 +146,12 @@ navigation:
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
 
+- section: Accuracy
+  collapsed: true
+  contents:
+  - page: Accuracy Benchmarking
+    path: accuracy/accuracy-benchmarking.md
+
 - section: Reference
   collapsed: true
   contents:
