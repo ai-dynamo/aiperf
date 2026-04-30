@@ -28,7 +28,18 @@ import aiosqlite
 import orjson
 import zstandard
 
-from aiperf.operator.runs_index_models import RunIndexRow, SweepVariationRow
+from aiperf.operator.results_layout import (
+    EPOCH_RE,
+    list_run_epochs,
+    resolve_latest,
+)
+from aiperf.operator.runs_index_models import (
+    BootstrapStats,
+    RunIndexRow,
+    SweepVariationRow,
+)
+
+READY_MARKER = ".aiperf_results_ready.json"
 
 logger = logging.getLogger(__name__)
 
@@ -723,3 +734,208 @@ async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[s
     rows = await cur.fetchall()
     await cur.close()
     return [r[0] for r in rows]
+
+
+async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
+    """Walk the PVC and ingest every run + sweep variation found.
+
+    - ``<base>/<ns>/<job>/<epoch>/`` for runs (excludes name == 'sweeps')
+    - ``<base>/<ns>/sweeps/<name>/<epoch>/`` for sweep variations
+    - Only indexes runs whose ``.aiperf_results_ready.json`` marker is present
+    - is_latest is set per ``latest.txt``, not "newest mtime in the table"
+    - When ``force=True``, drops + recreates the tables before walking
+    """
+    if force:
+        db = _conn()
+        await db.execute("DELETE FROM runs")
+        await db.execute("DELETE FROM sweep_variations")
+
+    started = time.monotonic()
+    runs_count = 0
+    sweep_count = 0
+
+    if not base.is_dir():
+        return BootstrapStats(0, 0, time.monotonic() - started)
+
+    for ns_dir in base.iterdir():
+        if not ns_dir.is_dir():
+            continue
+
+        # Runs walk: every <ns>/<job>/, EXCLUDING <ns>/sweeps/.
+        for job_dir_path in ns_dir.iterdir():
+            if not job_dir_path.is_dir() or job_dir_path.name == "sweeps":
+                continue
+            ns = ns_dir.name
+            job = job_dir_path.name
+            latest_epoch = resolve_latest(base, ns, job)
+            for epoch in list_run_epochs(base, ns, job):
+                run_path = job_dir_path / epoch
+                marker = run_path / READY_MARKER
+                if not marker.exists():
+                    continue
+                if await _index_run_from_disk(
+                    base, ns, job, epoch, is_latest=(epoch == latest_epoch)
+                ):
+                    runs_count += 1
+
+        # Sweeps walk
+        sweeps_root = ns_dir / "sweeps"
+        if sweeps_root.is_dir():
+            for sweep_dir in sweeps_root.iterdir():
+                if not sweep_dir.is_dir():
+                    continue
+                for epoch_dir in sweep_dir.iterdir():
+                    if not epoch_dir.is_dir() or not EPOCH_RE.match(epoch_dir.name):
+                        continue
+                    if await _index_sweep_from_disk(
+                        ns_dir.name, sweep_dir.name, epoch_dir.name, epoch_dir
+                    ):
+                        sweep_count += 1
+
+    elapsed = time.monotonic() - started
+    await set_meta("last_bootstrap_unix", str(int(time.time())))
+    logger.info(
+        "bootstrap: indexed %d runs, %d sweep variations in %.2fs",
+        runs_count,
+        sweep_count,
+        elapsed,
+    )
+    return BootstrapStats(runs_count, sweep_count, elapsed)
+
+
+async def _index_run_from_disk(
+    base: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
+) -> bool:
+    """Read profile_export_aiperf.json[.zst] and upsert a runs row.
+
+    Returns True on success, False on read error / missing summary.
+    Skips when the row already exists with metrics_json populated (post-restart
+    no-op). Bootstrap can be re-run safely.
+    """
+    run_path = base / namespace / job_id / epoch
+    summary_path_zst = run_path / "profile_export_aiperf.json.zst"
+    summary_path_raw = run_path / "profile_export_aiperf.json"
+
+    try:
+        if summary_path_zst.exists():
+            blob = summary_path_zst.read_bytes()
+            metrics = orjson.loads(zstandard.ZstdDecompressor().decompress(blob))
+            summary_blob = blob
+        elif summary_path_raw.exists():
+            raw = summary_path_raw.read_bytes()
+            metrics = orjson.loads(raw)
+            summary_blob = zstandard.ZstdCompressor().compress(raw)
+        else:
+            return False
+    except (OSError, orjson.JSONDecodeError, zstandard.ZstdError) as exc:
+        logger.warning("bootstrap: cannot read summary at %s: %s", run_path, exc)
+        return False
+
+    files = [f.name for f in run_path.iterdir() if f.is_file()]
+    total_size = sum((run_path / f).stat().st_size for f in files)
+    mtime_epoch = int(run_path.stat().st_mtime)
+
+    spec = metrics.get("input_config", {}) or {}
+    await upsert_run_created(namespace, job_id, epoch, spec={"benchmark": spec})
+    await upsert_run_completed(
+        namespace,
+        job_id,
+        epoch,
+        summary_blob=summary_blob,
+        metrics=metrics,
+        files=files,
+        mtime_epoch=mtime_epoch,
+        start_time=metrics.get("start_time"),
+        end_time=metrics.get("end_time"),
+        total_size_bytes=total_size,
+        phase="Succeeded",
+    )
+    if is_latest:
+        await set_latest(namespace, job_id, epoch)
+    return True
+
+
+async def _index_sweep_from_disk(
+    namespace: str, sweep_name: str, sweep_epoch: str, epoch_dir: Path
+) -> bool:
+    """Ingest <ns>/sweeps/<name>/<epoch>/ — variations + pareto if present.
+
+    Looks for ``aggregate.json`` (the format ``aggregate_sweep_and_export``
+    writes). Variations without it are skipped.
+    """
+    aggregate_path = epoch_dir / "aggregate.json"
+    if not aggregate_path.exists():
+        return False
+    try:
+        agg = orjson.loads(aggregate_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        return False
+
+    indexed = False
+    for v in agg.get("per_combination_metrics", []) or []:
+        idx = v.get("variation_idx")
+        if idx is None:
+            continue
+        await upsert_sweep_variation(
+            namespace,
+            sweep_name,
+            sweep_epoch,
+            int(idx),
+            variation_values=v.get("variation_values", {}),
+            mode=agg.get("metadata", {}).get("mode", "INDEPENDENT"),
+            phase="Succeeded",
+            metrics=v.get("metrics", {}),
+            child_ref=None,
+            metrics_blob=zstandard.ZstdCompressor().compress(orjson.dumps(v)),
+        )
+        indexed = True
+
+    pareto_idxs = {p.get("variation_idx") for p in agg.get("pareto_optimal", []) or []}
+    best_idxs = {
+        b.get("variation_idx") for b in agg.get("best_configurations", []) or []
+    }
+    if pareto_idxs or best_idxs:
+        rankings: list[tuple[int, int, bool]] = []
+        for v in agg.get("per_combination_metrics", []) or []:
+            idx = v.get("variation_idx")
+            if idx is None:
+                continue
+            i = int(idx)
+            rankings.append(
+                (
+                    i,
+                    i if i in pareto_idxs else 999,
+                    i in best_idxs,
+                )
+            )
+        await mark_sweep_pareto(
+            namespace,
+            sweep_name,
+            sweep_epoch,
+            rankings=rankings,
+        )
+
+    return indexed
+
+
+async def lazy_backfill_run(
+    base: Path, namespace: str, job_id: str, epoch: str
+) -> None:
+    """Background task fired from read-path fallback. Best-effort, never raises."""
+    try:
+        latest_epoch = resolve_latest(base, namespace, job_id)
+        await _index_run_from_disk(
+            base,
+            namespace,
+            job_id,
+            epoch,
+            is_latest=(epoch == latest_epoch),
+        )
+    except Exception as exc:
+        logger.warning(
+            "lazy_backfill_run failed for %s/%s/%s: %s",
+            namespace,
+            job_id,
+            epoch,
+            exc,
+        )

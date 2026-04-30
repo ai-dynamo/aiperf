@@ -298,3 +298,62 @@ async def test_list_all_latest_returns_only_latest_rows(index_path) -> None:
     rows = await runs_index.list_all_latest()
     keys = sorted((r.namespace, r.job_id, r.epoch) for r in rows)
     assert keys == [("a", "j1", "200"), ("a", "j2", "100"), ("b", "j3", "100")]
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_walks_pvc_and_indexes_runs(tmp_path: Path) -> None:
+    base = tmp_path / "results"
+    # <base>/<ns>/<job>/<epoch>/profile_export_aiperf.json + ready marker
+    run = base / "ns1" / "job-a" / "1714069323"
+    run.mkdir(parents=True)
+    (run / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "request_throughput": {
+                    "avg": 5.0,
+                    "p50": 5.0,
+                    "p99": 6.0,
+                    "unit": "rps",
+                },
+                "input_config": {
+                    "models": {"items": [{"name": "m"}]},
+                    "endpoint": {"urls": ["http://e"]},
+                },
+            }
+        )
+    )
+    (run / ".aiperf_results_ready.json").write_text("{}")
+    (base / "ns1" / "job-a" / "latest.txt").write_text("1714069323")
+
+    # A sweeps-collision distractor — must be skipped
+    (base / "ns1" / "sweeps" / "satsweep" / "1714069324").mkdir(parents=True)
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        stats = await runs_index.bootstrap(base)
+        assert stats.runs_indexed == 1
+        rows = await runs_index.list_all_latest()
+        assert len(rows) == 1
+        assert rows[0].is_latest is True
+        assert rows[0].model == "m"
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_skips_runs_without_ready_marker(tmp_path: Path) -> None:
+    base = tmp_path / "results"
+    run = base / "ns" / "j" / "100"
+    run.mkdir(parents=True)
+    (run / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+    # No .aiperf_results_ready.json — mid-write run
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        stats = await runs_index.bootstrap(base)
+        assert stats.runs_indexed == 0
+        assert await runs_index.list_all_latest() == []
+    finally:
+        await runs_index.close()
