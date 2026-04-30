@@ -16,6 +16,25 @@ aiperf profile Qwen/Qwen2.5-1.5B-Instruct \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 ```
 
+```bash
+# AIME competition math (zero-shot, chain-of-thought, math grader)
+aiperf profile Qwen/Qwen2.5-7B-Instruct \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark aime \
+  --accuracy-enable-cot \
+  --num-requests 30 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
+```
+
+## Available Benchmarks
+
+| Benchmark | Default grader | Default n-shots | Source |
+|---|---|---|---|
+| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
+| `aime` | `math` | 0 | `Maxwell-Jia/AIME_2024` |
+
 ## CLI Flags
 
 | Flag | Description | Default |
@@ -77,7 +96,36 @@ aiperf profile my-model --url http://localhost:8000 \
   --num-requests 15000 \
   --concurrency 50 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
+
+# AIME with explicit math grader and few-shot priming
+aiperf profile my-model --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark aime \
+  --accuracy-grader math \
+  --accuracy-n-shots 4 \
+  --num-requests 30 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
 ```
+
+## Graders
+
+| Grader | Selection rule | Coverage |
+|---|---|---|
+| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). | MMLU |
+| `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Compare via `Fraction` parsing or normalized string equality. | AIME |
+| `exact_match` | Stub. | (unused) |
+| `code_execution` | Stub. | (unused) |
+
+The `math` grader extracts the model's final answer using this priority order:
+
+1. The contents of the **last** `\boxed{...}` in the response (the canonical MATH/AIME format).
+2. The tail of an "the answer is X" / "answer: X" / "final answer X" phrase, recursively re-parsed for boxed/numeric content.
+3. The last numeric literal in the response (int, decimal, or `a/b`).
+
+Comparison is numeric when both sides parse as `fractions.Fraction` (so `\frac{1}{2}` ≡ `0.5` ≡ `1/2`), otherwise normalized string equality (whitespace-stripped, `\dfrac` / `\tfrac` / `\left` / `\right` / `\text{}` removed, `$...$` unwrapped). Symbolic equivalence (`\sqrt{2}` vs `2^{1/2}`) is **not** supported and will grade as incorrect.
+
+When the response did not follow the `\boxed{}` instruction and a fallback extractor was used, the response is flagged `unparsed=True` in the per-record output. A correct unparsed response is still scored correct, mirroring `multiple_choice`'s convention.
 
 ## Output
 

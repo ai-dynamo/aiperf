@@ -7,7 +7,7 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
-**Status summary (as of PR #815):** 6 of the original stubs are now fully implemented. Use them as canonical references when adding the remaining stubs.
+**Status summary:** As of the AIME loader landing on top of PR #815, `MultipleChoiceGrader`, `MathGrader`, `MMLUBenchmark`, and `AIMEBenchmark` are fully implemented; the remaining graders (`exact_match`, `code_execution`) and benchmarks (`hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`) are still stubs and ship behind `NotImplementedError` until each follow-up branch lands. Use the implemented classes as canonical references when filling in the remaining stubs.
 
 ## Table of Contents
 
@@ -139,14 +139,14 @@ class BaseGrader(AIPerfLoggerMixin):
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | **IMPLEMENTED in PR #815** — canonical reference for new graders. Matches choice labels (A/B/C/D) by regex extraction then exact comparison. |
+| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics, and compares via `Fraction` parsing or normalized string equality. Stdlib-only; no `math_verify` dependency. |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | Exact string matching against ground truth |
-| 2 | `MathGrader` | `graders/math.py` | `math` | Mathematical expression equivalence |
-| 3 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
+| 2 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
 
 **Each grader has 2 methods to implement:**
 
@@ -163,22 +163,22 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 
 ### Implemented
 
-| # | Class | File | Plugin Key | Default Grader | Default N-Shots |
-|---|-------|------|------------|----------------|-----------------|
+| # | Class | File | Plugin Key | Default Grader | Default N-Shots | Notes |
+|---|-------|------|------------|----------------|-----------------|-------|
 | 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
+| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 | **IMPLEMENTED.** Loads `Maxwell-Jia/AIME_2024`, instructs the model to wrap its final integer in `\boxed{}`, supports few-shot priming and chain-of-thought. |
 
 ### Still Stubbed
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 |
-| 2 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
-| 3 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
-| 4 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
-| 5 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
-| 6 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
-| 7 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 8 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
+| 2 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
+| 3 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 4 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 5 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 6 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 7 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 
