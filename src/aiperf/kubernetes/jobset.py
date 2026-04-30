@@ -79,10 +79,11 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         "Set to 'Never' for local development with minikube.",
     )
     resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
-        default="guaranteed",
+        default="burstable",
         description="CPU/memory resource mode for controller and worker pods. "
+        "'burstable' (default) emits requests only (no limits) so the controller "
+        "can grow beyond the request during aggregation without being OOM-killed. "
         "'guaranteed' emits requests==limits. "
-        "'burstable' emits requests only (no limits). "
         "'none' omits the resources block.",
     )
     worker_replicas: int = Field(default=1, description="Number of worker pods")

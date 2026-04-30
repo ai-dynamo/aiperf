@@ -44,7 +44,7 @@ spec:
   image: "nvcr.io/nvidia/aiperf:latest"
 
   # Pod resource mode
-  resourceMode: guaranteed       # "guaranteed", "burstable", or "none"
+  resourceMode: burstable        # "burstable" (default), "guaranteed", or "none"
 
   # Worker scaling
   connectionsPerWorker: 100       # max concurrent connections per worker process
@@ -133,7 +133,7 @@ phases:
 |-------|------|---------|-------------|
 | `image` | string | required | AIPerf container image |
 | `imagePullPolicy` | string | - | `Always`, `IfNotPresent`, or `Never` (Helm default: `IfNotPresent`) |
-| `resourceMode` | string | `guaranteed` | Pod CPU/memory mode. `guaranteed` keeps requests==limits (Guaranteed QoS); `burstable` sets requests only, no limits (Burstable QoS); `none` omits CPU/memory requests and limits for both controller and worker pods. |
+| `resourceMode` | string | `burstable` | Pod CPU/memory mode. `burstable` (default) sets requests only, no limits (Burstable QoS) so the controller can grow during aggregation without being OOM-killed by cgroup; `guaranteed` keeps requests==limits (Guaranteed QoS); `none` omits CPU/memory requests and limits for both controller and worker pods. |
 | `connectionsPerWorker` | int | 100 | Max concurrent connections per worker process |
 | `ttlSecondsAfterFinished` | int | 300 | Seconds to keep pods after completion |
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |
@@ -383,8 +383,8 @@ Phases run in order. Metrics from phases with `exclude_from_results: true` are n
 
 | Mode | Behavior | K8s QoS class | When to use |
 |---|---|---|---|
-| `guaranteed` (default) | `requests == limits` for CPU and memory. | Guaranteed | Production benchmarks where pods must not be evicted under pressure and noisy-neighbor behavior is unacceptable. |
-| `burstable` | `requests` only; no `limits`. | Burstable | Cost-sensitive clusters or development where headroom above the request is acceptable. Controller pods stay Burstable by default in the operator's own `values.yaml`. |
+| `burstable` (default) | `requests` only; no `limits`. | Burstable | Default. Cost-sensitive clusters, development, and any benchmark where the controller's aggregation phase may temporarily allocate beyond the request — limits-free pods are not OOM-killed by cgroup. Controller pods stay Burstable by default in the operator's own `values.yaml` for the same reason. |
+| `guaranteed` | `requests == limits` for CPU and memory. | Guaranteed | Production benchmarks where pods must not be evicted under pressure and noisy-neighbor behavior is unacceptable. Use this mode when you have measured the controller's peak memory and want a hard ceiling. |
 | `none` | Neither `requests` nor `limits`. | BestEffort | Environments where CPU/memory admission control is disabled (e.g. CI `kind` clusters with tight node budgets, or when an external scheduler handles admission). **Preflight check "Memory Estimation" is auto-skipped.** |
 
 The mode applies to both controller-pod and worker-pod containers; there is no per-container override. OOMKill semantics follow the QoS class — `guaranteed` pods will not be evicted for resource pressure, `burstable` pods may be throttled, and `none`/BestEffort pods can be evicted first.

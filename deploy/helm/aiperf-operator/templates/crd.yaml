@@ -30,7 +30,7 @@ spec:
     - name: Stage
       type: string
       jsonPath: .status.currentPhase
-      description: Current benchmark stage (warmup, profiling, processing)
+      description: Current benchmark stage (warmup, profiling)
     - name: Progress
       type: string
       jsonPath: .status.phases.profiling.requestsCompleted
@@ -763,6 +763,16 @@ spec:
                           via --parameter-sweep-same-seed; the cross-field validator on AIPerfConfig requires --random-seed
                           when true.
                         default: false
+                      mode:
+                        type: string
+                        description: 'Iteration order for sweep + multi-trial composition. ''repeated'' (default): trials
+                          outer, variations inner - artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/.
+                          ''independent'': variations outer, trials inner - artifact tree is <base>/<variation>/profile_runs/run_NNNN/.
+                          Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence (--convergence-metric)
+                          is incompatible with ''repeated''.'
+                        enum:
+                        - independent
+                        - repeated
                 required:
                 - models
                 - endpoint
@@ -770,14 +780,15 @@ spec:
                 - phases
               resourceMode:
                 type: string
-                description: CPU/memory resource mode for controller and worker pods. 'guaranteed' applies requests==limits
-                  (Guaranteed QoS). 'burstable' sets requests only, no limits (Burstable QoS). 'none' omits CPU/memory requests
+                description: CPU/memory resource mode for controller and worker pods. 'burstable' (default) sets requests
+                  only, no limits (Burstable QoS) so the controller can grow beyond the request during aggregation without
+                  being OOM-killed. 'guaranteed' applies requests==limits (Guaranteed QoS). 'none' omits CPU/memory requests
                   and limits as an escape hatch.
                 enum:
                 - guaranteed
                 - burstable
                 - none
-                default: guaranteed
+                default: burstable
               # -- Deployment fields (camelCase, K8s convention) ---------------
               connectionsPerWorker:
                 type: integer
@@ -1023,13 +1034,7 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
               currentPhase:
                 type: string
-                description: |-
-                  Current benchmark stage. Live values while the job is in
-                  flight: 'warmup', 'profiling', 'processing' (controller
-                  reported all profiling requests + records done; operator
-                  is fetching/aggregating results). Cleared once the job
-                  reaches a terminal phase — STAGE is only meaningful
-                  in-flight; the .status.phase field carries terminal state.
+                description: Current benchmark phase (warmup, profiling, etc)
               liveMetrics:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

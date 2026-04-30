@@ -543,6 +543,7 @@ class TestJobSetSpecContainerDetails:
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
+            resource_mode="guaranteed",
         )
         return spec.to_k8s_manifest()
 
@@ -625,6 +626,37 @@ class TestJobSetSpecContainerDetails:
                 )
                 assert "requests" in container["resources"]
                 assert "limits" not in container["resources"]
+
+    def test_resource_mode_default_is_burstable(self) -> None:
+        """Default resourceMode is burstable so the controller can grow during
+        aggregation without being OOM-killed by cgroup limits.
+
+        Regression for: a 1-hour DGX run was OOM-killed in the controller's
+        aggregation phase under the previous Guaranteed-by-default mode. The
+        burstable default leaves the workload memory budget unbounded by
+        Kubernetes, deferring eviction policy to node pressure.
+        """
+        spec = AIPerfJobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+        )
+        assert spec.resource_mode == "burstable"
+
+        manifest = spec.to_k8s_manifest()
+        for job in manifest["spec"]["replicatedJobs"]:
+            containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            for container in containers:
+                if container["name"] == "results-sidecar":
+                    continue
+                assert "resources" in container, (
+                    f"{container['name']} missing resources"
+                )
+                assert "limits" not in container["resources"], (
+                    f"{container['name']} unexpectedly has limits set under "
+                    f"the burstable default; got {container['resources']}"
+                )
 
     def test_containers_have_env_vars(self, jobset_manifest: dict[str, Any]) -> None:
         """Test that containers have environment variables."""

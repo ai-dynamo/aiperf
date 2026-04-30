@@ -325,7 +325,7 @@ class AIPerfJobSpec(AIPerfBaseModel):
         default=None, description="Image pull policy (Always, Never, IfNotPresent)"
     )
     resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
-        default="guaranteed",
+        default="burstable",
         description="CPU/memory resource mode for controller and worker pods.",
     )
     connections_per_worker: int = Field(

@@ -84,16 +84,12 @@ spec:
                     default: true
                   mode:
                     type: string
-                    enum:
-                      - independent
-                      - repeated
-                    default: repeated
-                    description: |
-                      Iteration order for sweep + multi-trial. 'repeated' (default)
-                      iterates trials outer, variations inner. 'independent' iterates
-                      variations outer, trials inner. Both produce the same total runs and
-                      same sweep_aggregate output. Adaptive convergence (the `convergence`
-                      block) is incompatible with 'repeated' and rejected at submit time.
+                    description: Iteration order for sweep + multi-trial. 'repeated' (default) iterates trials outer, variations
+                      inner. 'independent' iterates variations outer, trials inner. Both produce the same total runs and same
+                      sweep_aggregate output. Adaptive convergence (`convergence`) is incompatible with 'repeated'.
+                    enum: &id001
+                    - independent
+                    - repeated
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.multiRun is immutable after creation
@@ -148,14 +144,10 @@ spec:
                     default: continue
                   maxFailures:
                     type: integer
-                    description: |
-                      Hard failure budget for the entire sweep. 0 = unbounded
-                      (no early-abort on count). When >0, the orchestrator
-                      stops scheduling new children once `failedRuns >=
-                      maxFailures` and the sweep terminates with phase=Failed.
-                      Independent of terminal-phase resolution: a sweep with
-                      0 < failedRuns < total and the threshold not exceeded
-                      ends as `PartiallyFailed`, not `Failed`.
+                    description: 'Hard failure budget for the entire sweep. 0 = unbounded (no early-abort on count). When
+                      >0, the orchestrator stops scheduling new children once failedRuns >= maxFailures and the sweep terminates
+                      with phase=Failed. Independent of terminal-phase resolution: a sweep with 0 < failedRuns < total and
+                      the threshold not exceeded ends as PartiallyFailed.'
                     default: 0
                     minimum: 0
               cancel:
@@ -209,7 +201,7 @@ spec:
                         - guaranteed
                         - burstable
                         - none
-                        default: guaranteed
+                        default: burstable
                       connectionsPerWorker:
                         type: integer
                         description: Maximum concurrent connections each worker handles.
@@ -1059,6 +1051,14 @@ spec:
                                   Surfaced via --parameter-sweep-same-seed; the cross-field validator on AIPerfConfig requires
                                   --random-seed when true.
                                 default: false
+                              mode:
+                                type: string
+                                description: 'Iteration order for sweep + multi-trial composition. ''repeated'' (default):
+                                  trials outer, variations inner - artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/.
+                                  ''independent'': variations outer, trials inner - artifact tree is <base>/<variation>/profile_runs/run_NNNN/.
+                                  Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence
+                                  (--convergence-metric) is incompatible with ''repeated''.'
+                                enum: *id001
                         required:
                         - models
                         - endpoint

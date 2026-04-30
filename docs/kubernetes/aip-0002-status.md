@@ -251,7 +251,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | timing-manager | 100m/500m, 128Mi/256Mi | 🌟 | `TIMING_MANAGER` default 1000m/2Gi (`environment.py:307`) — production-validated, timing is latency-critical. |
 | dataset-manager | 100m/500m, 256Mi/512Mi | 🌟 | `DATASET_MANAGER` default 1000m/2Gi (`environment.py:308`) — tuned for multi-GB synthetic datasets. |
 | records-manager | 200m/1000m, 256Mi/1Gi | 🌟 | `RECORDS_MANAGER` default 1000m/2Gi (`environment.py:309`) — **spec defaults cause event-loop starvation at >500k requests** (see `gotcha_records_manager_cpu_starves_at_high_concurrency.md`); real floor is 4000m+. |
-| worker | 250m/250m, 256Mi/512Mi | 🌟 | Pod-level `WORKER_POD` 4000m/12Gi split across WPM + workers + RPs via weighted shares (`jobset_resources.py:77-125`) — more efficient pod packing than per-container allocations; `resource_mode=guaranteed` (default) achieves req==limit. |
+| worker | 250m/250m, 256Mi/512Mi | 🌟 | Pod-level `WORKER_POD` 4000m/12Gi split across WPM + workers + RPs via weighted shares (`jobset_resources.py:77-125`) — more efficient pod packing than per-container allocations; `resource_mode=guaranteed` achieves req==limit (default is `burstable` — no limits — so the controller can grow during aggregation). |
 | record-processor | 100m/250m, 256Mi/512Mi | 🌟 | Shares worker-pod budget with weighted shares; per-RP CPU pinnable via `RECORD_PROCESSOR_CPU_REQUEST` (`environment.py:317-320`). |
 
 ---

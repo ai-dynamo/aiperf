@@ -227,6 +227,19 @@ class TestAIPerfJobSpec:
         assert spec.image_pull_policy is None
         assert spec.cancel is False
 
+    def test_default_resource_mode_is_burstable(
+        self, valid_spec: dict[str, Any]
+    ) -> None:
+        """Default resourceMode is burstable.
+
+        A spec that omits resourceMode must produce burstable pods (requests
+        only, no limits) so the controller can grow during aggregation
+        without hitting cgroup OOMKill. See test_jobset.py for the manifest-
+        level assertion that no `resources.limits` is set in this mode.
+        """
+        spec = AIPerfJobSpec.from_crd_spec(valid_spec)
+        assert spec.resource_mode == "burstable"
+
     def test_creates_with_full_config(self) -> None:
         """Verify creates with all optional fields."""
         spec = AIPerfJobSpec.from_crd_spec(
