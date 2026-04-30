@@ -342,19 +342,33 @@ async def test_bootstrap_walks_pvc_and_indexes_runs(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_skips_runs_without_ready_marker(tmp_path: Path) -> None:
+async def test_bootstrap_ingests_legacy_runs_without_ready_marker(
+    tmp_path: Path,
+) -> None:
+    """Pre-marker-convention runs on the PVC must still be ingested at startup.
+
+    The ``.aiperf_results_ready.json`` marker guards lazy-backfill against
+    capturing mid-write runs; bootstrap runs at operator startup before any
+    write is in flight, so the marker is not required there. Skipping these
+    legacy runs would leave a fresh operator deploy onto an existing PVC
+    showing an empty leaderboard until new runs land.
+    """
     base = tmp_path / "results"
-    run = base / "ns" / "j" / "100"
+    # Use a real epoch matching EPOCH_RE (^\d{9,11}$) so list_run_epochs picks it up
+    run = base / "ns" / "j" / "1714069323"
     run.mkdir(parents=True)
     (run / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
-    # No .aiperf_results_ready.json — mid-write run
+    (base / "ns" / "j" / "latest.txt").write_text("1714069323")
+    # No .aiperf_results_ready.json — legacy run
 
     db_path = tmp_path / ".aiperf_index.sqlite"
     await runs_index.open(db_path)
     try:
         stats = await runs_index.bootstrap(base)
-        assert stats.runs_indexed == 0
-        assert await runs_index.list_all_latest() == []
+        assert stats.runs_indexed == 1
+        rows = await runs_index.list_all_latest()
+        assert len(rows) == 1
+        assert rows[0].epoch == "1714069323"
     finally:
         await runs_index.close()
 

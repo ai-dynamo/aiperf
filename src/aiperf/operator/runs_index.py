@@ -812,9 +812,16 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
 
     - ``<base>/<ns>/<job>/<epoch>/`` for runs (excludes name == 'sweeps')
     - ``<base>/<ns>/sweeps/<name>/<epoch>/`` for sweep variations
-    - Only indexes runs whose ``.aiperf_results_ready.json`` marker is present
     - is_latest is set per ``latest.txt``, not "newest mtime in the table"
     - When ``force=True``, drops + recreates the tables before walking
+
+    Bootstrap intentionally does NOT require the ``.aiperf_results_ready.json``
+    marker that ``lazy_backfill_run`` checks — bootstrap runs at operator
+    startup before any new run is mid-write, so the marker's
+    race-guard purpose doesn't apply. Legacy runs created before the marker
+    convention are still ingested. ``_index_run_from_disk`` skips runs missing
+    ``profile_export_aiperf.json`` entirely, which is the real
+    "no completed summary" guard.
     """
     if force:
         db = _conn()
@@ -840,10 +847,6 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
             job = job_dir_path.name
             latest_epoch = resolve_latest(base, ns, job)
             for epoch in list_run_epochs(base, ns, job):
-                run_path = job_dir_path / epoch
-                marker = run_path / READY_MARKER
-                if not marker.exists():
-                    continue
                 if await _index_run_from_disk(
                     base, ns, job, epoch, is_latest=(epoch == latest_epoch)
                 ):
