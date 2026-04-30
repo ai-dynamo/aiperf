@@ -142,6 +142,11 @@ navigation:
         path: ../pages-dev/benchmark-modes/timing-modes-reference.md
       - page: Trace Replay with Mooncake Traces
         path: ../pages-dev/benchmark-modes/trace-replay.md
+  - section: Accuracy
+    collapsed: true
+    contents:
+      - page: Accuracy Benchmarking
+        path: ../pages-dev/accuracy/accuracy-benchmarking.md
   - section: Reference
     collapsed: true
     contents:
