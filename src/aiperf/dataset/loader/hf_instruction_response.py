@@ -4,7 +4,8 @@
 from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
 
@@ -38,12 +39,14 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
         prompt_column: str,
         image_column: str | None = None,
         video_column: str | None = None,
+        audio_column: str | None = None,
         prompt_template: str | None = None,
         **kwargs,
     ) -> None:
         self.prompt_column = prompt_column
         self.image_column = image_column
         self.video_column = video_column
+        self.audio_column = audio_column
         self.prompt_template = prompt_template
         super().__init__(user_config=user_config, **kwargs)
 
@@ -67,9 +70,11 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
             if not column_validated:
                 column_validated = True
                 if self.prompt_template is None and self.prompt_column not in row:
-                    raise ValueError(
-                        f"Column '{self.prompt_column}' not found in dataset. "
-                        f"Available columns: {list(row.keys())}"
+                    raise DatasetLoaderError(
+                        f"Column '{self.prompt_column}' not found in dataset "
+                        f"'{self.hf_dataset_name}'. Available columns: {list(row.keys())}. "
+                        f"Set 'prompt_column' to an existing column or provide a "
+                        f"'prompt_template' that references the available columns."
                     )
 
             if self.prompt_template is not None:
@@ -90,6 +95,9 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
                 if self.video_column
                 else []
             )
+            audios: list[Audio] = (
+                self._extract_audio(row, self.audio_column) if self.audio_column else []
+            )
 
             conversations.append(
                 Conversation(
@@ -99,6 +107,7 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
                             texts=[Text(contents=[str(prompt)])],
                             images=images,
                             videos=videos,
+                            audios=audios,
                         )
                     ],
                 )

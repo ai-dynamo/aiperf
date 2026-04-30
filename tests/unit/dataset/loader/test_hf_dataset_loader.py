@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from PIL import Image as PILImage
 
@@ -168,7 +170,7 @@ class TestHFInstructionResponseDatasetLoader:
 
     async def test_raises_on_missing_prompt_column(self, loader):
         data = {"dataset": [{"other_field": "value"}]}
-        with pytest.raises(ValueError, match="Column 'problem' not found"):
+        with pytest.raises(DatasetLoaderError, match="Column 'problem' not found"):
             await loader.convert_to_conversations(data)
 
     async def test_prompt_template_combines_columns(self, user_config):
@@ -352,6 +354,62 @@ class TestHFInstructionResponseDatasetLoader:
         assert decoded.format == "JPEG"
 
 
+def _make_audio_row(duration_seconds: float = 1.0, sr: int = 16000) -> dict[str, Any]:
+    """Build a synthetic decoded HF audio row (array + sampling_rate)."""
+    num_samples = int(duration_seconds * sr)
+    return {
+        "problem": "test",
+        "audio": {
+            "array": np.zeros(num_samples, dtype=np.float32),
+            "sampling_rate": sr,
+        },
+    }
+
+
+@pytest.mark.asyncio
+class TestHFInstructionResponseAudioColumn:
+    def _make_loader(self, user_config, audio_column="audio"):
+        return HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            audio_column=audio_column,
+        )
+
+    async def test_turns_have_no_audios_when_audio_column_not_set(self, user_config):
+        loader = HFInstructionResponseDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+        )
+        data = {"dataset": [{"problem": "test"}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].audios == []
+
+    async def test_audio_column_attaches_audio_to_turn(self, user_config):
+        loader = self._make_loader(user_config)
+        data = {"dataset": [_make_audio_row()]}
+        conversations = await loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert len(turn.audios) == 1
+        assert turn.audios[0].contents[0].startswith("wav,")
+
+    async def test_audio_column_missing_value_produces_no_audios(self, user_config):
+        loader = self._make_loader(user_config)
+        data = {"dataset": [{"problem": "no audio here"}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].audios == []
+
+    async def test_audio_column_non_dict_value_produces_no_audios(self, user_config):
+        loader = self._make_loader(user_config)
+        data = {"dataset": [{"problem": "test", "audio": "not-a-dict"}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].audios == []
+
+
 def _make_hf_metadata(hf_subset: str | None = None) -> PublicDatasetLoaderMetadata:
     return PublicDatasetLoaderMetadata(
         hf_dataset_name="test/dataset",
@@ -404,3 +462,33 @@ class TestPublicDatasetComposerHFSubsetOverride:
             kwargs = composer._build_loader_kwargs("aimo")
 
         assert "hf_subset" not in kwargs
+
+    def test_audio_column_from_metadata_is_wired_to_kwargs(self, user_config):
+        user_config.input.hf_dataset_subset = None
+        composer = _make_composer(user_config)
+        metadata = PublicDatasetLoaderMetadata(
+            hf_dataset_name="test/dataset",
+            hf_split="train",
+            audio_column="audio",
+        )
+
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=metadata,
+        ):
+            kwargs = composer._build_loader_kwargs("librispeech")
+
+        assert kwargs["audio_column"] == "audio"
+
+    def test_audio_column_absent_when_not_set_in_metadata(self, user_config):
+        user_config.input.hf_dataset_subset = None
+        composer = _make_composer(user_config)
+        metadata = _make_hf_metadata()
+
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=metadata,
+        ):
+            kwargs = composer._build_loader_kwargs("aimo")
+
+        assert "audio_column" not in kwargs
