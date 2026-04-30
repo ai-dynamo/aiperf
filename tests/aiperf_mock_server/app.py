@@ -62,6 +62,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0
@@ -152,8 +153,48 @@ class TimingMiddleware:
         await self.app(scope, receive, send)
 
 
+_INFERENCE_PATHS: frozenset[str] = frozenset(
+    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings"}
+)
+
+
+class InferenceReadinessMiddleware:
+    """Returns HTTP 503 on inference paths while within the configured
+    startup delay. Used by readiness-probe tests to simulate a server
+    whose frontend is up but whose workers haven't loaded weights yet."""
+
+    def __init__(self, inner_app: ASGIApp) -> None:
+        self.app = inner_app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] == "http"
+            and server_config.inference_ready_delay_seconds > 0
+            and scope.get("path") in _INFERENCE_PATHS
+            and server_start_time > 0
+            and (time.time() - server_start_time)
+            < server_config.inference_ready_delay_seconds
+        ):
+            body = orjson.dumps(
+                {"error": "Model not ready: workers still loading weights"}
+            )
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 503,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+
 # Wrap FastAPI with ASGI middleware for earliest possible timing
-asgi_app = TimingMiddleware(app)
+asgi_app = InferenceReadinessMiddleware(TimingMiddleware(app))
 
 
 # ============================================================================
@@ -800,6 +841,22 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
 async def health():
     """Health check."""
     return {"status": "healthy", "config": server_config.model_dump()}
+
+
+@app.get("/v1/models")
+async def list_models() -> dict[str, Any]:
+    """OpenAI-compatible models list. Respects models_ready_delay_seconds and
+    disable_models_endpoint so readiness-probe tests can exercise all branches
+    (immediate success, success after retries, 404 fallback, timeout)."""
+    if server_config.disable_models_endpoint:
+        raise HTTPException(status_code=404, detail="Not Found")
+    elapsed = time.time() - server_start_time if server_start_time > 0 else 0.0
+    if elapsed < server_config.models_ready_delay_seconds:
+        return {"object": "list", "data": []}
+    return {
+        "object": "list",
+        "data": [{"id": server_config.default_model, "object": "model"}],
+    }
 
 
 @app.get("/")

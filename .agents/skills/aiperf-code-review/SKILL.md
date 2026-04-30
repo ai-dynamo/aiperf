@@ -1,3 +1,8 @@
+---
+name: aiperf-code-review
+description: Review the current branch against origin/main, capture findings in artifacts/code-review.md as a living document, validate every finding against the actual code, reproduce confirmed issues with the aiperf CLI against the in-repo mock server, and draft inline GitHub PR review comments anchored to specific files and lines. Use when the user asks for a branch or PR code review.
+---
+
  Review the current branch against `origin/main`, then carry the whole task through end-to-end without stopping at analysis.
 
   Goals:

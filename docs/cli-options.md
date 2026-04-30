@@ -167,6 +167,23 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
 
+#### `--wait-for-model-timeout` `<float>`
+
+Enable a pre-flight readiness probe by setting this to a positive value (seconds). aiperf applies this timeout to each URL/model probe before starting the benchmark, aborting with a non-zero exit if any probe times out. For multiple URLs or models, worst-case wall-clock time can be roughly this timeout multiplied by the number of URL/model probes. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. 0 (default) disables the probe. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.
+<br/>_Constraints: ≥ 0.0_
+<br/>_Default: `0.0`_
+
+#### `--wait-for-model-interval` `<float>`
+
+Seconds between readiness probe attempts. Only consulted when `--wait-for-model-timeout` is positive.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
+
+#### `--wait-for-model-mode` `<str>`
+
+Strategy for the readiness probe. 'inference' (default): POST a 1-token inference request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend, scheduler, worker, forward pass) is live. Any HTTP status &lt; 500 counts as ready. 'models': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back to a plain GET on the base URL on 404). 'both': run 'models' first, then 'inference'. Only consulted when `--wait-for-model-timeout` is positive.
+<br/>_Default: `inference`_
+
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` → `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
@@ -424,11 +441,11 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
 <br/>_Default: `libvpx-vp9`_
 
-#### `--video-audio-sample-rate` `<int>`
+#### `--video-audio-sample-rate` `<float>`
 
-Audio sample rate in Hz for the embedded audio track. Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). Higher sample rates increase audio fidelity and file size.
-<br/>_Constraints: ≥ 8000, ≤ 96000_
-<br/>_Default: `44100`_
+Audio sample rate in kHz for the embedded audio track. Common values: 8 (telephony), 16 (speech), 44.1 (CD quality), 48 (professional). Higher sample rates increase audio fidelity and file size.
+<br/>_Constraints: ≥ 8.0, ≤ 96.0_
+<br/>_Default: `44.1`_
 
 #### `--video-audio-num-channels` `<int>`
 

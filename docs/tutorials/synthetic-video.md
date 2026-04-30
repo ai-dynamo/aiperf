@@ -273,14 +273,14 @@ aiperf profile \
     --request-count 20
 ```
 
-This generates videos with a mono, 44100 Hz audio track using an auto-selected codec (libvorbis for WebM, aac for MP4).
+This generates videos with a mono, 44.1 kHz audio track using an auto-selected codec (libvorbis for WebM, aac for MP4).
 
 #### Audio Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `--video-audio-num-channels` | `int` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
-| `--video-audio-sample-rate` | `int` | `44100` | Sample rate in Hz (8000-96000) |
+| `--video-audio-sample-rate` | `float` | `44.1` | Sample rate in kHz (8-96) |
 | `--video-audio-codec` | `string` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
 | `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
@@ -318,7 +318,7 @@ aiperf profile \
     --video-width 640 \
     --video-height 480 \
     --video-audio-num-channels 2 \
-    --video-audio-sample-rate 48000 \
+    --video-audio-sample-rate 48 \
     --request-count 20
 ```
 
@@ -335,7 +335,7 @@ The audio generation uses a deterministic RNG seed (`dataset.video.audio`), so v
 #### Audio Size Impact
 
 Factors affecting audio contribution to file size:
-- **Sample rate**: 48000 Hz produces ~9% more data than 44100 Hz
+- **Sample rate**: 48 kHz produces ~9% more data than 44.1 kHz
 - **Channels**: Stereo (2) doubles audio data compared to mono (1)
 - **Codec**: Vorbis and Opus provide better compression than AAC at lower bitrates
 - **Duration**: Audio size scales linearly with video duration
@@ -420,7 +420,7 @@ aiperf profile \
     --video-fps 4 \
     --video-duration 5.0 \
     --video-audio-num-channels 1 \
-    --video-audio-sample-rate 16000 \
+    --video-audio-sample-rate 16 \
     --concurrency 4 \
     --request-count 50
 ```
@@ -443,7 +443,7 @@ aiperf profile \
     --video-format mp4 \
     --video-codec libx264 \
     --video-audio-num-channels 2 \
-    --video-audio-sample-rate 44100 \
+    --video-audio-sample-rate 44.1 \
     --concurrency 2 \
     --request-count 20
 ```
@@ -594,7 +594,7 @@ All video-related parameters at a glance:
 | Parameter | Default | Description |
 |---|---|---|
 | `--video-audio-num-channels` | `0` | 0 = disabled, 1 = mono, 2 = stereo |
-| `--video-audio-sample-rate` | `44100` | Sample rate in Hz (8000-96000) |
+| `--video-audio-sample-rate` | `44.1` | Sample rate in kHz (8-96) |
 | `--video-audio-codec` | auto | Audio codec (`aac`, `libvorbis`, `libopus`) |
 | `--video-audio-depth` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 

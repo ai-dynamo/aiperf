@@ -134,3 +134,78 @@ class TestMultiURLSupport:
         """URLs list must have at least one entry."""
         with pytest.raises(ValueError):
             EndpointConfig(model_names=["gpt2"], urls=[])
+
+
+class TestWaitForModelValidation:
+    """Tests for the readiness-probe flag coherence + bounds validation.
+
+    The probe is enabled by setting --wait-for-model-timeout to a positive
+    value. Dependent flags (--wait-for-model-interval, --wait-for-model-mode)
+    have no effect when disabled and should be rejected if set alone, so
+    typos like `--wait-for-model-interval 1` (without a timeout) fail fast.
+    """
+
+    def test_default_probe_disabled(self):
+        """With no probe flags set, the probe is disabled (timeout == 0)."""
+        config = EndpointConfig(model_names=["gpt2"])
+        assert config.wait_for_model_timeout == 0.0
+
+    def test_setting_timeout_enables_probe(self):
+        """Setting --wait-for-model-timeout to a positive value is the
+        one-and-only way to enable the probe."""
+        config = EndpointConfig(model_names=["gpt2"], wait_for_model_timeout=60.0)
+        assert config.wait_for_model_timeout == 60.0
+
+    def test_interval_without_timeout_rejected(self):
+        """Setting --wait-for-model-interval without a positive timeout is
+        incoherent (the interval will never be consulted)."""
+        with pytest.raises(ValueError, match="wait-for-model-interval"):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_interval=1.0)
+
+    def test_mode_without_timeout_rejected(self):
+        """Setting --wait-for-model-mode without a positive timeout is
+        incoherent (the mode will never be consulted)."""
+        with pytest.raises(ValueError, match="wait-for-model-mode"):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_mode="inference")
+
+    def test_interval_with_timeout_accepted(self):
+        """With a positive timeout, interval can be customized freely."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            wait_for_model_timeout=60.0,
+            wait_for_model_interval=2.5,
+        )
+        assert config.wait_for_model_interval == 2.5
+
+    def test_mode_with_timeout_accepted(self):
+        """With a positive timeout, mode can be customized freely."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            wait_for_model_timeout=60.0,
+            wait_for_model_mode="both",
+        )
+        assert config.wait_for_model_mode == "both"
+
+    def test_negative_timeout_rejected(self):
+        """Negative timeout is nonsensical and rejected by ge=0.0 validator."""
+        with pytest.raises(ValueError):
+            EndpointConfig(model_names=["gpt2"], wait_for_model_timeout=-1.0)
+
+    def test_zero_interval_rejected(self):
+        """Zero interval would create a tight retry loop; rejected by gt=0.0
+        validator (this fires even when paired with a positive timeout)."""
+        with pytest.raises(ValueError):
+            EndpointConfig(
+                model_names=["gpt2"],
+                wait_for_model_timeout=60.0,
+                wait_for_model_interval=0.0,
+            )
+
+    def test_invalid_mode_rejected(self):
+        """Mode is a Literal; unknown values rejected by pydantic."""
+        with pytest.raises(ValueError):
+            EndpointConfig(
+                model_names=["gpt2"],
+                wait_for_model_timeout=60.0,
+                wait_for_model_mode="something-else",  # type: ignore[arg-type]
+            )
