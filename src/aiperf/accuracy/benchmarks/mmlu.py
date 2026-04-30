@@ -100,7 +100,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
     on dataset source, prompt format, few-shot split, and gold representation.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.user_config = user_config
 

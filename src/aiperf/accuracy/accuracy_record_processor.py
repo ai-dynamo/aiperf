@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import BenchmarkProblem, GradingResult
@@ -33,7 +33,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         self,
         service_id: str | None,
         user_config: UserConfig,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         if not user_config.accuracy.enabled:
             raise PostProcessorDisabled(

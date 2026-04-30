@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.models import (
     ACCURACY_METRIC_PREFIX,
@@ -24,7 +24,7 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
     Renders a Rich table with per-task accuracy breakdown and overall score.
     """
 
-    def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+    def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         if not exporter_config.user_config.accuracy.enabled:
             raise ConsoleExporterDisabled(
                 "Accuracy console exporter is disabled: accuracy mode is not enabled"

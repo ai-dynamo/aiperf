@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
 from aiperf.common.config import UserConfig
@@ -23,16 +25,16 @@ class MultipleChoiceGrader(BaseGrader):
     - Score: 1 if gold == pred else 0
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
         super().__init__(user_config=user_config, **kwargs)
 
-    def extract_answer(self, response_text: str, **kwargs) -> str:
+    def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Extract the answer: take first line (simulates stop_sequence), then strip."""
         first_line = response_text.split("\n", 1)[0]
         return first_line.strip()
 
     async def grade(
-        self, response_text: str, ground_truth: str, **kwargs
+        self, response_text: str, ground_truth: str, **kwargs: Any
     ) -> GradingResult:
         pred = self.extract_answer(response_text)
         gold = ground_truth.strip()

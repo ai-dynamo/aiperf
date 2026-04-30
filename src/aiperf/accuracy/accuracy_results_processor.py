@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
 from aiperf.accuracy.models import (
@@ -29,7 +29,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
     then summarizes into per-task and overall accuracy MetricResult objects.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
         if not user_config.accuracy.enabled:
             raise PostProcessorDisabled(
                 "Accuracy results processor is disabled: accuracy mode is not enabled"

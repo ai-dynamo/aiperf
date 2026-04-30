@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import csv
 from pathlib import Path
+from typing import Any
 
 from aiperf.accuracy.models import (
     ACCURACY_METRIC_PREFIX,
@@ -23,7 +24,7 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
     Exports per-task accuracy summary to CSV for offline analysis.
     """
 
-    def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+    def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         if not exporter_config.user_config.accuracy.enabled:
             raise DataExporterDisabled(
                 "Accuracy data exporter is disabled: accuracy mode is not enabled"
