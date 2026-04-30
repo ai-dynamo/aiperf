@@ -19,6 +19,7 @@ corrupt or stale index degrades to slower, never wrong.
 
 from __future__ import annotations
 
+import io
 import logging
 import sqlite3
 import time
@@ -341,6 +342,19 @@ def _extract_model_endpoint(spec: dict[str, Any]) -> tuple[str | None, str | Non
 
 def _zstd_compress(payload: dict[str, Any]) -> bytes:
     return zstandard.ZstdCompressor().compress(orjson.dumps(payload))
+
+
+def zstd_decompress(blob: bytes) -> bytes:
+    """Decompress a zstd blob whether or not the frame carries a content size.
+
+    The completion handler writes ``profile_export_aiperf.json.zst`` via a
+    streaming compressor that does NOT embed the content size in the frame
+    header; ``ZstdDecompressor().decompress(blob)`` then raises ``ZstdError:
+    could not determine content size in frame header``. ``stream_reader``
+    handles both framed and stream-mode blobs, so use it uniformly.
+    """
+    with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(blob)) as reader:
+        return reader.read()
 
 
 def _narrow_metric_columns(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -793,7 +807,7 @@ async def get_run_spec(
     await cur.close()
     if row is None or row[0] is None:
         return None
-    return orjson.loads(zstandard.ZstdDecompressor().decompress(row[0]))
+    return orjson.loads(zstd_decompress(row[0]))
 
 
 async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[str]:
@@ -893,7 +907,7 @@ async def _index_run_from_disk(
     try:
         if summary_path_zst.exists():
             blob = summary_path_zst.read_bytes()
-            metrics = orjson.loads(zstandard.ZstdDecompressor().decompress(blob))
+            metrics = orjson.loads(zstd_decompress(blob))
             summary_blob = blob
         elif summary_path_raw.exists():
             raw = summary_path_raw.read_bytes()

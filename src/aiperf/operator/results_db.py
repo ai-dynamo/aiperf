@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import orjson
-import zstandard
 
 from aiperf.operator import runs_index
 from aiperf.operator.results_layout import resolve_run_dir
@@ -61,7 +60,7 @@ class ResultsDB:
 
         blob = await runs_index.get_summary_blob(namespace, job_id, epoch)
         if blob:
-            return orjson.loads(zstandard.ZstdDecompressor().decompress(blob))
+            return orjson.loads(runs_index.zstd_decompress(blob))
         return await self._summary_from_disk(namespace, job_id, epoch)
 
     async def _summary_from_disk(
@@ -77,9 +76,7 @@ class ResultsDB:
         zst = run_dir / "profile_export_aiperf.json.zst"
         raw = run_dir / "profile_export_aiperf.json"
         if zst.exists():
-            return orjson.loads(
-                zstandard.ZstdDecompressor().decompress(zst.read_bytes())
-            )
+            return orjson.loads(runs_index.zstd_decompress(zst.read_bytes()))
         if raw.exists():
             return orjson.loads(raw.read_bytes())
         return None
