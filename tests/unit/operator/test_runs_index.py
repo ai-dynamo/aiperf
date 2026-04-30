@@ -357,3 +357,63 @@ async def test_bootstrap_skips_runs_without_ready_marker(tmp_path: Path) -> None
         assert await runs_index.list_all_latest() == []
     finally:
         await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_orders_by_metric(index_path) -> None:
+    for ep, tput in [("100", 10.0), ("200", 50.0), ("300", 25.0)]:
+        spec = {}
+        await runs_index.upsert_run_created("ns", "j", ep, spec=spec)
+        await runs_index.upsert_run_completed(
+            "ns",
+            "j",
+            ep,
+            summary_blob=b"",
+            metrics={
+                "request_throughput": {
+                    "avg": tput,
+                    "p50": tput,
+                    "p99": tput,
+                    "unit": "rps",
+                },
+            },
+            files=[],
+            mtime_epoch=int(ep),
+        )
+    await runs_index.set_latest("ns", "j", "200")  # only "200" is latest
+
+    rows = await runs_index.leaderboard(
+        metric="request_throughput", stat="avg", order="desc", limit=10
+    )
+    # Only the latest epoch participates
+    assert len(rows) == 1
+    assert rows[0]["value"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_compare_returns_metrics_for_named_jobs(index_path) -> None:
+    metrics = {
+        "request_throughput": {
+            "avg": 100.0,
+            "p50": 95.0,
+            "p99": 110.0,
+            "unit": "rps",
+        },
+        "request_latency": {"avg": 0.05, "p50": 0.05, "p99": 0.08, "unit": "s"},
+    }
+    for j in ("j1", "j2"):
+        await runs_index.upsert_run_created("ns", j, "100", spec={})
+        await runs_index.upsert_run_completed(
+            "ns",
+            j,
+            "100",
+            summary_blob=b"",
+            metrics=metrics,
+            files=[],
+            mtime_epoch=100,
+        )
+        await runs_index.set_latest("ns", j, "100")
+
+    rows = await runs_index.compare(["j1", "j2"], metrics=["request_throughput"])
+    assert {r["job_id"] for r in rows} == {"j1", "j2"}
+    assert all(r["request_throughput_avg"] == 100.0 for r in rows)

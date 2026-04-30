@@ -939,3 +939,130 @@ async def lazy_backfill_run(
             epoch,
             exc,
         )
+
+
+_VALID_IDENTIFIER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz_0123456789")
+
+
+def _validate_identifier(name: str) -> None:
+    if not name or not all(c in _VALID_IDENTIFIER_CHARS for c in name.lower()):
+        raise ValueError(f"Invalid SQL identifier: {name!r}")
+
+
+async def leaderboard(
+    metric: str = "request_throughput",
+    stat: str = "avg",
+    order: str = "desc",
+    limit: int = 20,
+    *,
+    epoch: str | None = None,
+) -> list[dict[str, Any]]:
+    _validate_identifier(metric)
+    _validate_identifier(stat)
+    order_dir = "DESC" if order.lower() == "desc" else "ASC"
+    col = f"{metric}_{stat}"
+
+    if epoch is None:
+        sql = (
+            f"SELECT namespace, job_id, epoch, {col} AS value, "
+            f"       {metric}_unit AS unit, start_time, end_time, model, endpoint "
+            f"FROM runs WHERE is_latest = 1 AND {col} IS NOT NULL "
+            f"ORDER BY value {order_dir} LIMIT ?"
+        )
+        params: tuple[Any, ...] = (limit,)
+    else:
+        sql = (
+            f"SELECT namespace, job_id, epoch, {col} AS value, "
+            f"       {metric}_unit AS unit, start_time, end_time, model, endpoint "
+            f"FROM runs WHERE epoch = ? AND {col} IS NOT NULL "
+            f"ORDER BY value {order_dir} LIMIT ?"
+        )
+        params = (epoch, limit)
+
+    return await _select_dicts(sql, params)
+
+
+async def history(
+    *,
+    model: str | None = None,
+    endpoint: str | None = None,
+    metric: str = "request_throughput",
+    stat: str = "avg",
+    limit: int = 100,
+    epoch: str | None = None,
+) -> list[dict[str, Any]]:
+    _validate_identifier(metric)
+    _validate_identifier(stat)
+    col = f"{metric}_{stat}"
+
+    where = [f"{col} IS NOT NULL"]
+    params: list[Any] = []
+    if epoch is None:
+        where.append("is_latest = 1")
+    else:
+        where.append("epoch = ?")
+        params.append(epoch)
+    if model:
+        where.append("model LIKE ?")
+        params.append(f"%{model}%")
+    if endpoint:
+        where.append("endpoint LIKE ?")
+        params.append(f"%{endpoint}%")
+    params.append(limit)
+
+    sql = (
+        f"SELECT namespace, job_id, epoch, {col} AS value, "
+        f"       {metric}_unit AS unit, start_time, model, endpoint "
+        f"FROM runs WHERE {' AND '.join(where)} "
+        f"ORDER BY start_time ASC LIMIT ?"
+    )
+    return await _select_dicts(sql, tuple(params))
+
+
+async def compare(
+    job_ids: list[str],
+    metrics: list[str] | None = None,
+    *,
+    epoch: str | None = None,
+) -> list[dict[str, Any]]:
+    if not job_ids:
+        return []
+    if metrics is None:
+        metrics = list(_NARROW_METRICS)
+    for m in metrics:
+        _validate_identifier(m)
+
+    cols = [
+        "namespace",
+        "job_id",
+        "epoch",
+        "start_time",
+        "model",
+        "endpoint",
+        "gpu_count",
+        "gpu_name",
+    ]
+    for m in metrics:
+        for stat in ("avg", "p50", "p99"):
+            cols.append(f"{m}_{stat}")
+        cols.append(f"{m}_unit")
+
+    placeholders = ", ".join("?" * len(job_ids))
+    where = [f"job_id IN ({placeholders})"]
+    params: list[Any] = list(job_ids)
+    if epoch is None:
+        where.append("is_latest = 1")
+    else:
+        where.append("epoch = ?")
+        params.append(epoch)
+
+    sql = f"SELECT {', '.join(cols)} FROM runs WHERE {' AND '.join(where)}"
+    return await _select_dicts(sql, tuple(params))
+
+
+async def _select_dicts(sql: str, params: tuple) -> list[dict[str, Any]]:
+    cur = await _conn().execute(sql, params)
+    cols = [d[0] for d in cur.description]
+    rows = await cur.fetchall()
+    await cur.close()
+    return [dict(zip(cols, r, strict=True)) for r in rows]
