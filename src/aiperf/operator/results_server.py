@@ -157,8 +157,24 @@ def _register_k8s_exception_handler(app: FastAPI) -> None:
 
 
 def _mount_dashboard(app: FastAPI, base_dir: Path) -> None:
-    """Mount the Plotly Dash dashboard at /dashboard/, with a 503 placeholder if no runs yet."""
-    dash_app, run_count = build_dashboard(base_dir)
+    """Mount the Plotly Dash dashboard at /dashboard/, with a 503 placeholder if no runs yet.
+
+    Tolerates dashboard-init failures: when ``readOnlyRootFilesystem: true`` is
+    set on the container, ``PlotConfig`` can't auto-create ``$HOME/.aiperf/`` and
+    raises ``OSError [Errno 30]``. The dashboard is non-essential to the
+    results-server's primary job (file serving + analytics), so we swallow init
+    errors and serve a 503 placeholder instead of crashlooping.
+    """
+    try:
+        dash_app, run_count = build_dashboard(base_dir)
+    except OSError as exc:
+        logger.warning(
+            "Dashboard init failed (likely read-only rootfs): %s. "
+            "/dashboard/ will return 503; analytics + file endpoints unaffected.",
+            exc,
+        )
+        dash_app, run_count = None, 0
+
     if dash_app is not None:
         logger.info(
             f"Mounting Plotly Dash dashboard with {run_count} runs at /dashboard/"
