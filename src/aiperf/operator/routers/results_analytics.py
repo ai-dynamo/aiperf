@@ -30,11 +30,16 @@ from aiperf.operator.routers.results_schemas import (
 
 def _pivot_compare_rows(
     rows: list[dict[str, Any]], metric_list: list[str]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Pivot raw DuckDB rows (one per job) into the format the UI expects.
 
     Input:  [{job_id, request_throughput_avg, request_throughput_unit, ...}, ...]
-    Output: [{metric, stat, unit, values: {job_id: value}}, ...]
+    Output: ([{metric, stat, unit, values: {job_id: value}}, ...],
+             {<ns>/<job_id>: {gpu_count, gpu_name, model, endpoint}})
+
+    The ``meta`` map carries per-job context — GPU count and accelerator
+    model — so the UI can normalize throughput to per-GPU values and color
+    runs by hardware (the InferenceX-style correlation).
     """
     stats = ["avg", "p50", "p99"]
     entries: list[dict[str, Any]] = []
@@ -66,7 +71,19 @@ def _pivot_compare_rows(
                         "values": values,
                     }
                 )
-    return entries
+
+    meta: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        job_id = row.get("job_id", "")
+        namespace = row.get("namespace", "")
+        key = f"{namespace}/{job_id}" if namespace else job_id
+        meta[key] = {
+            "gpu_count": row.get("gpu_count"),
+            "gpu_name": row.get("gpu_name"),
+            "model": row.get("model"),
+            "endpoint": row.get("endpoint"),
+        }
+    return entries, meta
 
 
 def _register_leaderboard_route(
@@ -165,11 +182,12 @@ def _register_compare_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
         """Compare specific jobs side-by-side."""
         rows = await get_db().compare(job_ids=jobs, metrics=metrics, epoch=epoch)
         metric_list = metrics or list(DEFAULT_COMPARE_METRICS)
-        entries = _pivot_compare_rows(rows, metric_list)
+        entries, meta = _pivot_compare_rows(rows, metric_list)
         return CompareResponse(
             job_ids=jobs,
             metrics=metric_list,
             entries=entries,
+            meta=meta,
         )
 
 

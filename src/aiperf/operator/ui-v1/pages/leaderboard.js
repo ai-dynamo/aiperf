@@ -2,9 +2,20 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
+import { navigate } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
+
+// Metrics where smaller values are better (latency-like). Used for the
+// "lower = better" cue; ranking direction itself is owned by the API.
+const LOWER_IS_BETTER_PREFIXES = ['request_latency', 'inter_token_latency', 'time_to_first_token', 'time_to_second_token'];
+
+function isLowerBetter(metric) {
+  if (!metric) return false;
+  return LOWER_IS_BETTER_PREFIXES.some((p) => metric.startsWith(p));
+}
 
 const CHART_COLORS = [
   palette.mauve,
@@ -44,7 +55,7 @@ export function Leaderboard() {
     setError(null);
 
     api
-      .getLeaderboard(selected.metric, selected.stat)
+      .getLeaderboard(selected.metric, selected.stat, 1000)
       .then((resp) => {
         if (!cancelled) setData(resp);
       })
@@ -80,6 +91,9 @@ export function Leaderboard() {
         backgroundColor: top10.map((_, i) => CHART_COLORS[i % CHART_COLORS.length] + 'cc'),
         borderColor: top10.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
         borderWidth: 1,
+        // Cap bar thickness so a single-bar chart doesn't stretch to fill
+        // the full canvas height, which looks broken.
+        maxBarThickness: 28,
       },
     ],
   };
@@ -119,25 +133,47 @@ export function Leaderboard() {
         <div style="display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap">
           <div style="display: flex; align-items: center; gap: var(--space-2)">
             <label class="metric-selector-label">Model</label>
-            <input
-              class="metric-selector-select"
-              type="text"
-              placeholder="Filter by model..."
-              value=${model}
-              oninput=${(e) => setModel(e.target.value)}
-              style="min-width: 160px"
-            />
+            <div style="position: relative; display: inline-block">
+              <input
+                class="metric-selector-select"
+                type="text"
+                placeholder="Filter by model..."
+                value=${model}
+                oninput=${(e) => setModel(e.target.value)}
+                style=${'min-width: 160px;' + (model ? ' padding-right: 22px;' : '')}
+              />
+              ${model && html`
+                <button
+                  type="button"
+                  onclick=${() => setModel('')}
+                  aria-label="Clear model filter"
+                  title="Clear"
+                  style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--overlay0); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 50%"
+                >×</button>
+              `}
+            </div>
           </div>
           <div style="display: flex; align-items: center; gap: var(--space-2)">
             <label class="metric-selector-label">Endpoint</label>
-            <input
-              class="metric-selector-select"
-              type="text"
-              placeholder="Filter by endpoint..."
-              value=${endpoint}
-              oninput=${(e) => setEndpoint(e.target.value)}
-              style="min-width: 160px"
-            />
+            <div style="position: relative; display: inline-block">
+              <input
+                class="metric-selector-select"
+                type="text"
+                placeholder="Filter by endpoint..."
+                value=${endpoint}
+                oninput=${(e) => setEndpoint(e.target.value)}
+                style=${'min-width: 160px;' + (endpoint ? ' padding-right: 22px;' : '')}
+              />
+              ${endpoint && html`
+                <button
+                  type="button"
+                  onclick=${() => setEndpoint('')}
+                  aria-label="Clear endpoint filter"
+                  title="Clear"
+                  style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--overlay0); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 50%"
+                >×</button>
+              `}
+            </div>
           </div>
         </div>
       </div>
@@ -149,32 +185,46 @@ export function Leaderboard() {
       `}
 
       ${loading && html`
-        <div class="card" style="text-align: center; padding: var(--space-8); margin-bottom: var(--space-4)">
-          <span class="text-dim">Loading...</span>
+        <div class="card" style="margin-bottom: var(--space-4)">
+          <${LoadingPanel} label="Loading leaderboard…" testid="leaderboard-loading" />
         </div>
       `}
 
       ${!loading && !error && filtered.length === 0 && html`
         <div class="card empty-state" style="margin-bottom: var(--space-4)">
-          <p class="text-dim">No results found. Complete some benchmarks and try again.</p>
+          ${entries.length === 0
+            ? html`<p class="text-dim">No completed benchmarks yet. Submit an AIPerfJob and once it finishes it will appear here, ranked by your selected metric.</p>`
+            : html`<p class="text-dim">No results match the current filters. Clear the model/endpoint filter above to see all ${entries.length} run${entries.length === 1 ? '' : 's'}.</p>`}
         </div>
       `}
 
       ${!loading && filtered.length > 0 && html`
         <!-- Bar chart -->
         <div class="card" style="margin-bottom: var(--space-4)">
-          <div class="card-title">Top ${top10.length} -- ${selected.metric} (${selected.stat})</div>
+          <div class="card-title" style="display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap">
+            <span>Top ${top10.length} -- ${selected.metric} (${selected.stat})</span>
+            <span style="font-size: var(--font-size-xs); color: var(--overlay0); font-weight: normal">
+              ${isLowerBetter(selected.metric) ? '↓ lower = better' : '↑ higher = better'}${unit ? ' • ' + unit : ''}
+            </span>
+          </div>
           <${ChartWrapper} type="bar" data=${chartData} options=${chartOptions} height=${Math.max(200, top10.length * 32)} />
         </div>
 
         <!-- Ranked table -->
         <div class="card">
-          <div class="card-title">All Results</div>
+          <div class="card-title" style="display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap">
+            <span>All Results</span>
+            <span class="text-dim" style="font-size: var(--font-size-xs); font-weight: normal" data-testid="leaderboard-count">
+              ${filtered.length === entries.length
+                ? `${filtered.length} run${filtered.length === 1 ? '' : 's'}`
+                : `${filtered.length} of ${entries.length} runs`}
+            </span>
+          </div>
           <div style="overflow-x: auto">
             <table style="width: 100%; border-collapse: collapse; font-size: var(--font-size-sm)">
               <thead>
                 <tr style="color: var(--subtext0); border-bottom: 1px solid var(--surface1)">
-                  <th style="text-align: left; padding: var(--space-2) var(--space-3)">#</th>
+                  <th style="text-align: right; padding: var(--space-2) var(--space-3)">#</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Job</th>
                   <th style="text-align: left; padding: var(--space-2) var(--space-3)">Namespace</th>
                   <th style="text-align: right; padding: var(--space-2) var(--space-3)">Value</th>
@@ -194,13 +244,25 @@ export function Leaderboard() {
                     : rank === 3
                     ? palette.peach
                     : null;
+                  const canNavigate = !!entry.job_id;
+                  const goToJob = () => {
+                    if (canNavigate) {
+                      navigate('/jobs/' + encodeURIComponent(entry.namespace ?? 'default') + '/' + encodeURIComponent(entry.job_id));
+                    }
+                  };
+                  const baseBg = isTop3 ? rowColor + '0a' : 'transparent';
+                  const hoverBg = 'var(--surface0)';
 
                   return html`
                     <tr
                       key=${entry.job_id}
-                      style=${'border-bottom: 1px solid var(--surface0);' + (isTop3 ? ' background: ' + rowColor + '0a;' : '')}
+                      onclick=${goToJob}
+                      onmouseenter=${(e) => { if (canNavigate) e.currentTarget.style.background = hoverBg; }}
+                      onmouseleave=${(e) => { if (canNavigate) e.currentTarget.style.background = baseBg; }}
+                      title=${canNavigate ? 'View job details' : ''}
+                      style=${'border-bottom: 1px solid var(--surface0); background: ' + baseBg + ';' + (canNavigate ? ' cursor: pointer;' : '')}
                     >
-                      <td style=${'padding: var(--space-2) var(--space-3); font-weight: 600;' + (isTop3 ? ' color: ' + rowColor : ' color: var(--overlay0)')}>
+                      <td style=${'padding: var(--space-2) var(--space-3); text-align: right; font-weight: 600;' + (isTop3 ? ' color: ' + rowColor : ' color: var(--overlay0)')}>
                         ${rank}
                       </td>
                       <td style="padding: var(--space-2) var(--space-3); font-family: var(--font-mono); font-size: var(--font-size-xs)">
@@ -215,7 +277,10 @@ export function Leaderboard() {
                       <td style="padding: var(--space-2) var(--space-3); color: var(--subtext0)">
                         ${entry.model ?? '---'}
                       </td>
-                      <td style="padding: var(--space-2) var(--space-3); color: var(--subtext0); font-size: var(--font-size-xs); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                      <td
+                        title=${entry.endpoint ?? ''}
+                        style="padding: var(--space-2) var(--space-3); color: var(--subtext0); font-size: var(--font-size-xs); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
+                      >
                         ${entry.endpoint ?? '---'}
                       </td>
                       <td style="padding: var(--space-2) var(--space-3); color: var(--overlay0)">

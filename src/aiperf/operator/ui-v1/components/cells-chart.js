@@ -85,6 +85,18 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
       labels: xValues.map(String),
       datasets,
     };
+    // Long dim values (e.g. model paths, prompt-template names) overlap on
+    // the x-axis at default rotation. Compute a worst-case label length so
+    // we only rotate / truncate when needed and keep short numeric sweeps
+    // (concurrency=1,2,4,...) horizontal.
+    const maxLabelLen = chartData.labels.reduce((m, l) => Math.max(m, l.length), 0);
+    const xTickRotation = maxLabelLen > 8 ? 35 : 0;
+    const xTickCallback = maxLabelLen > 24
+      ? function (value) {
+          const lbl = this.getLabelForValue(value);
+          return lbl != null && lbl.length > 24 ? lbl.slice(0, 22) + '…' : lbl;
+        }
+      : undefined;
     const chartOptions = {
       plugins: {
         legend: {
@@ -97,13 +109,32 @@ export function CellsChart({ dimensions, cells, metric, stat }) {
           bodyColor: palette.text,
           borderColor: palette.surface0,
           borderWidth: 1,
+          callbacks: {
+            title: (items) => {
+              if (!items || items.length === 0) return '';
+              return `${primaryDim.name} = ${items[0].label}`;
+            },
+            label: (ctx) => {
+              const v = ctx.parsed?.y;
+              if (v == null) return `${ctx.dataset.label}: (no data)`;
+              const n = Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3);
+              return `${ctx.dataset.label}: ${n} (${stat})`;
+            },
+          },
         },
       },
       scales: {
         x: {
           title: { display: true, text: primaryDim.name, color: palette.overlay1, font: { size: 11 } },
           grid: { color: palette.surface0 },
-          ticks: { color: palette.overlay1, font: { size: 10 } },
+          ticks: {
+            color: palette.overlay1,
+            font: { size: 10 },
+            autoSkip: true,
+            maxRotation: xTickRotation,
+            minRotation: xTickRotation,
+            ...(xTickCallback ? { callback: xTickCallback } : {}),
+          },
         },
         y: {
           title: { display: true, text: `${metric} (${stat})`, color: palette.overlay1, font: { size: 11 } },

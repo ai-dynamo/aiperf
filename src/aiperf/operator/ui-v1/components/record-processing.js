@@ -27,6 +27,10 @@ export function RecordProcessing({ phases }) {
   let activeEta = null;
 
   for (const [, p] of phaseEntries) {
+    // Phase value can be null/undefined when the operator emits a
+    // partially-populated entry (e.g. a phase declared but never started).
+    // Skip rather than crash on `p.recordsSuccess`.
+    if (p == null || typeof p !== 'object') continue;
     totalSuccess += p.recordsSuccess ?? 0;
     totalError += p.recordsError ?? 0;
     totalRequestsCompleted += p.requestsCompleted ?? 0;
@@ -106,6 +110,7 @@ export function RecordProcessing({ phases }) {
         </thead>
         <tbody>
           ${phaseEntries.map(([name, p]) => {
+            if (p == null || typeof p !== 'object') return null;
             const rs = p.recordsSuccess ?? 0;
             const re = p.recordsError ?? 0;
             const rps = p.recordsPerSecond ?? 0;

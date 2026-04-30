@@ -13,7 +13,11 @@ export function Breadcrumb() {
   if (segments.length <= 1) {
     return html`
       <div class="breadcrumb" data-testid="breadcrumb">
-        <span class="breadcrumb-current">${segments[0]?.label ?? 'Dashboard'}</span>
+        <span
+          class="breadcrumb-current"
+          title=${segments[0]?.label ?? 'Dashboard'}
+          style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:48ch;display:inline-block;vertical-align:bottom"
+        >${segments[0]?.label ?? 'Dashboard'}</span>
       </div>
     `;
   }
@@ -22,11 +26,12 @@ export function Breadcrumb() {
     <div class="breadcrumb" data-testid="breadcrumb">
       ${segments.map((seg, i) => {
         const isLast = i === segments.length - 1;
+        const truncStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:32ch;display:inline-block;vertical-align:bottom';
         return html`
-          ${i > 0 && html`<span class="breadcrumb-sep">/</span>`}
+          ${i > 0 && html`<span class="breadcrumb-sep" aria-hidden="true">/</span>`}
           ${isLast
-            ? html`<span class="breadcrumb-current">${seg.label}</span>`
-            : html`<a href="#${seg.path}" onclick=${(e) => { e.preventDefault(); navigate(seg.path); }}>${seg.label}</a>`
+            ? html`<span class="breadcrumb-current" title=${seg.label} style=${truncStyle}>${seg.label}</span>`
+            : html`<a href="#${seg.path}" title=${seg.label} style=${truncStyle} onclick=${(e) => { e.preventDefault(); navigate(seg.path); }}>${seg.label}</a>`
           }
         `;
       })}

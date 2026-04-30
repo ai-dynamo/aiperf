@@ -6,7 +6,13 @@ import { navigate, query, setQuery } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { NsPill, ModelPill } from '../components/pills.js';
+import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
+
+// Backend caps history responses at this many rows. When ``entries.length``
+// equals the cap we surface a "may be truncated" hint so the user doesn't
+// silently assume they're seeing the full record.
+const HISTORY_TRUNCATION_HINT = 10000;
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -77,14 +83,30 @@ export function History() {
 
   const entries = data?.entries ?? [];
 
-  const filtered = entries.filter((e) => {
-    if (model && !(e.model ?? '').toLowerCase().includes(model.toLowerCase())) return false;
-    if (endpoint && !(e.endpoint ?? '').toLowerCase().includes(endpoint.toLowerCase())) return false;
-    if (ns && (e.namespace ?? '') !== ns) return false;
-    return true;
-  });
+  // Sort by start_time ascending so the line chart and table are stable
+  // across poll refreshes (API may return entries in arbitrary order).
+  const filtered = entries
+    .filter((e) => {
+      if (model && !(e.model ?? '').toLowerCase().includes(model.toLowerCase())) return false;
+      if (endpoint && !(e.endpoint ?? '').toLowerCase().includes(endpoint.toLowerCase())) return false;
+      if (ns && (e.namespace ?? '') !== ns) return false;
+      return true;
+    })
+    .slice()
+    .sort((a, b) => {
+      const ta = a.start_time ? Date.parse(a.start_time) : 0;
+      const tb = b.start_time ? Date.parse(b.start_time) : 0;
+      if (ta !== tb) return ta - tb;
+      // Tiebreak on job_id so equal timestamps don't reshuffle.
+      return String(a.job_id ?? '').localeCompare(String(b.job_id ?? ''));
+    });
 
   const unit = filtered[0]?.unit ?? '';
+
+  // Chart.js renders a `line` chart with a single point as just a dot —
+  // easy to miss at the default radius. Bump radius so it's visible, and
+  // surface a hint below the chart so the user knows nothing is broken.
+  const isSinglePoint = filtered.length === 1;
 
   const chartData = {
     labels: filtered.map((e) => formatDateShort(e.start_time)),
@@ -96,8 +118,8 @@ export function History() {
         backgroundColor: palette.blue + '22',
         fill: true,
         tension: 0.3,
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        pointRadius: isSinglePoint ? 8 : 4,
+        pointHoverRadius: isSinglePoint ? 10 : 6,
         pointBackgroundColor: palette.blue,
         borderWidth: 2,
       },
@@ -165,25 +187,47 @@ export function History() {
           `}
           <div style="display: flex; align-items: center; gap: var(--space-2)">
             <label class="metric-selector-label">Model</label>
-            <input
-              class="metric-selector-select"
-              type="text"
-              placeholder="Filter by model…"
-              value=${model}
-              oninput=${(e) => setModel(e.target.value)}
-              style="min-width: 160px"
-            />
+            <div style="position: relative; display: inline-block">
+              <input
+                class="metric-selector-select"
+                type="text"
+                placeholder="Filter by model…"
+                value=${model}
+                oninput=${(e) => setModel(e.target.value)}
+                style=${'min-width: 160px;' + (model ? ' padding-right: 22px;' : '')}
+              />
+              ${model && html`
+                <button
+                  type="button"
+                  onclick=${() => setModel('')}
+                  aria-label="Clear model filter"
+                  title="Clear"
+                  style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--overlay0); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 50%"
+                >×</button>
+              `}
+            </div>
           </div>
           <div style="display: flex; align-items: center; gap: var(--space-2)">
             <label class="metric-selector-label">Endpoint</label>
-            <input
-              class="metric-selector-select"
-              type="text"
-              placeholder="Filter by endpoint…"
-              value=${endpoint}
-              oninput=${(e) => setEndpoint(e.target.value)}
-              style="min-width: 160px"
-            />
+            <div style="position: relative; display: inline-block">
+              <input
+                class="metric-selector-select"
+                type="text"
+                placeholder="Filter by endpoint…"
+                value=${endpoint}
+                oninput=${(e) => setEndpoint(e.target.value)}
+                style=${'min-width: 160px;' + (endpoint ? ' padding-right: 22px;' : '')}
+              />
+              ${endpoint && html`
+                <button
+                  type="button"
+                  onclick=${() => setEndpoint('')}
+                  aria-label="Clear endpoint filter"
+                  title="Clear"
+                  style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--overlay0); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 50%"
+                >×</button>
+              `}
+            </div>
           </div>
         </div>
       </div>
@@ -195,14 +239,16 @@ export function History() {
       `}
 
       ${loading && html`
-        <div class="card" style="text-align: center; padding: var(--space-8); margin-bottom: var(--space-4)">
-          <span class="text-dim">Loading…</span>
+        <div class="card" style="margin-bottom: var(--space-4)">
+          <${LoadingPanel} label="Loading history…" testid="history-loading" />
         </div>
       `}
 
       ${!loading && !error && filtered.length === 0 && html`
         <div class="card empty-state" style="margin-bottom: var(--space-4)">
-          <p class="text-dim">No history found. Complete some benchmarks and try again.</p>
+          ${entries.length === 0
+            ? html`<p class="text-dim">No completed benchmarks yet. As AIPerfJobs finish, their ${selected.metric} (${selected.stat}) will plot here over time.</p>`
+            : html`<p class="text-dim">No data points match the current filters. ${entries.length} run${entries.length === 1 ? '' : 's'} are hidden — clear the model/endpoint${ns ? '/namespace' : ''} filter to see them.</p>`}
         </div>
       `}
 
@@ -211,11 +257,28 @@ export function History() {
         <div class="card" style="margin-bottom: var(--space-4)">
           <div class="card-title">${selected.metric} (${selected.stat}) over time</div>
           <${ChartWrapper} type="line" data=${chartData} options=${chartOptions} height=${300} />
+          ${isSinglePoint && html`
+            <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+              Only one data point — line chart will trend once a second matching run finishes.
+            </div>
+          `}
         </div>
 
         <!-- Data table -->
         <div class="card">
-          <div class="card-title">Data Points</div>
+          <div class="card-title" style="display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap">
+            <span>Data Points</span>
+            <span class="text-dim" style="font-size: var(--font-size-xs); font-weight: normal" data-testid="history-count">
+              ${filtered.length === entries.length
+                ? `${filtered.length} run${filtered.length === 1 ? '' : 's'}`
+                : `${filtered.length} of ${entries.length} runs`}
+              ${entries.length >= HISTORY_TRUNCATION_HINT
+                ? html`<span style=${'margin-left: var(--space-2); padding: 1px 6px; border: 1px solid ' + palette.peach + '55; border-radius: 6px; color: ' + palette.peach}
+                    title="The history endpoint caps responses at ${HISTORY_TRUNCATION_HINT}. Older runs may be missing — narrow by model/endpoint to refine."
+                  >may be truncated</span>`
+                : ''}
+            </span>
+          </div>
           <div style="overflow-x: auto">
             <table style="width: 100%; border-collapse: collapse; font-size: var(--font-size-sm)">
               <thead>

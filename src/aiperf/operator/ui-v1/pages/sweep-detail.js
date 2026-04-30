@@ -13,8 +13,9 @@ import { VariationsPareto } from '../components/variations-pareto.js';
 import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
+import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
-import { navigate } from '../lib/router.js';
+import { navigate, query, setQuery } from '../lib/router.js';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
@@ -86,8 +87,21 @@ export function SweepDetail({ namespace, name, epoch }) {
   const [epochs, setEpochs] = useState([]);
   const [archivedChildren, setArchivedChildren] = useState(null);
   const [childSummaries, setChildSummaries] = useState({});
-  const [chartMetricKey, setChartMetricKey] = useState(DEFAULT_CHART_METRIC_KEY);
-  const [paretoAxisKey, setParetoAxisKey] = useState(DEFAULT_PARETO_AXIS_KEY);
+  // URL-driven view state: ?metric= and ?axis= persist the chart-metric and
+  // pareto-axis selectors so deep-links and reloads keep the chosen view.
+  // Default values are elided from the URL to avoid noise.
+  const urlMetric = query.value.metric ?? DEFAULT_CHART_METRIC_KEY;
+  const urlAxis = query.value.axis ?? DEFAULT_PARETO_AXIS_KEY;
+  const [chartMetricKey, setChartMetricKey] = useState(urlMetric);
+  const [paretoAxisKey, setParetoAxisKey] = useState(urlAxis);
+  useEffect(() => {
+    if (chartMetricKey !== urlMetric) setChartMetricKey(urlMetric);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlMetric]);
+  useEffect(() => {
+    if (paretoAxisKey !== urlAxis) setParetoAxisKey(urlAxis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlAxis]);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -289,7 +303,7 @@ export function SweepDetail({ namespace, name, epoch }) {
     `;
   }
   if (!detail) {
-    return html`<div data-testid="page-sweep-detail" class="text-dim" style="padding:var(--space-6)">Loading…</div>`;
+    return html`<div data-testid="page-sweep-detail"><${LoadingPanel} label=${'Loading sweep ' + namespace + '/' + name + '…'} /></div>`;
   }
 
   const s = detail.sweep;
@@ -340,7 +354,12 @@ export function SweepDetail({ namespace, name, epoch }) {
 
       ${conditions.length > 0 && html`
         <div style="margin-bottom: var(--space-4)">
-          <${Conditions} conditions=${conditions} />
+          <${Conditions} conditions=${conditions.length > 8 ? conditions.slice(-8) : conditions} />
+          ${conditions.length > 8 && html`
+            <div class="text-dim" style="font-size:var(--font-size-xs);margin-top:var(--space-1);padding-left:var(--space-2)">
+              Showing 8 most recent of ${conditions.length} conditions.
+            </div>
+          `}
         </div>
       `}
 
@@ -380,7 +399,7 @@ export function SweepDetail({ namespace, name, epoch }) {
             <div class="card-title" style="margin:0">Variation curve</div>
             <select
               value=${chartMetricKey}
-              onchange=${e => setChartMetricKey(e.target.value)}
+              onchange=${e => setQuery({ metric: e.target.value === DEFAULT_CHART_METRIC_KEY ? undefined : e.target.value })}
               data-testid="variations-chart-metric"
               style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
             >
@@ -396,7 +415,7 @@ export function SweepDetail({ namespace, name, epoch }) {
             metricLabel=${chartMetric.meta.label}
             unit=${chartMetric.meta.unit}
           />
-          <div style="margin-top: var(--space-3)">
+          <div style="margin-top: var(--space-3); overflow-x: auto">
             <${VariationsTable}
               variations=${variations}
               headlineMetrics=${HEADLINE_METRICS}
@@ -411,12 +430,16 @@ export function SweepDetail({ namespace, name, epoch }) {
         <div class="card" style="margin-bottom: var(--space-4)" data-testid="sweep-detail-pareto">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
             <div class="card-title" style="margin:0">Pareto · ${paretoAxis.x.label} × ${paretoAxis.y.label}</div>
-            <div class="filter-tabs" style="margin:0">
+            <div class="filter-tabs" role="tablist" aria-label="Pareto axis selector" style="margin:0">
               ${PARETO_AXES.map(a => html`
                 <button
                   key=${a.key}
+                  role="tab"
+                  aria-pressed=${paretoAxisKey === a.key}
+                  aria-selected=${paretoAxisKey === a.key}
+                  title=${a.x.label + ' (' + a.x.unit + ') × ' + a.y.label + ' (' + a.y.unit + ')'}
                   class=${'filter-tab' + (paretoAxisKey === a.key ? ' filter-tab--active' : '')}
-                  onclick=${() => setParetoAxisKey(a.key)}
+                  onclick=${() => setQuery({ axis: a.key === DEFAULT_PARETO_AXIS_KEY ? undefined : a.key })}
                   data-testid=${'pareto-axis-' + a.key}
                 >${a.label}</button>
               `)}
@@ -455,7 +478,17 @@ export function SweepDetail({ namespace, name, epoch }) {
 
       <!-- Children -->
       <div class="card" data-testid="sweep-detail-children">
-        <div class="card-title">Children (${childRows.length})</div>
+        <div class="card-title" style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap">
+          <span>Children (${childRows.length})</span>
+          ${childRowsAreArchived && html`
+            <span
+              title="These runs are from a prior sweep epoch — re-running the sweep will produce a new set."
+              style=${`font-size:var(--font-size-xs);font-weight:normal;padding:1px 6px;border:1px solid ${palette.surface1};border-radius:6px;color:${palette.overlay1};background:${palette.surface0}33`}
+            >
+              archived epoch ${epoch}
+            </span>
+          `}
+        </div>
         ${childRows.length === 0
           ? html`<div class="text-dim" style="padding:var(--space-3) 0">No children persisted for this epoch yet.</div>`
           : childRowsAreArchived

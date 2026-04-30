@@ -30,6 +30,13 @@ function conditionClass(condition) {
 }
 
 /**
+ * Defensive cap on rendered condition badges. K8s conditions for AIPerfJob
+ * top out at ~10 in normal operation; a malformed status block has no upper
+ * bound, so cap rendering to keep DOM bounded and prevent runaway layouts.
+ */
+const MAX_VISIBLE_CONDITIONS = 50;
+
+/**
  * Row of condition status badges.
  * @param {{ conditions: Array<{type: string, status: string, reason?: string, message?: string}> }} props
  */
@@ -38,9 +45,17 @@ export function Conditions({ conditions }) {
     return html`<div class="conditions conditions--empty">No conditions</div>`;
   }
 
+  const overflow = Math.max(0, conditions.length - MAX_VISIBLE_CONDITIONS);
+  const visible = overflow > 0 ? conditions.slice(0, MAX_VISIBLE_CONDITIONS) : conditions;
+
   return html`
-    <div class="conditions" role="list" aria-label="Conditions">
-      ${conditions.map((cond) => {
+    <div
+      class="conditions"
+      role="list"
+      aria-label="Conditions"
+      style="display:flex;flex-wrap:wrap;gap:var(--space-1,4px);align-items:center"
+    >
+      ${visible.map((cond) => {
         const label = CONDITION_LABELS[cond.type] ?? cond.type;
         const cls = conditionClass(cond);
         const title = cond.message
@@ -53,11 +68,22 @@ export function Conditions({ conditions }) {
             class=${'condition-badge ' + cls}
             title=${title}
             role="listitem"
+            style="word-break:break-word;max-width:100%"
           >
             ${label}
           </span>
         `;
       })}
+      ${overflow > 0 && html`
+        <span
+          class="condition-badge condition-badge--unknown"
+          role="listitem"
+          title=${'+' + overflow + ' more conditions hidden (showing first ' + MAX_VISIBLE_CONDITIONS + ')'}
+          style="word-break:break-word;max-width:100%"
+        >
+          +${overflow} more
+        </span>
+      `}
     </div>
   `;
 }

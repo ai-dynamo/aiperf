@@ -3,6 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
 
 // Metrics where lower is better
@@ -36,7 +37,212 @@ function bestValue(metric, values) {
 
 function formatNum(v) {
   if (v == null) return '\u2014';
-  return typeof v === 'number' ? fmtNumber(v, 3) : String(v);
+  if (typeof v !== 'number') return String(v);
+  // Tiny per-GPU values (e.g. 0.04 req/s/GPU on 1024 GPUs) round to "0.000"
+  // at 3 decimals. Bump precision when the magnitude requires it.
+  const abs = Math.abs(v);
+  if (abs > 0 && abs < 0.01) return fmtNumber(v, 5);
+  if (abs > 0 && abs < 1) return fmtNumber(v, 4);
+  return fmtNumber(v, 3);
+}
+
+// Human-friendly metric labels for tooltip hints. Falls back to the
+// machine name when nothing matches so a missing entry just hides the
+// hint rather than breaking layout.
+const METRIC_DESCRIPTIONS = {
+  request_throughput: 'Successful requests completed per second.',
+  request_latency: 'End-to-end request latency (request sent \u2192 final token received).',
+  output_token_throughput: 'Output tokens generated per second across the whole run.',
+  output_token_throughput_per_user: 'Output tokens per second observed by a single user/session.',
+  total_token_throughput: 'Input + output tokens processed per second.',
+  time_to_first_token: 'Time from request sent to the first streamed token.',
+  inter_token_latency: 'Time between successive streamed output tokens.',
+  output_sequence_length: 'Number of output tokens per response.',
+  input_sequence_length: 'Number of input tokens per request.',
+};
+
+// Look up one (metric, stat) row from the pivoted compare response.
+function findEntry(entries, metric, stat) {
+  if (!Array.isArray(entries)) return null;
+  return entries.find((e) => e.metric === metric && e.stat === stat) ?? null;
+}
+
+// Hardware colors — points on the InferenceX-style Pareto are colored by
+// GPU family rather than per-job, so identical accelerators cluster
+// visually. Falls back to a stable hash-based color for unknowns.
+const GPU_FAMILY_COLORS = {
+  B200: palette.green,
+  GB200: palette.teal,
+  H200: palette.blue,
+  H100: palette.sapphire,
+  GH200: palette.lavender,
+  A100: palette.peach,
+  L40S: palette.yellow,
+  L40: palette.yellow,
+  L4: palette.maroon,
+  A10G: palette.maroon,
+  MI300X: palette.red,
+  MI325X: palette.red,
+};
+
+// Pull a short family tag (e.g. "H100") out of a DCGM model string like
+// "NVIDIA H100 80GB HBM3" or "NVIDIA H200". Returns null when nothing
+// matches so callers can fall back to the raw name.
+function gpuFamily(name) {
+  if (!name || typeof name !== 'string') return null;
+  const upper = name.toUpperCase();
+  const known = [
+    'GB200', 'B200', 'GH200', 'H200', 'H100', 'A100',
+    'L40S', 'L40', 'L4', 'A10G', 'MI325X', 'MI300X',
+  ];
+  for (const tag of known) {
+    if (upper.includes(tag)) return tag;
+  }
+  return null;
+}
+
+function gpuColor(name) {
+  const fam = gpuFamily(name);
+  if (fam && GPU_FAMILY_COLORS[fam]) return GPU_FAMILY_COLORS[fam];
+  // Stable hash → palette pick for unknown GPUs.
+  let h = 0;
+  for (let i = 0; i < (name || '').length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return JOB_COLORS[Math.abs(h) % JOB_COLORS.length];
+}
+
+// Build (x, y, label, color) points for a two-metric scatter. ``yPerGpu``
+// flag divides the Y value by the run's gpu_count (skipping runs that
+// lack telemetry). Color is keyed by GPU family so identical hardware
+// clusters on the chart.
+function buildScatterPoints(entries, x, y, displayKeys, splitKey, meta, yPerGpu) {
+  const xEntry = findEntry(entries, x.metric, x.stat);
+  const yEntry = findEntry(entries, y.metric, y.stat);
+  if (!xEntry || !yEntry) return [];
+  const points = [];
+  for (let i = 0; i < displayKeys.length; i++) {
+    const key = displayKeys[i];
+    const xv = xEntry.values?.[key];
+    const yv = yEntry.values?.[key];
+    if (xv == null || yv == null) continue;
+    const m = (meta && meta[key]) || {};
+    const gpuCount = Number(m.gpu_count) || 0;
+    if (yPerGpu && gpuCount <= 0) continue;
+    const yScaled = yPerGpu ? Number(yv) / gpuCount : Number(yv);
+    const gpuName = m.gpu_name || null;
+    const color = gpuName ? gpuColor(gpuName) : JOB_COLORS[i % JOB_COLORS.length];
+    points.push({
+      x: Number(xv),
+      y: yScaled,
+      key,
+      jobName: splitKey(key).jobId,
+      gpuCount,
+      gpuName,
+      gpuFamily: gpuFamily(gpuName) || gpuName || 'unknown',
+      color,
+    });
+  }
+  return points;
+}
+
+// Compute the Pareto-non-dominated subset of points, sorted by x ascending
+// for clean line drawing. ``larger`` flags say which direction is "better"
+// on each axis. O(n^2) \u2014 n is bounded by the number of selected runs.
+function paretoFrontier(points, xLargerBetter, yLargerBetter) {
+  if (!points || points.length < 2) return points ? points.slice() : [];
+  const dominates = (a, b) => {
+    const xBeat = xLargerBetter ? a.x >= b.x : a.x <= b.x;
+    const yBeat = yLargerBetter ? a.y >= b.y : a.y <= b.y;
+    const strict = a.x !== b.x || a.y !== b.y;
+    return xBeat && yBeat && strict;
+  };
+  return points
+    .filter((p) => !points.some((q) => q !== p && dominates(q, p)))
+    .slice()
+    .sort((a, b) => a.x - b.x);
+}
+
+// Build a chart.js scatter config from a point set + frontier line.
+function buildScatterChart(points, frontier, x, y) {
+  const datasets = [
+    {
+      label: 'runs',
+      data: points,
+      pointBackgroundColor: points.map((p) => p.color),
+      pointBorderColor: points.map((p) => p.color),
+      pointRadius: 7,
+      pointHoverRadius: 11,
+      showLine: false,
+      order: 1,
+      legend: false,
+    },
+  ];
+  if (frontier && frontier.length >= 2) {
+    datasets.push({
+      label: 'pareto frontier',
+      data: frontier.map((p) => ({ x: p.x, y: p.y, jobName: p.jobName })),
+      borderColor: palette.mauve,
+      backgroundColor: palette.mauve,
+      borderWidth: 1.6,
+      borderDash: [4, 4],
+      showLine: true,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      order: 2,
+      legend: false,
+    });
+  }
+
+  const options = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: palette.mantle,
+        titleColor: palette.text,
+        bodyColor: palette.text,
+        borderColor: palette.surface0,
+        borderWidth: 1,
+        callbacks: {
+          label: (ctx) => {
+            const p = ctx.raw;
+            const xs = `${x.label}: ${fmtNumber(p.x, 2)}${x.unit ? ' ' + x.unit : ''}`;
+            const ys = `${y.label}: ${fmtNumber(p.y, 2)}${y.unit ? ' ' + y.unit : ''}`;
+            const head = p.jobName || '';
+            const hw = p.gpuCount && p.gpuFamily
+              ? ` \u00b7 ${p.gpuCount}\u00d7 ${p.gpuFamily}`
+              : '';
+            return head ? `${head}${hw} \u2014 ${xs}, ${ys}` : `${xs}, ${ys}`;
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: x.unit ? `${x.label} (${x.unit})` : x.label,
+          color: palette.overlay1,
+          font: { size: 11 },
+        },
+        grid: { color: palette.surface0 + '40' },
+        ticks: { color: palette.overlay0, font: { size: 10 } },
+      },
+      y: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: y.unit ? `${y.label} (${y.unit})` : y.label,
+          color: palette.overlay1,
+          font: { size: 11 },
+        },
+        grid: { color: palette.surface0 + '40' },
+        ticks: { color: palette.overlay0, font: { size: 11 } },
+      },
+    },
+  };
+
+  return { datasets, options };
 }
 
 export function Compare() {
@@ -89,6 +295,20 @@ export function Compare() {
     setCompareError(null);
   }
 
+  // Quick-pick: take the most recent N completed runs (by start_time desc,
+  // falling back to original list order). Bridges the cold-start gap between
+  // "0 selected" and "see Pareto" — without it, first-time users have to hunt
+  // for jobs by name before they can see anything.
+  function selectRecent(n) {
+    const sorted = [...storedJobs].sort((a, b) => {
+      const ta = a?.start_time ? Date.parse(a.start_time) : 0;
+      const tb = b?.start_time ? Date.parse(b.start_time) : 0;
+      return tb - ta;
+    });
+    const picks = sorted.slice(0, n).map(compositeKey).filter(Boolean);
+    if (picks.length >= 2) setSelectedKeys(picks);
+  }
+
   async function handleCompare() {
     if (selectedKeys.length < 2) return;
     setComparing(true);
@@ -131,6 +351,97 @@ export function Compare() {
     return { labels: metrics, datasets };
   })();
 
+  // InferenceX-style charts. Built only when the relevant metrics are
+  // present for at least two runs — non-streaming runs lack
+  // ``output_token_throughput_per_user`` and will silently drop out.
+  // Y-axis throughput is normalized per GPU using meta.gpu_count from
+  // the run's telemetry payload (``profile_export_aiperf.json``'s
+  // ``telemetry_data.endpoints[..].gpus``). Runs without GPU telemetry
+  // get dropped from the per-GPU charts and surfaced in a "no telemetry"
+  // note rather than silently misrepresenting throughput.
+  const meta = compareData?.meta ?? {};
+  const paretoAxes = {
+    x: {
+      metric: 'output_token_throughput_per_user',
+      stat: 'avg',
+      label: 'Per-user output throughput',
+      unit: 'tok/s',
+      largerBetter: true,
+    },
+    y: {
+      metric: 'output_token_throughput',
+      stat: 'avg',
+      label: 'Output token throughput / GPU',
+      unit: 'tok/s/GPU',
+      largerBetter: true,
+    },
+  };
+  const paretoPoints = buildScatterPoints(
+    entries, paretoAxes.x, paretoAxes.y, displayKeys, splitKey, meta, true,
+  );
+  const paretoChart = paretoPoints.length >= 1
+    ? buildScatterChart(
+        paretoPoints,
+        paretoFrontier(paretoPoints, paretoAxes.x.largerBetter, paretoAxes.y.largerBetter),
+        paretoAxes.x,
+        paretoAxes.y,
+      )
+    : null;
+
+  const latThruAxes = {
+    x: {
+      metric: 'request_latency',
+      stat: 'p99',
+      label: 'Request latency p99',
+      unit: 'ms',
+      largerBetter: false,
+    },
+    y: {
+      metric: 'request_throughput',
+      stat: 'avg',
+      label: 'Request throughput / GPU',
+      unit: 'req/s/GPU',
+      largerBetter: true,
+    },
+  };
+  const latThruPoints = buildScatterPoints(
+    entries, latThruAxes.x, latThruAxes.y, displayKeys, splitKey, meta, true,
+  );
+  const latThruChart = latThruPoints.length >= 1
+    ? buildScatterChart(
+        latThruPoints,
+        paretoFrontier(latThruPoints, latThruAxes.x.largerBetter, latThruAxes.y.largerBetter),
+        latThruAxes.x,
+        latThruAxes.y,
+      )
+    : null;
+
+  // GPU-family legend rows for the chart cards: one entry per distinct
+  // family represented in the current Pareto point set.
+  const paretoGpuLegend = (() => {
+    const seen = new Map();
+    for (const p of paretoPoints) {
+      const fam = p.gpuFamily || 'unknown';
+      if (!seen.has(fam)) seen.set(fam, { family: fam, color: p.color });
+    }
+    return Array.from(seen.values());
+  })();
+  const latThruGpuLegend = (() => {
+    const seen = new Map();
+    for (const p of latThruPoints) {
+      const fam = p.gpuFamily || 'unknown';
+      if (!seen.has(fam)) seen.set(fam, { family: fam, color: p.color });
+    }
+    return Array.from(seen.values());
+  })();
+
+  // Count of selected runs whose telemetry didn't expose any GPU at all —
+  // used for the "N omitted (no GPU telemetry)" note.
+  const runsMissingGpuTelemetry = displayKeys.filter((k) => {
+    const c = Number(meta[k]?.gpu_count) || 0;
+    return c <= 0;
+  }).length;
+
   const chartOptions = {
     plugins: {
       legend: {
@@ -171,8 +482,27 @@ export function Compare() {
             style="width: 100%; margin-bottom: var(--space-3)"
           />
 
+          ${!jobsLoading && storedJobs.length >= 2 && selectedKeys.length === 0 && html`
+            <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3)" data-testid="compare-quick-pick">
+              <span class="text-dim" style="font-size: var(--font-size-xs); align-self: center">Quick pick:</span>
+              <button
+                onclick=${() => selectRecent(Math.min(3, storedJobs.length))}
+                disabled=${storedJobs.length < 2}
+                style="padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext1); font-size: var(--font-size-xs); cursor: pointer"
+                title="Pick the 3 most recent completed runs"
+              >Last 3</button>
+              ${storedJobs.length >= 5 && html`
+                <button
+                  onclick=${() => selectRecent(5)}
+                  style="padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext1); font-size: var(--font-size-xs); cursor: pointer"
+                  title="Pick the 5 most recent completed runs"
+                >Last 5</button>
+              `}
+            </div>
+          `}
+
           ${jobsLoading && html`
-            <div class="text-dim" style="padding: var(--space-4); text-align: center">Loading…</div>
+            <${LoadingPanel} label="Loading jobs…" inline=${true} testid="compare-jobs-loading" />
           `}
 
           ${jobsError && html`
@@ -220,7 +550,9 @@ export function Compare() {
                   ? ' background: var(--mauve); color: var(--base); border-color: var(--mauve); font-weight: 600;'
                   : ' background: var(--surface0); color: var(--overlay0); border-color: var(--surface1); cursor: not-allowed;')}
             >
-              ${comparing ? 'Comparing…' : `Compare (${selectedKeys.length})`}
+              ${comparing
+                ? html`<span style="display: inline-flex; align-items: center; gap: var(--space-2)"><${Spinner} size=${12} thickness=${1.5} color="var(--overlay0)" />Comparing…</span>`
+                : `Compare (${selectedKeys.length})`}
             </button>
             ${selectedKeys.length > 0 && html`
               <button
@@ -246,9 +578,29 @@ export function Compare() {
                     + ' border: 1px solid ' + JOB_COLORS[idx % JOB_COLORS.length] + '44;'}
                 >
                   ${splitKey(key).jobId}
+                  ${(() => {
+                    const m = meta[key];
+                    if (!m || !m.gpu_count || m.gpu_count <= 0) return null;
+                    const fam = gpuFamily(m.gpu_name) || m.gpu_name || 'GPU';
+                    return html`
+                      <span style="font-family: var(--font-mono); opacity: 0.85; padding-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1">
+                        ${m.gpu_count}× ${fam}
+                      </span>
+                    `;
+                  })()}
                   <span
                     onclick=${() => toggleJob(key)}
-                    style="cursor: pointer; opacity: 0.7; font-size: var(--font-size-xs)"
+                    onkeydown=${(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleJob(key);
+                      }
+                    }}
+                    title=${'Remove ' + splitKey(key).jobId + ' from comparison'}
+                    aria-label=${'Remove ' + splitKey(key).jobId + ' from comparison'}
+                    role="button"
+                    tabindex="0"
+                    style="cursor: pointer; opacity: 0.7; font-size: var(--font-size-sm); padding: 0 var(--space-1); margin-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1; outline-offset: 2px"
                   >✕</span>
                 </span>
               `)}
@@ -261,19 +613,37 @@ export function Compare() {
             </div>
           `}
 
-          ${!compareData && !comparing && selectedKeys.length < 2 && html`
+          ${!compareData && !comparing && selectedKeys.length === 0 && storedJobs.length === 0 && !jobsLoading && html`
+            <div class="card empty-state">
+              <p class="text-dim">No completed jobs yet. Run an AIPerfJob to populate the comparison list.</p>
+            </div>
+          `}
+
+          ${!compareData && !comparing && selectedKeys.length === 0 && storedJobs.length > 0 && html`
             <div class="card empty-state">
               <p class="text-dim">Select 2 or more jobs from the list to compare them.</p>
             </div>
           `}
 
-          ${comparing && html`
-            <div class="card" style="text-align: center; padding: var(--space-8)">
-              <span class="text-dim">Running comparison…</span>
+          ${!compareData && !comparing && selectedKeys.length === 1 && html`
+            <div class="card empty-state">
+              <p class="text-dim">Select at least one more job — comparison needs 2 or more runs.</p>
             </div>
           `}
 
-          ${compareData && !comparing && html`
+          ${comparing && html`
+            <div class="card">
+              <${LoadingPanel} label="Running comparison…" testid="compare-running" />
+            </div>
+          `}
+
+          ${compareData && !comparing && entries.length === 0 && html`
+            <div class="card empty-state" data-testid="compare-no-entries">
+              <p class="text-dim">No comparable metrics returned for the selected runs. They may be from different endpoints, or their results haven't been fully exported yet.</p>
+            </div>
+          `}
+
+          ${compareData && !comparing && entries.length > 0 && html`
             <!-- Metrics table -->
             <div class="card" style="margin-bottom: var(--space-4)">
               <div class="card-title">Metric Comparison</div>
@@ -297,8 +667,8 @@ export function Compare() {
                       const best = bestValue(entry.metric, entry.values ?? {});
                       return html`
                         <tr key=${entry.metric + entry.stat} style="border-bottom: 1px solid var(--surface0)">
-                          <td style="padding: var(--space-2) var(--space-3)">
-                            <div>${entry.metric}</div>
+                          <td style="padding: var(--space-2) var(--space-3)" title=${METRIC_DESCRIPTIONS[entry.metric] || entry.metric}>
+                            <div style="font-family: var(--font-mono); font-size: var(--font-size-xs)">${entry.metric}</div>
                             ${entry.stat && html`<div style="font-size: var(--font-size-xs); color: var(--overlay0)">${entry.stat}${entry.unit ? ' · ' + entry.unit : ''}</div>`}
                           </td>
                           ${displayKeys.map((key) => {
@@ -327,6 +697,68 @@ export function Compare() {
               <div class="card">
                 <div class="card-title">Visual Comparison</div>
                 <${ChartWrapper} type="bar" data=${chartData} options=${chartOptions} height=${300} />
+              </div>
+            `}
+
+            <!-- InferenceX-style Pareto: per-user vs per-GPU output throughput -->
+            ${paretoChart && html`
+              <div class="card" style="margin-top: var(--space-4)" data-testid="compare-pareto-throughput">
+                <div class="card-title">Throughput Pareto · per-user × per-GPU</div>
+                <${ChartWrapper} type="scatter" data=${{ datasets: paretoChart.datasets }} options=${paretoChart.options} height=${340} />
+                ${paretoPoints.length === 1 && html`
+                  <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+                    Add another run for a frontier — a Pareto needs at least two points.
+                  </div>
+                `}
+                ${paretoGpuLegend.length > 1 && html`
+                  <div style="margin-top: var(--space-2); display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--font-size-xs)">
+                    ${paretoGpuLegend.map((g) => html`
+                      <span key=${g.family} style="display: inline-flex; align-items: center; gap: var(--space-1)">
+                        <span style=${'display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ' + g.color}></span>
+                        <span style="color: var(--subtext0)">${g.family}</span>
+                      </span>
+                    `)}
+                  </div>
+                `}
+                ${paretoPoints.length < displayKeys.length && html`
+                  <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+                    ${displayKeys.length - paretoPoints.length} run(s) omitted — missing ${paretoAxes.x.metric} or GPU telemetry
+                    ${runsMissingGpuTelemetry > 0
+                      ? html` (${runsMissingGpuTelemetry} have no DCGM data — verify <code style="font-family: var(--font-mono)">dcgm-exporter</code> sidecar is enabled and the controller pod's GPU telemetry config exposes it)`
+                      : ''}
+                  </div>
+                `}
+              </div>
+            `}
+
+            <!-- InferenceX-style latency × throughput tradeoff -->
+            ${latThruChart && html`
+              <div class="card" style="margin-top: var(--space-4)" data-testid="compare-pareto-latency">
+                <div class="card-title">Latency × Throughput · request p99 × req/s/GPU</div>
+                <${ChartWrapper} type="scatter" data=${{ datasets: latThruChart.datasets }} options=${latThruChart.options} height=${340} />
+                ${latThruPoints.length === 1 && html`
+                  <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+                    Add another run for a frontier — a Pareto needs at least two points.
+                  </div>
+                `}
+                ${latThruGpuLegend.length > 1 && html`
+                  <div style="margin-top: var(--space-2); display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--font-size-xs)">
+                    ${latThruGpuLegend.map((g) => html`
+                      <span key=${g.family} style="display: inline-flex; align-items: center; gap: var(--space-1)">
+                        <span style=${'display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ' + g.color}></span>
+                        <span style="color: var(--subtext0)">${g.family}</span>
+                      </span>
+                    `)}
+                  </div>
+                `}
+                ${latThruPoints.length < displayKeys.length && html`
+                  <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+                    ${displayKeys.length - latThruPoints.length} run(s) omitted — missing latency, throughput, or GPU telemetry
+                    ${runsMissingGpuTelemetry > 0
+                      ? html` (${runsMissingGpuTelemetry} have no DCGM data — verify <code style="font-family: var(--font-mono)">dcgm-exporter</code> sidecar is enabled and the controller pod's GPU telemetry config exposes it)`
+                      : ''}
+                  </div>
+                `}
               </div>
             `}
           `}

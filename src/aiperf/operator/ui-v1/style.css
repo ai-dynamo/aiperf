@@ -524,6 +524,15 @@ select, input {
   50% { opacity: 0.5; }
 }
 
+@keyframes ui-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ui-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.85; }
+}
+
 .status-item {
   display: flex;
   align-items: center;
@@ -993,6 +1002,8 @@ select, input {
 ────────────────────────────────────────────────────────────── */
 .job-table-wrapper {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 240px);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
 }
@@ -1059,6 +1070,14 @@ select, input {
   text-align: center;
   padding: var(--space-8);
   color: var(--muted);
+}
+
+.job-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
 }
 
 /* ──────────────────────────────────────────────────────────────

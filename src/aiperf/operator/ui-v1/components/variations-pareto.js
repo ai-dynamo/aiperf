@@ -119,7 +119,11 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
           borderColor: palette.surface0,
           borderWidth: 1,
           callbacks: {
-            label: ctx => `${ctx.raw.cluster ?? ctx.dataset.label} · ${ctx.raw.jobName ?? ''} — ${fmtNumber(ctx.raw.x, 0)} · ${fmtInt(ctx.raw.y)}`,
+            title: ctx => ctx[0]?.raw?.jobName ?? '',
+            label: ctx => [
+              `${xMetric.label}: ${fmtNumber(ctx.raw.x, 0)} ${xMetric.unit}`,
+              `${yMetric.label}: ${fmtInt(ctx.raw.y)} ${yMetric.unit}`,
+            ],
           },
         },
       },
@@ -150,9 +154,9 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
   return html`
     <div data-testid="sweep-variations-pareto">
       <${ChartWrapper} type="scatter" data=${{ datasets: chart.datasets }} options=${chart.options} height=${360} />
-      ${chart.frontier.length > 0 && html`
+      ${chart.frontier.length >= 2 && html`
         <div class="text-dim" style="margin-top:var(--space-2);font-size:var(--font-size-xs)">
-          frontier: ${chart.frontier.map(p => p.jobName).join(' → ') || '—'}
+          frontier: ${chart.frontier.map(p => p.jobName).join(' → ')}
         </div>
       `}
     </div>

@@ -134,3 +134,10 @@ class CompareResponse(AIPerfBaseModel):
     entries: list[dict[str, Any]] = Field(
         default_factory=list, description="Per-job metric values"
     )
+    meta: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-job context keyed by '<namespace>/<job_id>'. "
+        "Each value carries gpu_count, gpu_name, model, endpoint — used by "
+        "the UI to normalize throughput per GPU and color points by "
+        "accelerator (InferenceX-style correlation).",
+    )

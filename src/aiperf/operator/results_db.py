@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import orjson
 
 from aiperf.operator.results_layout import resolve_run_dir
 
@@ -27,8 +28,47 @@ DEFAULT_COMPARE_METRICS = [
     "request_latency",
     "time_to_first_token",
     "output_token_throughput",
+    "output_token_throughput_per_user",
     "inter_token_latency",
 ]
+
+
+def _summarize_telemetry(telemetry_json: Any) -> tuple[int, str | None]:
+    """Extract (gpu_count, representative_gpu_name) from a telemetry payload.
+
+    DuckDB hands us ``to_json(t.telemetry_data)`` as a JSON string when the
+    ``telemetry_data`` struct is non-null and ``None`` when it's missing.
+    GPU count totals ``len(endpoints[i].gpus)`` across every endpoint —
+    the typical AIPerf deployment scrapes DCGM only from inference-server
+    pods, so this matches the InferenceX denominator. Returns (0, None)
+    when telemetry is absent or unparseable.
+    """
+    if not telemetry_json:
+        return 0, None
+    try:
+        data = (
+            orjson.loads(telemetry_json)
+            if isinstance(telemetry_json, (str, bytes))
+            else telemetry_json
+        )
+    except orjson.JSONDecodeError:
+        return 0, None
+    endpoints = (data or {}).get("endpoints") or {}
+    if not isinstance(endpoints, dict):
+        return 0, None
+    count = 0
+    name: str | None = None
+    for ep in endpoints.values():
+        gpus = (ep or {}).get("gpus") or {}
+        if not isinstance(gpus, dict):
+            continue
+        count += len(gpus)
+        if name is None:
+            for gpu in gpus.values():
+                if gpu and gpu.get("gpu_name"):
+                    name = gpu["gpu_name"]
+                    break
+    return count, name
 
 
 class ResultsDB:
@@ -279,6 +319,16 @@ class ResultsDB:
         if not base_rows:
             return []
 
+        # Pull GPU count + representative GPU model out of the telemetry
+        # JSON payload so the UI can render per-GPU throughput and group
+        # runs by accelerator (the InferenceX-style correlation). Strip the
+        # raw JSON column once parsed — keeping it would bloat the response.
+        for row in base_rows:
+            telemetry_json = row.pop("telemetry_json", None)
+            gpu_count, gpu_name = _summarize_telemetry(telemetry_json)
+            row["gpu_count"] = gpu_count
+            row["gpu_name"] = gpu_name
+
         # Key by (namespace, job_id, epoch) — two jobs with the same job_id
         # in different namespaces (or two epochs of the same job, when an
         # explicit epoch is passed) must not overwrite each other.
@@ -321,7 +371,8 @@ class ResultsDB:
                 {self._extract_job_path_parts()},
                 t.start_time::VARCHAR AS start_time,
                 t.input_config.models.items[1].name AS model,
-                t.input_config.endpoint.urls[1] AS endpoint
+                t.input_config.endpoint.urls[1] AS endpoint,
+                to_json(t)::JSON ->> 'telemetry_data' AS telemetry_json
             FROM (
                 SELECT *, filename
                 FROM read_json({files},

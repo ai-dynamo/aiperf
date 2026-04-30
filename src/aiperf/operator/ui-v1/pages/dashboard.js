@@ -8,6 +8,7 @@ import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
+import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
 
 function findBest(jobList, field) {
@@ -242,14 +243,28 @@ export function Dashboard() {
   const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
   const [summaryMap, setSummaryMap] = useState({});
+  // Block the dashboard body behind a spinner until the first /jobs
+  // fetch returns. Without this, an empty cluster shows the entire
+  // dashboard skeleton in its empty-state form before the first poll
+  // resolves, which reads as "no data" rather than "still loading".
+  const [firstJobsLoad, setFirstJobsLoad] = useState(jobs.value.length === 0);
+  const [jobsError, setJobsError] = useState(null);
 
   useEffect(() => {
     const ac = new AbortController();
     poll(async () => {
-      const data = await api.listJobs();
-      const list = data?.jobs ?? [];
-      jobs.value = list;
-      setLocalJobs(list);
+      try {
+        const data = await api.listJobs();
+        const list = data?.jobs ?? [];
+        jobs.value = list;
+        setLocalJobs(list);
+        setJobsError(null);
+      } catch (err) {
+        if (firstJobsLoad) setJobsError(err?.message ?? String(err));
+        throw err;
+      } finally {
+        setFirstJobsLoad(false);
+      }
     }, 5000, ac.signal);
     poll(async () => {
       try {
@@ -287,6 +302,7 @@ export function Dashboard() {
       } catch (_e) { /* not available yet */ }
     }, 15000, ac.signal);
     return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const allJobs = enrichJobsFromSummaries(localJobs, summaryMap);
@@ -302,10 +318,48 @@ export function Dashboard() {
   const maxThroughput = top5.reduce((mx, j) => Math.max(mx, j.throughputRps ?? 0), 0) || 1;
   const maxLatency = top5.reduce((mx, j) => Math.max(mx, j.latencyP99Ms ?? 0), 0) || 1;
 
+  if (firstJobsLoad) {
+    return html`
+      <div class="dashboard" data-testid="page-dashboard">
+        <div class="card">
+          <${LoadingPanel} label="Loading dashboard…" testid="dashboard-loading" />
+        </div>
+      </div>
+    `;
+  }
+
+  if (jobsError) {
+    return html`
+      <div class="dashboard" data-testid="page-dashboard">
+        <div class="card" style="border-color: var(--error); color: var(--error)" data-testid="dashboard-jobs-error">
+          <div style="font-weight:600;margin-bottom:4px">Failed to load jobs</div>
+          <div style="font-size:var(--font-size-sm);margin-bottom:8px">${jobsError}</div>
+          <div style="font-size:var(--font-size-sm);color:var(--muted)">
+            Check that the operator is reachable (try <code>aiperf kube status</code>) and that your kubeconfig context targets the right cluster.
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const noJobsAtAll = allJobs.length === 0;
+
   return html`
     <div class="dashboard" data-testid="page-dashboard">
-      ${clusterError && html`<div class="cluster-warning-banner">Cluster endpoint unavailable — data may be stale.</div>`}
+      ${clusterError && html`<div class="cluster-warning-banner" title="The /cluster endpoint failed. GPU/node counts and topology may not reflect the live cluster.">Cluster endpoint unavailable — GPU/node counts may be stale. Check operator logs with <code>aiperf kube logs operator</code>.</div>`}
 
+      ${noJobsAtAll ? html`
+        <div class="empty-state card" style="text-align:center;padding:var(--space-6)" data-testid="dashboard-empty">
+          <div style="font-size:18px;font-weight:600;margin-bottom:8px">No benchmarks yet</div>
+          <p class="text-dim" style="margin:0 0 12px 0">
+            Submit your first benchmark to see throughput, latency, and TTFT here.
+          </p>
+          <p class="text-dim" style="font-size:var(--font-size-sm);margin:0">
+            Start one with <code>aiperf kube run --model &lt;model&gt; --url &lt;endpoint&gt;</code>,
+            or scaffold a manifest with <code>aiperf kube init</code>.
+          </p>
+        </div>
+      ` : html`
       <${StatusBar} allJobs=${allJobs} cluster=${cluster} best=${best} />
 
       <${ThroughputLatencyScatter} completedJobs=${completed} />
@@ -317,6 +371,11 @@ export function Dashboard() {
         <${KpiCard} label="Peak Throughput" value=${best.value != null ? fmtThroughput(best.value) : '---'} unit=${best.value != null ? 'req/s' : ''} color=${palette.accent} sub=${best.name ?? ''} />
         <${KpiCard} label="Best TTFT" value=${bestTtft.value != null ? fmtNumber(bestTtft.value, 0) : '---'} unit=${bestTtft.value != null ? 'ms' : ''} color=${palette.cyan} sub=${bestTtft.name ?? ''} />
         <${KpiCard} label="Token Throughput" value=${bestTokenTps.value != null ? fmtInt(bestTokenTps.value) : '---'} unit=${bestTokenTps.value != null ? 'tok/s' : ''} color=${palette.amber} sub=${bestTokenTps.name ?? ''} />
+      </div>
+      <div class="text-dim" style="font-size:11px;margin-top:-8px;margin-bottom:var(--space-4);padding:0 4px">
+        <span title="Time To First Token: latency from request send to first streamed token (lower is better)">TTFT</span> = time to first token,
+        <span title="Inter-Token Latency: average time between successive output tokens">ITL</span> = inter-token latency,
+        <span title="99th-percentile end-to-end request latency (lower is better)">P99</span> = 99th-percentile latency.
       </div>
 
       <!-- Section 4: Active Jobs -->
@@ -348,18 +407,25 @@ export function Dashboard() {
               : errPctValue >= 1 ? palette.amber
               : palette.green;
             const liveMetrics = [
-              { label: 'TTFT', value: job.ttftMs, fmt: v => fmtNumber(v, 0), unit: 'ms' },
-              { label: 'OutTok', value: job.outputTokenThroughputTps, fmt: v => fmtInt(v), unit: 'tok/s' },
-              { label: 'P99', value: job.latencyP99Ms, fmt: v => fmtNumber(v, 0), unit: 'ms' },
-              { label: 'ITL', value: job.interTokenLatencyMs, fmt: v => fmtNumber(v, 1), unit: 'ms' },
-              { label: 'Reqs', value: job.totalRequests, fmt: v => fmtInt(v), unit: '' },
+              { label: 'TTFT', value: job.ttftMs, fmt: v => fmtNumber(v, 0), unit: 'ms', help: 'Time To First Token (avg) — latency from request send to first streamed token' },
+              { label: 'OutTok', value: job.outputTokenThroughputTps, fmt: v => fmtInt(v), unit: 'tok/s', help: 'Output token throughput — tokens generated per second across all in-flight requests' },
+              { label: 'P99', value: job.latencyP99Ms, fmt: v => fmtNumber(v, 0), unit: 'ms', help: '99th-percentile end-to-end request latency' },
+              { label: 'ITL', value: job.interTokenLatencyMs, fmt: v => fmtNumber(v, 1), unit: 'ms', help: 'Inter-Token Latency — average time between successive output tokens' },
+              { label: 'Reqs', value: job.totalRequests, fmt: v => fmtInt(v), unit: '', help: 'Total requests issued so far in this run' },
             ].filter(m => m.value != null);
 
+            const goToJob = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
             return html`
               <div
                 key=${job.namespace + '/' + job.name}
                 class="job-card"
-                onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
+                role="button"
+                tabindex="0"
+                aria-label=${'Open job ' + job.namespace + '/' + job.name}
+                onclick=${goToJob}
+                onkeydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToJob(); } }}
+                onfocus=${e => { e.currentTarget.style.outline = '2px solid ' + palette.accent; e.currentTarget.style.outlineOffset = '2px'; }}
+                onblur=${e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
                 style="cursor:pointer;margin-bottom:var(--space-3)"
               >
                 <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">
@@ -393,16 +459,18 @@ export function Dashboard() {
                 ${liveMetrics.length > 0 || errPctValue != null ? html`
                   <div class="live-metric-strip" data-testid="dashboard-active-metrics">
                     ${liveMetrics.map(m => html`
-                      <div class="live-metric" key=${m.label} title=${m.label + (m.unit ? ' (' + m.unit + ')' : '')}>
+                      <div class="live-metric" key=${m.label} title=${m.help + (m.unit ? ' (' + m.unit + ')' : '')}>
                         <span class="live-metric-label">${m.label}</span>
                         <span class="live-metric-value">${m.fmt(m.value)}</span>
                         ${m.unit ? html`<span class="live-metric-unit">${m.unit}</span>` : null}
                       </div>
                     `)}
                     ${errPctValue != null ? html`
-                      <div class="live-metric" title="Errored requests as % of total">
+                      <div class="live-metric" title=${'Errored requests as % of total — ' + (errPctValue >= 5 ? 'high error rate, investigate' : errPctValue >= 1 ? 'elevated error rate' : 'within tolerance')}>
                         <span class="live-metric-label">Err</span>
-                        <span class="live-metric-value" style="color:${errColor}">${fmtNumber(errPctValue, errPctValue < 1 ? 2 : 1)}%</span>
+                        <span class="live-metric-value" style="color:${errColor}">
+                          ${errPctValue >= 5 ? html`<span aria-label="high">! </span>` : null}${fmtNumber(errPctValue, errPctValue < 1 ? 2 : 1)}%
+                        </span>
                       </div>
                     ` : null}
                   </div>
@@ -424,11 +492,18 @@ export function Dashboard() {
           <span class="text-dim" style="font-size:var(--font-size-sm)">${failed.length}</span>
         </div>
         ${failed.map(job => {
+          const goToFailed = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
           return html`
             <div
               key=${job.namespace + '/' + job.name}
               class="job-card"
-              onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
+              role="button"
+              tabindex="0"
+              aria-label=${'Open failed job ' + job.namespace + '/' + job.name}
+              onclick=${goToFailed}
+              onkeydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToFailed(); } }}
+              onfocus=${e => { e.currentTarget.style.outline = '2px solid ' + palette.red; e.currentTarget.style.outlineOffset = '2px'; }}
+              onblur=${e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
               style="cursor:pointer;margin-bottom:var(--space-3);border-color:${palette.red}44"
             >
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -438,7 +513,7 @@ export function Dashboard() {
                 <${NsPill} ns=${job.namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId=${'dashboard-failed-ns-' + (job.namespace ?? '')} />
               </div>
               ${job.error ? html`
-                <div style="font-size:var(--font-size-sm);color:${palette.red};margin-top:4px">${job.error}</div>
+                <div title=${job.error} style="font-size:var(--font-size-sm);color:${palette.red};margin-top:4px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${job.error}</div>
               ` : null}
             </div>
           `;
@@ -468,18 +543,29 @@ export function Dashboard() {
               const tpsPct = maxThroughput > 0 ? (tpsVal / maxThroughput) * 100 : 0;
               const latPct = maxLatency > 0 ? (latVal / maxLatency) * 100 : 0;
               const mColor = modelColor(job.model);
+              const goToLb = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
 
               return html`
                 <tr
                   key=${job.namespace + '/' + job.name}
-                  onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
+                  role="button"
+                  tabindex="0"
+                  aria-label=${'Open job ' + job.namespace + '/' + job.name + ', rank ' + (i + 1)}
+                  onclick=${goToLb}
+                  onkeydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToLb(); } }}
+                  onfocus=${e => { e.currentTarget.style.outline = '2px solid ' + palette.accent; e.currentTarget.style.outlineOffset = '-2px'; }}
+                  onblur=${e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
                   style="cursor:pointer"
                 >
                   <td><span class="rank${i === 0 ? ' gold' : ''}">${i + 1}</span></td>
                   <td>
                     <div class="model-cell">
                       <span class="model-color" style="background:${mColor}"></span>
-                      <span class="model-name">${job.model ?? job.name}</span>
+                      <span
+                        class="model-name"
+                        title=${(job.model ?? job.name) + ' — ' + job.namespace + '/' + job.name}
+                        style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px;display:inline-block;vertical-align:middle"
+                      >${job.model ?? job.name}</span>
                     </div>
                   </td>
                   <td>
@@ -505,6 +591,7 @@ export function Dashboard() {
           </tbody>
         </table>
       ` : null}
+      `}
     </div>
   `;
 }

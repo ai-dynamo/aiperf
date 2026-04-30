@@ -25,6 +25,15 @@ function truncatePodName(name, maxLen = 20) {
 }
 
 /**
+ * Defensive cap on per-pod rendering. Sweep jobs at very high concurrency can
+ * spawn 200+ pods; at that scale individual dots collapse to pixel-wide
+ * artifacts and hover stops being meaningful. Cap visible dots/names and
+ * surface the overflow as an aggregate chip; the summary still reflects all
+ * pods so the ready/restarts counts stay correct.
+ */
+const MAX_VISIBLE_PODS = 100;
+
+/**
  * Horizontal pod status bar.
  * @param {{ pods: Array<{name: string, phase: string, ready: boolean, restarts: number}> }} props
  */
@@ -36,10 +45,13 @@ export function PodsBar({ pods }) {
   const readyCount = pods.filter((p) => p.ready).length;
   const totalRestarts = pods.reduce((sum, p) => sum + (p.restarts ?? 0), 0);
 
+  const overflowCount = Math.max(0, pods.length - MAX_VISIBLE_PODS);
+  const visiblePods = overflowCount > 0 ? pods.slice(0, MAX_VISIBLE_PODS) : pods;
+
   return html`
     <div class="pods-bar">
       <div class="pods-bar-dots">
-        ${pods.map(
+        ${visiblePods.map(
           (pod) => html`
             <span
               key=${pod.name}
@@ -48,9 +60,18 @@ export function PodsBar({ pods }) {
             />
           `,
         )}
+        ${overflowCount > 0 && html`
+          <span
+            class="pod-dot-overflow"
+            title=${'+' + overflowCount + ' more pods (showing first ' + MAX_VISIBLE_PODS + ')'}
+            style="display:inline-flex;align-items:center;padding:0 6px;font-size:11px;color:var(--text-dim,#888);border:1px dashed currentColor;border-radius:8px;margin-left:4px"
+          >
+            +${overflowCount}
+          </span>
+        `}
       </div>
       <div class="pods-bar-names">
-        ${pods.map(
+        ${visiblePods.map(
           (pod) => html`
             <span
               key=${pod.name}
@@ -61,6 +82,11 @@ export function PodsBar({ pods }) {
             </span>
           `,
         )}
+        ${overflowCount > 0 && html`
+          <span class="pods-bar-name" style="opacity:0.7;font-style:italic">
+            +${overflowCount} more
+          </span>
+        `}
       </div>
       <div class="pods-bar-summary">
         <span class="pods-bar-ready">${readyCount}/${pods.length} ready</span>

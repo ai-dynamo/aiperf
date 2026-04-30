@@ -79,8 +79,24 @@ async def on_child_phase_transition(
         return
     sweep_name, sweep_uid = parent
 
+    # Only count children from the same run-epoch as the child that just
+    # transitioned. Without this filter the rollup picks up stale children
+    # from prior re-applies of the sweep and writes ``completedRuns >
+    # totalVariations`` (the UI then shows a nonsensical "5 / 3"). The
+    # epoch label is set at child-creation time by the sweep-controller;
+    # missing label → fall back to the unfiltered count for backward
+    # compatibility with old children created before the label existed.
+    child_labels = (body.get("metadata") or {}).get("labels") or {}
+    child_run_epoch = child_labels.get("aiperf.nvidia.com/sweep-run-epoch")
+
     async with k8s_client() as api:
-        counts = await _count_owned_children(namespace, sweep_uid, sweep_name, api=api)
+        counts = await _count_owned_children(
+            namespace,
+            sweep_uid,
+            sweep_name,
+            run_epoch=child_run_epoch,
+            api=api,
+        )
         body_patch: dict[str, Any] = {
             "status": {
                 "completedRuns": counts["completed"],
@@ -153,6 +169,7 @@ async def _count_owned_children(
     sweep_uid: str,
     sweep_name: str,
     *,
+    run_epoch: str | None = None,
     api: ApiClient | None = None,
 ) -> dict[str, Any]:
     """List children with the sweep label and count by terminal phase.
@@ -160,6 +177,11 @@ async def _count_owned_children(
     When called from the kopf entry point, ``api`` is the shared client for
     this tick. Standalone test callers can pass ``api=None`` and a fresh
     client is opened transparently.
+
+    ``run_epoch`` (when provided) is added to the label selector so we
+    count only children from a single epoch — without this filter, stale
+    children from prior re-applies of the sweep get counted and the UI
+    reports e.g. ``completedRuns=5`` against ``totalVariations=3``.
     """
     import aiohttp
     import kopf
@@ -167,6 +189,9 @@ async def _count_owned_children(
     from kubernetes_asyncio.client import ApiException
 
     completed = failed = in_flight = 0
+    selector = f"aiperf.nvidia.com/sweep={sweep_name}"
+    if run_epoch:
+        selector += f",aiperf.nvidia.com/sweep-run-epoch={run_epoch}"
     try:
         async with _api_or_new(api) as client:
             custom = k8s.CustomObjectsApi(client)
@@ -175,7 +200,7 @@ async def _count_owned_children(
                 version="v1alpha1",
                 namespace=namespace,
                 plural="aiperfjobs",
-                label_selector=f"aiperf.nvidia.com/sweep={sweep_name}",
+                label_selector=selector,
             )
     except ApiException as e:
         raise kopf.TemporaryError(

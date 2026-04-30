@@ -38,6 +38,7 @@ export function CommandPalette({ onClose }) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef(null);
+  const listRef = useRef(null);
 
   // Build items: pages + job entries
   const allItems = [
@@ -64,6 +65,17 @@ export function CommandPalette({ onClose }) {
     setCursor(0);
   }, [query]);
 
+  // Keep the active item visible during keyboard navigation — long jobs
+  // lists otherwise let the cursor scroll out of view.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const active = list.querySelector('.command-palette-item--active');
+    if (active && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'nearest' });
+    }
+  }, [cursor]);
+
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus();
@@ -82,15 +94,28 @@ export function CommandPalette({ onClose }) {
   function handleKeyDown(e) {
     if (e.key === 'Escape') {
       onClose();
+    } else if (e.key === 'Tab') {
+      // Trap focus inside the palette: only the input is tabbable here, so
+      // any Tab keystroke would otherwise let focus escape to the underlying
+      // page (background links, top-nav). Pin focus on the input instead.
+      e.preventDefault();
+      inputRef.current?.focus();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setCursor((c) => Math.min(c + 1, filtered.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setCursor((c) => Math.max(c - 1, 0));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setCursor(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setCursor(Math.max(filtered.length - 1, 0));
     } else if (e.key === 'Enter') {
       const item = filtered[cursor];
       if (item) {
+        e.preventDefault();
         item.action();
         onClose();
       }
@@ -132,7 +157,7 @@ export function CommandPalette({ onClose }) {
           />
           <kbd class="command-palette-esc">Esc</kbd>
         </div>
-        <ul class="command-palette-list" role="listbox">
+        <ul class="command-palette-list" role="listbox" ref=${listRef}>
           ${filtered.length === 0 && html`
             <li class="command-palette-empty">No results for "${query}"</li>
           `}

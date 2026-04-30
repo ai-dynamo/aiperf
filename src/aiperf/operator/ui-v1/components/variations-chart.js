@@ -30,6 +30,10 @@ export function VariationsChart({ variations, metricLabel, unit }) {
     if (!variations || variations.length === 0) return null;
     const labels = variations.map(v => shortLabel(v.label) || `v${v.variation_index}`);
     const means = variations.map(v => v.mean);
+    // If every variation is missing this metric (e.g. selected metric not yet
+    // computed across any trial), Chart.js still renders an empty axis box —
+    // signal "no data" up so the page can show its empty state instead.
+    if (means.every(m => m == null)) return null;
     const stds = variations.map(v => v.std ?? 0);
     const errorPlus = means.map((m, i) => (m == null ? null : m + (stds[i] ?? 0)));
     const errorMinus = means.map((m, i) => (m == null ? null : m - (stds[i] ?? 0)));
@@ -110,7 +114,7 @@ export function VariationsChart({ variations, metricLabel, unit }) {
 
   if (!chart) {
     return html`<div class="text-dim" style="padding:var(--space-3) 0" data-testid="variations-chart-empty">
-      No variation data available yet.
+      No ${metricLabel || 'variation'} data available for any variation yet.
     </div>`;
   }
   return html`

@@ -24,6 +24,17 @@ export function EpochSelector({ epochs, current, onPick }) {
   );
   const isCurrentLatest = !current || (latest && current === latest.epoch);
   const activeEpoch = current ?? latest?.epoch;
+  // With only one epoch there's nothing to switch to — render the pill
+  // alone so users don't get a dropdown caret that opens a one-row menu.
+  const hasChoice = epochs.length > 1;
+
+  if (!hasChoice) {
+    return html`
+      <div data-testid="epoch-selector" style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+        <${EpochPill} epoch=${activeEpoch} isLatest=${isCurrentLatest} testId="epoch-selector-pill" />
+      </div>
+    `;
+  }
 
   return html`
     <div data-testid="epoch-selector" style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">

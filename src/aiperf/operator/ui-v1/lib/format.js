@@ -4,7 +4,34 @@
  */
 
 /**
+ * Pick a decimal count for a finite numeric magnitude, expanding precision
+ * for tiny non-zero values so they don't collapse to a string of zeros.
+ *
+ * Bands (open intervals on |value|):
+ *   (0, 0.01)  -> max(decimals, 5)
+ *   [0.01, 1)  -> max(decimals, 4)
+ *   otherwise  -> decimals
+ *
+ * Exact 0 (and Infinity / NaN, which the caller filters) honor the requested
+ * decimals so "0.00" stays "0.00".
+ * @param {number} value
+ * @param {number} decimals
+ * @returns {number}
+ */
+function magnitudeAwareDecimals(value, decimals) {
+  const abs = Math.abs(value);
+  if (abs === 0 || !isFinite(abs)) return decimals;
+  if (abs < 0.01) return Math.max(decimals, 5);
+  if (abs < 1) return Math.max(decimals, 4);
+  return decimals;
+}
+
+/**
  * Format a number with commas and fixed decimal places.
+ *
+ * For tiny non-zero values, the effective decimal count is expanded so a
+ * per-GPU normalized throughput like 0.04 req/s/GPU doesn't render as
+ * "0.00" at decimals=2. See {@link magnitudeAwareDecimals} for the bands.
  * @param {number|null|undefined} value
  * @param {number} decimals - Number of decimal places (default: 1)
  * @param {string} fallback - Fallback text for null/undefined (default: '---')
@@ -13,9 +40,10 @@
 export function fmtNumber(value, decimals = 1, fallback = '---') {
   if (value == null) return fallback;
   if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  const effective = magnitudeAwareDecimals(value, decimals);
   return value.toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
+    minimumFractionDigits: effective,
+    maximumFractionDigits: effective,
   });
 }
 

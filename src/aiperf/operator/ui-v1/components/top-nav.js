@@ -69,9 +69,11 @@ export function TopNav({ onSearchClick }) {
             href=${PLOTS_LINK.path}
             target="_blank"
             rel="noopener"
+            title="Opens classic Plots dashboard in a new tab"
+            aria-label="Plots (opens in new tab)"
           >
             ${PLOTS_LINK.label}
-            <span class="nav-external">\u2197</span>
+            <span class="nav-external" aria-hidden="true">\u2197</span>
           </a>
         </nav>
       </div>

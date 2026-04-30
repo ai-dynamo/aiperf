@@ -4,13 +4,13 @@ const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g,
 
 /**
  * Metric card — simple card, brand-colored value for key metrics.
- * @param {{ label: string, value: string|number, unit?: string, color?: string, sub?: string }} props
+ * @param {{ label: string, value: string|number, unit?: string, color?: string, sub?: string, title?: string }} props
  */
-export function KpiCard({ label, value, unit, color, sub }) {
+export function KpiCard({ label, value, unit, color, sub, title }) {
   const valueStyle = color ? `color: ${color}` : '';
 
   return html`
-    <div class="metric-card" data-testid=${'kpi-' + slugifyLabel(label)}>
+    <div class="metric-card" data-testid=${'kpi-' + slugifyLabel(label)} title=${title}>
       <span class="metric-label">${label}</span>
       <div class="metric-val-row">
         <span class="metric-val" style=${valueStyle}>

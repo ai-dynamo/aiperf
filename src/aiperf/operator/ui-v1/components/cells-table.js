@@ -21,16 +21,16 @@ export function CellsTable({ dimensions, cells, metric, stat, onCellClick }) {
   const dimNames = (dimensions || []).map(d => d.name);
 
   return html`
-    <div data-testid="sweep-cells-table" class="job-table-wrapper">
+    <div data-testid="sweep-cells-table" class="job-table-wrapper" style="max-height:520px;overflow:auto">
       <table class="job-table">
-        <thead>
+        <thead style="position:sticky;top:0;z-index:1;background:var(--ctp-base)">
           <tr>
-            <th class="job-table-th">idx</th>
+            <th class="job-table-th" style="text-align:right">idx</th>
             <th class="job-table-th">label</th>
-            ${dimNames.map(n => html`<th key=${n} class="job-table-th">${n}</th>`)}
-            <th class="job-table-th" style="text-align:right">trials ✓</th>
-            <th class="job-table-th" style="text-align:right">trials ✗</th>
-            <th class="job-table-th" style="text-align:right">${metric} (${stat})</th>
+            ${dimNames.map(n => html`<th key=${n} class="job-table-th" style="text-align:right">${n}</th>`)}
+            <th class="job-table-th" style="text-align:right" title="Trials that completed successfully for this cell">trials ✓</th>
+            <th class="job-table-th" style="text-align:right" title="Trials that failed for this cell">trials ✗</th>
+            <th class="job-table-th" style="text-align:right" title=${`Mean ${metric} across trials (${stat})`}>${metric} (${stat})</th>
           </tr>
         </thead>
         <tbody>
@@ -40,15 +40,15 @@ export function CellsTable({ dimensions, cells, metric, stat, onCellClick }) {
                 onclick=${() => onCellClick && onCellClick(c)}
                 style=${onCellClick ? 'cursor: pointer' : ''}
                 data-testid=${'sweep-cell-row-' + c.variation_index}>
-              <td class="job-table-td text-dim">${c.variation_index}</td>
+              <td class="job-table-td text-dim" style="text-align:right;font-variant-numeric:tabular-nums">${c.variation_index}</td>
               <td class="job-table-td job-table-name">${c.variation_label || '—'}</td>
-              ${dimNames.map(n => html`<td key=${n} class="job-table-td">${c.values?.[n] ?? '—'}</td>`)}
-              <td class="job-table-td" style="text-align:right">${c.trials_completed}</td>
+              ${dimNames.map(n => html`<td key=${n} class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${c.values?.[n] ?? '—'}</td>`)}
+              <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">${c.trials_completed}</td>
               <td class="job-table-td"
-                  style=${`text-align:right;color:${c.trials_failed > 0 ? palette.red : 'inherit'}`}>
+                  style=${`text-align:right;font-variant-numeric:tabular-nums;color:${c.trials_failed > 0 ? palette.red : 'inherit'}`}>
                 ${c.trials_failed}
               </td>
-              <td class="job-table-td" style="text-align:right">
+              <td class="job-table-td" style="text-align:right;font-variant-numeric:tabular-nums">
                 ${formatStat(c.metrics?.[metric]?.[stat])}
               </td>
             </tr>

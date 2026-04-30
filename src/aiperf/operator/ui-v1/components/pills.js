@@ -84,6 +84,7 @@ export function ModelPill({ model, onClick, testId }) {
   return html`
     <span
       class=${'meta-pill meta-pill--model' + (clickable ? ' meta-pill--clickable' : '')}
+      style=${clickable ? 'cursor:pointer;' : ''}
       title=${clickable ? `Filter by model: ${model}` : `Model: ${model}`}
       data-testid=${testId ?? 'model-pill'}
       onclick=${handler}

@@ -27,15 +27,33 @@ export function VariationsTable({ variations, headlineMetrics }) {
     </div>`;
   }
 
+  // Pre-pass: build a Set of metric column keys that have at least one
+  // non-null mean across visible variations. Columns missing from the set
+  // are dropped from header AND body so sweeps that exercise only a subset
+  // of metrics don't render a sea of em-dashes. Caller's headlineMetrics
+  // array is not mutated.
+  const populatedKeys = new Set();
+  for (const v of variations) {
+    const pm = v.perMetric;
+    if (!pm) continue;
+    for (const m of headlineMetrics) {
+      const k = m.key + '.' + m.stat;
+      if (populatedKeys.has(k)) continue;
+      const r = pm[k];
+      if (r && r.mean != null) populatedKeys.add(k);
+    }
+  }
+  const visibleMetrics = headlineMetrics.filter(m => populatedKeys.has(m.key + '.' + m.stat));
+
   return html`
-    <div data-testid="sweep-variations-table" class="job-table-wrapper">
+    <div data-testid="sweep-variations-table" class="job-table-wrapper" style="max-height:520px;overflow:auto">
       <table class="job-table">
-        <thead>
+        <thead style="position:sticky;top:0;z-index:1;background:var(--ctp-base)">
           <tr>
             <th class="job-table-th">variation</th>
             <th class="job-table-th" style="text-align:right">trials</th>
-            ${headlineMetrics.map(m => html`
-              <th key=${m.key + '.' + m.stat} class="job-table-th" style="text-align:right">
+            ${visibleMetrics.map(m => html`
+              <th key=${m.key + '.' + m.stat} class="job-table-th" style="text-align:right" title=${`${m.label} (${m.unit}) — mean across trials, with coefficient of variation below`}>
                 ${m.label}<br/>
                 <span class="text-dim" style="font-size:var(--font-size-xs);font-weight:normal">${m.unit}</span>
               </th>
@@ -47,7 +65,7 @@ export function VariationsTable({ variations, headlineMetrics }) {
             <tr key=${v.variation_index} data-testid=${'variation-row-' + v.variation_index}>
               <td class="job-table-td"><code style="font-size:var(--font-size-xs)">${v.label || `v${v.variation_index}`}</code></td>
               <td class="job-table-td" style="text-align:right">${v.n_trials}/${v.n_total}</td>
-              ${headlineMetrics.map(m => {
+              ${visibleMetrics.map(m => {
                 const r = v.perMetric?.[m.key + '.' + m.stat];
                 if (!r || r.mean == null) {
                   return html`<td key=${m.key + '.' + m.stat} class="job-table-td" style="text-align:right;color:${palette.overlay0}">—</td>`;

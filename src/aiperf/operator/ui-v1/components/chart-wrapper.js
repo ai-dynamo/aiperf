@@ -34,10 +34,16 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
   const prevFingerprintRef = useRef('');
   const prevOptionsRef = useRef('');
 
+  // Treat null/undefined data and zero-dataset data as "no data" — Chart.js
+  // throws or renders a blank canvas otherwise, which looks like a load bug.
+  const hasData = !!data?.datasets && data.datasets.length > 0
+    && data.datasets.some(ds => (ds.data?.length ?? 0) > 0);
+
   // Create chart on mount and whenever `type` changes (Chart.js cannot mutate
   // chart type in place — it must be destroyed and recreated).
   useEffect(() => {
     if (!canvasRef.current) return;
+    if (!hasData) return;
     if (!window.Chart) {
       console.warn('ChartWrapper: window.Chart not available - Chart.js not loaded');
       return;
@@ -62,7 +68,7 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
         chartRef.current = null;
       }
     };
-  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps - data/options handled by their own effects
+  }, [type, hasData]); // eslint-disable-line react-hooks/exhaustive-deps - data/options handled by their own effects
 
   // Update data only when fingerprint changes
   useEffect(() => {
@@ -86,7 +92,13 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
 
   return html`
     <div class="chart-container" style=${'height: ' + height + 'px'}>
-      <canvas ref=${canvasRef} />
+      ${hasData
+        ? html`<canvas ref=${canvasRef} />`
+        : html`<div
+            class="chart-empty"
+            style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim,#888);font-size:12px"
+          >No data to display</div>`
+      }
     </div>
   `;
 }

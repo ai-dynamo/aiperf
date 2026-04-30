@@ -12,9 +12,34 @@ import { PodsBar } from '../components/pods-bar.js';
 import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
+import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
+
+// Stable module-scope options for the streaming live-throughput chart.
+// Defining these inside the component would create a new object literal
+// every poll — even though ChartWrapper diffs by JSON fingerprint, the
+// stringify is wasted work and re-applying options retriggers Chart.js
+// layout. ``animation: false`` is critical: this is a real-time chart,
+// and the default 300ms tween makes the whole panel look like it's
+// refreshing on every sample. Latency-distribution / one-shot charts
+// keep their animation; only this streaming one disables it.
+const LIVE_THROUGHPUT_OPTIONS = {
+  animation: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: {
+      ticks: { color: palette.overlay0, maxTicksLimit: 6, font: { size: 10 } },
+      grid: { color: palette.surface0 },
+    },
+    y: {
+      ticks: { color: palette.overlay0, font: { size: 10 } },
+      grid: { color: palette.surface0 },
+      title: { display: true, text: 'tok/s', color: palette.overlay1, font: { size: 10 } },
+    },
+  },
+};
 
 function formatDuration(ms) {
   if (ms == null) return null;
@@ -117,9 +142,20 @@ function MetricsTable({ results }) {
                     <tr>
                       <th style=${'text-align: left; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>Metric</th>
                       <th style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>Unit</th>
-                      ${['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'].map(col => html`
-                        <th key=${col} style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>${col}</th>
-                      `)}
+                      ${['avg', 'p50', 'p90', 'p95', 'p99', 'min', 'max'].map(col => {
+                        const colTitle = {
+                          avg: 'Arithmetic mean across all requests',
+                          p50: '50th percentile (median) — half of requests at or below this value',
+                          p90: '90th percentile — 90% of requests at or below this value',
+                          p95: '95th percentile — 95% of requests at or below this value',
+                          p99: '99th percentile — 99% of requests at or below this value (tail latency)',
+                          min: 'Minimum observed value',
+                          max: 'Maximum observed value',
+                        }[col];
+                        return html`
+                          <th key=${col} title=${colTitle} style=${'text-align: right; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0 + '; cursor: help'}>${col}</th>
+                        `;
+                      })}
                     </tr>
                   </thead>
                   <tbody>
@@ -393,39 +429,112 @@ function TokenEfficiencyCard({ results, info }) {
 }
 
 // Feature 6: SLA Compliance Indicator
-function SLACompliance({ results, summary }) {
-  const ttftP99 = results?.time_to_first_token?.p99 ?? null;
-  const itlP99 = results?.inter_token_latency?.p99 ?? null;
-  const errorRate = summary?.error_rate ?? null;
+//
+// Thresholds come from the user-declared SLOs on the AIPerfJob CR
+// (``spec.benchmark.slos`` per ``src/aiperf/config/_models_core.py`` —
+// ``SLOsConfig = dict[str, float]`` keyed by metric tag, value in the
+// metric's display unit). If no SLOs were declared, this card renders
+// nothing rather than show invented thresholds.
+//
+// Direction (smaller-is-better for latency, larger-is-better for throughput)
+// mirrors ``MetricFlags.LARGER_IS_BETTER`` on each metric class. We hard-code
+// the small set of throughput-side tags realistic for ``--goodput`` because
+// the registry isn't reachable from the browser; unknown tags default to the
+// latency-style ``<=`` comparison.
+const LARGER_IS_BETTER_SLO_TAGS = new Set([
+  'output_token_throughput',
+  'output_token_throughput_per_user',
+  'request_throughput',
+  'total_token_throughput',
+  'e2e_output_token_throughput',
+  'prefill_throughput_per_user',
+]);
 
-  // Only show if we have at least one metric
-  if (ttftP99 == null && itlP99 == null && errorRate == null) return null;
+const SLO_PRETTY_LABEL = {
+  request_latency: 'Request Latency',
+  time_to_first_token: 'TTFT',
+  time_to_second_token: 'TTST',
+  inter_token_latency: 'ITL',
+  output_token_throughput: 'Output Token Throughput',
+  output_token_throughput_per_user: 'Per-User Output Throughput',
+  request_throughput: 'Request Throughput',
+  total_token_throughput: 'Total Token Throughput',
+  e2e_output_token_throughput: 'E2E Output Throughput',
+  prefill_throughput_per_user: 'Prefill Per-User Throughput',
+};
+
+const SLO_UNIT = {
+  request_latency: 'ms',
+  time_to_first_token: 'ms',
+  time_to_second_token: 'ms',
+  inter_token_latency: 'ms',
+  output_token_throughput: 'tok/s',
+  output_token_throughput_per_user: 'tok/s',
+  request_throughput: 'req/s',
+  total_token_throughput: 'tok/s',
+  e2e_output_token_throughput: 'tok/s',
+  prefill_throughput_per_user: 'tok/s',
+};
+
+function SLACompliance({ results, summary, config }) {
+  const slos =
+    config?.spec?.benchmark?.slos
+    ?? config?.spec?.slos
+    ?? null;
+  if (!slos || typeof slos !== 'object') return null;
+
+  const sloEntries = Object.entries(slos).filter(
+    ([, threshold]) => threshold != null && isFinite(Number(threshold)),
+  );
+  if (sloEntries.length === 0) return null;
 
   const checks = [];
 
-  if (ttftP99 != null) {
+  for (const [tag, rawThreshold] of sloEntries) {
+    const stats = results?.[tag] ?? summary?.[tag] ?? null;
+    if (stats == null || typeof stats !== 'object') continue;
+
+    const threshold = Number(rawThreshold);
+    const largerIsBetter = LARGER_IS_BETTER_SLO_TAGS.has(tag);
+    // Latency SLOs are reported as p99 (worst-tail compliance);
+    // throughput SLOs as avg (the headline rate users typically target).
+    const statName = largerIsBetter ? 'avg' : 'p99';
+    const value = stats[statName] ?? stats.avg ?? null;
+    if (value == null || !isFinite(Number(value))) continue;
+
+    const numValue = Number(value);
+    const pass = largerIsBetter
+      ? numValue >= threshold
+      : numValue <= threshold;
+    const op = largerIsBetter ? '>=' : '<=';
+    const unit = SLO_UNIT[tag] ?? '';
+    const pretty = SLO_PRETTY_LABEL[tag] ?? tag;
+    const digits = unit === 'req/s' || unit === 'tok/s' ? 1 : 0;
+
     checks.push({
-      label: 'TTFT p99 < 500ms',
-      pass: ttftP99 < 500,
-      value: `${fmtNumber(ttftP99, 0)} ms`,
+      label: `${pretty} ${statName} ${op} ${fmtNumber(threshold, digits)}${unit ? ' ' + unit : ''}`,
+      pass,
+      value: `${fmtNumber(numValue, digits)}${unit ? ' ' + unit : ''}`,
     });
   }
 
-  if (itlP99 != null) {
-    checks.push({
-      label: 'ITL p99 < 100ms',
-      pass: itlP99 < 100,
-      value: `${fmtNumber(itlP99, 0)} ms`,
+  // Overall goodput pass-rate, when the run actually computed it.
+  const goodCount = results?.good_request_count?.avg
+    ?? summary?.good_request_count?.avg
+    ?? null;
+  const totalCount = results?.request_count?.avg
+    ?? summary?.request_count?.avg
+    ?? null;
+  if (goodCount != null && totalCount != null && totalCount > 0) {
+    const pct = (goodCount / totalCount) * 100;
+    checks.unshift({
+      label: 'Goodput (all SLOs per request)',
+      pass: goodCount >= totalCount,
+      value: `${fmtNumber(pct, 1)}% (${fmtInt(goodCount)}/${fmtInt(totalCount)})`,
     });
   }
 
-  if (errorRate != null) {
-    checks.push({
-      label: 'Error rate < 1%',
-      pass: errorRate < 0.01,
-      value: `${fmtNumber(errorRate * 100, 2)}%`,
-    });
-  }
+  if (checks.length === 0) return null;
 
   return html`
     <div class="card" style="margin-top: var(--space-4)">
@@ -749,7 +858,7 @@ function FileViewerModal({ filename, url, onClose }) {
 
   let body;
   if (rawContent == null) {
-    body = html`<span class="text-dim">Loading...</span>`;
+    body = html`<span style="display: inline-flex; align-items: center; gap: var(--space-2)"><${Spinner} size=${14} /><span class="text-dim">Loading file…</span></span>`;
   } else if (ext === 'json') {
     const tokens = syntaxHighlight(rawContent);
     body = html`
@@ -1113,7 +1222,7 @@ function ServerMetricsSection({ serverMetrics }) {
   const histogramChartOptions = (unit) => ({
     plugins: {
       legend: { display: false },
-      tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} requests` } },
+      tooltip: { callbacks: { label: ctx => ` ${fmtInt(ctx.parsed.y)} requests` } },
     },
     scales: {
       x: {
@@ -1142,7 +1251,22 @@ function ServerMetricsSection({ serverMetrics }) {
     })
     .filter(Boolean);
 
-  if (kpiCards.length === 0 && histogramCharts.length === 0) return null;
+  if (kpiCards.length === 0 && histogramCharts.length === 0) {
+    // The export file existed but no series carried scrape points (server
+    // wasn't emitting vllm metrics, or the scrape interval missed the run).
+    // Show an explicit notice instead of silently dropping the section so users
+    // know the absence is observed, not a UI bug.
+    return html`
+      <div style="margin-top: var(--space-4)">
+        <div class="card" data-testid="job-detail-server-metrics-empty">
+          <div class="card-title">Server Metrics</div>
+          <div class="text-dim" style="font-size: var(--font-size-sm); padding: var(--space-2) 0">
+            No server metrics collected for this run. The endpoint did not expose vLLM-compatible metrics, or the scrape interval did not capture any points.
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   return html`
     <div style="margin-top: var(--space-4)">
@@ -1319,7 +1443,11 @@ function PerRecordAnalysis({ records }) {
     if (bv == null) return -1;
     return sortAsc ? av - bv : bv - av;
   });
-  const displayRows = tableExpanded ? sorted : sorted.slice(0, 50);
+  // Hard cap on expanded view: rendering 100k <tr>s freezes the browser.
+  // Users who need every row should download profile_export.jsonl directly.
+  const EXPANDED_MAX = 1000;
+  const truncated = tableExpanded && sorted.length > EXPANDED_MAX;
+  const displayRows = tableExpanded ? sorted.slice(0, EXPANDED_MAX) : sorted.slice(0, 50);
 
   const thStyle = col => [
     'padding: var(--space-2) var(--space-3);',
@@ -1397,6 +1525,11 @@ function PerRecordAnalysis({ records }) {
                 `)}
               </tbody>
             </table>
+            ${truncated && html`
+              <div style=${'margin-top: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--font-size-xs); color: ' + palette.overlay1 + '; font-style: italic; text-align: center'}>
+                Showing first ${fmtInt(EXPANDED_MAX)} of ${fmtInt(sorted.length)} rows. Download profile_export.jsonl for the full set.
+              </div>
+            `}
           </div>
         `}
       </div>
@@ -1412,8 +1545,17 @@ export function JobDetail({ namespace, name, epoch }) {
   const [serverMetrics, setServerMetrics] = useState(null);
   const [fileViewer, setFileViewer] = useState(null); // { filename, url }
   const [jsonlRecords, setJsonlRecords] = useState(null);
+  // Progress for the JSONL parse so users see a count tick up instead of a
+  // multi-second blank skeleton on 50k+ row exports.
+  const [jsonlProgress, setJsonlProgress] = useState(null);
   const [jobConfig, setJobConfig] = useState(null);
   const [epochs, setEpochs] = useState([]);
+  // Cancel-button state: 'idle' shows the button, 'confirm' shows an inline
+  // confirm/abort pair, 'pending' disables both while the API call is in flight.
+  // Replaces native confirm()/alert() which provided no in-flight feedback and
+  // let users double-click to fire two cancels.
+  const [cancelState, setCancelState] = useState('idle');
+  const [cancelError, setCancelError] = useState(null);
 
   const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 
@@ -1462,7 +1604,7 @@ export function JobDetail({ namespace, name, epoch }) {
         setError(null);
 
         const phase = (data?.job?.phase ?? data?.status?.phase ?? '').toLowerCase();
-        const done = phase === 'completed' || phase === 'succeeded' || phase === 'failed' || phase === 'error';
+        const done = phase === 'completed' || phase === 'succeeded' || phase === 'failed' || phase === 'error' || phase === 'cancelled' || phase === 'canceled' || phase === 'partiallyfailed';
         if (done) setPolling(false);
 
         // Append to throughput chart
@@ -1524,16 +1666,32 @@ export function JobDetail({ namespace, name, epoch }) {
         if (fileList.some(f => f.name === 'profile_export.jsonl')) {
           fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })
             .then(r => r.ok ? r.text() : null)
-            .then(text => {
-              if (!text) return;
-              const recs = text
-                .split('\n')
-                .filter(line => line.trim() !== '')
-                .map(line => { try { return JSON.parse(line); } catch { return null; } })
-                .filter(Boolean);
+            .then(async text => {
+              if (!text || ac.signal.aborted) return;
+              const lines = text.split('\n');
+              // Chunk the parse so the main thread can paint between batches.
+              // 50k records parse in well under a second total; 2k per yield
+              // keeps each frame under ~16ms even on slow hardware.
+              const CHUNK = 2000;
+              const recs = [];
+              setJsonlProgress({ done: 0, total: lines.length });
+              for (let i = 0; i < lines.length; i += CHUNK) {
+                if (ac.signal.aborted) return;
+                const end = Math.min(i + CHUNK, lines.length);
+                for (let j = i; j < end; j++) {
+                  const line = lines[j];
+                  if (!line || line.trim() === '') continue;
+                  try { recs.push(JSON.parse(line)); } catch { /* skip bad line */ }
+                }
+                setJsonlProgress({ done: end, total: lines.length });
+                // Yield to the event loop so the UI can repaint.
+                await new Promise(r => setTimeout(r, 0));
+              }
+              if (ac.signal.aborted) return;
+              setJsonlProgress(null);
               if (recs.length > 0) setJsonlRecords(recs);
             })
-            .catch(() => {});
+            .catch(() => { setJsonlProgress(null); });
         }
       })
       .catch(() => {});
@@ -1580,26 +1738,35 @@ export function JobDetail({ namespace, name, epoch }) {
   }
 
   async function handleCancel() {
-    if (!confirm(`Cancel job ${name}?`)) return;
+    setCancelError(null);
+    setCancelState('pending');
     try {
       await api.cancelJob(namespace, name);
+      // Stay in 'pending' until the next poll flips phase out of running.
     } catch (e) {
-      alert('Cancel failed: ' + e.message);
+      setCancelError(e?.message ?? String(e));
+      setCancelState('idle');
     }
   }
 
   if (!job && !error) {
     return html`
-      <div class="card" style="text-align: center; padding: var(--space-8)">
-        <span class="text-dim">Loading ${namespace}/${name}...</span>
+      <div class="card">
+        <${LoadingPanel} label=${'Loading ' + namespace + '/' + name + '…'} testid="job-detail-loading" />
       </div>
     `;
   }
 
   if (error) {
     return html`
-      <div class="card" style="border-color: ${colors.error}44; color: ${colors.error}">
-        <strong>Error:</strong> ${error}
+      <div class="card" style="border-color: ${colors.error}44; color: ${colors.error}" data-testid="job-detail-error">
+        <div style="font-weight: 600; margin-bottom: var(--space-1)">Failed to load job</div>
+        <div style="font-size: var(--font-size-sm); word-break: break-word; margin-bottom: var(--space-2)">${error}</div>
+        <div style="font-size: var(--font-size-sm); color: var(--muted)">
+          The operator may be unreachable, or this job may have been deleted. Try
+          <a href="#/jobs" onclick=${e => { e.preventDefault(); navigate('/jobs'); }} style=${'color: ' + palette.blue + '; cursor: pointer'}>back to all jobs</a>
+          or reload the page.
+        </div>
       </div>
     `;
   }
@@ -1616,6 +1783,12 @@ export function JobDetail({ namespace, name, epoch }) {
   const startTime = info.startTime ?? status.startTime;
   const isRunning = phase.toLowerCase() === 'running';
   const isCompleted = phase.toLowerCase() === 'completed' || phase.toLowerCase() === 'succeeded';
+  const phaseLower = phase.toLowerCase();
+  const isCancelled = phaseLower === 'cancelled' || phaseLower === 'canceled';
+  const isPartiallyFailed = phaseLower === 'partiallyfailed';
+  // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
+  // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
+  const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
 
   // status.summary (completed) and status.liveSummary (running) carry the same
   // curated nested ``{tag: {avg, p50, p99, ...}}`` projection of the AIPerf
@@ -1655,8 +1828,15 @@ export function JobDetail({ namespace, name, epoch }) {
   const latencyHistogram = (() => {
     const buckets = job?.status?.results?.latency_histogram ?? job?.status?.results?.histograms?.request_latency ?? null;
     if (!buckets || !Array.isArray(buckets) || buckets.length === 0) return null;
+    // Bucket upper bound ``le`` is in seconds. Tick labels swap to "s" past 1s
+    // so a 60-second tail doesn't render as "60000ms".
+    const fmtBucket = (le) => {
+      if (typeof le !== 'number') return String(le);
+      if (le >= 1) return le.toFixed(le >= 10 ? 0 : 1) + 's';
+      return (le * 1000).toFixed(0) + 'ms';
+    };
     return {
-      labels: buckets.map((b) => (typeof b.le === 'number' ? (b.le * 1000).toFixed(0) + 'ms' : String(b.le))),
+      labels: buckets.map((b) => fmtBucket(b.le)),
       datasets: [
         {
           label: 'Requests',
@@ -1669,20 +1849,7 @@ export function JobDetail({ namespace, name, epoch }) {
     };
   })();
 
-  const throughputChartOptions = {
-    plugins: { legend: { display: false } },
-    scales: {
-      x: {
-        ticks: { color: palette.overlay0, maxTicksLimit: 6, font: { size: 10 } },
-        grid: { color: palette.surface0 },
-      },
-      y: {
-        ticks: { color: palette.overlay0, font: { size: 10 } },
-        grid: { color: palette.surface0 },
-        title: { display: true, text: 'tok/s', color: palette.overlay1, font: { size: 10 } },
-      },
-    },
-  };
+  const throughputChartOptions = LIVE_THROUGHPUT_OPTIONS;
 
   const histogramOptions = {
     plugins: { legend: { display: false } },
@@ -1701,6 +1868,13 @@ export function JobDetail({ namespace, name, epoch }) {
   };
 
   const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
+
+  // Warmup hint: running, but no live KPI numbers yet — typical for the first ~30s
+  // while the workers ramp and TimingManager hasn't issued enough credits to populate
+  // any percentile. Without this hint, all-`---` KPIs read as "broken" instead of "soon".
+  const noKpisYet = throughput == null && ttftAvg == null && latP99 == null && outputTokenThroughput == null;
+  const showWarmupHint = isRunning && noKpisYet;
+  const currentSubPhase = info.currentPhase ?? status.currentPhase ?? null;
 
   function fileColor(filename) {
     const ext = filename.split('.').pop().toLowerCase();
@@ -1734,13 +1908,20 @@ export function JobDetail({ namespace, name, epoch }) {
                 `
                 : isCompleted
                   ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
-                  : null
+                  : isCancelled
+                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
+                    : isPartiallyFailed
+                      ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
+                      : null
               }
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             ${endpointUrl && html`
-              <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1)">
-                <span style="color: ${palette.blue}">${endpointUrl}</span>
+              <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1); max-width: 100%; overflow: hidden">
+                <span
+                  title=${endpointUrl}
+                  style=${'color: ' + palette.blue + '; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom'}
+                >${endpointUrl}</span>
               </div>
             `}
             ${info.sweepName && html`
@@ -1755,14 +1936,52 @@ export function JobDetail({ namespace, name, epoch }) {
             `}
           </div>
           ${isRunning && html`
-            <button
-              class="btn btn-danger"
-              onclick=${handleCancel}
-              style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-              data-testid="job-detail-cancel"
-            >
-              Cancel
-            </button>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
+              ${cancelState === 'idle' && html`
+                <button
+                  class="btn btn-danger"
+                  onclick=${() => setCancelState('confirm')}
+                  style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
+                  data-testid="job-detail-cancel"
+                  title="Stop the running benchmark. The AIPerfJob CR is kept; controller pod is terminated."
+                >
+                  Cancel run
+                </button>
+              `}
+              ${cancelState === 'confirm' && html`
+                <div style=${'display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: ' + colors.error + '11; border: 1px solid ' + colors.error + '44; border-radius: var(--radius-md)'}>
+                  <span style=${'font-size: var(--font-size-sm); color: ' + colors.error}>
+                    Stop benchmark for <strong>${name}</strong>? The CR is kept (use "kubectl delete" to remove it).
+                  </span>
+                  <button
+                    onclick=${handleCancel}
+                    style=${'background: ' + colors.error + '; color: white; border: none; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
+                    data-testid="job-detail-cancel-confirm"
+                  >
+                    Yes, cancel
+                  </button>
+                  <button
+                    onclick=${() => { setCancelState('idle'); setCancelError(null); }}
+                    style=${'background: transparent; color: ' + palette.subtext0 + '; border: 1px solid ' + palette.overlay0 + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
+                  >
+                    Keep running
+                  </button>
+                </div>
+              `}
+              ${cancelState === 'pending' && html`
+                <button
+                  disabled
+                  style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: not-allowed; font-size: var(--font-size-sm); display: inline-flex; align-items: center; gap: var(--space-2); opacity: 0.7'}
+                  data-testid="job-detail-cancel"
+                >
+                  <${Spinner} size=${12} />
+                  Cancelling…
+                </button>
+              `}
+              ${cancelError && html`
+                <span style=${'font-size: var(--font-size-xs); color: ' + colors.error}>Cancel failed: ${cancelError}</span>
+              `}
+            </div>
           `}
         </div>
       </div>
@@ -1776,41 +1995,80 @@ export function JobDetail({ namespace, name, epoch }) {
 
       <!-- Error banner -->
       ${jobError && html`
-        <div class="card" style="border-color: ${colors.error}44; color: ${colors.error}; margin-bottom: var(--space-4)">
-          <strong>Error:</strong> ${jobError}
+        <div class="card" style="border-color: ${colors.error}44; color: ${colors.error}; margin-bottom: var(--space-4)" title=${jobError}>
+          <strong>Error:</strong> <span style="word-break: break-word; white-space: pre-wrap">${jobError}</span>
+        </div>
+      `}
+
+      <!-- Warmup hint: running but no KPIs yet -->
+      ${showWarmupHint && html`
+        <div
+          class="card"
+          data-testid="job-detail-warmup-hint"
+          aria-live="polite"
+          style=${'margin-bottom: var(--space-4); border-color: ' + palette.amber + '44; background: ' + palette.amber + '0d; display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); color: ' + palette.subtext0}
+        >
+          <${Spinner} size=${14} />
+          <span>
+            ${currentSubPhase
+              ? html`Warming up — current phase <strong>${currentSubPhase}</strong>. First metrics typically arrive within 30 seconds.`
+              : html`Warming up — workers are spinning up. First metrics typically arrive within 30 seconds.`
+            }
+          </span>
         </div>
       `}
 
       <!-- KPI row -->
-      <div class="kpi-row" style="margin-bottom: var(--space-6)">
+      <!-- "Live" / "Final" tag clarifies whether the KPI numbers are still moving (running)
+           or are the run's final values (completed). -->
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2)">
+        <div style=${'font-size: var(--font-size-xs); font-weight: 600; color: ' + palette.overlay1 + '; text-transform: uppercase; letter-spacing: 0.06em'}>Key Metrics</div>
+        ${(isRunning || isCompleted) && html`
+          <span
+            title=${isRunning
+              ? 'Numbers below are updating live — they will change until the run completes.'
+              : 'Numbers below are the final values for this run.'}
+            style=${'font-size: var(--font-size-xs); font-weight: 600; padding: 2px var(--space-2); border-radius: var(--radius-sm); '
+              + (isRunning
+                ? 'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44'
+                : 'background: ' + palette.overlay0 + '22; color: ' + palette.subtext0 + '; border: 1px solid ' + palette.overlay0 + '44')}
+          >${isRunning ? 'LIVE' : 'FINAL'}</span>
+        `}
+      </div>
+      <div class="kpi-row" style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
         <${KpiCard}
           label="Throughput"
           value=${fmtRps(throughput) ?? '---'}
           unit=${throughput != null ? 'req/s' : ''}
           color=${colors.phaseRunning}
+          title="Requests per second (avg). Higher is better."
         />
         <${KpiCard}
           label="Token Throughput"
           value=${outputTokenThroughput != null ? fmtNum(outputTokenThroughput, 0) : '---'}
           unit=${outputTokenThroughput != null ? 'tok/s' : ''}
           color=${palette.sapphire}
+          title="Output tokens generated per second across all in-flight requests (avg). Higher is better."
         />
         <${KpiCard}
           label="TTFT avg"
           value=${fmtMs(ttftAvg) ?? '---'}
           unit=${ttftAvg != null ? 'ms' : ''}
           color=${palette.teal}
+          title="Time To First Token: latency from request send to the first streamed token (avg). Lower is better."
         />
         <${KpiCard}
           label="Latency P99"
           value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
           unit=${latP99 != null ? 'ms' : ''}
           color=${palette.peach}
+          title="End-to-end request latency at the 99th percentile — 99% of requests completed at or below this value. Lower is better."
         />
         <${KpiCard}
           label="Errors"
           value=${errorCount ?? '---'}
           color=${errorCount ? colors.error : colors.textMuted}
+          title="Percentage of requests that failed (HTTP error, timeout, or invalid response)."
         />
         <!-- Feature 5: Token Efficiency -->
         ${isCompleted && results && html`<${TokenEfficiencyCard} results=${results} info=${info} />`}
@@ -1823,7 +2081,12 @@ export function JobDetail({ namespace, name, epoch }) {
           ${phasesArray.length > 0 && html`
             <div class="card" style="margin-bottom: var(--space-4)">
               <div class="card-title">Phases</div>
-              <${PhaseBar} phases=${phasesArray} />
+              <!-- Sweep children with warmup + 5+ stages overflow on narrow viewports;
+                   horizontal scroll keeps the layout intact instead of wrapping items
+                   into broken rows. -->
+              <div style="overflow-x: auto; max-width: 100%">
+                <${PhaseBar} phases=${phasesArray} />
+              </div>
             </div>
           `}
 
@@ -1856,7 +2119,12 @@ export function JobDetail({ namespace, name, epoch }) {
             <div class="card-title">Live Throughput</div>
             ${chartData
               ? html`<${ChartWrapper} type="line" data=${chartData} options=${throughputChartOptions} height=${200} />`
-              : html`<div class="text-dim" style="padding: var(--space-4); text-align: center">Waiting for data...</div>`
+              : html`
+                <div class="text-dim" style="padding: var(--space-4); text-align: center; display: flex; align-items: center; justify-content: center; gap: var(--space-2)">
+                  <${Spinner} size=${14} />
+                  <span>${isRunning ? 'Waiting for first throughput sample…' : 'No throughput data available for this run.'}</span>
+                </div>
+              `
             }
           </div>
 
@@ -1869,20 +2137,48 @@ export function JobDetail({ namespace, name, epoch }) {
         </div>
       </div>
 
-      <!-- Feature 6: SLA Compliance (completed only) -->
-      ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} />`}
+      <!-- Feature 6: SLA Compliance (completed only, only when SLOs declared on the CR) -->
+      ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
 
       <!-- Server Metrics (completed only, when available) -->
-      ${isCompleted && serverMetrics && html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`}
+      ${isCompleted && serverMetrics
+        ? html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`
+        : (isCompleted && files.some(f => f.name === 'server_metrics_export.json') && html`
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+            <${Spinner} size="sm" />
+            <span class="text-dim" style="font-size: var(--font-size-sm)">Loading server metrics…</span>
+          </div>
+        `)
+      }
 
       <!-- Job Configuration (always shown if available) -->
-      ${jobConfig && html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`}
+      ${jobConfig
+        ? html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`
+        : html`
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+            <${Spinner} size="sm" />
+            <span class="text-dim" style="font-size: var(--font-size-sm)">Loading job configuration…</span>
+          </div>
+        `
+      }
 
       <!-- Feature 8: Run Metadata (completed only) -->
       ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
 
       <!-- Per-Record Analysis from profile_export.jsonl -->
-      ${isCompleted && jsonlRecords && html`<${PerRecordAnalysis} records=${jsonlRecords} />`}
+      ${isCompleted && jsonlRecords
+        ? html`<${PerRecordAnalysis} records=${jsonlRecords} />`
+        : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && html`
+          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2)">
+            <${Spinner} size="sm" />
+            <span class="text-dim" style="font-size: var(--font-size-sm)">
+              ${jsonlProgress
+                ? `Parsing per-request records — ${fmtInt(jsonlProgress.done)} of ${fmtInt(jsonlProgress.total)}…`
+                : 'Loading per-request records…'}
+            </span>
+          </div>
+        `)
+      }
 
       <!-- Feature 3: Concurrency vs Throughput (completed only) -->
       ${isCompleted && html`<${ConcurrencyThroughputChart} status=${status} />`}
@@ -1922,17 +2218,30 @@ export function JobDetail({ namespace, name, epoch }) {
             ${files.map(f => {
               const ext = f.name.split('.').pop().toLowerCase();
               const previewable = PREVIEWABLE.has(ext);
+              const action = () => openFile(f.name);
               return html`
                 <div
                   key=${f.name}
-                  onclick=${() => openFile(f.name)}
-                  style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s'}
+                  onclick=${action}
+                  onkeydown=${e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      action();
+                    }
+                  }}
+                  role="button"
+                  tabindex="0"
+                  aria-label=${(previewable ? 'Preview ' : 'Download ') + f.name}
+                  title=${previewable ? 'Click to preview' : 'Click to download'}
+                  style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; border: 1px solid ' + palette.surface0 + '60; outline: none'}
                   onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; }}
                   onmouseleave=${e => { e.currentTarget.style.background = palette.base; }}
+                  onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
+                  onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
                 >
                   <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name)}>${f.name}</span>
                   <div style="display: flex; align-items: center; gap: var(--space-2)">
-                    ${previewable && html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>preview</span>`}
+                    <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
                     <span class="text-dim" style="font-size: var(--font-size-xs)">${humanSize(f.size_bytes)}</span>
                   </div>
                 </div>

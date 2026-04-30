@@ -79,8 +79,11 @@ export const api = {
   },
 
   /** Leaderboard analytics */
-  getLeaderboard(metric = 'request_throughput', stat = 'avg') {
-    const params = new URLSearchParams({ metric, stat });
+  getLeaderboard(metric = 'request_throughput', stat = 'avg', limit = 20) {
+    // Backend default is 20. Callers that filter client-side (e.g.
+    // pages/leaderboard.js) should pass ``limit=1000`` so matching runs
+    // ranked below 20 aren't silently absent from the filtered view.
+    const params = new URLSearchParams({ metric, stat, limit: String(limit) });
     return apiFetch(`/analytics/leaderboard?${params}`);
   },
 
