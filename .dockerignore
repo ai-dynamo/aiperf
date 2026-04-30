@@ -55,6 +55,10 @@ dist/
 docs/
 notebooks/
 tools/
+!tools/generate_dpkg_attributions.py
+!tools/generate_python_attributions.py
+!tools/licenses.toml
+!tools/requirements.licenses.txt
 dev/
 CLAUDE.md
 CONTRIBUTING.md

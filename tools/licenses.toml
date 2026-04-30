@@ -71,6 +71,17 @@ The installed package is predominantly public domain with BSD-2-Clause covering
 the minority of third-party files. Verified from COPYING.txt in the distribution.
 Dependency chain: cyclopts -> rich-rst -> docutils."""
 
+[[exceptions]]
+type = "python"
+name = "pyudorandom"
+version = "1.0.0"
+spdx = "MIT"
+reason = """PyPI metadata is empty (license: UNKNOWN, no homepage, no LICENSE file
+in the sdist). The installed package declares its license in source:
+``pyudorandom/__init__.py`` sets ``__license__ = 'MIT'`` (Mats Julian Olsen,
+2016). Verified by inspecting the sdist tarball.
+Dependency chain: tdigest -> pyudorandom."""
+
 # Example Python exception (version required):
 #
 # [[exceptions]]
