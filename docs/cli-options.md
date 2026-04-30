@@ -929,8 +929,8 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 
 #### `--accuracy-n-shots` `<int>`
 
-Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default. Maximum 8.
-<br/>_Constraints: ≥ 0, ≤ 8_
+Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
+<br/>_Constraints: ≥ 0, ≤ 32_
 
 #### `--accuracy-enable-cot`
 

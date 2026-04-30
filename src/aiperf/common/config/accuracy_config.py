@@ -44,9 +44,9 @@ class AccuracyConfig(BaseConfig):
         int | None,
         Field(
             ge=0,
-            le=8,
+            le=32,
             description="Number of few-shot examples to include in the prompt. "
-            "0 means zero-shot evaluation, None uses the benchmark default. Maximum 8.",
+            "0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.",
         ),
         CLIParameter(
             name=("--accuracy-n-shots",),
