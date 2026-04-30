@@ -316,6 +316,22 @@ def _build_embedding_response_data(
     }
 
 
+def _extract_chat_embedding_inputs(req: ChatCompletionRequest) -> list[str]:
+    inputs: list[str] = []
+    for message in req.messages:
+        content = message.content
+        if isinstance(content, str):
+            inputs.append(content)
+            continue
+        text = "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+        inputs.append(text)
+    return inputs or [""]
+
+
 @app.post("/v1/embeddings", response_model=None)
 @with_error_injection
 async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
@@ -340,6 +356,35 @@ async def embeddings(req: EmbeddingRequest, request: Request) -> ORJSONResponse:
         )
 
         return ORJSONResponse(_build_embedding_response_data(ctx, req.inputs))
+
+
+@app.post("/v1/chat/embeddings", response_model=None)
+@with_error_injection
+async def chat_embeddings(
+    req: ChatCompletionRequest, request: Request
+) -> ORJSONResponse:
+    """Chat-shaped embedding endpoint."""
+    endpoint = "/v1/chat/embeddings"
+    start_time = request.state.start_time
+    ctx = make_ctx(req, endpoint, start_time)
+    inputs = _extract_chat_embedding_inputs(req)
+
+    with track_request(endpoint, req.model):
+        await _wait_for_processing(
+            server_config.embedding_base_latency,
+            server_config.embedding_per_input_latency,
+            len(inputs),
+        )
+
+        record_embedding_success(
+            endpoint,
+            req.model,
+            ctx.usage["prompt_tokens"],
+            len(inputs),
+            perf_counter() - start_time,
+        )
+
+        return ORJSONResponse(_build_embedding_response_data(ctx, inputs))
 
 
 # ============================================================================

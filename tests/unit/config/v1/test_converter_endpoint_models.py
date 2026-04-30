@@ -26,6 +26,14 @@ def test_build_endpoint_basic():
     assert out2["urls"] == ["http://localhost:8000"]
 
 
+def test_build_endpoint_preserves_explicit_unsupported_scheme():
+    user = UserConfig.model_validate(
+        {"endpoint": {"model_names": ["m"], "urls": ["ftp://localhost:8000"]}}
+    )
+    out = build_endpoint(user)
+    assert out["urls"] == ["ftp://localhost:8000"]
+
+
 def test_build_endpoint_passes_extras_when_set():
     user = UserConfig.model_validate(
         {

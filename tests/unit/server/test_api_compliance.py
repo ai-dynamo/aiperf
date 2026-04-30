@@ -368,6 +368,35 @@ class TestEmbeddings:
         emb2 = resp2.json()["data"][0]["embedding"]
         assert emb1 == emb2
 
+    async def test_chat_embedding_accepts_chat_messages(self, client: AsyncClient):
+        """Test chat-shaped embedding request for VLM2Vec-style endpoints."""
+        resp = await client.post(
+            "/v1/chat/embeddings",
+            json={
+                "model": "vlm2vec-model",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Embed this text"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "data:image/png;base64,abc123"},
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["object"] == "list"
+        assert data["model"] == "vlm2vec-model"
+        assert len(data["data"]) == 1
+        assert data["data"][0]["object"] == "embedding"
+        assert len(data["data"][0]["embedding"]) == 768
+        assert data["usage"]["prompt_tokens"] > 0
+
 
 # ============================================================================
 # Rankings API Compliance (NIM)

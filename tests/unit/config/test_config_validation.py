@@ -374,6 +374,24 @@ class TestUserCentricRequiresMultiTurn:
 
 
 # =============================================================================
+# Endpoint boundary validation
+# =============================================================================
+
+
+class TestEndpointBoundaryValidation:
+    def test_rejects_unsupported_url_scheme(self):
+        with pytest.raises(ValidationError, match="endpoint URL.*ftp://localhost:8000"):
+            EndpointConfig(urls=["ftp://localhost:8000/v1/chat/completions"])
+
+    def test_rejects_custom_path_without_leading_slash(self):
+        with pytest.raises(ValidationError, match="endpoint.path.*leading slash"):
+            EndpointConfig(
+                urls=["http://localhost:8000"],
+                path="v1/chat/completions",
+            )
+
+
+# =============================================================================
 # Streaming normalization for unsupported endpoint types
 # =============================================================================
 

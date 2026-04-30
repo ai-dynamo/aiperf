@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _url(item: str) -> str:
-    return item if item.startswith("http") else f"http://{item}"
+    return item if "://" in item else f"http://{item}"
 
 
 def _endpoint_template_from_extra(

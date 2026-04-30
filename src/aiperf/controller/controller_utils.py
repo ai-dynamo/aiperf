@@ -135,7 +135,7 @@ def print_exit_errors(
         summary.append(Text("\n"))
         summary.append(_format_field("Reason", wrap_text(details.message)))
 
-        if details.cause:
+        if details.cause and not str(details.cause).lstrip().startswith("Traceback"):
             summary.append(Text("\n"))
             summary.append(_format_field("Cause", wrap_text(str(details.cause))))
 

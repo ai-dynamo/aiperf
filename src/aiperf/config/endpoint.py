@@ -10,6 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import (
     ConfigDict,
@@ -193,9 +194,9 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="HTTP transport protocol (http/https). "
-            "Auto-detected from URL scheme if not specified. "
-            "Explicit setting overrides auto-detection.",
+            description="HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. "
+            "Both are used over the URL's scheme (http:// or https://). "
+            "Auto-detected from URL when unset; explicit setting overrides auto-detection.",
         ),
     ]
 
@@ -206,7 +207,7 @@ class EndpointConfig(BaseConfig):
             description="HTTP connection management strategy. "
             "pooled: shared connection pool (fastest), "
             "never: new connection per request (includes TCP overhead), "
-            "sticky_sessions: dedicated connection per session.",
+            "sticky-user-sessions: dedicated connection per user session.",
         ),
     ]
 
@@ -324,6 +325,18 @@ class EndpointConfig(BaseConfig):
                 pass
 
         return data
+
+    @model_validator(mode="after")
+    def _validate_endpoint_boundaries(self) -> Self:
+        for url in self.urls:
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    f"endpoint URL '{url}' must be an absolute http:// or https:// URL"
+                )
+        if self.path is not None and not self.path.startswith("/"):
+            raise ValueError("endpoint.path must start with a leading slash")
+        return self
 
     @model_validator(mode="after")
     def _validate_template_required(self) -> Self:

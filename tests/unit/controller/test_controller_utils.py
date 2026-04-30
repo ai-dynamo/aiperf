@@ -114,6 +114,25 @@ class TestPrintExitErrors:
             assert mock_console.print.call_count == 2
             mock_console.file.flush.assert_called()
 
+    def test_traceback_cause_is_hidden_from_console(self):
+        error = ExitErrorInfo(
+            error_details=ErrorDetails(
+                type="CommandError",
+                message="invalid dataset record",
+                cause="Traceback (most recent call last):\nValueError: bad input",
+            ),
+            operation="Configure Profiling",
+            service_id="dataset_manager",
+        )
+        console, output = _create_test_console_output()
+
+        print_exit_errors([error], console)
+
+        result = output.getvalue()
+        assert "invalid dataset record" in result
+        assert "Traceback" not in result
+        assert "ValueError" not in result
+
 
 class TestGroupErrorsByDetails:
     """Test the _group_errors_by_details function."""
