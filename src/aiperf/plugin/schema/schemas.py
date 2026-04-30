@@ -386,6 +386,14 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=None,
         description="Column name containing the video data (URL string or bytes dict). Used for video multimodal datasets.",
     )
+    audio_column: str | None = Field(
+        default=None,
+        description=(
+            "Column name containing audio data. Depending on loader/dataset, this can be "
+            "an HF Audio dict with array/sampling_rate (decoded) or bytes/path (decode=False). "
+            "Used for ASR/speech datasets."
+        ),
+    )
     conversation_column: str | None = Field(
         default=None,
         description="Column name containing the conversation messages array. Required for HFConversationDatasetLoader.",

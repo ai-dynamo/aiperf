@@ -89,6 +89,11 @@ dev = [
   "trustme>=1.0.0",
 ]
 
+[dependency-groups]
+dev = [
+    "hypothesis>=6.152.4",
+]
+
 [tool.ruff]
 # Base settings for ruff
 line-length = 88

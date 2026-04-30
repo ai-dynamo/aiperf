@@ -1676,6 +1676,69 @@ public_dataset_loader:
       prompt_column: change_request
       prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
 
+  # ---------------------------------------------------------------------------
+  # ASR (Automatic Speech Recognition) datasets
+  # ---------------------------------------------------------------------------
+  librispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      LibriSpeech ASR benchmark dataset (openslr). Clean read-speech clips from
+      audiobooks. Uses the test.clean split by default.
+    metadata:
+      hf_dataset_name: openslr/librispeech_asr
+      hf_split: test
+      hf_subset: clean
+      streaming: true
+      audio_column: audio
+
+  voxpopuli:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      VoxPopuli English ASR dataset (facebook). Unlabelled speech data from
+      European Parliament recordings.
+    metadata:
+      hf_dataset_name: facebook/voxpopuli
+      hf_split: test
+      hf_subset: en
+      audio_column: audio
+      streaming: true
+
+  gigaspeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      GigaSpeech English ASR dataset (speechcolab). Large-scale multi-domain
+      corpus from audiobooks, podcasts, and YouTube. Requires HuggingFace authentication.
+    metadata:
+      hf_dataset_name: speechcolab/gigaspeech
+      hf_split: test
+      hf_subset: xs
+      audio_column: audio
+      streaming: true
+
+  ami:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      AMI Meeting Corpus ASR dataset (Edinburgh CSTR). Meeting recordings with
+      individual headset microphone audio. Public, no authentication required.
+    metadata:
+      hf_dataset_name: edinburghcstr/ami
+      hf_split: test
+      hf_subset: ihm
+      audio_column: audio
+      streaming: true
+
+  spgispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      SPGISpeech ASR dataset (Kensho). Financial earnings call recordings.
+      Requires HuggingFace authentication and terms acceptance.
+    metadata:
+      hf_dataset_name: kensho/spgispeech
+      hf_split: test
+      hf_subset: test
+      audio_column: audio
+      streaming: true
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================
