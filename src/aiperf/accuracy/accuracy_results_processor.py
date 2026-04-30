@@ -7,7 +7,11 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from aiperf.accuracy.benchmark_loader import load_benchmark_problems
-from aiperf.accuracy.models import BenchmarkProblem
+from aiperf.accuracy.models import (
+    ACCURACY_OVERALL_TAG,
+    BenchmarkProblem,
+    accuracy_task_tag,
+)
 from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -98,7 +102,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             overall_acc = self._overall_correct / self._overall_total
             results.append(
                 MetricResult(
-                    tag="accuracy.overall",
+                    tag=ACCURACY_OVERALL_TAG,
                     header="Accuracy (Overall)",
                     unit="ratio",
                     count=self._overall_total,
@@ -113,7 +117,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             acc = correct / total if total > 0 else 0.0
             results.append(
                 MetricResult(
-                    tag=f"accuracy.task.{task}",
+                    tag=accuracy_task_tag(task),
                     header=f"Accuracy ({task})",
                     unit="ratio",
                     count=total,

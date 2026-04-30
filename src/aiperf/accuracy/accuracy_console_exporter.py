@@ -5,6 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.accuracy.models import (
+    ACCURACY_METRIC_PREFIX,
+    ACCURACY_OVERALL_TAG,
+    ACCURACY_TASK_TAG_PREFIX,
+)
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -41,15 +46,17 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
         if results is None or results.records is None:
             return
 
-        accuracy_metrics = [r for r in results.records if r.tag.startswith("accuracy.")]
+        accuracy_metrics = [
+            r for r in results.records if r.tag.startswith(ACCURACY_METRIC_PREFIX)
+        ]
         if not accuracy_metrics:
             return
 
         overall = next(
-            (m for m in accuracy_metrics if m.tag == "accuracy.overall"), None
+            (m for m in accuracy_metrics if m.tag == ACCURACY_OVERALL_TAG), None
         )
         task_metrics = [
-            m for m in accuracy_metrics if m.tag.startswith("accuracy.task.")
+            m for m in accuracy_metrics if m.tag.startswith(ACCURACY_TASK_TAG_PREFIX)
         ]
 
         table = Table(title="Accuracy Benchmark Results", show_lines=True)
@@ -59,7 +66,7 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
         table.add_column("Accuracy", justify="right", style="bold")
 
         for m in task_metrics:
-            task_name = m.tag.removeprefix("accuracy.task.")
+            task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
             acc_str = f"{m.current:.2%}" if m.current is not None else "N/A"
             table.add_row(
                 task_name,

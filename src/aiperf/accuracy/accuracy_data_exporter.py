@@ -7,6 +7,11 @@ import asyncio
 import csv
 from pathlib import Path
 
+from aiperf.accuracy.models import (
+    ACCURACY_METRIC_PREFIX,
+    ACCURACY_OVERALL_TAG,
+    ACCURACY_TASK_TAG_PREFIX,
+)
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
@@ -48,16 +53,18 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         if results is None or results.records is None:
             return
 
-        accuracy_metrics = [r for r in results.records if r.tag.startswith("accuracy.")]
+        accuracy_metrics = [
+            r for r in results.records if r.tag.startswith(ACCURACY_METRIC_PREFIX)
+        ]
         if not accuracy_metrics:
             return
 
         rows: list[list] = []
         for m in accuracy_metrics:
-            if m.tag == "accuracy.overall":
+            if m.tag == ACCURACY_OVERALL_TAG:
                 task_name = "OVERALL"
-            elif m.tag.startswith("accuracy.task."):
-                task_name = m.tag.removeprefix("accuracy.task.")
+            elif m.tag.startswith(ACCURACY_TASK_TAG_PREFIX):
+                task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
             else:
                 continue
             rows.append(

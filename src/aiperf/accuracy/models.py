@@ -8,6 +8,15 @@ from typing_extensions import TypedDict
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 
+ACCURACY_OVERALL_TAG = "accuracy.overall"
+ACCURACY_TASK_TAG_PREFIX = "accuracy.task."
+ACCURACY_METRIC_PREFIX = "accuracy."
+
+
+def accuracy_task_tag(task: str) -> str:
+    """Build the MetricResult.tag for a per-task accuracy result."""
+    return f"{ACCURACY_TASK_TAG_PREFIX}{task}"
+
 
 class AccuracyChatMessage(TypedDict):
     """A single OpenAI-compatible chat message used in accuracy benchmark prompts."""
