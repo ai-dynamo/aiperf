@@ -100,6 +100,7 @@ jobs:
         env:
           AIPERF_SOURCE_DIR: ${{ github.workspace }}
           CI_JOB_NAME: test_docs_end_to_end
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
 
       - name: Cleanup Docker containers
