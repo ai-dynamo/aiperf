@@ -169,7 +169,7 @@ Profile audio-capable models with the Responses API:
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type responses \
     --endpoint /v1/responses \
     --streaming \
