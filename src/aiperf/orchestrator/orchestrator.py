@@ -61,9 +61,12 @@ class MultiRunOrchestrator:
         - INDEPENDENT: variations outer, trials inner. Artifact
           tree is <base>/<variation>/profile_runs/run_NNNN/.
         - REPEATED (default): trials outer, variations inner. Artifact tree is
-          <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_0001/.
-          The trailing run_0001 segment comes from the per-cell strategy
-          and is unconditional; trial-NNNN is the orchestrator's prefix.
+          <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/.
+          The trial-NNNN prefix is the orchestrator's; the inner run_NNNN
+          comes from the per-cell strategy with the trial index threaded
+          through, so each cell has exactly one run labeled to match the
+          trial it belongs to (run_0001 under trial_0001, run_0002 under
+          trial_0002, ...).
 
         Args:
             plan: BenchmarkPlan with configs[], variations[], trials, convergence config.
@@ -222,7 +225,8 @@ class MultiRunOrchestrator:
         Each variation has one strategy reused across trials, called once
         per trial with that variation's growing prior-results history.
         Artifact tree:
-        <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_0001/.
+        <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/
+        - the inner run_NNNN tracks the trial index (one run per cell).
         """
         if plan.use_adaptive:
             raise ValueError(
