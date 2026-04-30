@@ -288,28 +288,13 @@ jobs:
       - name: Run integration tests
         run: make integration-tests-ci PYTHON_VERSION=3.12
 
-  # TODO: re-enable when GPU runner is available. Also restore references in
-  # build-container.needs and pipeline-summary (needs: list + summary table).
-  # gpu-e2e-tests:
-  #   name: GPU End-to-End Tests
-  #   needs: [prepare-nightly]
-  #   runs-on: prod-aiperf-tester-amd-gpu-v1
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #       with:
-  #         ref: ${{ inputs.ref || github.ref }}
-  #
-  #     - name: Run test_docs_end_to_end
-  #       env:
-  #         AIPERF_SOURCE_DIR: ${{ github.workspace }}
-  #         CI_JOB_NAME: test_docs_end_to_end
-  #       run: |
-  #         bash -x tests/ci/test_docs_end_to_end/setup_test.sh
-  #
-  #     - name: Cleanup Docker containers
-  #       if: always()
-  #       run: docker compose -f docker-compose.yml down || true
+  test-docs-end-to-end:
+    name: Test Docs End-to-End
+    needs: [prepare-nightly]
+    uses: ./.github/workflows/test-docs-end-to-end.yml
+    with:
+      source_ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+    secrets: inherit
 
   # ============================================================================
   # PHASE 3: BUILD
@@ -323,7 +308,7 @@ jobs:
   # the pipeline continues to build, stage, and scan.
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests]
+    needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, test-docs-end-to-end]
     if: >-
       ${{ always()
           && needs.prepare-nightly.result == 'success'
@@ -860,7 +845,7 @@ jobs:
       - pre-commit
       - unit-tests
       - integration-tests
-      # - gpu-e2e-tests  # temporarily commented out with the job
+      - test-docs-end-to-end
       - build-container
       - create-multiarch-manifest-ecr
       - stage-nightly-container
@@ -895,6 +880,7 @@ jobs:
             echo "| pre-commit | ${{ needs.pre-commit.result }} |"
             echo "| unit-tests | ${{ needs.unit-tests.result }} |"
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
+            echo "| test-docs-end-to-end | ${{ needs.test-docs-end-to-end.result }} |"
             echo ""
             echo "### Build + Upload"
             echo "| Job | Result |"
