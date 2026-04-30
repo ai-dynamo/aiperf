@@ -30,7 +30,7 @@ from aiperf.operator.job_union import (
     list_all_jobs,
     synthesize_status_from_summary,
 )
-from aiperf.operator.results_layout import EPOCH_RE, list_runs, resolve_run_dir
+from aiperf.operator.results_layout import EPOCH_RE, list_runs_async, resolve_run_dir
 from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
 from aiperf.operator.routers.jobs_models import (
     ActiveJobListResponse,
@@ -83,6 +83,84 @@ async def _fetch_k8s_version(api: ApiClient) -> str:
     except Exception:  # noqa: BLE001 - best-effort; UI tolerates 'unknown'
         return "unknown"
     return version_info.get("gitVersion", "unknown")
+
+
+async def _fetch_cluster_name(api: ApiClient) -> str | None:
+    """Auto-detect the cluster name from the apiserver, or None.
+
+    Kubernetes core has no canonical "cluster name" field, but two
+    well-known sources cover most installs:
+
+    * ``kube-system/kubeadm-config`` ConfigMap — written by kubeadm
+      (and tools that wrap it: kind, kops, kubespray, most on-prem and
+      DGX-style clusters). The ``ClusterConfiguration`` doc embedded in
+      its ``data`` block has a ``clusterName`` field.
+    * ``kube-system/cluster-info`` ConfigMap — public bootstrap info on
+      some installs; the embedded kubeconfig blob's ``clusters[0].name``
+      gives a usable label.
+
+    Best-effort: any RBAC denial / parse failure falls back to ``None``,
+    which lets the UI show the Kubernetes version instead. Operators
+    can override via ``AIPERF_OPERATOR_CLUSTER_NAME`` for clusters that
+    don't expose either of these (managed GKE/EKS, custom installers).
+    """
+    from kubernetes_asyncio import client as k8s
+
+    try:
+        core = k8s.CoreV1Api(api)
+        cm = await core.read_namespaced_config_map(
+            name="kubeadm-config", namespace="kube-system"
+        )
+    except Exception:  # noqa: BLE001 - best-effort; try the next source
+        cm = None
+
+    if cm is not None:
+        data = getattr(cm, "data", None) or {}
+        cluster_yaml = data.get("ClusterConfiguration") or data.get("ClusterStatus")
+        if isinstance(cluster_yaml, str):
+            # Cheap line-scan for `clusterName: <value>` — avoids pulling a
+            # YAML dep just for this single field. The kubeadm doc keeps it
+            # at top level so a simple prefix match is correct.
+            for line in cluster_yaml.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("clusterName:"):
+                    name = stripped.split(":", 1)[1].strip().strip("'\"")
+                    if name and name not in {"kubernetes", ""}:
+                        return name
+
+    try:
+        core = k8s.CoreV1Api(api)
+        cm = await core.read_namespaced_config_map(
+            name="cluster-info", namespace="kube-system"
+        )
+    except Exception:  # noqa: BLE001 - best-effort
+        return None
+
+    data = getattr(cm, "data", None) or {}
+    kubeconfig_blob = data.get("kubeconfig") or ""
+    # Same strategy as above — line-scan for the first `name:` under
+    # `clusters:`. Good enough for the simple kubeconfig format the
+    # cluster-info CM typically embeds.
+    in_clusters_section = False
+    for line in kubeconfig_blob.splitlines():
+        stripped = line.strip()
+        if stripped == "clusters:":
+            in_clusters_section = True
+            continue
+        if in_clusters_section and stripped.startswith("name:"):
+            name = stripped.split(":", 1)[1].strip().strip("'\"")
+            if name and name not in {"kubernetes", ""}:
+                return name
+        if (
+            in_clusters_section
+            and stripped
+            and not stripped.startswith("-")
+            and not stripped.startswith(
+                ("name:", "cluster:", "server:", "certificate", "insecure")
+            )
+        ):
+            in_clusters_section = False
+    return None
 
 
 def _pod_gpu_request(pod: V1Pod) -> int:
@@ -316,8 +394,8 @@ async def _list_job_epochs_impl(
     persisted, or PVC directory was reaped) — callers should treat this
     identically to "no archived runs".
     """
-    runs = list_runs(base_dir, namespace, name)
-    # ``list_runs`` returns descending; the API exposes ascending so the
+    runs = await list_runs_async(base_dir, namespace, name)
+    # ``list_runs_async`` returns descending; the API exposes ascending so the
     # latest entry sits at index -1, matching the UI history strip.
     return JobEpochsResponse(
         epochs=[
@@ -533,6 +611,12 @@ async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
     """
     k8s_version = await _fetch_k8s_version(api)
     stats = await _fetch_cluster_gpu_stats(api)
+    from aiperf.operator.environment import OperatorEnvironment
+
+    # Env var wins (operator can override on managed clusters where the
+    # apiserver lookup is impossible); otherwise probe well-known
+    # ConfigMaps for the cluster name.
+    cluster_name = OperatorEnvironment.CLUSTER_NAME or await _fetch_cluster_name(api)
     return ClusterResponse(
         nodes=stats["node_count"],
         gpus=stats["gpus"],
@@ -544,6 +628,7 @@ async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
         nodes_partial=stats["nodes_partial"],
         nodes_full=stats["nodes_full"],
         kubernetes_version=k8s_version,
+        cluster_name=cluster_name,
     )
 
 

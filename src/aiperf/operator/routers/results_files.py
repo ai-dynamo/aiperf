@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, HTTPException, Request
@@ -189,12 +190,65 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
     )
 
 
+def _extract_model_endpoint(latest_dir: Path) -> tuple[str | None, str | None]:
+    """Read ``job_spec.json`` from the run dir and extract (model, endpoint).
+
+    Mirrors the extraction in ``operator/job_index.py`` so the in-memory
+    index and the on-disk fallback agree on what a job's "model" is.
+    Returns ``(None, None)`` for any failure — older jobs predate
+    ``job_spec.json`` and we don't want to fail the entire ``/results``
+    listing if one of them is unparseable.
+    """
+    spec_path = latest_dir / "job_spec.json"
+    if not spec_path.exists():
+        return None, None
+    try:
+        import orjson
+
+        spec = orjson.loads(spec_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        return None, None
+    if not isinstance(spec, dict):
+        return None, None
+    benchmark = spec.get("benchmark", spec)
+    if not isinstance(benchmark, dict):
+        return None, None
+    models_cfg = benchmark.get("models", {})
+    # models can be: {"items": [{"name": "x"}]}, {"modelNames": ["x"]}, or
+    # just ["x"]. Match the shape-tolerance in operator/job_index.py.
+    model_items: list[Any]
+    if isinstance(models_cfg, list):
+        model_items = models_cfg
+    elif isinstance(models_cfg, dict):
+        model_items = models_cfg.get("items", models_cfg.get("modelNames", []))
+    else:
+        model_items = []
+    model_name: str | None = None
+    if isinstance(model_items, list) and model_items:
+        first = model_items[0]
+        if isinstance(first, dict):
+            model_name = first.get("name")
+        else:
+            model_name = str(first) if first is not None else None
+    endpoint_cfg = benchmark.get("endpoint", {})
+    endpoint_url: str | None = None
+    if isinstance(endpoint_cfg, dict):
+        urls = endpoint_cfg.get("urls", endpoint_cfg.get("url", []))
+        if isinstance(urls, list) and urls:
+            endpoint_url = str(urls[0]) if urls[0] is not None else None
+        elif isinstance(urls, str):
+            endpoint_url = urls
+    return model_name, endpoint_url
+
+
 def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
     """Walk ``<namespace>/<job_id>/<epoch>/`` under ``base_dir``.
 
     Yields one :class:`JobEntry` per ``<ns>/<name>`` using the run pointed
     to by latest.txt. Jobs whose pointer is missing or targets a vanished
-    epoch are skipped silently.
+    epoch are skipped silently. ``model`` and ``endpoint`` are populated
+    from the run dir's ``job_spec.json`` so the UI can filter clusters of
+    "similar runs" without round-tripping to the live AIPerfJob CR list.
     """
     found: list[JobEntry] = []
     for ns_dir in sorted(base_dir.iterdir()):
@@ -209,12 +263,15 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
             files = [f for f in latest_dir.iterdir() if f.is_file()]
             if not files:
                 continue
+            model, endpoint = _extract_model_endpoint(latest_dir)
             found.append(
                 JobEntry(
                     namespace=ns_dir.name,
                     job_id=name_dir.name,
                     file_count=len(files),
                     total_size_bytes=sum(f.stat().st_size for f in files),
+                    model=model,
+                    endpoint=endpoint,
                 )
             )
     return found
@@ -286,13 +343,13 @@ def _serve_job_file(
     raise HTTPException(404, f"File not found: {filename}")
 
 
-def _build_run_history_response(
+async def _build_run_history_response(
     base_dir: Path, namespace: str, job_id: str
 ) -> RunHistoryListResponse:
     """Resolve every run dir for a job, raising 404 when none exist."""
-    from aiperf.operator.results_layout import list_runs
+    from aiperf.operator.results_layout import list_runs_async
 
-    runs = list_runs(base_dir, namespace, job_id)
+    runs = await list_runs_async(base_dir, namespace, job_id)
     if not runs:
         raise HTTPException(404, f"No runs for {namespace}/{job_id}")
     latest = next((r.epoch for r in runs if r.is_latest), None)
@@ -374,9 +431,7 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     )
     async def list_runs_endpoint(namespace: str, job_id: str) -> RunHistoryListResponse:
         """List every run dir for a job, newest first, with summary metadata."""
-        return await asyncio.to_thread(
-            _build_run_history_response, base_dir, namespace, job_id
-        )
+        return await _build_run_history_response(base_dir, namespace, job_id)
 
     @router.get("/results/{namespace}/{job_id}/runs/{epoch}.zip")
     async def download_historical_bundle(

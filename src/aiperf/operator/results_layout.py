@@ -48,7 +48,9 @@ __all__ = [
     "job_dir",
     "list_run_epochs",
     "list_runs",
+    "list_runs_async",
     "list_sweep_epochs",
+    "list_sweep_epochs_async",
     "resolve_latest",
     "resolve_run_dir",
     "resolve_sweep_dir",
@@ -83,6 +85,13 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
     ``is_latest=True`` matches ``latest.txt`` when the pointer is present
     and its target exists on disk.
 
+    When called from an async context (a running loop is detected), each
+    discovered run epoch is also handed off to ``runs_index.lazy_backfill_run``
+    via ``asyncio.create_task`` so the SQLite index converges on the disk
+    truth without blocking this read. Pure-sync callers (CLI, retention)
+    skip the backfill — the next operator restart's bootstrap pass picks
+    up the leftover.
+
     Example:
         >>> list_runs(Path("/data"), "bench", "warmup-7f2a")
         [RunEntry(epoch='1714150923', mtime_epoch=1714150925, file_count=7,
@@ -107,7 +116,48 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
             )
         )
     runs.sort(key=lambda r: r.mtime_epoch, reverse=True)
+    _schedule_lazy_backfill_runs(base, namespace, name, runs)
     return runs
+
+
+async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntry]:
+    """Index-first variant of :func:`list_runs` for async callers.
+
+    Reads the SQLite ``runs_index`` first; on a hit, the index rows are
+    returned directly without touching the PVC. On a miss (empty rows)
+    AND when the job dir exists on disk, falls back to the legacy
+    disk-walk and fires a ``lazy_backfill_run`` task per epoch so the
+    next call lands in the index. This is the path used by the
+    operator's FastAPI handlers.
+
+    When ``runs_index.open()`` has not been called (unit tests, results
+    sidecar processes that don't manage the index) the function silently
+    falls through to the disk walk — the index is treated as a cache,
+    not a hard dependency.
+
+    Example:
+        >>> entries = await list_runs_async(Path("/data"), "bench", "warmup-7f2a")
+    """
+    from aiperf.operator import runs_index as _runs_index
+
+    try:
+        rows = await _runs_index.list_runs_for_job(namespace, name)
+    except RuntimeError:
+        rows = []
+    if rows:
+        return [
+            RunEntry(
+                epoch=r.epoch,
+                mtime_epoch=r.mtime_epoch or 0,
+                file_count=r.file_count,
+                total_size_bytes=r.total_size_bytes,
+                is_latest=r.is_latest,
+            )
+            for r in rows
+        ]
+    if not job_dir(base, namespace, name).is_dir():
+        return []
+    return list_runs(base, namespace, name)
 
 
 def job_dir(base: Path, namespace: str, name: str) -> Path:
@@ -296,6 +346,57 @@ def list_sweep_epochs(base: Path, namespace: str, name: str) -> list[RunEntry]:
     return sorted(out, key=lambda e: e.epoch)
 
 
+async def list_sweep_epochs_async(
+    base: Path, namespace: str, name: str
+) -> list[RunEntry]:
+    """Index-first variant of :func:`list_sweep_epochs` for async callers.
+
+    Reads distinct ``sweep_epoch`` values from the SQLite index first;
+    on a hit, fills :class:`RunEntry` rows from disk stats (the index
+    only tracks per-variation rows, not aggregate file counts). On a
+    miss falls back to the legacy disk-walk via :func:`list_sweep_epochs`.
+
+    Example:
+        >>> entries = await list_sweep_epochs_async(Path("/data"), "bench", "satsweep")
+    """
+    from aiperf.operator import runs_index as _runs_index
+
+    try:
+        epochs = await _runs_index.list_sweep_epochs_for_sweep(namespace, name)
+    except RuntimeError:
+        epochs = []
+    if not epochs:
+        return list_sweep_epochs(base, namespace, name)
+
+    sweep_root = base / namespace / "sweeps" / name
+    if not sweep_root.is_dir():
+        return list_sweep_epochs(base, namespace, name)
+
+    latest = resolve_sweep_latest(base, namespace, name)
+    out: list[RunEntry] = []
+    for epoch in epochs:
+        epoch_dir = sweep_root / epoch
+        if not epoch_dir.is_dir():
+            continue
+        try:
+            mtime = int(epoch_dir.stat().st_mtime)
+            children = list(epoch_dir.iterdir())
+            file_count = len(children)
+            total_size_bytes = sum(c.stat().st_size for c in children if c.is_file())
+        except OSError:
+            continue
+        out.append(
+            RunEntry(
+                epoch=epoch,
+                mtime_epoch=mtime,
+                file_count=file_count,
+                total_size_bytes=total_size_bytes,
+                is_latest=(epoch == latest),
+            )
+        )
+    return sorted(out, key=lambda e: e.epoch)
+
+
 def list_run_epochs(base: Path, namespace: str, name: str) -> list[str]:
     """Return every epoch-shaped subdirectory of the job dir.
 
@@ -392,6 +493,47 @@ def enforce_retention(
                 exc,
             )
     return deleted
+
+
+def _schedule_lazy_backfill_runs(
+    base: Path, namespace: str, name: str, runs: list[RunEntry]
+) -> None:
+    """Best-effort fire-and-forget ``runs_index.lazy_backfill_run`` per epoch.
+
+    Called from sync :func:`list_runs` so async callers (FastAPI handlers
+    wrapped via ``asyncio.to_thread``, asyncio test loops) get the SQLite
+    index converged toward disk truth without blocking the read. When no
+    loop is running (pure-sync CLI / retention path), silently skip — the
+    operator's startup ``runs_index.bootstrap`` covers that gap.
+
+    Imported lazily to keep ``results_layout`` import-cycle-free; the
+    operator package re-exports ``runs_index`` so a lazy attribute load
+    is the cheapest way to avoid a top-level circular import.
+    """
+    if not runs:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        from aiperf.operator import runs_index as _runs_index
+    except ImportError as exc:  # pragma: no cover - defensive
+        logger.warning("runs_index unavailable for lazy backfill: %s", exc)
+        return
+    for entry in runs:
+        try:
+            loop.create_task(
+                _runs_index.lazy_backfill_run(base, namespace, name, entry.epoch)
+            )
+        except Exception as exc:  # noqa: BLE001 - index path must never break reads
+            logger.warning(
+                "runs_index.lazy_backfill_run task failed for %s/%s/%s: %s",
+                namespace,
+                name,
+                entry.epoch,
+                exc,
+            )
 
 
 def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:

@@ -20,7 +20,7 @@ from kubernetes_asyncio.client import ApiClient
 from aiperf.operator.job_union import list_all_jobs
 from aiperf.operator.results_layout import (
     EPOCH_RE,
-    list_sweep_epochs,
+    list_sweep_epochs_async,
     resolve_sweep_dir,
 )
 from aiperf.operator.routers.sweeps_models import (
@@ -300,10 +300,10 @@ async def _get_cells_impl(
     )
 
 
-def _list_sweep_epochs_impl(
+async def _list_sweep_epochs_impl(
     base_dir: Path, namespace: str, name: str
 ) -> SweepEpochsResponse:
-    runs = list_sweep_epochs(base_dir, namespace, name)
+    runs = await list_sweep_epochs_async(base_dir, namespace, name)
     return SweepEpochsResponse(
         epochs=[
             SweepEpochSummary(
@@ -438,7 +438,7 @@ def create_sweeps_router(
     async def list_sweep_epochs_endpoint(
         namespace: str, name: str
     ) -> SweepEpochsResponse:
-        return _list_sweep_epochs_impl(_base_dir, namespace, name)
+        return await _list_sweep_epochs_impl(_base_dir, namespace, name)
 
     @router.get(
         "/sweeps/{namespace}/{name}/cells",
