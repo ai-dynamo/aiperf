@@ -33,10 +33,17 @@ src/aiperf/plugin/enums.pyi
 # Generated at wheel-build time by the nightly CI pipeline; never committed.
 src/aiperf/_build_info.py
 
-# Claude Code - ignore user settings, keep agent and skill configs
+# Agent Skills (open standard, agentskills.io)
+.agents/*
+!.agents/skills/
+
+# Claude Code - ignore user settings, keep agents and the skills symlink
 .claude/*
 !.claude/agents/
-!.claude/skills/
+!.claude/skills
+
+# Codex - ignore user settings
+.codex/*
 
 # Cursor - ignore user settings
 .cursor/*
