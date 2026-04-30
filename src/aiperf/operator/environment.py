@@ -91,6 +91,33 @@ class _ResultsSettings(BaseSettings):
         "A run is deleted only when BOTH this age cap AND RETAIN_RUNS "
         "agree the run is outside the keep window; protect_epoch still wins.",
     )
+    TRANSIENT_FETCH_RETRY_BUDGET_SEC: float = Field(
+        default=60.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Wall-clock budget (seconds, measured from the completion-claim "
+            "annotation timestamp) within which a transient HTTP fetch failure "
+            "is converted to a kopf.TemporaryError so the next monitor tick "
+            "retries via the orphan-claim recovery path. Past this budget the "
+            "operator gives up and marks the AIPerfJob Failed with the "
+            "ResultsFetchFailed condition. WHY: sub-second benchmarks can "
+            "race the controller's post-export shutdown — the marker has been "
+            "written and key files exist on the controller PVC, but the "
+            "operator's HTTP fetch hits a connection-refused or empty list "
+            "as the controller container terminates. Set 0 to disable retries."
+        ),
+    )
+    TRANSIENT_FETCH_RETRY_DELAY_SEC: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description=(
+            "Delay (seconds) passed to ``kopf.TemporaryError`` when retrying "
+            "a transient results-fetch failure. Each retry runs through the "
+            "orphan-claim recovery path on the next monitor tick."
+        ),
+    )
 
 
 class _ProgressSettings(BaseSettings):

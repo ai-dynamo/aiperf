@@ -32,6 +32,9 @@ from aiperf.operator.handlers._completion_fetch import (
     _IncompleteResultsError,  # re-exported for tests/monitor
     fetch_results_with_retry,
 )
+from aiperf.operator.handlers._completion_retry import (
+    maybe_raise_for_transient_fetch_failure,
+)
 from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.models import ControllerFetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient  # re-exported for tests
@@ -81,13 +84,12 @@ async def handle_completion(
     phase/results/summary/resultsPath + conditions on ``sb``, updates the
     job index (degrading to a condition + event on failure), emits
     ResultsStored/ResultsFailed/Completed kopf events, and deletes the
-    backing JobSet on success. Short-circuits with no side effects if
-    ``on_delete`` has already requested cancellation for this job. The
-    ``result`` kwarg lets the salvage path skip the HTTP round-trip.
+    backing JobSet on success. Short-circuits if ``on_delete`` has already
+    requested cancellation. ``result`` lets the salvage path skip the HTTP
+    round-trip.
     """
-    # Short-circuit if on_delete has signaled cancellation. The CR is
-    # about to disappear; skipping fetch/JobSet-delete/status patches
-    # keeps the delete from blocking on retry backoff.
+    # on_delete cancellation: skip fetch/JobSet-delete/status patches so the
+    # CR delete doesn't block on retry backoff.
     if is_cancellation_requested(job_key(namespace, job_id)):
         logger.info(
             f"Cancellation requested for {namespace}/{job_id}, "
@@ -104,7 +106,45 @@ async def handle_completion(
         result = await fetch_results_with_retry(host, namespace, job_id, body=body)
 
     flags = _compute_result_flags(result, job_id)
+    # Race retry: see _completion_retry for the gate; raises kopf.TemporaryError.
+    maybe_raise_for_transient_fetch_failure(
+        body=body,
+        namespace=namespace,
+        job_id=job_id,
+        result=result,
+        flags=flags,
+    )
+    await _apply_completion_results(
+        body=body,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        result=result,
+        sb=sb,
+        flags=flags,
+    )
 
+    sb.finalize()
+    if flags.success:
+        events.completed(body, job_id, duration_sec)
+
+    await _maybe_delete_jobset_after_success(namespace, jobset_name, job_id, flags)
+
+
+async def _apply_completion_results(
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    jobset_name: str,
+    job_id: str,
+    result: ControllerFetchResult,
+    sb: StatusBuilder,
+    flags: _ResultFlags,
+) -> None:
+    """Stamp results/phase/condition + update index. Index is updated BEFORE
+    ``sb.finalize()`` so its failure path can queue an INDEX_UPDATED=False
+    condition without racing the single finalize() pass.
+    """
     _record_results_on_status(
         body=body,
         namespace=namespace,
@@ -124,10 +164,6 @@ async def handle_completion(
         has_error=flags.has_error,
         success=flags.success,
     )
-
-    # Index update writes a condition on failure; do it before the single
-    # finalize() so partial-failure paths don't queue a second finalize().
-    # status.py:235 documents finalize() as exactly-once.
     await _update_job_index_safe(
         body=body,
         namespace=namespace,
@@ -136,12 +172,6 @@ async def handle_completion(
         sb=sb,
         success=flags.success,
     )
-
-    sb.finalize()
-    if flags.success:
-        events.completed(body, job_id, duration_sec)
-
-    await _maybe_delete_jobset_after_success(namespace, jobset_name, job_id, flags)
 
 
 async def _maybe_delete_jobset_after_success(
