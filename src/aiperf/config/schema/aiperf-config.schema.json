@@ -3361,6 +3361,11 @@
           "description": "If true, every sweep variation reuses the same random seed (correlated comparisons). If false (default), each variation derives a unique seed `base_seed + variation.index`. Surfaced via --parameter-sweep-same-seed; the cross-field validator on AIPerfConfig requires --random-seed when true.",
           "title": "Parametersweepsameseed",
           "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/SweepMode",
+          "default": "repeated",
+          "description": "Iteration order for sweep + multi-trial composition. 'repeated' (default): trials outer, variations inner - artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/. 'independent': variations outer, trials inner - artifact tree is <base>/<variation>/profile_runs/run_NNNN/. Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence (--convergence-metric) is incompatible with 'repeated'."
         }
       },
       "title": "MultiRunConfig",
@@ -5058,6 +5063,15 @@
         "multiprocessing"
       ],
       "title": "ServiceRunType",
+      "type": "string"
+    },
+    "SweepMode": {
+      "description": "Execution order for sweep + confidence composition.\n\nREPEATED: for trial in trials: for value in values\n    All values tested per trial before moving to next trial.\n    Path: base_dir/profile_runs/trial_0001/concurrency_10/\n\nINDEPENDENT: for value in values: for trial in trials\n    All trials completed per value before moving to next value.\n    Path: base_dir/concurrency_10/profile_runs/trial_0001/",
+      "enum": [
+        "independent",
+        "repeated"
+      ],
+      "title": "SweepMode",
       "type": "string"
     },
     "SynthesisConfig": {

@@ -27,6 +27,26 @@ Use this when you don't need a model-specific tokenizer and just want token coun
 aiperf profile --tokenizer builtin ...
 ```
 
+## Placeholder Model Name Detection
+
+When `--tokenizer` is **not** set, AIPerf normally derives the tokenizer name from `--model`. If the model name looks like an obvious LLM-hallucinated placeholder (e.g. `mock-model`, `test-model`, `fake-llama`), AIPerf substitutes `builtin` for that model and emits a warning instead of attempting an HF Hub lookup that would fail. This avoids a confusing tokenizer error when the user is iterating against a mock or test server.
+
+The check fires when the model name (case-insensitive, with `_` normalized to `-`) is not path-like (no `/`, `\`, leading `.`, or leading `~`) **and** matches either:
+
+| Match type | Values |
+|---|---|
+| Exact name | `test`, `mock`, `fake`, `dummy`, `example`, `sample`, `placeholder` |
+| Substring | `mock-`, `-mock`, `fake-`, `-fake`, `test-model`, `-test-model`, `your-model`, `my-model`, `model-name`, `model-id` |
+
+Examples that trigger the fallback: `mock-model`, `Test-Model-v2`, `MOCK_LLAMA`, `placeholder`, `my-model`. Examples that do **not** trigger it: `meta-llama/Llama-3-test-finetune` (path-like), `gpt2`, `Qwen/Qwen3-0.6B`.
+
+**Sample output:**
+```
+WARNING  Model name 'mock-llama' looks like a placeholder; defaulting tokenizer to 'builtin' (tiktoken o200k_base). Pass --tokenizer <name> to override.
+```
+
+**Opt out** by passing `--tokenizer <name>` explicitly. Any explicit value wins, even one that looks placeholder-ish — the check only runs when the tokenizer would otherwise default from `--model`. If a model with a placeholder-shaped name is real on your inference server, set `--tokenizer` to a real HF repo (or to `builtin` yourself to suppress the warning).
+
 ## Automatic Cache Detection
 
 When a HuggingFace tokenizer has been previously downloaded, AIPerf detects it in the local HF cache and loads directly without any network calls. This applies to both alias resolution and tokenizer loading -- no `model_info()` API call, no ETag update check. First run downloads as normal; every subsequent run is fully offline.

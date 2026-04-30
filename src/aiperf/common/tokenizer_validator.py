@@ -309,6 +309,16 @@ def validate_tokenizer_early(
         logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
         return {model: tokenizer_cfg.name for model in model_names}
 
+    # Fake-model-name fallback: when --tokenizer is unset, names that look
+    # like LLM-hallucinated placeholders default to builtin instead of an HF
+    # Hub lookup. Explicit --tokenizer always wins.
+    fake_to_builtin: dict[str, str] = {}
+    if not (tokenizer_cfg and tokenizer_cfg.name):
+        fake_to_builtin, real_models = _partition_fake_models(model_names, logger)
+        if not real_models:
+            return fake_to_builtin
+        names = real_models
+
     console = Console()
     resolved = _resolve_aliases(names, logger, console)
 
@@ -328,4 +338,30 @@ def validate_tokenizer_early(
 
     if tokenizer_cfg and tokenizer_cfg.name:
         return {model: resolved[tokenizer_cfg.name] for model in model_names}
-    return resolved
+    return {**fake_to_builtin, **resolved}
+
+
+def _partition_fake_models(
+    model_names: list[str], logger: AIPerfLogger
+) -> tuple[dict[str, str], list[str]]:
+    """Split ``model_names`` into (fake → builtin map, real names list).
+
+    Emits one ``WARNING`` log line per detected placeholder. Called only
+    when ``--tokenizer`` was not explicitly set.
+    """
+    from aiperf.common.tokenizer import BUILTIN_TOKENIZER_NAME
+    from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
+    fake_to_builtin: dict[str, str] = {}
+    real_models: list[str] = []
+    for model in model_names:
+        if is_fake_model_name(model):
+            logger.warning(
+                f"Model name '{model}' looks like a placeholder; defaulting "
+                f"tokenizer to '{BUILTIN_TOKENIZER_NAME}' (tiktoken o200k_base). "
+                f"Pass --tokenizer <name> to override."
+            )
+            fake_to_builtin[model] = BUILTIN_TOKENIZER_NAME
+        else:
+            real_models.append(model)
+    return fake_to_builtin, real_models

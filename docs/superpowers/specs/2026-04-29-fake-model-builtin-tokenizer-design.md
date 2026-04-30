@@ -34,16 +34,13 @@ and **before** `_resolve_aliases()`.
 
 ## Detection rule
 
-New helper in `src/aiperf/common/tokenizer.py`:
+New helper in a small dedicated module
+``src/aiperf/common/tokenizer_fake_names.py`` (own file to keep
+``tokenizer.py`` under the 500-line ergonomics ceiling):
 
 ```python
 def is_fake_model_name(name: str) -> bool:
-    """Return True if *name* looks like an LLM-hallucinated placeholder.
-
-    Used by the tokenizer validator to substitute ``builtin`` when the user
-    did not pass ``--tokenizer`` and the model name is obviously not a real
-    HF repo / local path.
-    """
+    """Return True if *name* looks like an LLM-hallucinated placeholder."""
 ```
 
 Algorithm:
@@ -121,12 +118,12 @@ untouched — that path already returns `{model: resolved[X]}` for every model.
 
 | File | Change |
 |---|---|
-| `src/aiperf/common/tokenizer.py` | Add `is_fake_model_name()` + private constant sets, add to `__all__`. |
-| `src/aiperf/common/tokenizer_validator.py` | Partition `model_names`, log warning per fake, skip prefetch when all fake, mixed-merge otherwise. |
+| `src/aiperf/common/tokenizer_fake_names.py` | New module: `is_fake_model_name()` + private constant sets. |
+| `src/aiperf/common/tokenizer_validator.py` | New `_partition_fake_models()` helper; `validate_tokenizer_early` calls it when `--tokenizer` is unset, logs warning per fake, skips prefetch when all fake, mixed-merge otherwise. |
 | `src/aiperf/config/v1/_tokenizer.py` | Append one sentence to `--tokenizer` description: "If `--tokenizer` is not set and the model name looks like an obvious placeholder (e.g. `mock-model`, `test-model`), AIPerf substitutes `builtin` automatically." |
 | `docs/reference/tokenizer-auto-detection.md` | New section "Placeholder Model Name Detection" between "Built-in Tokenizer" and "Automatic Cache Detection": describes trigger conditions, full pattern list, sample warning output, and the explicit-`--tokenizer` opt-out. |
-| `tests/unit/common/test_tokenizer.py` (or nearest existing tokenizer unit-test module) | Parametrized tests for `is_fake_model_name` covering positives and negatives. |
-| `tests/unit/common/test_tokenizer_validator.py` (or nearest) | Test that `validate_tokenizer_early` returns `{model: "builtin"}` for fake-only model lists with **no** Hub calls (mock `_resolve_aliases` / `_prefetch_tokenizers` and assert they are not invoked). |
+| `tests/unit/common/test_tokenizer.py` | `TestIsFakeModelName` parametrized positives + negatives. |
+| `tests/unit/common/test_tokenizer_validator.py` | `TestValidatorFakeModelFallback` covering all-fake, mixed, and explicit-tokenizer-overrides. |
 
 No changes to `docs/index.yml` (modifying an existing tracked file).
 No changes to auto-generated `docs/cli-options.md` (description regenerates).
