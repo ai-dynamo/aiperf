@@ -40,7 +40,10 @@ class MultipleChoiceGrader(BaseGrader):
         return GradingResult(
             correct=correct,
             confidence=1.0 if correct else 0.0,
-            reasoning=f"pred='{pred}', gold='{gold}', match={correct}",
+            reasoning=(
+                f"first-line-of-response stripped to '{pred}'; "
+                f"ground_truth stripped to '{gold}'; match={correct}"
+            ),
             extracted_answer=pred,
             ground_truth=gold,
         )
