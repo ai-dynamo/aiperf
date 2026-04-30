@@ -264,8 +264,18 @@ class StatusBuilder:
         return self._conditions
 
     def set_phase(self, phase: Phase) -> StatusBuilder:
-        """Set the job phase."""
+        """Set the job phase.
+
+        Side effect: when transitioning to a terminal phase (Completed,
+        Failed, Cancelled), also clears ``status.currentPhase`` (the
+        kubectl ``STAGE`` print column). Without this clear, the column
+        would keep showing the last benchmark stage (``profiling`` /
+        ``processing``) after the job has terminated, which is misleading
+        — STAGE is only meaningful while the job is in flight.
+        """
         self._patch.status["phase"] = str(phase)
+        if phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+            self._patch.status["currentPhase"] = None
         return self
 
     def set_error(self, error: str) -> StatusBuilder:

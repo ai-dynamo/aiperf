@@ -30,7 +30,7 @@ spec:
     - name: Stage
       type: string
       jsonPath: .status.currentPhase
-      description: Current benchmark stage (warmup, profiling)
+      description: Current benchmark stage (warmup, profiling, processing)
     - name: Progress
       type: string
       jsonPath: .status.phases.profiling.requestsCompleted
@@ -1023,7 +1023,13 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
               currentPhase:
                 type: string
-                description: Current benchmark phase (warmup, profiling, etc)
+                description: |-
+                  Current benchmark stage. Live values while the job is in
+                  flight: 'warmup', 'profiling', 'processing' (controller
+                  reported all profiling requests + records done; operator
+                  is fetching/aggregating results). Cleared once the job
+                  reaches a terminal phase — STAGE is only meaningful
+                  in-flight; the .status.phase field carries terminal state.
               liveMetrics:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

@@ -101,13 +101,35 @@ def _apply_controller_progress_status(
     progress: Any,
     current_phase: Phase,
 ) -> None:
-    """Apply controller-authored progress to CR status."""
+    """Apply controller-authored progress to CR status.
+
+    The CR's ``status.currentPhase`` (the kubectl ``STAGE`` print column)
+    surfaces three values during the active job lifecycle:
+
+    - ``warmup`` / ``profiling`` — pass through the controller's reported
+      ``CreditPhase`` while the workload is in flight.
+    - ``processing`` — stamped once the controller reports
+      ``progress.is_complete=True`` (all profiling requests sent AND all
+      records processed). This signals the operator-side drain window:
+      results are being fetched from the controller pod, aggregated, and
+      written to disk. Without this, ``STAGE`` would freeze at
+      ``profiling`` for the seconds-long fetch window, indistinguishable
+      from a stalled benchmark.
+
+    The terminal-phase clear (``currentPhase=None`` once the CR reaches
+    Completed/Failed/Cancelled) is performed by ``handle_completion`` and
+    the failure paths in ``monitor.py`` itself — not here.
+    """
     sb.set_worker_aggregate_status(progress.workers.model_dump())
 
     if not progress.current_phase:
         return
 
-    patch.status["currentPhase"] = progress.current_phase
+    is_complete = bool(getattr(progress, "is_complete", False))
+    if progress.current_phase == "profiling" and is_complete:
+        patch.status["currentPhase"] = "processing"
+    else:
+        patch.status["currentPhase"] = progress.current_phase
 
     if progress.current_phase == "profiling":
         sb.set_phase(Phase.RUNNING)

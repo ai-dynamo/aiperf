@@ -661,6 +661,36 @@ class TestStatusBuilder:
         assert mock_patch.status["phase"] == "Running"
         assert result is builder  # Returns self for chaining
 
+    def test_set_phase_terminal_clears_current_phase(self) -> None:
+        """Verify terminal phases clear ``status.currentPhase``.
+
+        Without this, the kubectl ``STAGE`` print column keeps showing
+        the last in-flight stage label (``profiling`` / ``processing``)
+        forever after the job has already terminated.
+        """
+        for terminal in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+            mock_patch = MagicMock()
+            mock_patch.status = {"currentPhase": "profiling"}
+
+            builder = StatusBuilder(mock_patch)
+            builder.set_phase(terminal)
+
+            assert mock_patch.status["phase"] == str(terminal)
+            # None signals merge-patch removal of the field on the API server.
+            assert mock_patch.status["currentPhase"] is None
+
+    def test_set_phase_non_terminal_preserves_current_phase(self) -> None:
+        """Verify non-terminal phases leave ``currentPhase`` untouched."""
+        mock_patch = MagicMock()
+        mock_patch.status = {"currentPhase": "warmup"}
+
+        builder = StatusBuilder(mock_patch)
+        builder.set_phase(Phase.RUNNING)
+
+        assert mock_patch.status["phase"] == "Running"
+        # Untouched — only terminal transitions clear the stage label.
+        assert mock_patch.status["currentPhase"] == "warmup"
+
     def test_set_error(self) -> None:
         """Test set_error updates patch status."""
         mock_patch = MagicMock()

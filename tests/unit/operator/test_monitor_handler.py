@@ -313,10 +313,15 @@ class TestApplyControllerProgressStatus:
     """Tests for ``_apply_controller_progress_status``."""
 
     def _progress(
-        self, *, current_phase: str | None, workers: dict[str, int] | None = None
+        self,
+        *,
+        current_phase: str | None,
+        workers: dict[str, int] | None = None,
+        is_complete: bool = False,
     ) -> MagicMock:
         p = MagicMock()
         p.current_phase = current_phase
+        p.is_complete = is_complete
         p.workers = MagicMock()
         p.workers.model_dump = MagicMock(
             return_value=workers if workers is not None else {"ready": 1, "total": 1}
@@ -363,3 +368,45 @@ class TestApplyControllerProgressStatus:
         # Controller currentPhase still recorded, but CR phase unchanged.
         assert patch.status["currentPhase"] == "warmup"
         assert "phase" not in patch.status
+
+    def test_stamps_processing_when_profiling_complete(self) -> None:
+        """Verify 'processing' is stamped once profiling is complete (drain window).
+
+        is_complete=True from the controller means all profiling requests
+        have been sent AND all records processed; the operator is now
+        fetching results / aggregating. STAGE must reflect the drain, not
+        keep showing 'profiling' as if the workload were still in flight.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="profiling", is_complete=True)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["currentPhase"] == "processing"
+        # The CR phase stays RUNNING — terminal phase is set later by
+        # handle_completion. We only flip the in-flight stage label here.
+        assert patch.status["phase"] == str(Phase.RUNNING)
+
+    def test_keeps_profiling_when_workload_still_in_flight(self) -> None:
+        """Verify 'profiling' (not 'processing') while requests still pending."""
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="profiling", is_complete=False)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["currentPhase"] == "profiling"
+
+    def test_warmup_complete_does_not_stamp_processing(self) -> None:
+        """Verify is_complete only flips 'profiling', not earlier phases.
+
+        ``progress.is_complete`` is gated on the profiling phase finishing,
+        but a defensive check: even if a controller bug returned is_complete
+        with current_phase='warmup', we should not silently rewrite warmup
+        as processing — it'd hide a real bug.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(current_phase="warmup", is_complete=True)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
+
+        assert patch.status["currentPhase"] == "warmup"
