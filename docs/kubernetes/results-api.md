@@ -350,6 +350,8 @@ curl --compressed \
 
 These endpoints run DuckDB queries directly against the result files on the PVC — no ETL step. All return `503` with message `"Analytics engine not initialized"` if the results-server lifespan hook has not yet populated the DB handle.
 
+Analytics endpoints (`/analytics/leaderboard`, `/history`, `/compare`, `/summary`) are now backed by `runs_index` — flat-column SQLite SELECTs against indexed rows, with a `metrics_json` blob for full-summary access. The cold-start cost (one PVC walk) moves to operator startup bootstrap; subsequent queries are O(1) regardless of run count.
+
 ### `GET /api/v1/analytics/leaderboard`
 
 Rank every run by a metric.

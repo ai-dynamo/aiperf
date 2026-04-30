@@ -410,6 +410,35 @@ automatically; no URL rewrites needed.
   default-route requests return 404 until the next successful completion
   rewrites the pointer. Historical routes still work.
 
+### Runs/sweep index writes
+
+The operator maintains a SQLite index at `<RESULTS.DIR>/.aiperf_index.sqlite` that mirrors disk state for fast queries. Writes happen at fixed handler points:
+
+```mermaid
+sequenceDiagram
+    participant K as kopf
+    participant O as operator
+    participant FS as PVC
+    participant DB as runs_index
+
+    K->>O: on_create(AIPerfJob)
+    O->>FS: save_job_spec_file
+    O->>DB: upsert_run_created (Pending)
+
+    Note over O: phase transitions (Running, Aggregating, ...)
+    O->>DB: upsert_run_phase
+
+    K->>O: completion observed
+    O->>FS: download results, write ready marker
+    O->>DB: upsert_run_completed + set_latest
+
+    K->>O: on_delete or retention
+    O->>FS: rm -rf run dir
+    O->>DB: delete_run
+```
+
+Read sites (`results_layout.list_runs_async`, `results_db.ResultsDB`, `routers/results_files.py`) consult the index first and fall back to disk only when a row is missing, firing a lazy backfill in the background.
+
 ## 8. Completion & Cleanup
 
 ### Lifecycle
