@@ -482,6 +482,17 @@ custom_dataset_loader:
       is_trace: true
       default_block_size: 512
 
+  sagemaker_data_capture:
+    class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
+    description: |
+      Amazon SageMaker Data Capture trace replay loader. Parses JSONL files
+      produced by SageMaker real-time endpoint data capture. Replays the exact
+      captured prompts (messages) with original timing. Supports directory input
+      (recursive globbing of hourly-partitioned capture files).
+      Usage: --custom-dataset-type sagemaker_data_capture --input-file ./captured/ --fixed-schedule
+    metadata:
+      is_trace: true
+
   multi_turn:
     class: aiperf.dataset.loader.multi_turn:MultiTurnDatasetLoader
     description: |

@@ -78,6 +78,8 @@ navigation:
       path: tutorials/bailian-trace.md
     - page: Profile with BurstGPT Traces
       path: tutorials/burst-gpt-trace.md
+    - page: Replay SageMaker Data Capture Traces
+      path: tutorials/sagemaker-data-capture.md
     - page: Multi-Turn Conversations
       path: tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
