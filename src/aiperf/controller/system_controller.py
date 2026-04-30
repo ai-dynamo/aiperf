@@ -11,6 +11,7 @@ from rich.panel import Panel
 
 from aiperf.cli_utils import (
     print_developer_mode_warning,
+    warn_accuracy_temperature,
     warn_osl_without_ignore_eos,
 )
 from aiperf.common.base_service import BaseService
@@ -95,6 +96,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
 
+        if self._should_warn_accuracy_temperature():
+            warn_accuracy_temperature()
+
         self._was_cancelled = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
@@ -172,6 +176,19 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Check if ignore_eos or min_tokens is set with a truthy value
         extra_dict = dict(extra_inputs)
         return not (extra_dict.get("ignore_eos") or extra_dict.get("min_tokens"))
+
+    def _should_warn_accuracy_temperature(self) -> bool:
+        """Check if accuracy mode is active without temperature=0 in extra inputs."""
+        if not self.user_config.accuracy.enabled:
+            return False
+        extra_inputs = self.user_config.input.extra
+        if not extra_inputs:
+            return True
+        val = dict(extra_inputs).get("temperature")
+        try:
+            return float(val) != 0.0
+        except (TypeError, ValueError):
+            return True
 
     async def request_realtime_metrics(self) -> None:
         """Request real-time metrics from the RecordsManager."""

@@ -9,6 +9,7 @@ __pycache__/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.pre-commit-cache/
 .mypy_cache/
 .hypothesis/
 .kiro/

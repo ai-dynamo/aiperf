@@ -8,6 +8,7 @@ from rich.console import Console, RenderableType
 from rich.table import Table
 
 from aiperf.common.enums import MetricFlags
+from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -50,10 +51,13 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
         # Records are already in display units from summarize()
-        sorted_records = sorted(
-            records,
-            key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
-        )
+        def _sort_key(x: MetricResult) -> int:
+            try:
+                return MetricRegistry.get_class(x.tag).display_order or sys.maxsize
+            except MetricTypeError:
+                return sys.maxsize
+
+        sorted_records = sorted(records, key=_sort_key)
         for record in sorted_records:
             if not self._should_show(record):
                 continue
@@ -61,7 +65,10 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     def _should_show(self, record: MetricResult) -> bool:
         # Only show metrics that are not error-only or hidden
-        metric_class = MetricRegistry.get_class(record.tag)
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return False
         return metric_class.missing_flags(
             MetricFlags.ERROR_ONLY
             | MetricFlags.NO_CONSOLE
