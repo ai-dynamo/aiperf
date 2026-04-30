@@ -148,6 +148,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [InstructCoder Dataset](docs/tutorials/instruct-coder.md) - Profile with InstructCoder code generation dataset
 - [SpecBench Dataset](docs/tutorials/spec-bench.md) - Profile with SpecBench speculative decoding dataset
 - [Blazedit Dataset](docs/tutorials/blazedit.md) - Profile with Blazedit code editing dataset
+- [ASR Datasets](docs/tutorials/asr.md) - Profile ASR models with LibriSpeech, VoxPopuli, GigaSpeech, AMI, and SPGISpeech
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
