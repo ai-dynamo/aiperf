@@ -280,3 +280,21 @@ async def test_mark_sweep_pareto_sets_ranks_and_best(index_path) -> None:
     assert rows[0].pareto_rank == 1 and not rows[0].is_best
     assert rows[1].pareto_rank == 0 and rows[1].is_best
     assert rows[2].pareto_rank == 2 and not rows[2].is_best
+
+
+@pytest.mark.asyncio
+async def test_list_all_latest_returns_only_latest_rows(index_path) -> None:
+    for ns, job, ep in [
+        ("a", "j1", "100"),
+        ("a", "j1", "200"),
+        ("a", "j2", "100"),
+        ("b", "j3", "100"),
+    ]:
+        await runs_index.upsert_run_created(ns, job, ep, spec={})
+    await runs_index.set_latest("a", "j1", "200")
+    await runs_index.set_latest("a", "j2", "100")
+    await runs_index.set_latest("b", "j3", "100")
+
+    rows = await runs_index.list_all_latest()
+    keys = sorted((r.namespace, r.job_id, r.epoch) for r in rows)
+    assert keys == [("a", "j1", "200"), ("a", "j2", "100"), ("b", "j3", "100")]

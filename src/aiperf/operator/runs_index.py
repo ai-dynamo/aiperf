@@ -664,6 +664,56 @@ async def list_sweep_variations(
     ]
 
 
+async def list_all_latest() -> list[RunIndexRow]:
+    """All ``is_latest=1`` rows, ordered by end_time DESC NULLS LAST."""
+    cur = await _conn().execute(
+        f"SELECT {_RUN_ROW_COLS} FROM runs WHERE is_latest = 1 "
+        "ORDER BY end_time DESC NULLS LAST, created_unix DESC"
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return [_row_to_run(r) for r in rows]
+
+
+async def get_latest_run(namespace: str, job_id: str) -> RunIndexRow | None:
+    """Return the ``is_latest=1`` row for a job, or None if no latest is set."""
+    cur = await _conn().execute(
+        f"SELECT {_RUN_ROW_COLS} FROM runs "
+        "WHERE namespace = ? AND job_id = ? AND is_latest = 1 LIMIT 1",
+        (namespace, job_id),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+    return _row_to_run(row) if row else None
+
+
+async def get_run_spec(
+    namespace: str, job_id: str, epoch: str | None = None
+) -> dict[str, Any] | None:
+    """Decompress and return the CR spec stored in ``runs.spec_json``.
+
+    When ``epoch`` is None, uses the is_latest row. Returns None when no row
+    matches or spec_json is null.
+    """
+    if epoch is None:
+        cur = await _conn().execute(
+            "SELECT spec_json FROM runs "
+            "WHERE namespace = ? AND job_id = ? AND is_latest = 1 LIMIT 1",
+            (namespace, job_id),
+        )
+    else:
+        cur = await _conn().execute(
+            "SELECT spec_json FROM runs "
+            "WHERE namespace = ? AND job_id = ? AND epoch = ?",
+            (namespace, job_id, epoch),
+        )
+    row = await cur.fetchone()
+    await cur.close()
+    if row is None or row[0] is None:
+        return None
+    return orjson.loads(zstandard.ZstdDecompressor().decompress(row[0]))
+
+
 async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[str]:
     cur = await _conn().execute(
         "SELECT DISTINCT sweep_epoch FROM sweep_variations "
