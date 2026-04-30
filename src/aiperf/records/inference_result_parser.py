@@ -114,6 +114,9 @@ class InferenceResultParser(CommunicationMixin):
                 load_target, alias_flag = self._select_load_target(
                     tokenizer_name, resolve_alias
                 )
+                self.info(
+                    f"Configuring tokenizer for {model.name} (resolve_alias: {alias_flag})"
+                )
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     _tokenizer_preload.get_or_load,
                     load_target,
