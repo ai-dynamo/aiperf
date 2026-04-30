@@ -25,7 +25,9 @@ and are independently testable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any
 
 import kopf
@@ -36,6 +38,7 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_PLURAL,
     AIPERF_VERSION,
 )
+from aiperf.operator import runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
 from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
@@ -232,3 +235,29 @@ async def cleanup_old_results(
 ) -> None:
     """Clean up old results based on TTL."""
     await cleanup.cleanup_old_results(body=body, status=status, name=name)
+
+
+@kopf.on.startup()
+async def open_runs_index(**_: Any) -> None:
+    """Open the runs_index SQLite DB and schedule a background bootstrap.
+
+    On corruption, rename the file to ``.broken-<unix>`` for forensics and
+    reopen a fresh DB. ``bootstrap`` runs as a background task so operator
+    readiness is not gated on a full PVC scan.
+    """
+    base = OperatorEnvironment.RESULTS.DIR
+    db_path = base / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    if not await runs_index.integrity_check():
+        logger.warning("runs_index corrupt; renaming and rebuilding")
+        broken = base / f".aiperf_index.sqlite.broken-{int(time.time())}"
+        db_path.rename(broken)
+        await runs_index.close()
+        await runs_index.open(db_path)
+    asyncio.create_task(runs_index.bootstrap(base))
+
+
+@kopf.on.cleanup()
+async def close_runs_index(**_: Any) -> None:
+    """Close the runs_index SQLite connection on operator shutdown."""
+    await runs_index.close()
