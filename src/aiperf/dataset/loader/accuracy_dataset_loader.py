@@ -24,6 +24,11 @@ from aiperf.common.config import UserConfig
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 
+# Default max_tokens when a benchmark omits generation_size from metadata.
+# MMLU sets 5 (single-letter answer); long-form benchmarks should set
+# their own value in BenchmarkProblem.metadata["generation_size"].
+DEFAULT_GENERATION_SIZE = 100
+
 
 class AccuracyDatasetLoader:
     """Loads accuracy benchmark problems and converts them to Conversations.
@@ -62,9 +67,9 @@ class AccuracyDatasetLoader:
                 messages.insert(0, {"role": "system", "content": system_prompt})
 
             gen_size = (
-                problem.metadata.get("generation_size", 100)
+                problem.metadata.get("generation_size", DEFAULT_GENERATION_SIZE)
                 if problem.metadata
-                else 100
+                else DEFAULT_GENERATION_SIZE
             )
 
             prompt_text = (
