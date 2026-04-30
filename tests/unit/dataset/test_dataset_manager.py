@@ -24,6 +24,7 @@ from aiperf.plugin.enums import (
     DatasetSamplingStrategy,
     PublicDatasetType,
     ServiceRunType,
+    TimingMode,
 )
 
 # ============================================================================
@@ -843,3 +844,113 @@ class TestConfigureDatasetInlineMediaGating:
 
         meta = plugins.get_endpoint_metadata("chat")
         assert meta.requires_inline_media is False
+
+
+# ============================================================================
+# Accuracy mode sampling strategy guards
+# ============================================================================
+
+
+def _make_accuracy_user_config(
+    strategy: DatasetSamplingStrategy | None = None,
+) -> UserConfig:
+    from aiperf.common.config.accuracy_config import AccuracyConfig
+    from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+
+    kwargs: dict = {}
+    if strategy is not None:
+        kwargs["dataset_sampling_strategy"] = strategy
+
+    return UserConfig(
+        endpoint=EndpointConfig(
+            model_names=["test-model"],
+            type=EndpointType.COMPLETIONS,
+            streaming=False,
+        ),
+        input=InputConfig(**kwargs),
+        accuracy=AccuracyConfig(benchmark=AccuracyBenchmarkType.MMLU),
+    )
+
+
+@pytest.mark.asyncio
+class TestAccuracyModeSamplingGuards:
+    """_load_accuracy_dataset rejects sampling modes that break session_num→problem mapping."""
+
+    async def _make_manager(self, user_config: UserConfig) -> DatasetManager:
+        service_config = ServiceConfig()
+        manager = DatasetManager(service_config, user_config)
+        await manager.initialize()
+        return manager
+
+    async def test_random_sampling_raises_service_error(self) -> None:
+        """Explicit random sampling is rejected in accuracy mode."""
+        user_config = _make_accuracy_user_config(
+            strategy=DatasetSamplingStrategy.RANDOM
+        )
+        manager = await self._make_manager(user_config)
+
+        with pytest.raises(
+            ServiceError, match="random.*not supported|not supported.*random"
+        ):
+            await manager._load_accuracy_dataset()
+
+    async def test_shuffle_sampling_raises_service_error(self) -> None:
+        """Explicit shuffle sampling is rejected in accuracy mode."""
+        user_config = _make_accuracy_user_config(
+            strategy=DatasetSamplingStrategy.SHUFFLE
+        )
+        manager = await self._make_manager(user_config)
+
+        with pytest.raises(
+            ServiceError, match="shuffle.*not supported|not supported.*shuffle"
+        ):
+            await manager._load_accuracy_dataset()
+
+    async def test_fixed_schedule_raises_service_error(self) -> None:
+        """Fixed-schedule timing is rejected in accuracy mode."""
+        user_config = _make_accuracy_user_config()
+        user_config._timing_mode = TimingMode.FIXED_SCHEDULE
+        manager = await self._make_manager(user_config)
+
+        with pytest.raises(
+            ServiceError, match="fixed.schedule.*not supported|not supported.*fixed"
+        ):
+            await manager._load_accuracy_dataset()
+
+    async def test_sequential_sampling_does_not_raise(self) -> None:
+        """Explicit sequential sampling is accepted and does not override itself."""
+        user_config = _make_accuracy_user_config(
+            strategy=DatasetSamplingStrategy.SEQUENTIAL
+        )
+        manager = await self._make_manager(user_config)
+
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.AccuracyDatasetLoader.load",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await manager._load_accuracy_dataset()
+
+        assert result == []
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )
+
+    async def test_no_explicit_strategy_defaults_to_sequential(self) -> None:
+        """When no sampling strategy is set, accuracy mode defaults to sequential."""
+        user_config = _make_accuracy_user_config()
+        assert user_config.input.dataset_sampling_strategy is None
+        manager = await self._make_manager(user_config)
+
+        with patch(
+            "aiperf.dataset.loader.accuracy_dataset_loader.AccuracyDatasetLoader.load",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await manager._load_accuracy_dataset()
+
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )

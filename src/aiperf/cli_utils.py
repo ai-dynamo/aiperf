@@ -145,3 +145,13 @@ def warn_osl_without_ignore_eos() -> None:
         "Consider: --extra-inputs ignore_eos:true (generate until max_tokens) "
         "or --extra-inputs min_tokens:<value> (set minimum output length)."
     )
+
+
+def warn_accuracy_temperature() -> None:
+    """Log a warning when accuracy mode is used without temperature=0 in extra inputs."""
+
+    _logger.warning(
+        "Running accuracy benchmark without temperature=0 in --extra-inputs. "
+        "Most LLM servers default to temperature=1.0, introducing random sampling and run-to-run variance. "
+        "For reproducible results matching lighteval, add: --extra-inputs '{\"temperature\": 0}'"
+    )
