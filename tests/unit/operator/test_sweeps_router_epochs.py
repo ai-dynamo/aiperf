@@ -148,6 +148,119 @@ def test_get_children_missing_404(tmp_path: Path) -> None:
     assert r.status_code == 404
 
 
+def _live_record_with_aggregate_children(
+    name: str, epoch: str, children: list[dict]
+) -> object:
+    """Build a SweepRecord whose live status mirrors the operator-pod reality:
+    the controller-pod's children.json envelope is embedded under
+    ``status.aggregate.children``, but no on-disk file is visible to the
+    operator pod (the controller and operator use different PVCs).
+    """
+    from aiperf.operator.sweep_union import SweepRecord
+
+    return SweepRecord(
+        namespace="bench",
+        name=name,
+        source="live",
+        phase="Succeeded",
+        total_variations=len(children),
+        completed_runs=len(children),
+        failed_runs=0,
+        age_seconds=120,
+        model="m",
+        raw_status={
+            "phase": "Succeeded",
+            "aggregate": {
+                "children": {"sweep_run_epoch": epoch, "children": children},
+            },
+        },
+    )
+
+
+def test_get_children_reads_live_cr_when_disk_empty(tmp_path: Path) -> None:
+    """Reproduces the prod 404: live sweep with status.aggregate.children
+    populated, but no children.json on the operator pod's PVC."""
+    rec = _live_record_with_aggregate_children(
+        "s1",
+        "1714069323",
+        [
+            {
+                "namespace": "bench",
+                "name": "s1-v00-t0",
+                "variation_index": 0,
+                "trial_index": 0,
+                "child_run_epoch": "1714069324",
+                "variation_label": "concurrency-1",
+            },
+        ],
+    )
+    api = MagicMock()
+    with patch(
+        "aiperf.operator.routers.sweeps.find_any_sweep",
+        AsyncMock(return_value=rec),
+    ):
+        c = _client(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/s1/children")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sweepRunEpoch"] == "1714069323"
+    assert len(body["children"]) == 1
+    assert body["children"][0]["name"] == "s1-v00-t0"
+    assert body["children"][0]["childRunEpoch"] == "1714069324"
+
+
+def test_get_children_explicit_epoch_skips_cr(tmp_path: Path) -> None:
+    """An explicit ?epoch=X is a historical lookup — must read disk only,
+    never fall back to the live CR (whose aggregate may be a different epoch)."""
+    rec = _live_record_with_aggregate_children(
+        "s1", "9999999999", [{"namespace": "bench", "name": "wrong-epoch-child"}]
+    )
+    api = MagicMock()
+    with patch(
+        "aiperf.operator.routers.sweeps.find_any_sweep",
+        AsyncMock(return_value=rec),
+    ):
+        c = _client(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/s1/children?epoch=1714069323")
+    assert r.status_code == 404
+
+
+def test_get_children_falls_back_to_disk_when_cr_absent(tmp_path: Path) -> None:
+    """Archived (post-TTL) sweep: CR is gone, but children.json sits on the
+    PVC — the disk fallback must still work."""
+    _write_aggregate(tmp_path, "bench", "s1", "1714069323", {"phase": "Succeeded"})
+    _write_children(
+        tmp_path,
+        "bench",
+        "s1",
+        "1714069323",
+        [
+            {
+                "namespace": "bench",
+                "name": "s1-v00-t0",
+                "variation_index": 0,
+                "trial_index": 0,
+                "child_run_epoch": "1714069324",
+                "variation_label": "concurrency-1",
+            },
+        ],
+    )
+    from aiperf.operator.results_layout import write_sweep_latest
+
+    write_sweep_latest(tmp_path, "bench", "s1", "1714069323")
+    api = MagicMock()
+    with patch(
+        "aiperf.operator.routers.sweeps.find_any_sweep",
+        AsyncMock(return_value=None),
+    ):
+        c = _client(api, tmp_path)
+        r = c.get("/api/v1/sweeps/bench/s1/children")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["children"]) == 1
+    assert body["children"][0]["childRunEpoch"] == "1714069324"
+
+
 def test_get_cells_with_epoch_param(tmp_path: Path) -> None:
     _write_aggregate(
         tmp_path,

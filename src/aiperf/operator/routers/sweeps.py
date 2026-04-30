@@ -317,23 +317,16 @@ def _list_sweep_epochs_impl(
     )
 
 
-def _get_children_impl(
-    base_dir: Path, namespace: str, name: str, epoch: str | None
+def _children_manifest_from_doc(
+    doc: dict[str, Any], epoch: str | None
 ) -> ChildrenManifestResponse:
-    sweep_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
-    if sweep_dir is None:
-        raise HTTPException(
-            404, f"Sweep epoch not found: {namespace}/{name} epoch={epoch}"
-        )
-    p = sweep_dir / "children.json"
-    if not p.is_file():
-        raise HTTPException(
-            404, f"children.json missing for {namespace}/{name} epoch={epoch}"
-        )
-    try:
-        doc = orjson.loads(p.read_bytes())
-    except (OSError, orjson.JSONDecodeError) as e:
-        raise HTTPException(503, f"children.json unreadable: {e}") from e
+    """Build a ChildrenManifestResponse from a ``children.json``-shaped dict.
+
+    Accepts the disk envelope ``{"sweep_run_epoch": "...", "children": [...]}``
+    that is also embedded verbatim into ``status.aggregate.children`` on the
+    live CR — both the live (CR) and archived (PVC) read paths converge on
+    this shape.
+    """
     return ChildrenManifestResponse(
         sweep_run_epoch=str(doc.get("sweep_run_epoch") or epoch or ""),
         children=[
@@ -349,6 +342,59 @@ def _get_children_impl(
             if isinstance(c, dict)
         ],
     )
+
+
+async def _get_children_impl(
+    api: ApiClient,
+    base_dir: Path,
+    namespace: str,
+    name: str,
+    epoch: str | None,
+) -> ChildrenManifestResponse:
+    """Resolve the per-epoch children manifest, preferring the live CR.
+
+    The sweep-controller writes ``children.json`` to its own pod-local PVC
+    *and* embeds the same envelope at ``status.aggregate.children`` on the
+    parent AIPerfSweep CR. The operator pod reading this route does NOT
+    share a PVC with the controller pod, so the on-disk file is invisible
+    here for live sweeps — the CR is the only source the operator can
+    actually observe. Read the CR first; fall back to disk only for
+    archived (post-TTL) sweeps where the CR is gone but the controller's
+    PVC was promoted to a shared archive.
+
+    Returns 404 only when neither half has data — the prior disk-only
+    implementation 404'd every live sweep regardless of CR state.
+    """
+    # CR first: the live sweep-controller embeds the full children.json
+    # envelope under status.aggregate.children for any sweep that has run
+    # at least one variation, even mid-run.
+    if epoch is None:
+        rec = await find_any_sweep(api, base_dir, namespace, name)
+        if rec is not None and rec.raw_status:
+            aggregate = rec.raw_status.get("aggregate")
+            if isinstance(aggregate, dict):
+                children_doc = aggregate.get("children")
+                if isinstance(children_doc, dict) and isinstance(
+                    children_doc.get("children"), list
+                ):
+                    return _children_manifest_from_doc(children_doc, epoch=epoch)
+
+    # Fallback: per-epoch on-disk archive (post-TTL or explicit epoch lookup).
+    sweep_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
+    if sweep_dir is None:
+        raise HTTPException(
+            404, f"Sweep epoch not found: {namespace}/{name} epoch={epoch}"
+        )
+    p = sweep_dir / "children.json"
+    if not p.is_file():
+        raise HTTPException(
+            404, f"children.json missing for {namespace}/{name} epoch={epoch}"
+        )
+    try:
+        doc = orjson.loads(p.read_bytes())
+    except (OSError, orjson.JSONDecodeError) as e:
+        raise HTTPException(503, f"children.json unreadable: {e}") from e
+    return _children_manifest_from_doc(doc, epoch=epoch)
 
 
 def create_sweeps_router(
@@ -417,6 +463,8 @@ def create_sweeps_router(
     ) -> ChildrenManifestResponse:
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
-        return _get_children_impl(_base_dir, namespace, name, epoch)
+        return await _get_children_impl(
+            _require_api(), _base_dir, namespace, name, epoch
+        )
 
     return router
