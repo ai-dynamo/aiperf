@@ -222,3 +222,61 @@ async def test_upsert_reordering_invariants(tmp_path: Path, events) -> None:
         assert rows[0].epoch == "100"
     finally:
         await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_upsert_sweep_variation_inserts(index_path) -> None:
+    metrics = {
+        "request_throughput": {"avg": 100.0, "p50": 95.0, "p99": 110.0, "unit": "rps"},
+        "request_latency": {"avg": 0.05, "p50": 0.05, "p99": 0.08, "unit": "s"},
+    }
+    await runs_index.upsert_sweep_variation(
+        "ns",
+        "satsweep",
+        "1714069323",
+        0,
+        variation_values={"concurrency": 10},
+        mode="REPEATED",
+        phase="Succeeded",
+        metrics=metrics,
+        child_ref=("ns", "satsweep-c10", "1714069324"),
+        metrics_blob=b"\x28\xb5\x2f\xfd",  # not real zstd; just a sentinel
+    )
+
+    rows = await runs_index.list_sweep_variations("ns", "satsweep", "1714069323")
+    assert len(rows) == 1
+    assert rows[0].variation_idx == 0
+    assert rows[0].mode == "REPEATED"
+    assert rows[0].child_job_id == "satsweep-c10"
+
+
+@pytest.mark.asyncio
+async def test_mark_sweep_pareto_sets_ranks_and_best(index_path) -> None:
+    for idx in range(3):
+        await runs_index.upsert_sweep_variation(
+            "ns",
+            "s1",
+            "100",
+            idx,
+            variation_values={"concurrency": 10 * (idx + 1)},
+            mode="INDEPENDENT",
+            phase="Succeeded",
+            metrics={},
+            child_ref=None,
+            metrics_blob=b"",
+        )
+
+    await runs_index.mark_sweep_pareto(
+        "ns",
+        "s1",
+        "100",
+        rankings=[(0, 1, False), (1, 0, True), (2, 2, False)],
+    )
+
+    rows = sorted(
+        await runs_index.list_sweep_variations("ns", "s1", "100"),
+        key=lambda r: r.variation_idx,
+    )
+    assert rows[0].pareto_rank == 1 and not rows[0].is_best
+    assert rows[1].pareto_rank == 0 and rows[1].is_best
+    assert rows[2].pareto_rank == 2 and not rows[2].is_best

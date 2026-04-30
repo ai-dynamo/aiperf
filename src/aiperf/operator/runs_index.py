@@ -28,7 +28,7 @@ import aiosqlite
 import orjson
 import zstandard
 
-from aiperf.operator.runs_index_models import RunIndexRow
+from aiperf.operator.runs_index_models import RunIndexRow, SweepVariationRow
 
 logger = logging.getLogger(__name__)
 
@@ -541,3 +541,135 @@ async def get_summary_blob(namespace: str, job_id: str, epoch: str) -> bytes | N
     row = await cur.fetchone()
     await cur.close()
     return row[0] if row and row[0] else None
+
+
+async def upsert_sweep_variation(
+    namespace: str,
+    sweep_name: str,
+    sweep_epoch: str,
+    variation_idx: int,
+    *,
+    variation_values: dict[str, Any],
+    mode: str,
+    phase: str | None,
+    metrics: dict[str, Any],
+    child_ref: tuple[str, str, str] | None,
+    metrics_blob: bytes,
+) -> None:
+    """Insert (or update on conflict) one variation row.
+
+    ``child_ref`` is ``(namespace, job_id, epoch)`` of the runs row produced by
+    the variation's controller pod, or ``None`` for in-process / aggregate-only
+    variations.
+    """
+    narrow = _narrow_metric_columns(metrics)
+    child_ns, child_job, child_epoch = child_ref or (None, None, None)
+
+    cols = [
+        "namespace",
+        "sweep_name",
+        "sweep_epoch",
+        "variation_idx",
+        "variation_values_json",
+        "mode",
+        "phase",
+        "child_namespace",
+        "child_job_id",
+        "child_epoch",
+        "metrics_json",
+    ]
+    vals: list[Any] = [
+        namespace,
+        sweep_name,
+        sweep_epoch,
+        variation_idx,
+        _zstd_compress(variation_values),
+        mode,
+        phase,
+        child_ns,
+        child_job,
+        child_epoch,
+        metrics_blob,
+    ]
+    for k, v in narrow.items():
+        cols.append(k)
+        vals.append(v)
+
+    placeholders = ", ".join("?" * len(cols))
+    update_assignments = ", ".join(
+        f"{c} = excluded.{c}"
+        for c in cols
+        if c not in ("namespace", "sweep_name", "sweep_epoch", "variation_idx")
+    )
+    sql = (
+        f"INSERT INTO sweep_variations ({', '.join(cols)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(namespace, sweep_name, sweep_epoch, variation_idx) "
+        f"DO UPDATE SET {update_assignments}"
+    )
+    await _conn().execute(sql, vals)
+
+
+async def mark_sweep_pareto(
+    namespace: str,
+    sweep_name: str,
+    sweep_epoch: str,
+    *,
+    rankings: list[tuple[int, int, bool]],
+) -> None:
+    """Apply ``[(variation_idx, pareto_rank, is_best), ...]`` in one transaction."""
+    db = _conn()
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        for idx, rank, best in rankings:
+            await db.execute(
+                "UPDATE sweep_variations SET pareto_rank = ?, is_best = ? "
+                "WHERE namespace = ? AND sweep_name = ? AND sweep_epoch = ? "
+                "AND variation_idx = ?",
+                (rank, 1 if best else 0, namespace, sweep_name, sweep_epoch, idx),
+            )
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+
+
+async def list_sweep_variations(
+    namespace: str, sweep_name: str, sweep_epoch: str
+) -> list[SweepVariationRow]:
+    cur = await _conn().execute(
+        "SELECT namespace, sweep_name, sweep_epoch, variation_idx, mode, phase, "
+        "       pareto_rank, is_best, child_namespace, child_job_id, child_epoch "
+        "FROM sweep_variations "
+        "WHERE namespace = ? AND sweep_name = ? AND sweep_epoch = ? "
+        "ORDER BY variation_idx ASC",
+        (namespace, sweep_name, sweep_epoch),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return [
+        SweepVariationRow(
+            namespace=r[0],
+            sweep_name=r[1],
+            sweep_epoch=r[2],
+            variation_idx=r[3],
+            mode=r[4],
+            phase=r[5],
+            pareto_rank=r[6],
+            is_best=bool(r[7]),
+            child_namespace=r[8],
+            child_job_id=r[9],
+            child_epoch=r[10],
+        )
+        for r in rows
+    ]
+
+
+async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[str]:
+    cur = await _conn().execute(
+        "SELECT DISTINCT sweep_epoch FROM sweep_variations "
+        "WHERE namespace = ? AND sweep_name = ? ORDER BY sweep_epoch DESC",
+        (namespace, sweep_name),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return [r[0] for r in rows]
