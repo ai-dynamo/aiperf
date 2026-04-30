@@ -29,6 +29,8 @@ navigation:
             path: ../pages-dev/tutorials/vision.md
           - page: Profile Audio Language Models with AIPerf
             path: ../pages-dev/tutorials/audio.md
+          - page: Profile ASR Models with AIPerf
+            path: ../pages-dev/tutorials/asr.md
           - page: Profile Embedding Models with AIPerf
             path: ../pages-dev/tutorials/embeddings.md
           - page: Profile Ranking Models with AIPerf
