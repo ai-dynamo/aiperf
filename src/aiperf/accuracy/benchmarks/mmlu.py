@@ -150,7 +150,6 @@ class MMLUBenchmark(AIPerfLoggerMixin):
                         "generation_size": GENERATION_SIZE,
                         "stop_sequence": STOP_SEQUENCE,
                     },
-                    few_shot_examples=few_shots,
                     raw_messages=raw_messages,
                 )
             )

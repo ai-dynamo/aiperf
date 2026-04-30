@@ -61,9 +61,6 @@ class BenchmarkProblem(AIPerfBaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional problem metadata"
     )
-    few_shot_examples: list[dict[str, Any]] = Field(
-        default_factory=list, description="Few-shot examples to prepend to the prompt"
-    )
     raw_messages: list[AccuracyChatMessage] | None = Field(
         default=None,
         description="Pre-formatted OpenAI-compatible messages array for the chat endpoint. "
