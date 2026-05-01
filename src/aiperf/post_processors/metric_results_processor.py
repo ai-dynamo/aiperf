@@ -96,9 +96,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                             else MetricArray()
                         )
                     if isinstance(value, list):
-                        results_dict[tag].extend(value)  # type: ignore
+                        results_dict[tag].extend(value)
                     else:
-                        results_dict[tag].append(value)  # type: ignore
+                        results_dict[tag].append(value)
 
                 elif metric_type == MetricType.AGGREGATE:
                     metric: BaseAggregateMetric = instances_map[tag]  # type: ignore

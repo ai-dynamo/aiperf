@@ -21,25 +21,23 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `min`, `max` | running scalars | bit-exact |
 | `avg` | `sum / count` | bit-exact |
 | `std` | `sqrt(max(0, sum_sq/count − avg²))` | bit-exact (population std, matches `np.std`) |
-| `p1` … `p99` | t-digest sketch | approximate, ≤ ~0.5 % relative error |
+| `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
-Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (low single-digit KB) regardless of sample count.
+Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
 
 ## Empirical accuracy
 
-Measured on a 1 470-sample run (30 streaming requests × 49 chunks each) against an exact numpy reference:
+Backed by [`crick.TDigest`](https://github.com/dask/crick) (Cython/C). Measured against a numpy reference across five trials at three workload sizes, fresh RNG seed per trial, lognormal `mean=ln(5), sigma=0.4` clipped to [0.5, 50] ms (representative ICL distribution at moderate ITL):
 
-| field | exact | t-digest | rel diff |
-|---|---|---|---|
-| `min` | 3.0497700 | 3.0497700 | 0 |
-| `max` | 6.9478710 | 6.9478710 | 0 |
-| `avg` | 4.9999602 | 4.9999602 | 0 |
-| `std` | 0.7915493 | 0.7915493 | 3.3 × 10⁻¹³ |
-| `p50` | 5.2294285 | 5.2289453 | 0.0092 % |
-| `p90` | 6.2683405 | 6.2703040 | 0.031 % |
-| `p99` | 6.5617756 | 6.5755314 | 0.21 % |
+| Sample count | Worst-case max %err across percentiles | Throughput |
+|---:|---:|---:|
+| 200 K | 0.068 % | ~9.6 M updates/s |
+| 5 M | 0.021 % | ~12.0 M updates/s |
+| 50 M | **0.012 %** | ~12.0 M updates/s |
 
-Mid-range percentiles are ~100× tighter than the 0.5 % band; the extreme tails (p99 in particular) are noisiest because t-digest is rank-accurate and the rank jitter at the tail translates to value jitter. At larger N the gap shrinks further.
+At the default compression the worst-case relative error is **40× under** the 0.5% band a t-digest typically promises. Mid-range percentiles (p10–p90) are tighter still — usually 5-digit relative agreement with the exact numpy reference.
+
+The compression parameter is exposed as `AIPERF_METRICS_TDIGEST_COMPRESSION` (default 500) for benchmarks that want even tighter percentiles at the cost of a slightly larger sketch.
 
 ## Per-record values are unchanged
 
@@ -49,7 +47,7 @@ The aggregation described above is **only** at the run-level. The per-record JSO
 
 For ICL specifically:
 
-- The numbers in `profile_export_aiperf.{json,csv}` come from the t-digest aggregator. Percentile values may differ from a direct numpy computation by up to ~0.5 % at small benchmark sizes; at large sizes the error is well below benchmark noise.
+- The numbers in `profile_export_aiperf.{json,csv}` come from the t-digest aggregator. Percentile values typically match a direct numpy computation to within 0.05% relative error on benchmark-scale runs; tail percentiles (p1, p99) at small N exhibit slightly more rank-jitter but stay well under the 0.5% band.
 - `count`, `sum`, `min`, `max`, `avg`, `std` are computed exactly and match what an exact array would produce.
 - Per-request ICL lists in `profile_export.jsonl` are unchanged — anything that needs sample-level precision can read those.
 
@@ -59,4 +57,5 @@ For all other metrics: **no change**. Scalar record metrics still use the exact-
 
 - Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](../../src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
 - Selection site: [`src/aiperf/post_processors/metric_results_processor.py`](../../src/aiperf/post_processors/metric_results_processor.py) — first-touch dispatch by `isinstance(value, list)`.
-- Dependency: [`tdigest~=0.5.2.2`](https://pypi.org/project/tdigest/) (pure Python, no transitive C/Rust deps).
+- Compression knob: `Environment.METRICS.TDIGEST_COMPRESSION` (env: `AIPERF_METRICS_TDIGEST_COMPRESSION`, default 500).
+- Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained).
