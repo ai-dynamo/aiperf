@@ -369,7 +369,7 @@ def case_success_output_integrity(
 ) -> tuple[int, str]:
     artifact = ctx.artifacts / name
     rc, text = run_cmd(
-        base_profile(ctx, name, "--endpoint-type", "responses", artifact=artifact),
+        base_profile(ctx, name, "--endpoint-type", "chat", artifact=artifact),
         log,
         ctx,
         60,
@@ -535,7 +535,7 @@ def build_cases() -> list[Case]:
             "success-output-integrity",
             "PASS_REQUIRED",
             case_success_output_integrity,
-            "successful responses run exports parseable outputs",
+            "successful chat run exports parseable outputs",
         ),
         *build_network_cases(),
     ]

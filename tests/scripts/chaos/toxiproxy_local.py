@@ -38,6 +38,9 @@ class Toxic:
     toxicity: float = 1.0
 
 
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 class ToxiproxyClient:
     def __init__(self, admin_url: str, timeout: float = 5.0) -> None:
         self.admin_url = admin_url
@@ -51,7 +54,7 @@ class ToxiproxyClient:
             method=method,
             headers={"Content-Type": "application/json"} if data else {},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with _NO_PROXY_OPENER.open(req, timeout=self.timeout) as resp:
             payload = resp.read()
         if not payload:
             return {}
