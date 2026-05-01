@@ -123,3 +123,65 @@ def test_aggregate_sparkline_snapshot_e2e_latency_only() -> None:
     assert _run_node(script) == (
         '{"latencyKpiId":"p99-e2e-latency","aggregatorMs":420,"curatorMs":420}'
     )
+
+
+def test_aggregate_sparkline_snapshot_emits_zero_waiting() -> None:
+    """Zero queue depth still produces a `requests-waiting: 0` entry so the
+    rolling buffer stays continuous; the curator hides the tile by snapshot
+    gate, but Task 2 will extend the curator to use the buffer instead."""
+    script = f"""
+        import {{
+          normalizeServerMetrics, aggregateSparklineSnapshot,
+        }} from {HELPERS!r};
+        const snapshot = {{
+          summary: {{ endpoints_configured: ['u'], endpoints_successful: ['u'] }},
+          metrics: {{
+            dynamo_frontend_requests: {{
+              type: 'counter',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ rate: 1 }} }}],
+            }},
+            dynamo_frontend_queued_requests: {{
+              type: 'gauge',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ avg: 0, max: 0 }} }}],
+            }},
+          }},
+        }};
+        const agg = aggregateSparklineSnapshot(normalizeServerMetrics(snapshot));
+        console.log(JSON.stringify({{
+          waitingValue: agg.values['requests-waiting'],
+          hasWaitingKey: 'requests-waiting' in agg.values,
+        }}));
+    """
+    assert _run_node(script) == '{"waitingValue":0,"hasWaitingKey":true}'
+
+
+def test_aggregate_sparkline_snapshot_ttft_beats_e2e_when_both_present() -> None:
+    """When both TTFT and e2e-latency histograms are present, the latency
+    tile id resolves to p99-ttft (precedence: ttftHit || e2eHit)."""
+    script = f"""
+        import {{
+          normalizeServerMetrics, aggregateSparklineSnapshot,
+        }} from {HELPERS!r};
+        const snapshot = {{
+          summary: {{ endpoints_configured: ['u'], endpoints_successful: ['u'] }},
+          metrics: {{
+            dynamo_frontend_time_to_first_token_seconds: {{
+              type: 'histogram',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ count: 10, p99_estimate: 0.05 }} }}],
+            }},
+            'vllm:e2e_request_latency_seconds': {{
+              type: 'histogram',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ count: 10, p99_estimate: 0.5 }} }}],
+            }},
+          }},
+        }};
+        const agg = aggregateSparklineSnapshot(normalizeServerMetrics(snapshot));
+        console.log(JSON.stringify({{
+          latencyKpiId: agg.latencyKpiId,
+          // Aggregator picked the ttft histogram, so the value is 0.05 not 0.5.
+          latencyValueIsTtft: Math.abs(agg.values[agg.latencyKpiId] - 0.05) < 1e-9,
+        }}));
+    """
+    assert _run_node(script) == (
+        '{"latencyKpiId":"p99-ttft","latencyValueIsTtft":true}'
+    )

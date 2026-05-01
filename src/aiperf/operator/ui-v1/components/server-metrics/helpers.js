@@ -338,10 +338,19 @@ export function curateServerMetrics(serverMetrics) {
 }
 
 /**
- * Collapse a single normalized server-metrics snapshot into the five
- * numbers the server-metrics KPI tiles surface, keyed by the same KPI ids
- * `curateServerMetrics` produces. Used by the per-job WS layer to push
- * one sample per scrape into a per-KPI rolling buffer.
+ * Collapse a single normalized server-metrics snapshot into one number per
+ * KPI id whose underlying metric resolved to a finite value (including
+ * zero). Used by the per-job WS layer to push one sample per scrape into a
+ * per-KPI rolling buffer.
+ *
+ * This is intentionally more permissive than `curateServerMetrics`:
+ * `curateServerMetrics` may suppress some tiles when the current snapshot
+ * is all-zero (specifically `requests-waiting`, gated on
+ * `(waitingPeak ?? waitingAvg) > 0`), but the aggregator emits the
+ * zero-sample so the rolling buffer stays continuous. A queue going
+ * 5 -> 3 -> 1 -> 0 -> 0 -> 2 must keep its zero entries in the buffer so
+ * the sparkline renders the full trend; Task 2 extends the curator's tile
+ * gate to use the buffer instead of just the current snapshot.
  *
  * The latency tile id flips between `'p99-ttft'` and `'p99-e2e-latency'`
  * depending on which histogram is present in the snapshot; the resolved id
