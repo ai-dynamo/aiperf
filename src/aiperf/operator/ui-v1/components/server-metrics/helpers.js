@@ -216,9 +216,9 @@ function buildSummary(serverMetrics, backendsPresent) {
   };
 }
 
-function makeKpi({ id, label, value, unit, source, stat, icon, tone = 'accent', progress = null, sub = null }) {
+function makeKpi({ id, label, value, unit, source, stat, icon, tone = 'accent', progress = null, sub = null, points = null }) {
   if (value == null) return null;
-  return { id, label, value, unit, source, stat, icon, tone, progress, sub };
+  return { id, label, value, unit, source, stat, icon, tone, progress, sub, points };
 }
 
 function collectSeries(metricHits, metrics) {
@@ -262,7 +262,7 @@ export function normalizeServerMetrics(serverMetrics) {
   };
 }
 
-export function curateServerMetrics(serverMetrics) {
+export function curateServerMetrics(serverMetrics, sparklines = null) {
   if (!serverMetrics) return null;
   const metrics = serverMetrics.metrics ?? {};
   const backendsPresent = detectBackends(metrics);
@@ -284,9 +284,15 @@ export function curateServerMetrics(serverMetrics) {
   const waitingAvg = waitHit ? avgOf(metrics[waitHit.name], 'avg') : null;
   const waitingPeak = waitHit ? maxOf(metrics[waitHit.name], 'max') : null;
 
+  const waitingPoints = sparklines?.['requests-waiting'] ?? null;
+  const waitingBufHasNonzero = Array.isArray(waitingPoints)
+    && waitingPoints.some(p => typeof p?.v === 'number' && p.v > 0);
+
   const kpis = [
-    makeKpi({ id: 'request-rate', label: 'Request rate', value: reqRate, unit: 'req/s', source: reqHit?.name, stat: reqHit?.statField, icon: 'speed' }),
-    makeKpi({ id: 'generation-token-rate', label: 'Generation token rate', value: genRate, unit: 'tok/s', source: genHit?.name, stat: genHit?.statField, icon: 'tokens' }),
+    makeKpi({ id: 'request-rate', label: 'Request rate', value: reqRate, unit: 'req/s', source: reqHit?.name, stat: reqHit?.statField, icon: 'speed',
+      points: sparklines?.['request-rate'] ?? null }),
+    makeKpi({ id: 'generation-token-rate', label: 'Generation token rate', value: genRate, unit: 'tok/s', source: genHit?.name, stat: genHit?.statField, icon: 'tokens',
+      points: sparklines?.['generation-token-rate'] ?? null }),
     makeKpi({
       id: 'kv-cache-pressure',
       label: 'KV/cache pressure',
@@ -298,6 +304,7 @@ export function curateServerMetrics(serverMetrics) {
       tone: kvPeak != null && kvPeak >= 90 ? 'warn' : 'accent',
       progress: kvPeak,
       sub: kvAvg != null ? `avg ${kvAvg.toFixed(1)}%` : null,
+      points: sparklines?.['kv-cache-pressure'] ?? null,
     }),
     makeKpi({
       id: latencyHit === ttftHit ? 'p99-ttft' : 'p99-e2e-latency',
@@ -307,8 +314,15 @@ export function curateServerMetrics(serverMetrics) {
       source: latencyHit?.name,
       stat: 'p99_estimate',
       icon: 'timer',
+      points: (() => {
+        if (!latencyHit) return null;
+        const latId = latencyHit === ttftHit ? 'p99-ttft' : 'p99-e2e-latency';
+        const raw = sparklines?.[latId];
+        if (!Array.isArray(raw)) return null;
+        return raw.map(p => ({ t: p.t, v: p.v * 1000 }));
+      })(),
     }),
-    waitingAvg != null && ((waitingPeak ?? waitingAvg) > 0) ? makeKpi({
+    waitingAvg != null && (((waitingPeak ?? waitingAvg) > 0) || waitingBufHasNonzero) ? makeKpi({
       id: 'requests-waiting',
       label: 'Requests waiting',
       value: waitingAvg,
@@ -318,6 +332,7 @@ export function curateServerMetrics(serverMetrics) {
       icon: 'clock',
       tone: 'warn',
       sub: waitingPeak != null ? `peak ${waitingPeak.toFixed(0)}` : null,
+      points: waitingPoints,
     }) : null,
   ].filter(Boolean);
 

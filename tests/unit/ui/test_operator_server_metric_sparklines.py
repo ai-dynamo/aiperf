@@ -185,3 +185,84 @@ def test_aggregate_sparkline_snapshot_ttft_beats_e2e_when_both_present() -> None
     assert _run_node(script) == (
         '{"latencyKpiId":"p99-ttft","latencyValueIsTtft":true}'
     )
+
+
+def test_curate_server_metrics_attaches_sparkline_points() -> None:
+    """When a sparklines map is supplied, each KPI gets its `points` array."""
+    script = f"""
+        import {{ normalizeServerMetrics, curateServerMetrics }} from {HELPERS!r};
+        const snapshot = {{
+          summary: {{ endpoints_configured: ['u'], endpoints_successful: ['u'] }},
+          metrics: {{
+            dynamo_frontend_requests: {{
+              type: 'counter',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ rate: 5 }} }}],
+            }},
+          }},
+        }};
+        const sparklines = {{ 'request-rate': [{{ t: 1, v: 4 }}, {{ t: 2, v: 5 }}] }};
+        const curated = curateServerMetrics(normalizeServerMetrics(snapshot), sparklines);
+        const reqRate = curated.kpis.find(k => k.id === 'request-rate');
+        console.log(JSON.stringify({{
+          hasPoints: Array.isArray(reqRate.points),
+          n: reqRate.points.length,
+          firstV: reqRate.points[0].v,
+        }}));
+    """
+    assert _run_node(script) == '{"hasPoints":true,"n":2,"firstV":4}'
+
+
+def test_curate_server_metrics_requests_waiting_gate_uses_buffer() -> None:
+    """Requests-waiting tile stays visible after the queue drains if any
+    rolling-buffer sample was non-zero, so a transient queue earlier in
+    the run keeps its tile."""
+    script = f"""
+        import {{ normalizeServerMetrics, curateServerMetrics }} from {HELPERS!r};
+        const snapshot = {{
+          summary: {{ endpoints_configured: ['u'], endpoints_successful: ['u'] }},
+          metrics: {{
+            dynamo_frontend_queued_requests: {{
+              type: 'gauge',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ avg: 0, max: 0 }} }}],
+            }},
+          }},
+        }};
+        const norm = normalizeServerMetrics(snapshot);
+        // No sparklines: tile hidden (current behavior).
+        const curatedNoBuf = curateServerMetrics(norm);
+        const noTile = !curatedNoBuf || !curatedNoBuf.kpis.some(k => k.id === 'requests-waiting');
+        // Buffer has a non-zero sample: tile stays visible.
+        const sparklines = {{ 'requests-waiting': [{{ t: 1, v: 4 }}, {{ t: 2, v: 0 }}] }};
+        const curatedBuf = curateServerMetrics(norm, sparklines);
+        const tile = curatedBuf.kpis.find(k => k.id === 'requests-waiting');
+        console.log(JSON.stringify({{ noTile, hasTile: tile != null, points: tile?.points?.length ?? 0 }}));
+    """
+    assert _run_node(script) == '{"noTile":true,"hasTile":true,"points":2}'
+
+
+def test_curate_server_metrics_latency_points_scaled_to_ms() -> None:
+    """Latency tile's `points` values are scaled seconds → milliseconds to
+    match the curator's displayed `value`. Aggregator stores raw seconds."""
+    script = f"""
+        import {{ normalizeServerMetrics, curateServerMetrics }} from {HELPERS!r};
+        const snapshot = {{
+          summary: {{ endpoints_configured: ['u'], endpoints_successful: ['u'] }},
+          metrics: {{
+            dynamo_frontend_time_to_first_token_seconds: {{
+              type: 'histogram',
+              series: [{{ endpoint_url: 'u', labels: {{}}, stats: {{ count: 10, p99_estimate: 0.05 }} }}],
+            }},
+          }},
+        }};
+        const sparklines = {{ 'p99-ttft': [{{ t: 1, v: 0.05 }}, {{ t: 2, v: 0.06 }}] }};
+        const curated = curateServerMetrics(normalizeServerMetrics(snapshot), sparklines);
+        const ttft = curated.kpis.find(k => k.id === 'p99-ttft');
+        console.log(JSON.stringify({{
+          // Aggregator s=0.05 → curator ms=50.
+          firstMs: ttft.points[0].v,
+          secondMs: ttft.points[1].v,
+          // Sanity: the headline `value` is also in ms.
+          valueIsMs: ttft.value === 50,
+        }}));
+    """
+    assert _run_node(script) == '{"firstMs":50,"secondMs":60,"valueIsMs":true}'
