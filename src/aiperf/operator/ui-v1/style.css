@@ -2851,6 +2851,17 @@ select, input {
   height: var(--log-strip-height);
   flex: 0 0 auto;
 }
+
+/* Collapsed mode: shrink to roughly 5 rows of body + the head row, so the
+   strip stops dominating the bottom of the page when nothing's actively
+   happening. ``--log-strip-height`` still applies in expanded mode. */
+.log-strip--collapsed {
+  height: auto;
+}
+.log-strip--collapsed .log-strip-body {
+  /* 5 rows × 1.6 line-height × 11 px font + a touch of padding. */
+  max-height: calc(11px * 1.6 * 5 + 12px);
+}
 .log-strip-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 16px;
@@ -2892,6 +2903,21 @@ select, input {
   color: var(--sub);
 }
 .log-strip-filter--active .log-strip-filter-count { background: var(--accent-dim); color: var(--accent); }
+
+.log-strip-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--sub);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.log-strip-toggle:hover { color: var(--text); border-color: var(--border-hover); }
 
 .log-strip-body {
   font-family: var(--font-mono);

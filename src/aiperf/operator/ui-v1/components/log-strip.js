@@ -104,9 +104,15 @@ function useEventFeed() {
   return events;
 }
 
+// Default-visible row count when the strip is collapsed. Keep small — the
+// strip lives at the bottom of every page and competes for vertical real
+// estate with the page body. Users who want history click "Show all".
+const COLLAPSED_ROWS = 5;
+
 export function LogStrip() {
   const events = useEventFeed();
   const [filter, setFilter] = useState('all');
+  const [collapsed, setCollapsed] = useState(true);
   const bodyRef = useRef(null);
   const stickyRef = useRef(true);
 
@@ -116,19 +122,24 @@ export function LogStrip() {
     error: events.filter(e => e.severity === 'error').length,
   };
 
-  const visible = events.filter(e => {
+  const filtered = events.filter(e => {
     if (filter === 'all') return true;
     return e.severity === filter;
   });
+  // When collapsed, show only the last N entries so the strip stays a tidy
+  // 5-line peek; expanding reveals the full bounded window (up to MAX_EVENTS).
+  const visible = collapsed ? filtered.slice(-COLLAPSED_ROWS) : filtered;
+  const hiddenCount = filtered.length - visible.length;
 
   // Auto-scroll the strip to the bottom on each new event so the freshest
   // line stays in view. Skip when the user has scrolled up (>32 px from the
-  // bottom) so reading older entries isn't interrupted.
+  // bottom) so reading older entries isn't interrupted. Re-snap when toggling
+  // collapse so the latest event lands in view in either mode.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || !stickyRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [visible.length]);
+  }, [visible.length, collapsed]);
 
   function onScroll(e) {
     const el = e.currentTarget;
@@ -142,7 +153,11 @@ export function LogStrip() {
   ];
 
   return html`
-    <section class="log-strip" aria-label="Event log" data-testid="log-strip">
+    <section
+      class=${'log-strip' + (collapsed ? ' log-strip--collapsed' : '')}
+      aria-label="Event log"
+      data-testid="log-strip"
+    >
       <div class="log-strip-head">
         <div class="log-strip-title">Event Log</div>
         <div class="log-strip-filters" role="tablist">
@@ -160,6 +175,20 @@ export function LogStrip() {
             </button>
           `)}
         </div>
+        <button
+          type="button"
+          class="log-strip-toggle"
+          data-testid="log-strip-toggle"
+          aria-expanded=${!collapsed}
+          onclick=${() => setCollapsed(v => !v)}
+          title=${collapsed
+            ? (hiddenCount > 0 ? `Show all ${filtered.length} events (${hiddenCount} hidden)` : 'Expand event log')
+            : 'Collapse to last ' + COLLAPSED_ROWS + ' events'}
+        >
+          ${collapsed
+            ? (hiddenCount > 0 ? `Show all (${filtered.length})` : 'Expand')
+            : 'Collapse'}
+        </button>
       </div>
       <div class="log-strip-body" ref=${bodyRef} onscroll=${onScroll}>
         ${visible.map((e, i) => {
