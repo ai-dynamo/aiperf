@@ -42,10 +42,10 @@ metadata:
 spec:
   benchmark:
     models:
-    - meta-llama/Llama-3-70B
+      - meta-llama/Llama-3-70B
     endpoint:
       urls:
-      - http://trtllm.default.svc:8000
+        - "http://trtllm.default.svc:8000"
       type: chat
       streaming: true
       path: /v1/chat/completions
@@ -82,10 +82,10 @@ metadata:
 spec:
   benchmark:
     models:
-    - mistralai/Mistral-7B-Instruct
+      - mistralai/Mistral-7B-Instruct
     endpoint:
       urls:
-      - http://vllm.default.svc:8000
+        - "http://vllm.default.svc:8000"
       type: chat
       streaming: true
     datasets:
@@ -117,10 +117,10 @@ metadata:
 spec:
   benchmark:
     models:
-    - <model-name>
+      - <model-name>
     endpoint:
       urls:
-      - http://<endpoint-host>:8000
+        - "http://<endpoint-host>:8000"
       type: chat
       streaming: true
     datasets:
@@ -316,6 +316,7 @@ export function Launch() {
     setTemplateId(id);
     setYaml(t.yaml);
     setState({ kind: 'idle' });
+    setPrefillFrom(null);
   }
 
   async function launch() {
@@ -371,9 +372,9 @@ export function Launch() {
   const pillIdle = ` background: transparent; color: ${palette.subtext1}; border-color: ${palette.surface0};`;
   const pillActive = ` background: ${palette.accentDim}; color: ${palette.text}; border-color: ${palette.accent};`;
 
-  const targetRowStyle = `display: block; width: 100%; box-sizing: border-box; margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-tile, ${palette.bgRaised}); border: 1px solid ${palette.surface0}; border-radius: var(--radius-md); color: ${palette.subtext1}; font-family: var(--font-mono); font-size: var(--font-size-sm);`;
+  const targetRowStyle = `display: block; width: 100%; box-sizing: border-box; margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-tile); border: 1px solid ${palette.surface0}; border-radius: var(--radius-md); color: ${palette.subtext1}; font-family: var(--font-mono); font-size: var(--font-size-sm);`;
 
-  const textareaStyle = `font-family: var(--font-mono); font-size: var(--font-size-sm); width: 100%; box-sizing: border-box; min-height: 480px; background: var(--bg-tile, ${palette.bgRaised}); border: 1px solid ${palette.surface0}; border-radius: var(--radius-md); padding: var(--space-3); color: ${palette.text}; resize: vertical; line-height: 1.5;`;
+  const textareaStyle = `font-family: var(--font-mono); font-size: var(--font-size-sm); width: 100%; box-sizing: border-box; min-height: 480px; background: var(--bg-tile); border: 1px solid ${palette.surface0}; border-radius: var(--radius-md); padding: var(--space-3); color: ${palette.text}; resize: vertical; line-height: 1.5;`;
 
   return html`
     <div class="launch-page" data-testid="page-launch">
@@ -459,6 +460,7 @@ export function Launch() {
           <button
             class="btn btn--ghost"
             onclick=${copyYaml}
+            data-testid="launch-copy"
             title="Copy YAML to clipboard"
           >Copy</button>
           <button
