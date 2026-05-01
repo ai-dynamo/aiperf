@@ -12,6 +12,9 @@ import { PhaseBar } from '../components/phase-bar.js';
 import { RecordProcessing } from '../components/record-processing.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
+import { LogsPane } from '../components/logs-pane.js';
+import { EventsPane } from '../components/events-pane.js';
+import { LatencyTimelineChart } from '../components/latency-timeline-chart.js';
 import { EpochSelector } from '../components/epoch-selector.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
@@ -1649,7 +1652,7 @@ export function JobDetail({ namespace, name, epoch }) {
   // Live realtime feed proxied through the operator into the controller pod's
   // ``/ws``. Empty until ``isRunning`` opens the socket below.
   const [liveData, setLiveData] = useState({
-    summary: {}, timeseries: {}, connected: false,
+    summary: {}, timeseries: {}, serverSummary: null, serverTimeseries: {}, connected: false,
   });
 
   // Open the per-job WebSocket only while the run is active and we're on the
@@ -1660,7 +1663,7 @@ export function JobDetail({ namespace, name, epoch }) {
   useEffect(() => {
     if (!wsActive) {
       // Clear stale live state so a finished job doesn't keep painting old samples.
-      setLiveData({ summary: {}, timeseries: {}, connected: false });
+      setLiveData({ summary: {}, timeseries: {}, serverSummary: null, serverTimeseries: {}, connected: false });
       return;
     }
     const handle = openJobWs(namespace, name, (snap) => setLiveData(snap));
@@ -1916,7 +1919,10 @@ export function JobDetail({ namespace, name, epoch }) {
   // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
   // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
   const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
-  const liveServerMetrics = epoch === undefined ? status.serverMetrics : null;
+  const liveServerMetricsBase = epoch === undefined ? status.serverMetrics : null;
+  const liveServerMetrics = (liveData.connected && liveData.serverSummary)
+    ? liveData.serverSummary
+    : liveServerMetricsBase;
   const displayedServerMetrics = serverMetrics || liveServerMetrics;
   const serverMetricsSource = serverMetrics ? 'final' : 'live';
 
@@ -2237,6 +2243,13 @@ export function JobDetail({ namespace, name, epoch }) {
               </div>
             `
           }
+
+          ${epoch === undefined && html`
+            <div style="margin-top: var(--space-4); display: grid; gap: var(--space-4)">
+              <${EventsPane} ns=${namespace} name=${name} />
+              <${LogsPane} ns=${namespace} name=${name} pods=${pods} />
+            </div>
+          `}
         </div>
 
         <!-- Right: Charts -->
@@ -2262,7 +2275,10 @@ export function JobDetail({ namespace, name, epoch }) {
 
       <!-- Server Metrics -->
       ${displayedServerMetrics
-        ? html`<${ServerMetricsSection} serverMetrics=${displayedServerMetrics} source=${serverMetricsSource} />`
+        ? html`<${ServerMetricsSection}
+                 serverMetrics=${displayedServerMetrics}
+                 source=${serverMetricsSource}
+                 sparklines=${epoch === undefined ? liveData.serverTimeseries : null} />`
         : (isTerminal && files.some(f => f.name === 'server_metrics_export.json') && !serverMetricsLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />
@@ -2317,6 +2333,13 @@ export function JobDetail({ namespace, name, epoch }) {
 
       <!-- Latency percentile chart (completed only) -->
       ${isCompleted && results && html`<${LatencyPercentileChart} results=${results} />`}
+
+      <!-- Latency Timeline (completed only) -->
+      ${isCompleted && html`
+        <div style="margin-top: var(--space-4)">
+          <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
+        </div>
+      `}
 
       <!-- Feature 4: ISL Distribution (completed only) -->
       ${isCompleted && results && html`<${ISLDistributionChart} results=${results} />`}

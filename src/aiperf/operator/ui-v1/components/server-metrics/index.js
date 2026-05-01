@@ -101,9 +101,9 @@ function DetailsTable({ rows, sources }) {
  * @param {object|null} props.serverMetrics - Parsed server_metrics_export.json
  *   or null if not yet loaded. The parent decides whether to render at all.
  */
-export function ServerMetricsSection({ serverMetrics, source = 'final' }) {
+export function ServerMetricsSection({ serverMetrics, source = 'final', sparklines = null }) {
   if (!serverMetrics) return null;
-  const curated = curateServerMetrics(normalizeServerMetrics(serverMetrics));
+  const curated = curateServerMetrics(normalizeServerMetrics(serverMetrics), sparklines);
   const sourceLabel = source === 'live' ? 'LIVE' : 'FINAL';
 
   if (!curated) {
@@ -137,6 +137,7 @@ export function ServerMetricsSection({ serverMetrics, source = 'final' }) {
                 sub=${kpi.sub}
                 progress=${kpi.progress}
                 title=${kpi.source ? `Source: ${kpi.source} (${kpi.stat})` : ''}
+                sparkline=${kpi.points && kpi.points.length > 1 ? { points: kpi.points } : null}
               />
             `)}
           </div>
