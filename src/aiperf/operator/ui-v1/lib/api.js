@@ -185,6 +185,27 @@ export const api = {
     return { records, skipped: null };
   },
 
+  /** Fetch a single run's exported summary JSON for a given epoch.
+   *
+   *  Hits ``/results/<ns>/<jobId>/runs/<epoch>/profile_export_aiperf.json``.
+   *  Throws ``Error`` with ``.status`` attached on non-2xx so callers can
+   *  distinguish 404 (no summary on disk for that epoch) from transport
+   *  failures.
+   */
+  async fetchRunSummary(ns, jobId, epoch) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    const epSeg = encodeURIComponent(epoch);
+    const url = `${BASE}/results/${nsSeg}/${idSeg}/runs/${epSeg}/profile_export_aiperf.json`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const err = new Error(`fetchRunSummary ${ns}/${jobId}/${epoch}: ${resp.status}`);
+      err.status = resp.status;
+      throw err;
+    }
+    return resp.json();
+  },
+
   /** Fetch pod logs for a job. See ``getJobLogs`` below. */
   getJobLogs(ns, name, opts) {
     return getJobLogs(ns, name, opts);

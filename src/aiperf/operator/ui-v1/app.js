@@ -12,6 +12,7 @@ import { Jobs } from './pages/jobs.js';
 import { JobDetail } from './pages/job-detail.js';
 import { Leaderboard } from './pages/leaderboard.js';
 import { Compare } from './pages/compare.js';
+import { CompareEpochs } from './pages/compare-epochs.js';
 import { History } from './pages/history.js';
 import { Archive } from './pages/archive.js';
 import { Sweeps } from './pages/sweeps.js';
@@ -41,6 +42,7 @@ function App() {
   const sweepRunMatch = matchRoute('/sweeps/:ns/:name/runs/:epoch', currentRoute);
   const jobDetailMatch = matchRoute('/jobs/:ns/:name', currentRoute);
   const sweepDetailMatch = matchRoute('/sweeps/:ns/:name', currentRoute);
+  const compareEpochsMatch = matchRoute('/compare/:ns/:name/:epochA/:epochB', currentRoute);
 
   if (currentRoute === '/' || currentRoute === '') {
     page = html`<${Dashboard} />`;
@@ -58,6 +60,8 @@ function App() {
     page = html`<${SweepDetail} namespace=${sweepDetailMatch.ns} name=${sweepDetailMatch.name} />`;
   } else if (currentRoute === '/leaderboard') {
     page = html`<${Leaderboard} />`;
+  } else if (compareEpochsMatch) {
+    page = html`<${CompareEpochs} namespace=${compareEpochsMatch.ns} name=${compareEpochsMatch.name} epochA=${compareEpochsMatch.epochA} epochB=${compareEpochsMatch.epochB} />`;
   } else if (currentRoute === '/compare') {
     page = html`<${Compare} />`;
   } else if (currentRoute === '/history') {
