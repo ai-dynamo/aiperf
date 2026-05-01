@@ -15,6 +15,7 @@ const NAV_GROUPS = [
       { path: '/leaderboard', label: 'Leaderboard' },
       { path: '/compare', label: 'Compare' },
       { path: '/history', label: 'History' },
+      { path: '/archive', label: 'Archive' },
     ],
   },
 ];

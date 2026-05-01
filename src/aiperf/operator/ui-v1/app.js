@@ -13,6 +13,7 @@ import { JobDetail } from './pages/job-detail.js';
 import { Leaderboard } from './pages/leaderboard.js';
 import { Compare } from './pages/compare.js';
 import { History } from './pages/history.js';
+import { Archive } from './pages/archive.js';
 import { Sweeps } from './pages/sweeps.js';
 import { SweepDetail } from './pages/sweep-detail.js';
 import { Launch } from './pages/launch.js';
@@ -61,6 +62,8 @@ function App() {
     page = html`<${Compare} />`;
   } else if (currentRoute === '/history') {
     page = html`<${History} />`;
+  } else if (currentRoute === '/archive') {
+    page = html`<${Archive} />`;
   } else if (currentRoute === '/launch') {
     page = html`<${Launch} />`;
   } else {
