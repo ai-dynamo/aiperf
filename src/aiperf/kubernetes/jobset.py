@@ -133,17 +133,33 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
     )
 
     def _build_manifest_labels(self) -> dict[str, str]:
-        """Build top-level JobSet labels (AIPerf, name, Kueue scheduling)."""
+        """Build top-level JobSet labels (AIPerf, name, Kueue scheduling).
+
+        Kueue queue-name and priority-class fall back to the operator-side
+        defaults (`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` /
+        `_PRIORITY_CLASS`) when not set on the CR. This makes Kueue gang-
+        scheduling default-on for clusters that have Kueue installed and a
+        named LocalQueue, without forcing per-CR opt-in.
+        """
+        from aiperf.kubernetes.environment import K8sEnvironment
+
         labels: dict[str, str] = {
             AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
             AIPerfLabels.JOB_ID: self.job_id,
         }
         if self.name_label:
             labels[AIPerfLabels.NAME] = self.name_label
-        if self.scheduling.queue_name:
-            labels[KueueLabels.QUEUE_NAME] = self.scheduling.queue_name
-        if self.scheduling.priority_class:
-            labels[KueueLabels.PRIORITY_CLASS] = self.scheduling.priority_class
+        queue_name = (
+            self.scheduling.queue_name or K8sEnvironment.JOBSET.KUEUE_DEFAULT_QUEUE_NAME
+        )
+        if queue_name:
+            labels[KueueLabels.QUEUE_NAME] = queue_name
+        priority_class = (
+            self.scheduling.priority_class
+            or K8sEnvironment.JOBSET.KUEUE_DEFAULT_PRIORITY_CLASS
+        )
+        if priority_class:
+            labels[KueueLabels.PRIORITY_CLASS] = priority_class
         return labels
 
     def _resolve_manifest_ttl(self) -> int | None:
@@ -188,6 +204,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         self,
         controller_host: str | None = None,
         include_pod_index: bool = True,
+        controller_pod: bool = False,
     ) -> list[dict[str, Any]]:
         from aiperf.kubernetes.jobset_helpers import build_env_vars
 
@@ -197,6 +214,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             pod_template=self.pod_template,
             controller_host=controller_host,
             include_pod_index=include_pod_index,
+            controller_pod=controller_pod,
         )
 
     def _get_volume_mounts(self) -> list[dict[str, Any]]:

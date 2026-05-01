@@ -177,8 +177,17 @@ def build_env_vars(
     pod_template: PodTemplateConfig,
     controller_host: str | None = None,
     include_pod_index: bool = True,
+    controller_pod: bool = False,
 ) -> list[dict[str, Any]]:
-    """Create environment variables for a container."""
+    """Create environment variables for a container.
+
+    Args:
+        controller_pod: When True, this container runs inside the controller
+            pod (api / dataset-manager / etc.) -- emit AIPERF_CONTROLLER_POD=1
+            so bootstrap.py skips HF offline-mode (the controller needs HF
+            egress for prewarming the shared cache). Worker-pod containers
+            default to False and inherit offline mode.
+    """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
     has_hf_home = any(
         (item or {}).get("name") == "HF_HOME" for item in pod_template.env
@@ -208,6 +217,12 @@ def build_env_vars(
             "value": str(registration_timeout),
         },
     ]
+
+    if controller_pod:
+        # Marker consumed by aiperf.common.bootstrap._configure_child_process:
+        # presence of this var disables the HF offline-mode default so the
+        # controller pod can reach HuggingFace to warm the shared cache.
+        env.append({"name": "AIPERF_CONTROLLER_POD", "value": "1"})
 
     # HF cache lives on the shared `tokenizer-cache` emptyDir so the
     # controller pod's warmer, dataset-manager, and api containers all see

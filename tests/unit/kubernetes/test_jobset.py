@@ -2311,3 +2311,30 @@ class TestJobSetSpecAlwaysBenchmarkRun:
                     continue
                 assert "--benchmark-run" in container["args"]
                 assert "--config-file" not in container["args"]
+
+
+def test_build_env_vars_controller_pod_emits_marker() -> None:
+    """Controller-pod call sets AIPERF_CONTROLLER_POD=1."""
+    from aiperf.kubernetes.jobset_helpers import build_env_vars
+
+    env = build_env_vars(
+        job_id="job-7",
+        namespace="ns",
+        pod_template=PodTemplateConfig(),
+        controller_pod=True,
+    )
+    names = {e["name"]: e.get("value") for e in env}
+    assert names.get("AIPERF_CONTROLLER_POD") == "1"
+
+
+def test_build_env_vars_worker_pod_omits_marker() -> None:
+    """Worker-pod call (default controller_pod=False) does not set the marker."""
+    from aiperf.kubernetes.jobset_helpers import build_env_vars
+
+    env = build_env_vars(
+        job_id="job-7",
+        namespace="ns",
+        pod_template=PodTemplateConfig(),
+    )
+    names = [e["name"] for e in env]
+    assert "AIPERF_CONTROLLER_POD" not in names

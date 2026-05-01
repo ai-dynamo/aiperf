@@ -59,11 +59,13 @@ def _configure_child_process() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    # Skip HF offline mode in Kubernetes pods: the parent process may not
-    # have warmed the cache (e.g. controller pod), so children need network
-    # access.  Worker pods prefetch via WorkerGroupManager before spawning
-    # subprocesses, but the controller pod does not.
-    if not os.environ.get("AIPERF_JOB_ID"):
+    # HF offline-mode gate: enable everywhere EXCEPT controller-pod containers.
+    # The controller pod's api / dataset-manager containers need HF egress for
+    # prewarming the shared cache and for synthetic-dataset prompt generation;
+    # every other context (worker pods, local mode) defaults to offline so a
+    # regression that re-introduces from_pretrained(name) blows up immediately
+    # instead of silently re-establishing HF egress.
+    if os.environ.get("AIPERF_CONTROLLER_POD") != "1":
         _enable_hf_offline_mode()
 
 

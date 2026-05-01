@@ -118,6 +118,7 @@ class _JobSetManifestBuilder:
         self,
         controller_host: str | None = None,
         include_pod_index: bool = True,
+        controller_pod: bool = False,
     ) -> list[dict[str, Any]]:
         """Create environment variables for a container."""
         return build_env_vars(
@@ -126,6 +127,7 @@ class _JobSetManifestBuilder:
             pod_template=self.spec.pod_template,
             controller_host=controller_host,
             include_pod_index=include_pod_index,
+            controller_pod=controller_pod,
         )
 
     # ------------------------------------------------------------------ container factories
@@ -142,6 +144,7 @@ class _JobSetManifestBuilder:
         service_id: str | None = None,
         extra_env: list[dict[str, Any]] | None = None,
         include_pod_index: bool = True,
+        controller_pod: bool = False,
         skip_readiness_probe: bool = False,
         skip_startup_probe: bool = False,
         skip_liveness_probe: bool = False,
@@ -153,6 +156,7 @@ class _JobSetManifestBuilder:
         env = self._create_env_vars(
             controller_host=controller_host,
             include_pod_index=include_pod_index,
+            controller_pod=controller_pod,
         )
         if extra_env:
             env.extend(extra_env)
@@ -222,7 +226,7 @@ class _JobSetManifestBuilder:
             image_pull_policy=self.spec.image_pull_policy,
             command=["aiperf"],
             args=args,
-            env=self._create_env_vars(include_pod_index=False),
+            env=self._create_env_vars(include_pod_index=False, controller_pod=True),
             resources=self._resolve_pod_resources("EVENT_BUS_PROXY"),
             volume_mounts=build_volume_mounts(self.spec.pod_template),
             ports=container_ports,
@@ -270,6 +274,7 @@ class _JobSetManifestBuilder:
                 resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
                 service_id="system_controller",
                 include_pod_index=False,
+                controller_pod=True,
                 skip_readiness_probe=True,  # System controller manages its own lifecycle
                 # Enable realtime metrics since we don't use DASHBOARD UI
                 extra_env=[
@@ -283,6 +288,7 @@ class _JobSetManifestBuilder:
                 resources=self._resolve_pod_resources("DATASET_MANAGER"),
                 service_id="dataset_manager",
                 include_pod_index=False,
+                controller_pod=True,
             ),
             self._create_container(
                 name=Containers.TIMING_MANAGER,
@@ -291,6 +297,7 @@ class _JobSetManifestBuilder:
                 resources=self._resolve_pod_resources("TIMING_MANAGER"),
                 service_id="timing_manager",
                 include_pod_index=False,
+                controller_pod=True,
             ),
             self._create_container(
                 name=Containers.RECORDS_MANAGER,
@@ -299,6 +306,7 @@ class _JobSetManifestBuilder:
                 resources=self._resolve_pod_resources("RECORDS_MANAGER"),
                 service_id="records_manager",
                 include_pod_index=False,
+                controller_pod=True,
                 skip_readiness_probe=True,
                 skip_startup_probe=True,
                 skip_liveness_probe=True,
@@ -311,6 +319,7 @@ class _JobSetManifestBuilder:
                 api_port=K8sEnvironment.PORTS.API_SERVICE,
                 service_id="api",
                 include_pod_index=False,
+                controller_pod=True,
             ),
         ]
 
@@ -327,6 +336,7 @@ class _JobSetManifestBuilder:
                     resources=self._resolve_pod_resources("GPU_TELEMETRY_MANAGER"),
                     service_id="gpu_telemetry_manager",
                     include_pod_index=False,
+                    controller_pod=True,
                 )
             )
         if self.spec.server_metrics_enabled:
@@ -338,6 +348,7 @@ class _JobSetManifestBuilder:
                     resources=self._resolve_pod_resources("SERVER_METRICS_MANAGER"),
                     service_id="server_metrics_manager",
                     include_pod_index=False,
+                    controller_pod=True,
                 )
             )
         return managers
