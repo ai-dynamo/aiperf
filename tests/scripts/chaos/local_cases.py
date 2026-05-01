@@ -113,12 +113,27 @@ def build_cases(ctx: Context) -> list[Case]:
         "--no-gpu-telemetry",
     ]
 
+    def _merge(base_cmd: list[str], extras: list[str]) -> list[str]:
+        extra_flags = {tok for tok in extras if tok.startswith("--")}
+        out: list[str] = []
+        skip_next = False
+        for idx, tok in enumerate(base_cmd):
+            if skip_next:
+                skip_next = False
+                continue
+            if tok in extra_flags:
+                if idx + 1 < len(base_cmd) and not base_cmd[idx + 1].startswith("--"):
+                    skip_next = True
+                continue
+            out.append(tok)
+        return out + list(extras)
+
     def prof(
         name: str, *args: str, timeout: int = 90
     ) -> tuple[str, list[str], int, Literal["pass", "fail"]]:
         return (
             name,
-            base + ["--artifact-dir", str(ART / name)] + list(args),
+            _merge(base, ["--artifact-dir", str(ART / name), *args]),
             timeout,
             "fail",
         )
@@ -128,7 +143,7 @@ def build_cases(ctx: Context) -> list[Case]:
     ) -> tuple[str, list[str], int, Literal["pass", "fail"]]:
         return (
             name,
-            base + ["--artifact-dir", str(ART / name)] + list(args),
+            _merge(base, ["--artifact-dir", str(ART / name), *args]),
             timeout,
             "pass",
         )
@@ -139,7 +154,7 @@ def build_cases(ctx: Context) -> list[Case]:
         cmd = [arg for arg in base if arg != "--no-gpu-telemetry"]
         return (
             name,
-            cmd + ["--artifact-dir", str(ART / name)] + list(args),
+            _merge(cmd, ["--artifact-dir", str(ART / name), *args]),
             timeout,
             "pass",
         )
@@ -209,8 +224,7 @@ def build_cases(ctx: Context) -> list[Case]:
             cmd += ["--no-gpu-telemetry"]
         if server_metrics_disabled:
             cmd += ["--no-server-metrics"]
-        cmd += list(extra)
-        return name, cmd, timeout, "pass"
+        return name, _merge(cmd, list(extra)), timeout, "pass"
 
     cases: list[tuple[str, list[str], int, Literal["pass", "fail"]]] = [
         # Mutually exclusive / duplicate CLI forms should fail at parse or config validation.
@@ -633,7 +647,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "1",
             "--streaming",
             "--prefill-concurrency",
-            "2",
+            "1",
             "--warmup-request-count",
             "1",
         ),
@@ -1174,7 +1188,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "chat",
             "--streaming",
             "--prefill-concurrency",
-            "2",
+            "1",
             "--warmup-request-count",
             "1",
         ),
@@ -1187,6 +1201,7 @@ def build_cases(ctx: Context) -> list[Case]:
             "50",
             "--request-cancellation-delay",
             "0",
+            request_count="8",
         ),
         profile_full(
             "profile-sweep-repeated",

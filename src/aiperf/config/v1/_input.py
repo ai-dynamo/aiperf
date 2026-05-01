@@ -762,6 +762,7 @@ class VideoAudioConfig(BaseConfig):
             "Supported values: 8, 16, 24, or 32 bits. "
             "Higher bit depths provide greater dynamic range but increase file size.",
         ),
+        BeforeValidator(int),
         CLIParameter(
             name=("--video-audio-depth",),
             group=_CLI_GROUP,
