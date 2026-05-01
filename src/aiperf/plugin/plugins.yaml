@@ -1086,10 +1086,35 @@ accuracy_grader:
   code_execution:
     class: aiperf.accuracy.graders.code_execution:CodeExecutionGrader
     description: |
-      Code execution grader that runs generated code in a sandboxed environment
-      and compares output against expected results.
-    metadata:
-      is_implemented: false
+      Code execution grader for LiveCodeBench, backed by lighteval's
+      ``lcb_codegen_metric``. Extracts the model's code block, executes it
+      against public + private test cases in sandboxed subprocesses, and
+      reports pass@1. Requires the ``[accuracy]`` install.
+
+  lighteval_expr:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
+    description: |
+      Lighteval ``expr_gold_metric`` — used by AIME24/AIME25. Wraps lighteval's
+      ``MultilingualExtractiveMatchMetric`` configured with
+      ``ExprExtractionConfig`` for gold and
+      ``(ExprExtractionConfig, LatexExtractionConfig(boxed_match_priority=0))``
+      for predictions, matching the trt-llm benchmark recipe's
+      ``acc_bench_lighteval.py`` definition.
+
+  lighteval_latex:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalLatexGrader
+    description: |
+      Lighteval ``latex_gold_metric`` — used by MATH-500. Same as
+      ``lighteval_expr`` but the gold extractor uses
+      ``LatexExtractionConfig`` since MATH-500 gold answers are LaTeX
+      snippets like ``\\frac{1}{3}``.
+
+  lighteval_gpqa:
+    class: aiperf.accuracy.graders.lighteval_grader:LightevalGPQAGrader
+    description: |
+      Lighteval ``gpqa_metric`` — used by GPQA-Diamond. Extracts via
+      ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
+      to find the chosen A/B/C/D letter in both gold and prediction.
 
 # =============================================================================
 # Accuracy Benchmarks
