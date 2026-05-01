@@ -22,7 +22,6 @@ from aiperf.common.enums.dataset_enums import (
 from aiperf.common.enums.export_enums import (
     ExportFormat,
     ExportLevel,
-    ListMetricAggregationMode,
     RecordExportFormat,
     ServerMetricsFormat,
     SummaryFormat,
@@ -158,7 +157,6 @@ __all__ = [
     "IPVersion",
     "ImageFormat",
     "LifecycleState",
-    "ListMetricAggregationMode",
     "MediaType",
     "MessageType",
     "ModelSelectionStrategy",

@@ -1,201 +1,147 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Run-level aggregator for list-valued record metrics.
+
+Used by :class:`aiperf.post_processors.metric_results_processor.MetricResultsProcessor`
+when a ``MetricType.RECORD`` metric arrives with a list value (today only
+``inter_chunk_latency``, where each request contributes a list of inter-chunk
+gap durations). At 1 M-request ramp scale the exact storage —
+``records x (chunks-1) x 8 B`` would dwarf the records-manager pod's
+memory budget. T-digest bounds it to a few KB regardless of sample count.
+
+Backed by :class:`crick.TDigest` (Cython/C). Throughput measured at
+~12 M updates/s with worst-case relative percentile error under 0.05%
+on 50M-sample workloads at the default compression - see
+``docs/reference/list-metric-aggregation.md`` for the empirical band.
+
+Stats:
+- ``count``, ``sum``, ``min``, ``max``, ``avg`` are exact (running side-channel
+  scalars).
+- ``std`` is exact via Welford's online algorithm - numerically stable for
+  large-offset, low-spread distributions where ``sum_sq/count - avg^2`` would
+  suffer catastrophic cancellation.
+- ``p1``..``p99`` are approximate via t-digest.
+
+Implements :class:`aiperf.metrics.metric_dicts.MetricSeriesProtocol`.
+"""
 
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 
-try:
-    from tdigest import TDigest
-except ImportError:  # pragma: no cover - exercised via import-guard tests
-    TDigest = None
+import numpy as np
+from crick import TDigest
 
-from aiperf.common.enums import ListMetricAggregationMode
-from aiperf.common.models.record_models import MetricResult
+from aiperf.common.environment import Environment
+from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT
-from aiperf.metrics.metric_dicts import MetricArray
 
-__all__ = [
-    "ExactListMetricAggregator",
-    "ListMetricAggregator",
-    "TDigestListMetricAggregator",
-    "build_list_metric_aggregator",
-    "build_list_metric_aggregator_for_tag",
-]
+__all__ = ["TDigestListMetricAggregator"]
 
 
-class ListMetricAggregator:
-    """Base accumulator for run-level list-valued metric summaries."""
+class TDigestListMetricAggregator:
+    """Bounded-memory aggregator backed by a t-digest sketch.
+
+    Conforms to :class:`aiperf.metrics.metric_dicts.MetricSeriesProtocol`.
+    """
 
     def __init__(self) -> None:
-        self._count = 0
-        self._sum = 0.0
-        self._sum_squares = 0.0
+        self._td = TDigest(compression=Environment.METRICS.TDIGEST_COMPRESSION)
+        self._count: int = 0
+        self._sum: float = 0.0
+        # Welford's online algorithm: running mean + sum-of-squared-deviations.
+        # Numerically stable for large-offset distributions where the textbook
+        # ``sum_sq/count - avg^2`` would suffer catastrophic cancellation.
+        self._mean: float = 0.0
+        self._m2: float = 0.0
         self._min: float | None = None
         self._max: float | None = None
 
     @property
     def sum(self) -> float:
-        """Return the accumulated sum of all observed values."""
+        """Exact running sum of all samples — for the
+        :class:`MetricSeriesProtocol` so derived-sum metrics can compute
+        uniformly across this and :class:`MetricArray`."""
         return self._sum
 
     def __len__(self) -> int:
-        """Return the number of observed values."""
+        """Return the number of observed samples."""
         return self._count
 
-    def append(self, value: float | int) -> None:
-        """Append a single metric value."""
-        float_value = float(value)
-        self._observe(float_value)
-        self._append(float_value)
+    def append(self, value: int | float) -> None:
+        """Add a single sample."""
+        v = float(value)
+        self._td.update(v)
+        self._count += 1
+        self._sum += v
+        delta = v - self._mean
+        self._mean += delta / self._count
+        delta2 = v - self._mean
+        self._m2 += delta * delta2
+        self._min = v if self._min is None else min(self._min, v)
+        self._max = v if self._max is None else max(self._max, v)
 
-    def extend(self, values: list[float] | list[int]) -> None:
-        """Append multiple metric values."""
-        for value in values:
-            self.append(value)
+    def extend(self, values: Iterable[int | float]) -> None:
+        """Add many samples in a single C-level update.
+
+        The numpy round-trip avoids per-sample Python overhead in the
+        sketch path; the side-channel scalars use Welford's parallel
+        combine so ``std`` stays numerically stable across batches.
+        """
+        arr = np.asarray(values, dtype=np.float64)
+        n_b = int(arr.size)
+        if n_b == 0:
+            return
+        self._td.update(arr)
+        sum_b = float(arr.sum())
+        mean_b = sum_b / n_b
+        m2_b = float(((arr - mean_b) ** 2).sum())
+        # Welford parallel combine: merge (n_b, mean_b, m2_b) into (count, mean, m2).
+        n_a = self._count
+        if n_a == 0:
+            self._mean = mean_b
+            self._m2 = m2_b
+        else:
+            new_count = n_a + n_b
+            delta = mean_b - self._mean
+            self._mean += delta * n_b / new_count
+            self._m2 += m2_b + delta * delta * n_a * n_b / new_count
+        self._count += n_b
+        self._sum += sum_b
+        batch_min = float(arr.min())
+        batch_max = float(arr.max())
+        self._min = batch_min if self._min is None else min(self._min, batch_min)
+        self._max = batch_max if self._max is None else max(self._max, batch_max)
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
-        """Convert the aggregated values into the existing MetricResult shape."""
-        self._raise_if_empty()
+        """Return a :class:`MetricResult` with the same field set as
+        ``MetricArray.to_result``. Percentiles come from the t-digest;
+        every other stat is exact."""
+        if self._count == 0:
+            return MetricResult(tag=tag, header=header, unit=unit, count=0)
         avg = self._sum / self._count
-        variance = max((self._sum_squares / self._count) - (avg * avg), 0.0)
+        # Population variance via Welford's M2; matches numpy's default
+        # ``np.std(arr)``. ``max(0, ...)`` clamps tiny float underflow.
+        var = max(0.0, self._m2 / self._count)
+        std = math.sqrt(var)
         return MetricResult(
             tag=tag,
             header=header,
             unit=unit,
+            count=self._count,
+            sum=self._sum,
             min=self._min,
             max=self._max,
             avg=avg,
-            sum=self._sum,
-            std=math.sqrt(variance),
-            p1=self._percentile(1),
-            p5=self._percentile(5),
-            p10=self._percentile(10),
-            p25=self._percentile(25),
-            p50=self._percentile(50),
-            p75=self._percentile(75),
-            p90=self._percentile(90),
-            p95=self._percentile(95),
-            p99=self._percentile(99),
-            count=self._count,
+            std=std,
+            p1=float(self._td.quantile(0.01)),
+            p5=float(self._td.quantile(0.05)),
+            p10=float(self._td.quantile(0.10)),
+            p25=float(self._td.quantile(0.25)),
+            p50=float(self._td.quantile(0.50)),
+            p75=float(self._td.quantile(0.75)),
+            p90=float(self._td.quantile(0.90)),
+            p95=float(self._td.quantile(0.95)),
+            p99=float(self._td.quantile(0.99)),
         )
-
-    def _observe(self, value: float) -> None:
-        """Update summary statistics for an observed metric value."""
-        self._count += 1
-        self._sum += value
-        self._sum_squares += value * value
-        self._min = value if self._min is None else min(self._min, value)
-        self._max = value if self._max is None else max(self._max, value)
-
-    def _append(self, value: float) -> None:
-        """Store a single metric value in the backing accumulator."""
-        raise NotImplementedError
-
-    def _percentile(self, percentile: int) -> float:
-        """Read a percentile from the backing accumulator."""
-        raise NotImplementedError
-
-    def _raise_if_empty(self) -> None:
-        """Validate that at least one metric value has been observed."""
-        if self._count == 0:
-            raise IndexError("Cannot summarize an empty list metric aggregator")
-
-
-class ExactListMetricAggregator(ListMetricAggregator):
-    """Exact list metric accumulator backed by MetricArray."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._values = MetricArray()
-
-    def append(self, value: float | int) -> None:
-        """Append a single metric value."""
-        super().append(value)
-
-    def extend(self, values: list[float] | list[int]) -> None:
-        """Append multiple metric values."""
-        if not values:
-            return
-        float_values = [float(value) for value in values]
-        for value in float_values:
-            self._observe(value)
-        self._values.extend(float_values)
-
-    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
-        """Delegate exact summaries to MetricArray."""
-        self._raise_if_empty()
-        return self._values.to_result(tag, header, unit)
-
-    def _append(self, value: float) -> None:
-        """Store a single metric value in the MetricArray."""
-        self._values.append(value)
-
-    def _percentile(self, percentile: int) -> float:
-        """Exact aggregation delegates summary generation to MetricArray."""
-        raise NotImplementedError
-
-
-class TDigestListMetricAggregator(ListMetricAggregator):
-    """Approximate list metric accumulator backed by a t-digest sketch."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        if TDigest is None:
-            raise ImportError(
-                "tdigest is required for metrics.listMetricAggregation=tdigest"
-            )
-        self._digest = TDigest()
-
-    def _append(self, value: float) -> None:
-        """Store a single metric value in the digest."""
-        self._digest.update(value)
-
-    def _percentile(self, percentile: int) -> float:
-        """Read an approximate percentile from the digest."""
-        self._raise_if_empty()
-        return float(self._digest.percentile(percentile))
-
-
-def build_list_metric_aggregator(
-    mode: ListMetricAggregationMode,
-) -> ListMetricAggregator:
-    """Build the configured list metric accumulator implementation."""
-    if mode == ListMetricAggregationMode.EXACT:
-        return ExactListMetricAggregator()
-    if mode == ListMetricAggregationMode.TDIGEST:
-        return TDigestListMetricAggregator()
-    raise ValueError(f"Unsupported list metric aggregation mode: {mode}")
-
-
-def build_list_metric_aggregator_for_tag(
-    tag: MetricTagT,
-    default_mode: ListMetricAggregationMode,
-) -> ListMetricAggregator:
-    """Build a list metric aggregator, honouring the metric's per-class
-    ``MetricFlags.AGGREGATE_TDIGEST`` override.
-
-    Metrics that legitimately stay as ``list[...]`` per record (today only
-    ``inter_chunk_latency``, which contributes one sample per inter-chunk
-    gap per request) can request t-digest aggregation regardless of the
-    global default — exact storage at ramp scale is multi-GB, t-digest is
-    a few KB. Other list-valued metrics (none currently, but room to grow)
-    follow the global default.
-
-    Tags not registered in :class:`MetricRegistry` (e.g. synthetic tags used
-    in tests) silently fall back to the default mode.
-    """
-    # Local import to avoid circular dependency: metric_registry imports
-    # base_metric → list_metric_aggregation indirectly via this module's
-    # peers. Importing at call time keeps module load order intact.
-    from aiperf.common.enums import MetricFlags  # noqa: PLC0415
-    from aiperf.common.exceptions import MetricTypeError  # noqa: PLC0415
-    from aiperf.metrics.metric_registry import MetricRegistry  # noqa: PLC0415
-
-    try:
-        metric_class = MetricRegistry.get_class(tag)
-    except MetricTypeError:
-        return build_list_metric_aggregator(default_mode)
-    if metric_class.has_flags(MetricFlags.AGGREGATE_TDIGEST):
-        return TDigestListMetricAggregator()
-    return build_list_metric_aggregator(default_mode)

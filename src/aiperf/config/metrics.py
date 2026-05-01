@@ -3,25 +3,20 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from pydantic import ConfigDict
 
-from pydantic import ConfigDict, Field
-
-from aiperf.common.enums import ListMetricAggregationMode
 from aiperf.config._base import BaseConfig
 
 __all__ = ["MetricsConfig"]
 
 
 class MetricsConfig(BaseConfig):
-    """Configuration for benchmark metric aggregation behavior."""
+    """Configuration for benchmark metric aggregation behavior.
+
+    Currently empty — list-valued record metrics aggregate via t-digest at
+    first-touch (see :mod:`aiperf.metrics.list_metric_aggregation`); the
+    sketch compression is tunable via ``AIPERF_METRICS_TDIGEST_COMPRESSION``.
+    Reserved as the home for any future user-facing metric-aggregation knobs.
+    """
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
-
-    list_metric_aggregation: Annotated[
-        ListMetricAggregationMode,
-        Field(
-            default=ListMetricAggregationMode.EXACT,
-            description="Aggregation mode for list-valued metrics in benchmark summaries.",
-        ),
-    ]

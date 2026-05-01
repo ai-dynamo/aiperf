@@ -1,225 +1,226 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Unit tests for ``TDigestListMetricAggregator``.
 
+The aggregator is the run-level storage for list-valued record metrics
+(today only ``inter_chunk_latency``). It backs percentile reads with a
+t-digest sketch but keeps ``count`` / ``sum`` / ``min`` / ``max`` /
+``avg`` / ``std`` bit-exact via running side-channel scalars (``std``
+via Welford's online algorithm for numerical stability).
+"""
+
+from __future__ import annotations
+
+import numpy as np
 import pytest
 
-from aiperf.common.enums import ListMetricAggregationMode
-from aiperf.metrics import list_metric_aggregation as list_metric_aggregation_module
-from aiperf.metrics.derived_sum_metric import DerivedSumMetric
-from aiperf.metrics.list_metric_aggregation import (
-    ExactListMetricAggregator,
-    TDigestListMetricAggregator,
-    build_list_metric_aggregator,
-)
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
-from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
-
-try:
-    import tdigest  # noqa: F401
-except ImportError:
-    tdigest = None
-
-HAS_TDIGEST = tdigest is not None
+from aiperf.common.environment import Environment
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
+from aiperf.metrics.metric_dicts import MetricArray, MetricSeriesProtocol
 
 
-class TotalInterChunkLatencyMetric(DerivedSumMetric[float, InterChunkLatencyMetric]):
-    tag = "test_total_inter_chunk_latency_from_aggregator"
+class TestTDigestListMetricAggregator:
+    """Behavioral contract for the aggregator."""
 
+    def test_empty_aggregator_returns_count_zero_result(self) -> None:
+        agg = TDigestListMetricAggregator()
+        result = agg.to_result(tag="test", header="Test", unit="ms")
+        assert result.tag == "test"
+        assert result.header == "Test"
+        assert result.unit == "ms"
+        assert result.count == 0
+        assert result.sum is None
+        assert result.min is None
+        assert result.max is None
+        assert result.avg is None
+        assert result.std is None
+        assert result.p50 is None
+        assert result.p99 is None
 
-SAMPLE_VALUES = [1.0, 2.0, 3.0, 10.0, 20.0, 21.0, 22.0, 50.0, 100.0]
-ACCURACY_SAMPLE_VALUES = [float(value) for value in range(1, 101)]
+    def test_append_single_value_count_one(self) -> None:
+        agg = TDigestListMetricAggregator()
+        agg.append(7.0)
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.count == 1
+        assert result.sum == pytest.approx(7.0)
+        assert result.min == pytest.approx(7.0)
+        assert result.max == pytest.approx(7.0)
+        assert result.avg == pytest.approx(7.0)
+        assert result.std == pytest.approx(0.0)
+        assert result.p50 == pytest.approx(7.0)
 
+    def test_extend_with_list_count_matches_len(self) -> None:
+        agg = TDigestListMetricAggregator()
+        agg.extend([1.0, 2.0, 3.0, 4.0, 5.0])
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.count == 5
+        assert result.sum == pytest.approx(15.0)
 
-def test_tdigest_dependency_guard_still_allows_exact_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Exact mode should still work when tdigest is unavailable."""
-    monkeypatch.setattr(list_metric_aggregation_module, "TDigest", None)
+    def test_repeated_extend_accumulates(self) -> None:
+        agg = TDigestListMetricAggregator()
+        agg.extend([1.0, 2.0, 3.0])
+        agg.extend([4.0, 5.0])
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.count == 5
+        assert result.sum == pytest.approx(15.0)
+        assert result.min == pytest.approx(1.0)
+        assert result.max == pytest.approx(5.0)
 
-    aggregator = build_list_metric_aggregator(ListMetricAggregationMode.EXACT)
+    def test_mixed_int_and_float_values(self) -> None:
+        agg = TDigestListMetricAggregator()
+        agg.append(1)
+        agg.append(2.5)
+        agg.extend([3, 4.5])
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.count == 4
+        assert result.sum == pytest.approx(11.0)
 
-    assert isinstance(aggregator, ExactListMetricAggregator)
+    def test_min_max_exact_across_random_inputs(self) -> None:
+        rng = np.random.default_rng(42)
+        values = rng.uniform(low=-1000.0, high=1000.0, size=10_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.min == float(values.min())
+        assert result.max == float(values.max())
 
+    def test_count_sum_exact_across_random_inputs(self) -> None:
+        rng = np.random.default_rng(42)
+        values = rng.uniform(low=0.0, high=1000.0, size=10_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.count == 10_000
+        assert result.sum == pytest.approx(float(values.sum()), rel=1e-12)
 
-def test_tdigest_mode_raises_clear_error_when_dependency_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tdigest mode should fail with a clear import guard when dependency is missing."""
-    monkeypatch.setattr(list_metric_aggregation_module, "TDigest", None)
+    def test_avg_std_exact_against_numpy(self) -> None:
+        rng = np.random.default_rng(42)
+        values = rng.normal(loc=100.0, scale=15.0, size=10_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.avg == pytest.approx(float(np.mean(values)), rel=1e-9)
+        assert result.std == pytest.approx(float(np.std(values)), rel=1e-9)
 
-    with pytest.raises(ImportError, match="tdigest"):
-        build_list_metric_aggregator(ListMetricAggregationMode.TDIGEST)
+    def test_percentiles_within_tolerance(self) -> None:
+        rng = np.random.default_rng(42)
+        values = rng.uniform(low=0.0, high=1000.0, size=100_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ms")
+        assert result.p50 == pytest.approx(float(np.percentile(values, 50)), rel=0.005)
+        assert result.p90 == pytest.approx(float(np.percentile(values, 90)), rel=0.005)
+        assert result.p99 == pytest.approx(float(np.percentile(values, 99)), rel=0.005)
 
+    def test_to_result_schema_matches_metric_array(self) -> None:
+        rng = np.random.default_rng(42)
+        values = rng.uniform(low=0.0, high=1000.0, size=100_000)
 
-@pytest.mark.parametrize(
-    ("mode", "aggregator_type"),
-    [
-        pytest.param(ListMetricAggregationMode.EXACT, ExactListMetricAggregator),
-        *(
-            [
-                pytest.param(
-                    ListMetricAggregationMode.TDIGEST,
-                    TDigestListMetricAggregator,
-                )
-            ]
-            if HAS_TDIGEST
-            else []
-        ),
-    ],
-)
-def test_build_list_metric_aggregator_preserves_metric_result_shape(
-    mode: ListMetricAggregationMode,
-    aggregator_type: type[ExactListMetricAggregator | TDigestListMetricAggregator],
-) -> None:
-    """Build aggregators that emit the existing MetricResult summary shape."""
-    aggregator = build_list_metric_aggregator(mode)
+        digest_agg = TDigestListMetricAggregator()
+        digest_agg.extend(values.tolist())
+        digest_result = digest_agg.to_result(tag="t", header="T", unit="ms")
 
-    aggregator.extend(SAMPLE_VALUES)
-    result = aggregator.to_result("latency", "Latency", "ms")
+        array_agg = MetricArray()
+        array_agg.extend(values.tolist())
+        array_result = array_agg.to_result(tag="t", header="T", unit="ms")
 
-    assert isinstance(aggregator, aggregator_type)
-    assert result.tag == "latency"
-    assert result.header == "Latency"
-    assert result.unit == "ms"
-    assert result.count == len(SAMPLE_VALUES)
-    assert result.sum == pytest.approx(sum(SAMPLE_VALUES))
-    assert result.min == min(SAMPLE_VALUES)
-    assert result.max == max(SAMPLE_VALUES)
-    assert result.avg is not None
-    assert result.std is not None
-    assert result.p1 is not None
-    assert result.p5 is not None
-    assert result.p10 is not None
-    assert result.p25 is not None
-    assert result.p50 is not None
-    assert result.p75 is not None
-    assert result.p90 is not None
-    assert result.p95 is not None
-    assert result.p99 is not None
+        # Both paths populate the same stat fields (dataclass schema parity).
+        populated_fields = (
+            "tag",
+            "header",
+            "unit",
+            "count",
+            "sum",
+            "min",
+            "max",
+            "avg",
+            "std",
+            "p1",
+            "p5",
+            "p10",
+            "p25",
+            "p50",
+            "p75",
+            "p90",
+            "p95",
+            "p99",
+        )
+        for f in populated_fields:
+            assert getattr(digest_result, f) is not None, f
+            assert getattr(array_result, f) is not None, f
+        assert digest_result.count == array_result.count
+        assert digest_result.min == pytest.approx(array_result.min)
+        assert digest_result.max == pytest.approx(array_result.max)
+        assert digest_result.sum == pytest.approx(array_result.sum, rel=1e-12)
+        assert digest_result.avg == pytest.approx(array_result.avg, rel=1e-9)
+        assert digest_result.std == pytest.approx(array_result.std, rel=1e-9)
+        for pct_field in ("p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"):
+            assert getattr(digest_result, pct_field) == pytest.approx(
+                getattr(array_result, pct_field), rel=0.005
+            )
 
+    def test_extend_batched_matches_per_element_appends(self) -> None:
+        """Single ``extend(list)`` (numpy batched C-level update) must give
+        the same exact stats as N successive ``append(v)`` calls. Regression
+        boundary for the batched code path.
+        """
+        rng = np.random.default_rng(42)
+        values = rng.normal(loc=100.0, scale=15.0, size=10_000)
 
-@pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
-def test_tdigest_percentiles_stay_close_to_exact_on_fixed_sample_set() -> None:
-    """T-digest summaries should stay close to the exact percentile results."""
-    exact = build_list_metric_aggregator(ListMetricAggregationMode.EXACT)
-    tdigest = build_list_metric_aggregator(ListMetricAggregationMode.TDIGEST)
+        agg_batched = TDigestListMetricAggregator()
+        agg_batched.extend(values.tolist())
+        r_batched = agg_batched.to_result(tag="t", header="T", unit="ms")
 
-    exact.extend(ACCURACY_SAMPLE_VALUES)
-    tdigest.extend(ACCURACY_SAMPLE_VALUES)
+        agg_streamed = TDigestListMetricAggregator()
+        for v in values:
+            agg_streamed.append(float(v))
+        r_streamed = agg_streamed.to_result(tag="t", header="T", unit="ms")
 
-    exact_result = exact.to_result("latency", "Latency", "ms")
-    tdigest_result = tdigest.to_result("latency", "Latency", "ms")
+        assert r_batched.count == r_streamed.count
+        assert r_batched.min == pytest.approx(r_streamed.min)
+        assert r_batched.max == pytest.approx(r_streamed.max)
+        assert r_batched.sum == pytest.approx(r_streamed.sum, rel=1e-12)
+        assert r_batched.avg == pytest.approx(r_streamed.avg, rel=1e-12)
+        assert r_batched.std == pytest.approx(r_streamed.std, rel=1e-9)
 
-    assert tdigest_result.count == exact_result.count
-    assert tdigest_result.sum == pytest.approx(exact_result.sum)
-    assert tdigest_result.min == exact_result.min
-    assert tdigest_result.max == exact_result.max
-    assert tdigest_result.avg == pytest.approx(exact_result.avg)
-    assert tdigest_result.std == pytest.approx(exact_result.std)
-    assert tdigest_result.p1 == pytest.approx(exact_result.p1, abs=2.0)
-    assert tdigest_result.p5 == pytest.approx(exact_result.p5, abs=2.0)
-    assert tdigest_result.p10 == pytest.approx(exact_result.p10, abs=2.0)
-    assert tdigest_result.p25 == pytest.approx(exact_result.p25, abs=2.0)
-    assert tdigest_result.p50 == pytest.approx(exact_result.p50, abs=2.0)
-    assert tdigest_result.p75 == pytest.approx(exact_result.p75, abs=2.0)
-    assert tdigest_result.p90 == pytest.approx(exact_result.p90, abs=2.0)
-    assert tdigest_result.p95 == pytest.approx(exact_result.p95, abs=2.0)
-    assert tdigest_result.p99 == pytest.approx(exact_result.p99, abs=2.0)
+    def test_welford_std_is_stable_on_large_offset_distribution(self) -> None:
+        """The textbook ``sum_sq/count - avg^2`` formula collapses to zero
+        for large-offset, low-spread data because of catastrophic
+        cancellation. Welford's algorithm preserves precision.
+        """
+        rng = np.random.default_rng(42)
+        values = 1.0e9 + rng.normal(loc=0.0, scale=1.0, size=10_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ns")
+        assert result.std == pytest.approx(float(np.std(values)), rel=1e-3)
 
+    def test_protocol_runtime_isinstance(self) -> None:
+        """Aggregator should satisfy ``MetricSeriesProtocol`` so
+        ``isinstance`` dispatch in ``MetricResultsProcessor`` and
+        ``DerivedSumMetric`` accepts both this and ``MetricArray``."""
+        digest_agg = TDigestListMetricAggregator()
+        array_agg = MetricArray()
+        assert isinstance(digest_agg, MetricSeriesProtocol)
+        assert isinstance(array_agg, MetricSeriesProtocol)
 
-@pytest.mark.parametrize(
-    "aggregator",
-    [
-        pytest.param(ExactListMetricAggregator(), id="exact"),
-        *(
-            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
-            if HAS_TDIGEST
-            else []
-        ),
-    ],
-)
-def test_list_metric_aggregator_combines_append_and_extend_ingest_paths(
-    aggregator: ExactListMetricAggregator | TDigestListMetricAggregator,
-) -> None:
-    """Aggregators should preserve summaries across mixed ingest calls."""
-    aggregator.extend([1.0, 2.0])
-    aggregator.append(3.0)
-    aggregator.extend([4.0, 5.0])
+    def test_compression_env_var_flows_to_underlying_sketch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``AIPERF_METRICS_TDIGEST_COMPRESSION`` must be wired through to
+        ``crick.TDigest`` so operators can tune accuracy/memory without code
+        changes."""
+        monkeypatch.setenv("AIPERF_METRICS_TDIGEST_COMPRESSION", "200")
+        from aiperf.common.environment import _MetricsSettings
 
-    result = aggregator.to_result("latency", "Latency", "ms")
+        monkeypatch.setattr(Environment, "METRICS", _MetricsSettings(), raising=True)
+        agg = TDigestListMetricAggregator()
+        assert agg._td.compression == 200
 
-    assert result.count == 5
-    assert result.sum == pytest.approx(15.0)
-    assert result.min == 1.0
-    assert result.max == 5.0
-    assert result.avg == pytest.approx(3.0)
-
-
-def test_exact_list_metric_aggregator_extend_uses_metric_array_bulk_ingest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Exact aggregation should keep the bulk MetricArray.extend ingest path."""
-    aggregator = ExactListMetricAggregator()
-    values = [1.0, 2.0, 3.0]
-    extend_calls: list[list[float]] = []
-    append_calls: list[float] = []
-
-    def record_extend(self: MetricArray, batch: list[float]) -> None:
-        extend_calls.append(batch)
-
-    def record_append(self: MetricArray, value: float) -> None:
-        append_calls.append(value)
-
-    monkeypatch.setattr(MetricArray, "extend", record_extend)
-    monkeypatch.setattr(MetricArray, "append", record_append)
-
-    aggregator.extend(values)
-
-    assert extend_calls == [values]
-    assert append_calls == []
-
-
-@pytest.mark.parametrize(
-    "aggregator",
-    [
-        pytest.param(ExactListMetricAggregator(), id="exact"),
-        *(
-            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
-            if HAS_TDIGEST
-            else []
-        ),
-    ],
-)
-def test_derived_sum_metric_accepts_any_metric_series_aggregator(
-    aggregator: ExactListMetricAggregator | TDigestListMetricAggregator,
-) -> None:
-    """Derived sum metrics should work with any run-level metric series aggregator."""
-    aggregator.extend([1.0, 2.0, 3.0])
-    metric_results = MetricResultsDict()
-    metric_results[InterChunkLatencyMetric.tag] = aggregator
-
-    result = TotalInterChunkLatencyMetric().derive_value(metric_results)
-
-    assert result == pytest.approx(6.0)
-
-
-@pytest.mark.parametrize(
-    "aggregator",
-    [
-        pytest.param(ExactListMetricAggregator(), id="exact"),
-        *(
-            [pytest.param(TDigestListMetricAggregator(), id="tdigest")]
-            if HAS_TDIGEST
-            else []
-        ),
-    ],
-)
-def test_list_metric_aggregator_to_result_raises_consistent_error_when_empty(
-    aggregator: ExactListMetricAggregator | TDigestListMetricAggregator,
-) -> None:
-    """Both implementations should reject empty summaries the same way."""
-    with pytest.raises(
-        IndexError,
-        match="Cannot summarize an empty list metric aggregator",
-    ):
-        aggregator.to_result("latency", "Latency", "ms")
+    def test_sum_property_for_derived_metric_protocol(self) -> None:
+        """``MetricSeriesProtocol`` requires a ``sum`` property so
+        :class:`DerivedSumMetric` can compute uniformly across this and
+        :class:`MetricArray`."""
+        agg = TDigestListMetricAggregator()
+        agg.extend([1.0, 2.0, 3.0, 4.0, 5.0])
+        assert agg.sum == pytest.approx(15.0)

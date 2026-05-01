@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import (
-    ListMetricAggregationMode,
     MetricDictValueTypeT,
     MetricFlags,
     MetricType,
@@ -20,10 +19,7 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
-from aiperf.metrics.list_metric_aggregation import (
-    ListMetricAggregator,
-    build_list_metric_aggregator_for_tag,
-)
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import (
     MetricArray,
     MetricResultsDict,
@@ -59,9 +55,6 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
-        self._list_metric_aggregation_mode: ListMetricAggregationMode = (
-            run.cfg.metrics.list_metric_aggregation
-        )
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -132,31 +125,25 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         value: Any,
         results_dict: MetricResultsDict,
     ) -> None:
-        """Append a RECORD-type metric value into its list or scalar accumulator."""
-        if isinstance(value, list):
-            existing_values = results_dict.get(tag)
-            if existing_values is None:
-                existing_values = build_list_metric_aggregator_for_tag(
-                    tag,
-                    self._list_metric_aggregation_mode,
-                )
-                results_dict[tag] = existing_values
-            if not isinstance(existing_values, ListMetricAggregator):
-                raise TypeError(
-                    f"Expected ListMetricAggregator for list-valued metric '{tag}', got {type(existing_values)}"
-                )
-            existing_values.extend(value)
-            return
+        """Append a RECORD-type metric value into its run-level series.
 
+        Storage type is decided at first-touch from the value shape: list
+        values go to a bounded :class:`TDigestListMetricAggregator` (today
+        only ``inter_chunk_latency``, which would otherwise blow past pod
+        RAM at ramp scale); scalars stay in :class:`MetricArray`.
+        """
         existing_values = results_dict.get(tag)
         if existing_values is None:
-            existing_values = MetricArray()
-            results_dict[tag] = existing_values
-        if not isinstance(existing_values, MetricArray):
-            raise TypeError(
-                f"Expected MetricArray for scalar metric '{tag}', got {type(existing_values)}"
+            existing_values = (
+                TDigestListMetricAggregator()
+                if isinstance(value, list)
+                else MetricArray()
             )
-        existing_values.append(value)
+            results_dict[tag] = existing_values
+        if isinstance(value, list):
+            existing_values.extend(value)
+        else:
+            existing_values.append(value)
 
     async def get_instances_map(
         self, request_start_ns: int | None = None

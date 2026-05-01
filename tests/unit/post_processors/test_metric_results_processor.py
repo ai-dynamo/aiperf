@@ -5,16 +5,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.enums import ListMetricAggregationMode, MetricType
+from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.config import AIPerfConfig
 from aiperf.metrics.derived_sum_metric import DerivedSumMetric
-from aiperf.metrics.list_metric_aggregation import (
-    ExactListMetricAggregator,
-    ListMetricAggregator,
-    TDigestListMetricAggregator,
-)
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import (
     MetricArray,
     MetricResultsDict,
@@ -27,13 +23,6 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.unit.post_processors.conftest import _make_run, create_metric_records_message
-
-try:
-    import tdigest as _tdigest  # noqa: F401
-except ImportError:
-    _tdigest = None
-
-HAS_TDIGEST = _tdigest is not None
 
 
 class TotalInterChunkLatencyMetric(DerivedSumMetric[float, InterChunkLatencyMetric]):
@@ -83,16 +72,12 @@ class TestMetricResultsProcessor:
         assert list(processor._results["test_record"].data) == [42.0, 84.0]
 
     @pytest.mark.asyncio
-    async def test_process_result_record_metric_list_values_use_exact_aggregator_by_default(
+    async def test_process_result_record_metric_list_values_use_tdigest_aggregator(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
-        """Test list-valued record metrics use the default exact aggregator."""
-        # Synthetic tag isn't in the real registry; raising MetricTypeError
-        # is the contract the production builder relies on to fall back to
-        # the global default mode (EXACT here).
-        from aiperf.common.exceptions import MetricTypeError
-
-        mock_metric_registry.get_class.side_effect = MetricTypeError("test_record")
+        """List-valued record metrics route to TDigestListMetricAggregator at
+        first touch. The bounded-memory sketch is the only run-level storage
+        for list values — there is no flag, no global default, no opt-in."""
         processor = MetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
@@ -102,58 +87,6 @@ class TestMetricResultsProcessor:
         )
         await processor.process_result(message.to_data())
 
-        assert (
-            processor._list_metric_aggregation_mode == ListMetricAggregationMode.EXACT
-        )
-        assert "test_record" in processor._results
-        assert isinstance(processor._results["test_record"], ExactListMetricAggregator)
-
-        result = processor._results["test_record"].to_result(
-            "test_record",
-            "Test Record",
-            "count",
-        )
-        assert result == MetricResult(
-            tag="test_record",
-            header="Test Record",
-            unit="count",
-            min=10.0,
-            max=30.0,
-            avg=20.0,
-            sum=60.0,
-            std=8.16496580927726,
-            p1=10.2,
-            p5=11.0,
-            p10=12.0,
-            p25=15.0,
-            p50=20.0,
-            p75=25.0,
-            p90=28.0,
-            p95=29.0,
-            p99=29.8,
-            count=3,
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
-    async def test_process_result_record_metric_list_values_use_tdigest_aggregator(
-        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
-    ) -> None:
-        """Test list-valued record metrics use the configured tdigest aggregator."""
-        config = mock_user_config.model_copy(deep=True)
-        config.metrics.list_metric_aggregation = ListMetricAggregationMode.TDIGEST
-        processor = MetricResultsProcessor(_make_run(config))
-        processor._tags_to_types = {"test_record": MetricType.RECORD}
-
-        message = create_metric_records_message(
-            x_request_id="test-1",
-            results=[{"test_record": [10.0, 20.0, 30.0]}],
-        )
-        await processor.process_result(message.to_data())
-
-        assert (
-            processor._list_metric_aggregation_mode == ListMetricAggregationMode.TDIGEST
-        )
         assert "test_record" in processor._results
         assert isinstance(
             processor._results["test_record"], TDigestListMetricAggregator
@@ -165,36 +98,20 @@ class TestMetricResultsProcessor:
             "count",
         )
         assert result.count == 3
-        assert result.min == 10.0
-        assert result.max == 30.0
+        assert result.min == pytest.approx(10.0)
+        assert result.max == pytest.approx(30.0)
         assert result.avg == pytest.approx(20.0)
         assert result.sum == pytest.approx(60.0)
         assert result.p50 == pytest.approx(20.0, abs=1.0)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            pytest.param(ListMetricAggregationMode.EXACT, id="exact"),
-            pytest.param(
-                ListMetricAggregationMode.TDIGEST,
-                id="tdigest",
-                marks=pytest.mark.skipif(
-                    not HAS_TDIGEST, reason="tdigest dependency is not installed"
-                ),
-            ),
-        ],
-    )
     async def test_process_result_record_metric_list_values_support_derived_sum_metrics(
         self,
         mock_metric_registry: Mock,
         mock_user_config: AIPerfConfig,
-        mode: ListMetricAggregationMode,
     ) -> None:
-        """Test derived sum metrics consume the shared run-level metric series contract."""
-        config = mock_user_config.model_copy(deep=True)
-        config.metrics.list_metric_aggregation = mode
-        processor = MetricResultsProcessor(_make_run(config))
+        """Derived sum metrics consume the shared run-level metric series contract."""
+        processor = MetricResultsProcessor(_make_run(mock_user_config))
         processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
         processor._instances_map = {
             InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
@@ -218,54 +135,13 @@ class TestMetricResultsProcessor:
         assert metric_results[TotalInterChunkLatencyMetric.tag] == pytest.approx(60.0)
 
     @pytest.mark.asyncio
-    async def test_summarize_list_metric_in_exact_mode(
+    async def test_summarize_list_metric(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
-        """Test summarize emits list-valued metric summaries in exact mode."""
+        """Summarize emits list-valued metric summaries via the t-digest aggregator."""
         mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
 
         processor = MetricResultsProcessor(_make_run(mock_user_config))
-        processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
-        processor._instances_map = {
-            InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
-        }
-
-        message = create_metric_records_message(
-            x_request_id="test-1",
-            results=[
-                {
-                    InterChunkLatencyMetric.tag: [
-                        10_000_000.0,
-                        20_000_000.0,
-                        30_000_000.0,
-                    ]
-                }
-            ],
-        )
-        await processor.process_result(message.to_data())
-
-        results = await processor.summarize()
-
-        assert len(results) == 1
-        assert results[0].tag == InterChunkLatencyMetric.tag
-        assert results[0].unit == "ms"
-        assert results[0].count == 3
-        assert results[0].sum == pytest.approx(60.0)
-        assert results[0].avg == pytest.approx(20.0)
-        assert results[0].min == pytest.approx(10.0)
-        assert results[0].max == pytest.approx(30.0)
-
-    @pytest.mark.asyncio
-    @pytest.mark.skipif(not HAS_TDIGEST, reason="tdigest dependency is not installed")
-    async def test_summarize_list_metric_in_tdigest_mode(
-        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
-    ) -> None:
-        """Test summarize emits list-valued metric summaries in tdigest mode."""
-        mock_metric_registry.get_class.return_value = InterChunkLatencyMetric
-
-        config = mock_user_config.model_copy(deep=True)
-        config.metrics.list_metric_aggregation = ListMetricAggregationMode.TDIGEST
-        processor = MetricResultsProcessor(_make_run(config))
         processor._tags_to_types = {InterChunkLatencyMetric.tag: MetricType.RECORD}
         processor._instances_map = {
             InterChunkLatencyMetric.tag: InterChunkLatencyMetric()
@@ -294,6 +170,8 @@ class TestMetricResultsProcessor:
         assert results[0].count == 4
         assert results[0].sum == pytest.approx(100.0)
         assert results[0].avg == pytest.approx(25.0)
+        assert results[0].min == pytest.approx(10.0)
+        assert results[0].max == pytest.approx(40.0)
         assert results[0].p50 == pytest.approx(25.0, abs=1.0)
 
     @pytest.mark.asyncio
@@ -498,13 +376,13 @@ class TestMetricResultsProcessor:
             str(RequestLatencyMetric.unit),
         )
 
-    def test_create_metric_result_from_list_metric_aggregator(
+    def test_create_metric_result_from_tdigest_aggregator(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
     ) -> None:
-        """Test creating MetricResult from ListMetricAggregator."""
+        """Test creating MetricResult from TDigestListMetricAggregator."""
         processor = MetricResultsProcessor(_make_run(mock_user_config))
         processor._instances_map = {RequestLatencyMetric.tag: RequestLatencyMetric()}
-        aggregator: ListMetricAggregator = ExactListMetricAggregator()
+        aggregator = TDigestListMetricAggregator()
 
         expected_result = MetricResult(
             tag=RequestLatencyMetric.tag,

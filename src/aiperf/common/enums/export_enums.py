@@ -30,16 +30,6 @@ class ExportLevel(CaseInsensitiveStrEnum):
     """Export raw parsed records with full request/response data (most detailed)"""
 
 
-class ListMetricAggregationMode(CaseInsensitiveStrEnum):
-    """Aggregation strategy for list-valued metrics in benchmark summaries."""
-
-    EXACT = "exact"
-    """Preserve exact list values for aggregation and summary statistics."""
-
-    TDIGEST = "tdigest"
-    """Use t-digest sketches for scalable percentile aggregation of list metrics."""
-
-
 class RecordExportFormat(CaseInsensitiveStrEnum):
     """Format options for per-record metrics export.
 

@@ -257,15 +257,6 @@ class MetricFlags(Flag):
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
 
-    AGGREGATE_TDIGEST = 1 << 17
-    """Aggregate this metric with a t-digest sketch instead of materializing
-    every sample. Use for list-valued record metrics whose run-level sample
-    count grows with `records × samples_per_record` and would otherwise dwarf
-    the records-manager's RAM (e.g. `inter_chunk_latency`, which contributes
-    one value per inter-chunk gap per request — billions of points at ramp
-    scale). Approximate percentiles (~0.5% relative error on p50/p90/p99);
-    `count`/`sum`/`min`/`max`/`stddev` stay exact via the base aggregator."""
-
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.
