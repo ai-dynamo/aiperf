@@ -143,6 +143,17 @@ async def test_run_sparks_section_renders_for_running_job(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_v1_job_detail_hides_live_throughput_when_no_samples(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """A running v1 job detail without throughput samples hides the chart card."""
+    _ensure_empty_results_dir(seeded_results_dir, "aiperf-bench", "live-run")
+    await page.goto(f"{live_operator_app.base_url}/v1/#/jobs/aiperf-bench/live-run")
+    await expect(page.get_by_test_id("page-job-detail")).to_be_visible()
+    await expect(page.get_by_text("Live Throughput")).to_have_count(0)
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_run_pods_section_renders_for_running_job(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:

@@ -25,6 +25,7 @@ from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.models import AIPerfJobInfo
 from aiperf.operator.models import MetricsSummary
 from aiperf.operator.results_layout import resolve_run_dir
+from aiperf.operator.runs_index import zstd_decompress
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -68,12 +69,22 @@ def _sweep_linkage_from_marker(
 
 
 def _read_summary(path: Path) -> dict[str, Any] | None:
-    """Load a ``profile_export_aiperf.json`` or return None if unreadable."""
+    """Load a profile export summary or return None if unreadable."""
     try:
-        return orjson.loads(path.read_bytes())
-    except (OSError, orjson.JSONDecodeError) as e:
+        payload = path.read_bytes()
+        if path.suffix == ".zst":
+            payload = zstd_decompress(payload)
+        return orjson.loads(payload)
+    except (OSError, orjson.JSONDecodeError, ValueError) as e:
         logger.warning(f"Skipping unreadable summary {path}: {e}")
         return None
+
+
+def _summary_path(run: Path) -> Path | None:
+    for candidate in (run / f"{_SUMMARY_FILE}.zst", run / _SUMMARY_FILE):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _archived_from_summary(
@@ -168,8 +179,8 @@ def _scan_pvc_jobs(
             run = resolve_run_dir(base_dir, ns_dir.name, name_dir.name)
             if run is None:
                 continue
-            summary_path = run / _SUMMARY_FILE
-            if not summary_path.is_file():
+            summary_path = _summary_path(run)
+            if summary_path is None:
                 continue
             summary = _read_summary(summary_path)
             if summary is None:
@@ -358,9 +369,9 @@ async def find_any_job(
         cr.source = "live"
 
     run = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
-    summary_path = run / _SUMMARY_FILE if run is not None else None
+    summary_path = _summary_path(run) if run is not None else None
     pvc: AIPerfJobInfo | None = None
-    if summary_path is not None and summary_path.is_file():
+    if summary_path is not None:
         import datetime as _dt
 
         data = _read_summary(summary_path)

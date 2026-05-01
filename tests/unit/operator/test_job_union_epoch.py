@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import zstandard as zstd
 
 
 def _write_summary(base: Path, ns: str, name: str, epoch: str, body: dict) -> None:
@@ -22,6 +23,17 @@ def _write_summary(base: Path, ns: str, name: str, epoch: str, body: dict) -> No
     d = base / ns / name / epoch
     d.mkdir(parents=True)
     (d / "profile_export_aiperf.json").write_text(json.dumps(body))
+
+
+def _write_compressed_summary(
+    base: Path, ns: str, name: str, epoch: str, body: dict
+) -> None:
+    d = base / ns / name / epoch
+    d.mkdir(parents=True)
+    payload = json.dumps(body).encode()
+    (d / "profile_export_aiperf.json.zst").write_bytes(
+        zstd.ZstdCompressor().compress(payload)
+    )
 
 
 @pytest.mark.asyncio
@@ -71,6 +83,43 @@ async def test_find_any_job_epoch_specific_returns_old_epoch(tmp_path: Path) -> 
     assert rec is not None
     assert rec.throughput_rps == 100.0
     assert rec.source == "archived"
+
+
+@pytest.mark.asyncio
+async def test_find_any_job_epoch_reads_compressed_profile_export(
+    tmp_path: Path,
+) -> None:
+    from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
+
+    _write_compressed_summary(
+        tmp_path,
+        "bench",
+        "j1",
+        "1714069323",
+        {
+            "status": "Succeeded",
+            "request_throughput": {"avg": 123.0},
+            "request_latency": {"p99": 9.0},
+            "input_config": {
+                "models": {"items": [{"name": "m"}]},
+                "endpoint": {"urls": ["x"]},
+            },
+        },
+    )
+    write_latest(tmp_path, "bench", "j1", "1714069323")
+    with patch.object(job_union, "find_aiperf_job", AsyncMock(return_value=None)):
+        rec = await job_union.find_any_job(
+            None,
+            tmp_path,
+            "bench",
+            "j1",
+            epoch="1714069323",
+        )
+    assert rec is not None
+    assert rec.source == "archived"
+    assert rec.throughput_rps == 123.0
+    assert rec.latency_p99_ms == 9.0
 
 
 @pytest.mark.asyncio

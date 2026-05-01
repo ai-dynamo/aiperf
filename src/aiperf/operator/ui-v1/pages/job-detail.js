@@ -2,6 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { openJobWs } from '../lib/job-ws.js';
+import { buildRunSelectorRows } from '../lib/run-selector.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
@@ -99,9 +100,9 @@ const METRIC_GROUPS = [
       { key: 'output_token_throughput', label: 'Output Token Throughput', cols: ['avg'] },
       { key: 'total_token_throughput', label: 'Total Token Throughput', cols: ['avg'] },
       { key: 'goodput', label: 'Goodput', cols: ['avg'] },
-      { key: 'output_token_throughput_per_user', label: 'Output Token Throughput per User', cols: ['avg', 'p50', 'p99'] },
+      { key: 'output_token_throughput_per_user', label: 'Output Token Throughput per User', cols: FULL_PERCENTILES },
       { key: 'e2e_output_token_throughput', label: 'E2E Output Token Throughput', cols: ['avg'] },
-      { key: 'prefill_throughput_per_user', label: 'Prefill Throughput per User', cols: ['avg', 'p50', 'p99'] },
+      { key: 'prefill_throughput_per_user', label: 'Prefill Throughput per User', cols: FULL_PERCENTILES },
     ],
   },
   {
@@ -111,29 +112,29 @@ const METRIC_GROUPS = [
       { key: 'request_latency', label: 'Request Latency', cols: FULL_PERCENTILES },
       { key: 'time_to_first_token', label: 'Time to First Token', cols: FULL_PERCENTILES },
       { key: 'inter_token_latency', label: 'Inter-Token Latency', cols: FULL_PERCENTILES },
-      { key: 'time_to_second_token', label: 'Time to Second Token', cols: ['avg', 'p50', 'p95', 'p99'] },
-      { key: 'inter_chunk_latency', label: 'Inter-Chunk Latency', cols: ['avg', 'p50', 'p90', 'p99'] },
-      { key: 'time_to_first_output_token', label: 'Time to First Output Token', cols: ['avg', 'p50', 'p90', 'p99'] },
-      { key: 'image_latency', label: 'Image Latency', cols: ['avg', 'p50', 'p99'] },
+      { key: 'time_to_second_token', label: 'Time to Second Token', cols: FULL_PERCENTILES },
+      { key: 'inter_chunk_latency', label: 'Inter-Chunk Latency', cols: FULL_PERCENTILES },
+      { key: 'time_to_first_output_token', label: 'Time to First Output Token', cols: FULL_PERCENTILES },
+      { key: 'image_latency', label: 'Image Latency', cols: FULL_PERCENTILES },
     ],
   },
   {
     label: 'Tokens',
     color: palette.mauve,
     rows: [
-      { key: 'usage_prompt_tokens', label: 'Usage Prompt Tokens', cols: ['avg', 'p50', 'p99'] },
-      { key: 'usage_completion_tokens', label: 'Usage Completion Tokens', cols: ['avg', 'p50', 'p99'] },
-      { key: 'usage_total_tokens', label: 'Usage Total Tokens', cols: ['avg', 'p50', 'p99'] },
-      { key: 'reasoning_token_count', label: 'Reasoning Tokens', cols: ['avg', 'p50', 'p99'] },
-      { key: 'output_token_count', label: 'Output Tokens', cols: ['avg', 'p50', 'p99'] },
+      { key: 'usage_prompt_tokens', label: 'Usage Prompt Tokens', cols: FULL_PERCENTILES },
+      { key: 'usage_completion_tokens', label: 'Usage Completion Tokens', cols: FULL_PERCENTILES },
+      { key: 'usage_total_tokens', label: 'Usage Total Tokens', cols: FULL_PERCENTILES },
+      { key: 'reasoning_token_count', label: 'Reasoning Tokens', cols: FULL_PERCENTILES },
+      { key: 'output_token_count', label: 'Output Tokens', cols: FULL_PERCENTILES },
     ],
   },
   {
     label: 'Sequence Lengths',
     color: palette.teal,
     rows: [
-      { key: 'input_sequence_length', label: 'Input Sequence Length', cols: ['avg', 'p50', 'p99'] },
-      { key: 'output_sequence_length', label: 'Output Sequence Length', cols: ['avg', 'p50', 'p99'] },
+      { key: 'input_sequence_length', label: 'Input Sequence Length', cols: FULL_PERCENTILES },
+      { key: 'output_sequence_length', label: 'Output Sequence Length', cols: FULL_PERCENTILES },
       { key: 'osl_mismatch_diff_pct', label: 'OSL Mismatch (diff %)', cols: ['avg'] },
       { key: 'error_isl', label: 'Error ISL', cols: ['avg'] },
     ],
@@ -160,20 +161,20 @@ const METRIC_GROUPS = [
     label: 'HTTP',
     color: palette.pink,
     rows: [
-      { key: 'http_req_duration', label: 'HTTP Request Duration', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_total', label: 'HTTP Request Total', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_waiting', label: 'HTTP Waiting (TTFB)', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_connecting', label: 'HTTP Connecting', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_sending', label: 'HTTP Sending', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_receiving', label: 'HTTP Receiving', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_blocked', label: 'HTTP Blocked', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_dns_lookup', label: 'HTTP DNS Lookup', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_connection_overhead', label: 'HTTP Connection Overhead', cols: ['avg', 'p50', 'p99'] },
-      { key: 'http_req_data_sent', label: 'HTTP Data Sent', cols: ['avg', 'min', 'max'] },
-      { key: 'http_req_data_received', label: 'HTTP Data Received', cols: ['avg', 'min', 'max'] },
-      { key: 'http_req_chunks_sent', label: 'HTTP Chunks Sent', cols: ['avg', 'min', 'max'] },
-      { key: 'http_req_chunks_received', label: 'HTTP Chunks Received', cols: ['avg', 'min', 'max'] },
-      { key: 'http_req_connection_reused', label: 'HTTP Connection Reused', cols: ['avg', 'min', 'max'] },
+      { key: 'http_req_duration', label: 'HTTP Request Duration', cols: FULL_PERCENTILES },
+      { key: 'http_req_total', label: 'HTTP Request Total', cols: FULL_PERCENTILES },
+      { key: 'http_req_waiting', label: 'HTTP Waiting (TTFB)', cols: FULL_PERCENTILES },
+      { key: 'http_req_connecting', label: 'HTTP Connecting', cols: FULL_PERCENTILES },
+      { key: 'http_req_sending', label: 'HTTP Sending', cols: FULL_PERCENTILES },
+      { key: 'http_req_receiving', label: 'HTTP Receiving', cols: FULL_PERCENTILES },
+      { key: 'http_req_blocked', label: 'HTTP Blocked', cols: FULL_PERCENTILES },
+      { key: 'http_req_dns_lookup', label: 'HTTP DNS Lookup', cols: FULL_PERCENTILES },
+      { key: 'http_req_connection_overhead', label: 'HTTP Connection Overhead', cols: FULL_PERCENTILES },
+      { key: 'http_req_data_sent', label: 'HTTP Data Sent', cols: FULL_PERCENTILES },
+      { key: 'http_req_data_received', label: 'HTTP Data Received', cols: FULL_PERCENTILES },
+      { key: 'http_req_chunks_sent', label: 'HTTP Chunks Sent', cols: FULL_PERCENTILES },
+      { key: 'http_req_chunks_received', label: 'HTTP Chunks Received', cols: FULL_PERCENTILES },
+      { key: 'http_req_connection_reused', label: 'HTTP Connection Reused', cols: FULL_PERCENTILES },
     ],
   },
   {
@@ -182,8 +183,8 @@ const METRIC_GROUPS = [
     rows: [
       { key: 'num_images', label: 'Images per Request', cols: ['avg'] },
       { key: 'image_throughput', label: 'Image Throughput', cols: ['avg'] },
-      { key: 'video_inference_time', label: 'Video Inference Time', cols: ['avg', 'p50', 'p99'] },
-      { key: 'video_peak_memory', label: 'Video Peak Memory', cols: ['avg', 'max'] },
+      { key: 'video_inference_time', label: 'Video Inference Time', cols: FULL_PERCENTILES },
+      { key: 'video_peak_memory', label: 'Video Peak Memory', cols: FULL_PERCENTILES },
     ],
   },
 ];
@@ -1239,8 +1240,15 @@ function PerRecordAnalysis({ records }) {
     const ttft = extractJsonlMetric(rec, 'time_to_first_token');
     const latency = extractJsonlMetric(rec, 'request_latency');
     const itl = extractJsonlMetric(rec, 'inter_chunk_latency') ?? extractJsonlMetric(rec, 'inter_token_latency');
+    const errorIsl = extractJsonlMetric(rec, 'error_isl');
+    // ErrorDetails carries (message, code, type); pick the most concise label
+    // (type > code > generic "error") so the column stays narrow and sortable.
+    const errorObj = rec?.error ?? null;
+    const errorLabel = errorObj
+      ? (errorObj.type ?? (errorObj.code != null ? `HTTP ${errorObj.code}` : 'error'))
+      : null;
     const phase = rec?.metadata?.phase ?? rec?.metadata?.credit_phase ?? null;
-    return { index: i + 1, isl, osl, ttft, latency, itl, phase };
+    return { index: i + 1, isl, osl, ttft, latency, itl, errorIsl, errorObj, errorLabel, phase };
   });
 
   // Collect unique phase values for coloring (only use if >1 distinct phase)
@@ -1340,13 +1348,19 @@ function PerRecordAnalysis({ records }) {
 
   // Sortable table
   const hasItl = rows.some(r => r.itl != null);
+  const hasErrors = rows.some(r => r.errorObj != null);
+  const errorCount = rows.filter(r => r.errorObj != null).length;
   const COL_DEFS = [
     { key: '#', label: '#', get: r => r.index, fmt: v => fmtInt(v) },
-    { key: 'isl', label: 'ISL', get: r => r.isl, fmt: v => fmtInt(v) },
+    // ISL collapses input_sequence_length (success) and error_isl (failure)
+    // into a single column — they're the same quantity, just produced by
+    // different code paths depending on whether the request errored.
+    { key: 'isl', label: 'ISL', get: r => r.isl ?? r.errorIsl, fmt: v => fmtInt(v) },
     { key: 'osl', label: 'OSL', get: r => r.osl, fmt: v => fmtInt(v) },
     { key: 'ttft', label: 'TTFT (ms)', get: r => r.ttft, fmt: v => fmtNumber(v, 1) },
     { key: 'latency', label: 'Latency (ms)', get: r => r.latency, fmt: v => fmtNumber(v, 1) },
     ...(hasItl ? [{ key: 'itl', label: 'ITL (ms)', get: r => r.itl, fmt: v => fmtNumber(v, 1) }] : []),
+    ...(hasErrors ? [{ key: 'error', label: 'Error', get: r => r.errorLabel, fmt: v => v ?? '' }] : []),
   ];
 
   function handleSort(col) {
@@ -1362,7 +1376,8 @@ function PerRecordAnalysis({ records }) {
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    return sortAsc ? av - bv : bv - av;
+    const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av - bv);
+    return sortAsc ? cmp : -cmp;
   });
   // Hard cap on expanded view: rendering 100k <tr>s freezes the browser.
   // Users who need every row should download profile_export.jsonl directly.
@@ -1393,7 +1408,9 @@ function PerRecordAnalysis({ records }) {
   return html`
     <div class="card" style="margin-top: var(--space-4)">
       <div class="card-title">Per-Record Analysis</div>
-      <div style="font-size: var(--font-size-xs); color: ${palette.overlay0}; margin-bottom: var(--space-3)">${records.length} requests</div>
+      <div style="font-size: var(--font-size-xs); color: ${palette.overlay0}; margin-bottom: var(--space-3)">
+        ${fmtInt(records.length)} requests${hasErrors ? html` <span style=${'color: ' + colors.error}>(${fmtInt(errorCount)} ${errorCount === 1 ? 'error' : 'errors'})</span>` : ''}
+      </div>
 
       <!-- Scatter: Latency vs Request # -->
       <div style="margin-bottom: var(--space-4)">
@@ -1435,15 +1452,27 @@ function PerRecordAnalysis({ records }) {
                 </tr>
               </thead>
               <tbody>
-                ${displayRows.map((row, ri) => html`
-                  <tr key=${row.index} style=${'background: ' + (ri % 2 === 0 ? palette.base : palette.mantle)}>
-                    ${COL_DEFS.map((col, ci) => html`
-                      <td key=${col.key} style=${'padding: var(--space-1) var(--space-3); color: ' + palette.text + '; text-align: ' + (ci === 0 ? 'left' : 'right') + '; border-bottom: 1px solid ' + palette.surface0 + '40'}>
-                        ${col.fmt(col.get(row))}
-                      </td>
-                    `)}
-                  </tr>
-                `)}
+                ${displayRows.map((row, ri) => {
+                  const isErr = row.errorObj != null;
+                  // Faint red tint on error rows so failures are visible at a
+                  // glance even when sorted away from the top.
+                  const rowBg = isErr
+                    ? colors.error + '14'
+                    : (ri % 2 === 0 ? palette.base : palette.mantle);
+                  return html`
+                    <tr key=${row.index} style=${'background: ' + rowBg}>
+                      ${COL_DEFS.map((col, ci) => {
+                        const isErrCol = col.key === 'error';
+                        const cellColor = (isErrCol && isErr) ? colors.error : palette.text;
+                        return html`
+                          <td key=${col.key} style=${'padding: var(--space-1) var(--space-3); color: ' + cellColor + '; text-align: ' + (ci === 0 ? 'left' : 'right') + '; border-bottom: 1px solid ' + palette.surface0 + '40'}>
+                            ${col.fmt(col.get(row))}
+                          </td>
+                        `;
+                      })}
+                    </tr>
+                  `;
+                })}
               </tbody>
             </table>
             ${truncated && html`
@@ -1470,6 +1499,44 @@ function PerRecordAnalysis({ records }) {
 // The ns·model URL shape (with the spaced middle-dot) matches the
 // legacy ui exactly so deep-links shared between the two UIs resolve to
 // the same set of jobs.
+function formatRunSelectorTime(epochSeconds) {
+  if (epochSeconds == null || epochSeconds === 0) return '—';
+  return new Date(epochSeconds * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+function RunSelectorCard({ namespace, name, epochs, current, hasLive }) {
+  const rows = buildRunSelectorRows({ namespace, name, epochs, current, hasLive });
+  if (rows.length === 0) return null;
+  return html`
+    <div class="card run-selector-card" data-testid="job-detail-run-selector">
+      <div class="card-title">Runs</div>
+      <div class="run-selector-list">
+        ${rows.map(row => html`
+          <a
+            key=${row.kind + ':' + (row.epoch || 'live')}
+            href=${row.href}
+            onclick=${e => { e.preventDefault(); navigate(row.href.slice(1)); }}
+            class=${'run-selector-row' + (row.selected ? ' run-selector-row--selected' : '')}
+            data-testid=${row.kind === 'live' ? 'run-selector-live' : 'run-selector-epoch'}
+          >
+            <div class="run-selector-main">
+              <span class="run-selector-label">${row.label}</span>
+              ${row.isLatest && html`<span class="metric-source-chip">LATEST</span>`}
+              ${row.selected && html`<span class="metric-source-chip">CURRENT</span>`}
+            </div>
+            <div class="run-selector-meta">
+              <span>${row.kind === 'live' ? 'current CR status' : formatRunSelectorTime(row.mtimeEpoch)}</span>
+              <span>${row.fileCount == null ? 'live' : `${fmtInt(row.fileCount)} files`}</span>
+            </div>
+          </a>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
 function SimilarRunsLink({ namespace, model, currentName }) {
   if (!namespace || !model) return null;
   const all = jobsSignal.value ?? [];
@@ -1849,6 +1916,9 @@ export function JobDetail({ namespace, name, epoch }) {
   // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
   // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
   const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
+  const liveServerMetrics = epoch === undefined ? status.serverMetrics : null;
+  const displayedServerMetrics = serverMetrics || liveServerMetrics;
+  const serverMetricsSource = serverMetrics ? 'final' : 'live';
 
   useEffect(() => {
     if (epoch !== undefined || resolvedEpoch == null) return;
@@ -2064,6 +2134,14 @@ export function JobDetail({ namespace, name, epoch }) {
         </div>
       </div>
 
+      <${RunSelectorCard}
+        namespace=${namespace}
+        name=${name}
+        epochs=${epochs}
+        current=${epoch}
+        hasLive=${true}
+      />
+
       <!-- Conditions -->
       ${conditions.length > 0 && html`
         <div style="margin-bottom: var(--space-4)">
@@ -2163,18 +2241,12 @@ export function JobDetail({ namespace, name, epoch }) {
 
         <!-- Right: Charts -->
         <div>
-          <div class="card" style="margin-bottom: var(--space-4)">
-            <div class="card-title">Live Throughput</div>
-            ${chartData
-              ? html`<${ChartWrapper} type="line" data=${chartData} options=${throughputChartOptions} height=${200} />`
-              : html`
-                <div class="text-dim" style="padding: var(--space-4); text-align: center; display: flex; align-items: center; justify-content: center; gap: var(--space-2)">
-                  <${Spinner} size=${14} />
-                  <span>${isRunning ? 'Waiting for first throughput sample…' : 'No throughput data available for this run.'}</span>
-                </div>
-              `
-            }
-          </div>
+          ${chartData && html`
+            <div class="card" style="margin-bottom: var(--space-4)">
+              <div class="card-title">Live Throughput</div>
+              <${ChartWrapper} type="line" data=${chartData} options=${throughputChartOptions} height=${200} />
+            </div>
+          `}
 
           ${isCompleted && latencyHistogram && html`
             <div class="card">
@@ -2188,9 +2260,9 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Feature 6: SLA Compliance (completed only, only when SLOs declared on the CR) -->
       ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
 
-      <!-- Server Metrics (completed only, when available) -->
-      ${isTerminal && serverMetrics
-        ? html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`
+      <!-- Server Metrics -->
+      ${displayedServerMetrics
+        ? html`<${ServerMetricsSection} serverMetrics=${displayedServerMetrics} source=${serverMetricsSource} />`
         : (isTerminal && files.some(f => f.name === 'server_metrics_export.json') && !serverMetricsLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />

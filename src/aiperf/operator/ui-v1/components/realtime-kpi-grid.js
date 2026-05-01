@@ -194,7 +194,8 @@ function KpiTile({ spec, metric, slos, series }) {
 
 /** Composite goodput / success-rate tile. Goodput when SLOs are declared,
  *  Success Rate (1 - error_rate) otherwise. */
-function ReliabilityTile({ summary, slos }) {
+function ReliabilityTile({ summary, slos, timeseries }) {
+  const ts = timeseries ?? {};
   const hasSlo = slos && Object.keys(slos).length > 0;
 
   if (hasSlo) {
@@ -213,6 +214,18 @@ function ReliabilityTile({ summary, slos }) {
     const kind = pct == null ? null : (pct >= 100 ? 'good' : 'warn');
     const primaryDisplay = formatStat(primary, gp?.unit ?? 'req/s');
     const sloList = Object.keys(slos).join(', ');
+    // Sparkline series: prefer goodput timeseries directly; fall back to
+    // good_request_count (the underlying counter — useful while goodput is
+    // still NoMetricValue early in the run before benchmark_duration is set).
+    const sparkPoints = pluck(ts['goodput'], 'avg').length > 0
+      ? pluck(ts['goodput'], 'avg')
+      : pluck(ts['good_request_count'], 'avg');
+    const sparkStroke = kind === 'bad' ? 'var(--red)'
+      : kind === 'good' ? 'var(--accent)'
+      : 'var(--sub)';
+    const sparkFill = kind === 'bad' ? 'rgba(239,83,80,0.15)'
+      : kind === 'good' ? 'var(--accent-dim)'
+      : 'rgba(167,167,167,0.10)';
     return html`
       <div class=${'kpi-tile' + (kind ? ' kpi-tile--slo-' + kind : '')} key="goodput">
         <div class="kpi-tile-head">
@@ -235,6 +248,8 @@ function ReliabilityTile({ summary, slos }) {
           <span class="kpi-big-val">${primaryDisplay.body}</span>
           ${primaryDisplay.unit && html`<span class="kpi-big-unit">${primaryDisplay.unit}</span>`}
         </div>
+        <${Sparkline} points=${sparkPoints} stroke=${sparkStroke} fill=${sparkFill}
+                      width=${140} height=${26} />
         <div class="kpi-tile-sub">
           ${pct != null
             ? html`<span>${fmtPercent(pct, 1)}</span>
@@ -258,6 +273,14 @@ function ReliabilityTile({ summary, slos }) {
   const success = Math.max(0, 100 - rate);
   const errVal = (typeof errorCount === 'number') ? errorCount : (errorCount?.avg ?? 0);
   const kind = errVal === 0 ? 'good' : 'warn';
+  // Sparkline: error_rate trend (lower is better) — fall back to
+  // error_request_count if error_rate isn't streamed. Both are emitted
+  // by the records-manager when available.
+  const sparkPoints = pluck(ts['error_rate'], 'avg').length > 0
+    ? pluck(ts['error_rate'], 'avg')
+    : pluck(ts['error_request_count'], 'avg');
+  const sparkStroke = kind === 'good' ? 'var(--accent)' : 'var(--red)';
+  const sparkFill = kind === 'good' ? 'var(--accent-dim)' : 'rgba(239,83,80,0.15)';
 
   return html`
     <div class=${'kpi-tile kpi-tile--slo-' + kind} key="success-rate">
@@ -274,6 +297,8 @@ function ReliabilityTile({ summary, slos }) {
       <div class="kpi-big">
         <span class="kpi-big-val">${fmtPercent(success, 2)}</span>
       </div>
+      <${Sparkline} points=${sparkPoints} stroke=${sparkStroke} fill=${sparkFill}
+                    width=${140} height=${26} />
       <div class="kpi-tile-sub">
         <span>errors</span>
         <span class="kpi-tile-sub-val">${fmtInt(errVal)}</span>
@@ -307,7 +332,7 @@ export function RealtimeKpiGrid({ summary, slos, timeseries }) {
         <${KpiTile} spec=${spec} metric=${summary?.[spec.tag]} slos=${sloDict}
                     series=${ts[spec.tag] ?? []} key=${spec.tag} />
       `)}
-      <${ReliabilityTile} summary=${summary ?? {}} slos=${sloDict} />
+      <${ReliabilityTile} summary=${summary ?? {}} slos=${sloDict} timeseries=${ts} />
     </div>
   `;
 }

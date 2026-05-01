@@ -109,7 +109,7 @@ _CGROUP_SPECS: tuple[tuple[str, str, callable], ...] = (
 _PRLIMIT_SPECS: tuple[tuple[str, str, callable], ...] = (
     (
         "resource-low-fd-limit",
-        "FLAG_FOR_REVIEW",
+        "GRACEFUL_FAILURE_REQUIRED",
         case_low_fd_limit,
     ),
 )

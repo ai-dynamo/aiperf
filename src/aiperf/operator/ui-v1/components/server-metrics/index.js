@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { fmtInt, fmtNumber, fmtThroughput } from '../../lib/format.js';
 import { KpiCard } from '../kpi-card.js';
-import { curateServerMetrics } from './helpers.js';
+import { curateServerMetrics, normalizeServerMetrics } from './helpers.js';
 
 function formatDuration(seconds) {
   if (seconds == null) return '—';
@@ -101,15 +101,16 @@ function DetailsTable({ rows, sources }) {
  * @param {object|null} props.serverMetrics - Parsed server_metrics_export.json
  *   or null if not yet loaded. The parent decides whether to render at all.
  */
-export function ServerMetricsSection({ serverMetrics }) {
+export function ServerMetricsSection({ serverMetrics, source = 'final' }) {
   if (!serverMetrics) return null;
-  const curated = curateServerMetrics(serverMetrics);
+  const curated = curateServerMetrics(normalizeServerMetrics(serverMetrics));
+  const sourceLabel = source === 'live' ? 'LIVE' : 'FINAL';
 
   if (!curated) {
     return html`
       <div style="margin-top: var(--space-4)">
         <div class="card" data-testid="job-detail-server-metrics-empty">
-          <div class="card-title">Server Metrics</div>
+          <div class="card-title">Server Metrics <span class="metric-source-chip">${sourceLabel}</span></div>
           <div class="text-dim" style="font-size: var(--font-size-sm); padding: var(--space-2) 0">
             No server metrics collected for this run. The endpoint did not expose compatible metrics, or the scrape interval did not capture any points.
           </div>
@@ -121,7 +122,7 @@ export function ServerMetricsSection({ serverMetrics }) {
   return html`
     <div class="server-metrics-section" style="margin-top: var(--space-4)">
       <div class="card" data-testid="job-detail-server-metrics-curated">
-        <div class="card-title">Server Metrics</div>
+        <div class="card-title">Server Metrics <span class="metric-source-chip">${sourceLabel}</span></div>
         <${SummaryStrip} summary=${curated.summary} />
         ${curated.kpis.length > 0 && html`
           <div class="kpi-row server-metrics-kpis">

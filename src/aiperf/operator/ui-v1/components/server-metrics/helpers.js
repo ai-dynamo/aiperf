@@ -233,6 +233,35 @@ function collectSeries(metricHits, metrics) {
   return sortSeries([...rows.values()]);
 }
 
+export function normalizeServerMetrics(serverMetrics) {
+  if (!serverMetrics) return null;
+  if (!serverMetrics.endpoint_summaries || serverMetrics.metrics) return serverMetrics;
+
+  const endpointEntries = Object.entries(serverMetrics.endpoint_summaries);
+  const metrics = {};
+  for (const [endpointKey, endpointSummary] of endpointEntries) {
+    const endpointUrl = endpointSummary?.endpoint_url || endpointKey;
+    for (const [metricName, metric] of Object.entries(endpointSummary?.metrics || {})) {
+      if (!metrics[metricName]) {
+        metrics[metricName] = { ...metric, series: [] };
+      }
+      const series = Array.isArray(metric?.series) ? metric.series : [];
+      metrics[metricName].series.push(...series.map(item => ({ ...item, endpoint_url: item.endpoint_url || endpointUrl })));
+    }
+  }
+
+  const endpoints = endpointEntries.map(([endpointKey, endpointSummary]) => endpointSummary?.endpoint_url || endpointKey);
+  return {
+    ...serverMetrics,
+    summary: {
+      ...(serverMetrics.summary || {}),
+      endpoints_configured: serverMetrics.summary?.endpoints_configured || endpoints,
+      endpoints_successful: serverMetrics.summary?.endpoints_successful || endpoints,
+    },
+    metrics,
+  };
+}
+
 export function curateServerMetrics(serverMetrics) {
   if (!serverMetrics) return null;
   const metrics = serverMetrics.metrics ?? {};

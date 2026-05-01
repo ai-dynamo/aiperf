@@ -2106,6 +2106,21 @@ select, input {
   font-size: var(--font-size-xs);
 }
 
+.metric-source-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-2);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+
 .server-metrics-kpis {
   margin-top: var(--space-2);
   margin-bottom: var(--space-4);
@@ -2183,6 +2198,63 @@ select, input {
 
 .per-endpoint-table tbody tr:hover {
   background: var(--bg-raised);
+}
+
+/* ───── Run selector card ───── */
+.run-selector-card {
+  margin-bottom: var(--space-4);
+}
+
+.run-selector-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-2);
+}
+
+.run-selector-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.run-selector-row:hover,
+.run-selector-row:focus {
+  border-color: var(--border-hover);
+  background: color-mix(in srgb, var(--bg-raised) 75%, var(--accent));
+  outline: none;
+}
+
+.run-selector-row--selected {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  background: color-mix(in srgb, var(--green) 10%, var(--bg-raised));
+}
+
+.run-selector-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.run-selector-label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.run-selector-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--sub);
+  font-size: var(--font-size-xs);
 }
 
 /* ───── Realtime KPI tiles (per-job dynamic grid) ───── */

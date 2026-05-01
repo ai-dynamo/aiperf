@@ -51,6 +51,7 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
         )
 
     _preflight_artifact_dir(plan)
+    _preflight_fd_limit()
     _preflight_endpoint_ready(plan)
 
     if plan.is_single_run:
@@ -88,6 +89,43 @@ def _preflight_artifact_dir(plan: BenchmarkPlan) -> None:
             f"(no write permission on existing parent '{parent}'). "
             f"Pick a different --artifact-dir or fix permissions."
         )
+
+
+def _preflight_fd_limit() -> None:
+    """Raise RLIMIT_NOFILE soft limit and bail early if hard limit is too low.
+
+    Why: aiperf's multiprocess service mesh (ZMQ inproc/IPC + per-worker HTTP
+    pools) needs hundreds of file descriptors. With the default soft limit of
+    1024 on most distros it usually fits, but bumping to 8192 leaves headroom
+    for higher concurrency. When the hard limit is below the working floor,
+    the ZMQ ipc_listener SIGABRTs mid-startup (`Too many open files
+    src/ipc_listener.cpp:297`) — surface a clean error here instead.
+    """
+    try:
+        import resource
+    except ImportError:
+        return  # Windows / unsupported platform; nothing to do.
+
+    target_soft = 8192
+    min_required = 256
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < min_required:
+        raise ConfigurationError(
+            f"file descriptor hard limit too low: {hard} (need at least "
+            f"{min_required}). Raise it via `ulimit -n 4096` (or larger) "
+            f"before running aiperf."
+        )
+    if soft >= target_soft or soft == resource.RLIM_INFINITY:
+        return
+    new_soft = (
+        target_soft
+        if hard == resource.RLIM_INFINITY
+        else min(target_soft, hard)
+    )
+    if new_soft <= soft:
+        return
+    with contextlib.suppress(ValueError, OSError):
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
