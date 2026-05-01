@@ -52,54 +52,6 @@ function jobCreatedTs(job) {
   return Number.isFinite(t) ? t : 0;
 }
 
-// --- Section 1: StatusBar ---
-//
-// Single-tile cluster GPU summary. Outlined SVG icon, label, big number,
-// sub-line \u2014 same visual idiom as the ClusterStatsBanner.
-
-function StatusIcon({ kind }) {
-  // ``aria-hidden`` because the surrounding tile already carries the
-  // label text for screen readers.
-  if (kind === 'cluster') {
-    return html`
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="5" rx="1.2" />
-        <rect x="3" y="10" width="18" height="5" rx="1.2" />
-        <rect x="3" y="16" width="18" height="4" rx="1.2" />
-        <circle cx="6.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
-        <circle cx="6.5" cy="12.5" r="0.8" fill="currentColor" stroke="none" />
-        <circle cx="6.5" cy="18" r="0.8" fill="currentColor" stroke="none" />
-      </svg>
-    `;
-  }
-  return null;
-}
-
-function StatusBar({ cluster }) {
-  const gpusUsed = cluster?.gpus_used ?? null;
-  const gpusTotal = cluster?.gpus ?? null;
-  const nodes = cluster?.nodes ?? null;
-  if (gpusTotal == null) return null;
-
-  return html`
-    <div class="status-bar status-bar--tiles" data-testid="dashboard-status-bar">
-      <div class="status-tile" title="GPUs in use across the cluster">
-        <div class="status-tile__icon status-tile__icon--neutral"><${StatusIcon} kind="cluster" /></div>
-        <div class="status-tile__body">
-          <div class="status-tile__label">Cluster</div>
-          <div class="status-tile__value">
-            <span class="status-tile__num status-tile__num--total">${fmtInt(gpusUsed ?? 0)}</span>
-            <span class="status-tile__num-sep">/</span>
-            <span class="status-tile__num status-tile__num--total">${fmtInt(gpusTotal)}</span>
-            <span class="status-tile__unit">GPUs</span>
-          </div>
-          <div class="status-tile__sub">${nodes != null ? `across ${fmtInt(nodes)} node${nodes === 1 ? '' : 's'}` : ''}</div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 // --- Section 2: ThroughputLatencyScatter ---
 
 const AXIS_MODES = {
@@ -266,7 +218,6 @@ function enrichJobsFromSummaries(jobList, summaryMap) {
 
 export function Dashboard() {
   const [localJobs, setLocalJobs] = useState(jobs.value);
-  const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
   const [summaryMap, setSummaryMap] = useState({});
   // Block the dashboard body behind a spinner until the first /jobs
@@ -296,7 +247,6 @@ export function Dashboard() {
       try {
         const data = await api.getCluster();
         clusterInfo.value = data;
-        setCluster(data);
         setClusterError(false);
       } catch (_e) { setClusterError(true); }
     }, 10000, ac.signal);
@@ -392,8 +342,6 @@ export function Dashboard() {
           </p>
         </div>
       ` : html`
-      <${StatusBar} cluster=${cluster} />
-
       <${ThroughputLatencyScatter} completedJobs=${completed} />
 
       <!-- Section 3: Metric cards -->

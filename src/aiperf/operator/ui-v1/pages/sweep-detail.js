@@ -613,13 +613,13 @@ export function SweepDetail({ namespace, name, epoch }) {
                         key=${c.namespace + '/' + c.name + '/' + (c.childRunEpoch ?? '')}
                         class="job-table-row"
                         style="cursor:pointer"
-                        onclick=${() => navigate(`/jobs/${encodeURIComponent(c.namespace)}/${encodeURIComponent(c.name)}/runs/${encodeURIComponent(c.childRunEpoch)}`)}
+                        onclick=${() => navigate(buildJobPath(c))}
                       >
                         <td class="job-table-td">${c.name}</td>
                         <td class="job-table-td">${c.namespace}</td>
-                        <td class="job-table-td">${c.variationLabel || c.variationIndex}</td>
+                        <td class="job-table-td">${c.variationLabel ?? c.variationIndex ?? '---'}</td>
                         <td class="job-table-td">${c.trialIndex ?? '---'}</td>
-                        <td class="job-table-td text-dim">${c.childRunEpoch}</td>
+                        <td class="job-table-td text-dim">${c.childRunEpoch ?? '---'}</td>
                       </tr>
                     `)}
                   </tbody>

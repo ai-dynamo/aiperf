@@ -483,10 +483,6 @@ select, input {
   border-radius: var(--radius);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  transition: border-color var(--transition-fast), background var(--transition-fast);
-}
-.cluster-banner__tile:hover {
-  border-color: var(--border-hover);
 }
 .cluster-banner__icon {
   width: 36px;
