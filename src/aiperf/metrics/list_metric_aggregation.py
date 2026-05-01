@@ -6,19 +6,19 @@ Used by :class:`aiperf.post_processors.metric_results_processor.MetricResultsPro
 when a ``MetricType.RECORD`` metric arrives with a list value (today only
 ``inter_chunk_latency``, where each request contributes a list of inter-chunk
 gap durations). At 1 M-request ramp scale the exact storage —
-``records × (chunks-1) × 8 B`` — would dwarf the records-manager pod's
+``records x (chunks-1) x 8 B`` would dwarf the records-manager pod's
 memory budget. T-digest bounds it to a few KB regardless of sample count.
 
 Backed by :class:`crick.TDigest` (Cython/C). Throughput measured at
 ~12 M updates/s with worst-case relative percentile error under 0.05%
-on 50M-sample workloads at the default compression — see
+on 50M-sample workloads at the default compression - see
 ``docs/reference/list-metric-aggregation.md`` for the empirical band.
 
 Stats:
 - ``count``, ``sum``, ``min``, ``max``, ``avg`` are exact (running side-channel
   scalars).
-- ``std`` is exact via Welford's online algorithm — numerically stable for
-  large-offset, low-spread distributions where ``sum_sq/count − avg²`` would
+- ``std`` is exact via Welford's online algorithm - numerically stable for
+  large-offset, low-spread distributions where ``sum_sq/count - avg^2`` would
   suffer catastrophic cancellation.
 - ``p1``..``p99`` are approximate via t-digest.
 
