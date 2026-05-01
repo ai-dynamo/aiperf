@@ -114,8 +114,10 @@ class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
     Tries Kubernetes first (if running in-cluster), then falls back to manual configuration."""
 
     KUBERNETES = "kubernetes"
-    """Use Kubernetes API to discover pods with prometheus.io/scrape annotations
-    or nvidia.com/metrics-enabled labels."""
+    """Use Kubernetes API to discover inference-server pods (vLLM, SGLang,
+    Triton, TensorRT-LLM, NVIDIA Dynamo) by container-image signature, the
+    Dynamo opt-in label ``nvidia.com/metrics-enabled=true``, or the AIPerf
+    opt-in annotation ``aiperf.nvidia.com/metrics-paths``."""
 
     DISABLED = "disabled"
     """Disable automatic discovery. Only use explicitly provided URLs."""

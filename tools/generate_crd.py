@@ -53,6 +53,12 @@ SPDX_HEADER = (
 # Keys to strip from JSON Schema that K8s CRDs don't support
 _STRIP_KEYS = frozenset({"title", "examples", "$defs", "$schema"})
 
+# Internal marker on nodes that came from a mixed-type ``anyOf``/``oneOf``
+# (e.g. ``list[X] | Literal[False]``). The post-pass that defaults
+# ``type: object`` on preserve-unknown nodes skips these — neither object nor
+# any primitive matches every legal value. Stripped before serialization.
+_MIXED_UNION_SENTINEL = "_aiperf_mixed_union"
+
 # Maximum recursion depth before falling back to preserve-unknown-fields.
 # AIPerfSweep wraps an AIPerfJob in spec.template.spec, adding 3 levels;
 # the deepest legitimate path today is spec.template.spec.benchmark.runtime.<field>
@@ -71,6 +77,28 @@ def _resolve_ref(ref: str, defs: dict[str, Any]) -> dict[str, Any]:
     if name not in defs:
         return {}
     return defs[name]
+
+
+def _anyof_has_non_object_alt(alts: list[dict[str, Any]]) -> bool:
+    """True if any alternative is structurally not an object.
+
+    Used to distinguish two flavors of mixed-type ``anyOf``/``oneOf``:
+
+    * ``list[ConcurrencyPhase | PoissonPhase | ...]`` items — each
+      alternative is a ``$ref`` to an object type. ``type: object`` +
+      preserve-unknown is the right K8s shape.
+    * ``list[Format] | Literal[False]`` — at least one alternative is an
+      array or primitive. No single ``type`` matches every legal value, so
+      the leaf must stay typeless (with preserve-unknown) and rely on the
+      operator's Pydantic validation.
+    """
+    for alt in alts:
+        t = alt.get("type")
+        if t is not None and t != "object":
+            return True
+        if "const" in alt and not isinstance(alt["const"], dict):
+            return True
+    return False
 
 
 def _is_nullable_anyof(schema: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
@@ -163,18 +191,42 @@ def _convert_schema(
                     result[key] = schema[key]
             return result
 
-        # Mixed-type anyOf: K8s structural schema allows no-type when paired
-        # with x-kubernetes-preserve-unknown-fields: true (apiserver skips
-        # type enforcement). Don't force type=object here — that breaks
-        # leaves like `artifacts.records: list | Literal[False]` whose default
-        # is a non-object scalar.
-        result = {"x-kubernetes-preserve-unknown-fields": True}
+        # Mixed-type anyOf: split into "all alternatives are objects (or $ref
+        # to objects)" vs. "at least one alternative is array or primitive".
+        # The first kind (e.g. ``phases: list[ConcurrencyPhase | PoissonPhase
+        # | ...]`` items) is structurally an object — emit
+        # ``type: object`` + preserve-unknown so K8s accepts dict values and
+        # CEL rules can compile. The second kind (e.g.
+        # ``artifacts.summary: list[Format] | Literal[False]``) cannot be
+        # coerced to a single type — leave typeless and tag with
+        # ``_MIXED_UNION_SENTINEL`` so the post-pass doesn't restore
+        # ``type: object`` (which would reject every legal value at admission).
+        if _anyof_has_non_object_alt(any_of):
+            result = {
+                "x-kubernetes-preserve-unknown-fields": True,
+                _MIXED_UNION_SENTINEL: True,
+            }
+        else:
+            result = {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            }
         if "description" in schema:
             result["description"] = schema["description"]
         return result
 
     if "oneOf" in schema:
-        result = {"x-kubernetes-preserve-unknown-fields": True}
+        # Same split as anyOf above.
+        if _anyof_has_non_object_alt(schema["oneOf"]):
+            result = {
+                "x-kubernetes-preserve-unknown-fields": True,
+                _MIXED_UNION_SENTINEL: True,
+            }
+        else:
+            result = {
+                "type": "object",
+                "x-kubernetes-preserve-unknown-fields": True,
+            }
         if "description" in schema:
             result["description"] = schema["description"]
         return result
@@ -633,18 +685,36 @@ def _decorate_all(node: dict[str, Any]) -> None:
 
 
 def _ensure_type_on_preserve_unknown(node: dict[str, Any]) -> None:
-    """Default ``type: object`` on any node that has the preserve-unknown marker.
+    """Default ``type: object`` on preserve-unknown nodes that aren't union escapes.
 
     K8s structural-schema validation rejects ``x-kubernetes-preserve-unknown-fields:
     true`` without a declared ``type``, AND CEL field access compiles only on
     nodes where the apiserver knows the type. The Pydantic→OpenAPI walker leaves
     a few branches typeless (mixed-type anyOf, oneOf, sibling markers on $refs),
     so this pass closes the gap before CRD apply.
+
+    Skips nodes flagged with ``_MIXED_UNION_SENTINEL`` — those came from
+    ``anyOf``/``oneOf`` of mixed scalar/array types (e.g.
+    ``artifacts.summary: list[X] | Literal[False]``) where neither
+    ``type: object`` nor any single primitive type matches every legal value.
+    K8s accepts the typeless preserve-unknown leaf for these. The sentinel is
+    stripped by ``_strip_mixed_union_sentinels`` before serialization.
     """
     if not isinstance(node, dict):
         return
-    if node.get("x-kubernetes-preserve-unknown-fields") is True and "type" not in node:
-        node["type"] = "object"
+    if node.get("x-kubernetes-preserve-unknown-fields") is not True:
+        return
+    if "type" in node:
+        return
+    if node.get(_MIXED_UNION_SENTINEL):
+        return
+    node["type"] = "object"
+
+
+def _strip_mixed_union_sentinels(node: dict[str, Any]) -> None:
+    """Remove the internal mixed-union sentinel before serialization."""
+    if isinstance(node, dict):
+        node.pop(_MIXED_UNION_SENTINEL, None)
 
 
 def _walk_dict_apply(node: Any, fn: Any) -> None:
@@ -940,6 +1010,7 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     # the same call. See _decorate_all and the individual _decorate_* helpers.
     _walk_dict_apply(benchmark_walked, _ensure_type_on_preserve_unknown)
     _walk_dict_apply(benchmark_walked, _decorate_all)
+    _walk_dict_apply(benchmark_walked, _strip_mixed_union_sentinels)
 
     # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.).
     # skipEndpointCheck lives on AIPerfJobSpec (not DeploymentConfig) and is
@@ -1166,6 +1237,7 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
     # AIPerfJob CRD does.
     _walk_dict_apply(spec_schema, _ensure_type_on_preserve_unknown)
     _walk_dict_apply(spec_schema, _decorate_all)
+    _walk_dict_apply(spec_schema, _strip_mixed_union_sentinels)
 
     properties = spec_schema.setdefault("properties", {})
 

@@ -10,7 +10,7 @@ columns scaled by duration — then measures deep memory with pympler and
 compares against the estimator's predictions.
 
 Usage:
-    uv run python scripts/calibrate_memory_estimates.py
+    uv run python -m aiperf.analysis.calibrate_memory_estimates
 """
 
 from __future__ import annotations
@@ -29,6 +29,13 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
 )
+from aiperf.kubernetes._memory_estimator.constants import (
+    _DEFAULT_GPU_METRICS,
+    _DEFAULT_HISTOGRAM_BUCKETS,
+    _DEFAULT_HISTOGRAM_METRICS,
+    _DEFAULT_NUM_STANDARD_METRICS,
+    _DEFAULT_UNIQUE_METRIC_SERIES,
+)
 from aiperf.kubernetes.memory_estimator import (
     MemoryEstimationParams,
     MemoryEstimator,
@@ -36,6 +43,10 @@ from aiperf.kubernetes.memory_estimator import (
     _estimate_worker,
 )
 from aiperf.metrics.metric_dicts import MetricArray
+
+# Production estimator's default connections-per-worker (matches
+# ``estimate_memory(...)`` in ``aiperf.kubernetes.memory_estimator``).
+_DEFAULT_CONNECTIONS_PER_WORKER = 200
 
 # =============================================================================
 # Helpers
@@ -80,7 +91,7 @@ def _make_turn(isl: int) -> Turn:
     """Create a Turn object with a prompt sized to ISL tokens."""
     return Turn(
         role="user",
-        texts=[Text(content=_make_prompt_text(isl))],
+        texts=[Text(contents=[_make_prompt_text(isl)])],
     )
 
 
@@ -256,7 +267,7 @@ def measure_inflight_set(s: Scenario) -> dict[str, float]:
 
 def measure_records_manager(s: Scenario) -> dict[str, float]:
     """Measure metric array accumulation at total_requests scale."""
-    num_metrics = 25
+    num_metrics = _DEFAULT_NUM_STANDARD_METRICS
     # Cap at 200K for speed — extrapolate for larger
     n = min(s.total_requests, 200_000)
 
@@ -289,7 +300,7 @@ def measure_gpu_telemetry(s: Scenario) -> dict[str, float]:
 
     from aiperf.common.models.telemetry_models import GpuMetricTimeSeries
 
-    n_metrics = 12
+    n_metrics = _DEFAULT_GPU_METRICS
     sample_metrics = {f"metric_{i}": float(i) * 10.0 for i in range(n_metrics)}
     n_samples = int(s.duration_s)
 
@@ -351,7 +362,7 @@ def run_scenario(s: Scenario) -> None:
         streaming=s.streaming,
         max_turns=s.turns,
         avg_isl=s.isl,
-        connections_per_worker=500,
+        connections_per_worker=_DEFAULT_CONNECTIONS_PER_WORKER,
     )
     measured_worker_variable = _mib(inflight["inflight_per_worker_bytes"])
     print(
@@ -361,7 +372,7 @@ def run_scenario(s: Scenario) -> None:
     )
 
     # Records manager estimate
-    est_rm = _estimate_records_manager(s.total_requests, 25)
+    est_rm = _estimate_records_manager(s.total_requests, _DEFAULT_NUM_STANDARD_METRICS)
     print(
         f"    RecordsManager:   measured={rm_mib:>8.1f} MiB  "
         f"estimated={est_rm.variable_mib:>8.1f} MiB  "
@@ -369,9 +380,11 @@ def run_scenario(s: Scenario) -> None:
     )
 
     # Full cluster estimate
-    from aiperf.common.environment import Environment
+    from aiperf.kubernetes.environment import K8sEnvironment
 
-    rp_per_pod = max(1, s.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
+    rp_per_pod = max(
+        1, s.workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
+    )
     params = MemoryEstimationParams(
         total_workers=s.total_workers,
         workers_per_pod=s.workers_per_pod,
@@ -386,17 +399,17 @@ def run_scenario(s: Scenario) -> None:
         max_turns=s.turns,
         streaming=s.streaming,
         num_endpoints=1,
-        connections_per_worker=500,
+        connections_per_worker=_DEFAULT_CONNECTIONS_PER_WORKER,
         num_gpus=s.num_gpus,
         gpu_sample_interval_s=1.0,
-        num_gpu_metrics=12,
+        num_gpu_metrics=_DEFAULT_GPU_METRICS,
         num_server_metrics_endpoints=0,
         server_metrics_scrape_interval_s=5.0,
-        est_unique_metric_series=200,
-        est_histogram_metrics=20,
-        est_histogram_buckets=10,
+        est_unique_metric_series=_DEFAULT_UNIQUE_METRIC_SERIES,
+        est_histogram_metrics=_DEFAULT_HISTOGRAM_METRICS,
+        est_histogram_buckets=_DEFAULT_HISTOGRAM_BUCKETS,
         num_models=s.num_models,
-        num_standard_metrics=25,
+        num_standard_metrics=_DEFAULT_NUM_STANDARD_METRICS,
         export_http_trace=False,
     )
     est = MemoryEstimator(params).estimate()

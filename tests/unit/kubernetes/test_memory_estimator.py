@@ -817,8 +817,13 @@ class TestScalingScenarios:
     def test_high_isl_osl_increases_worker_memory(self) -> None:
         """ISL=4096 OSL=2048 should use more per-pod memory than ISL=512 OSL=128.
 
-        The difference is moderate because the tokenizer base (150 MiB/RP) dominates.
-        The ISL/OSL-dependent portion (in-flight records) adds ~10-50% on top.
+        With realistic per-process Python baselines (~150 MiB/process,
+        calibrated against ``dev/results/sweep-isl-osl-mem-findings.md``),
+        the per-process base dominates at low concurrency. The variable
+        component still moves measurably with ISL/OSL — at default
+        ``_make_params`` (max_concurrency=100, total_workers=10, so 10
+        in-flight per worker) it adds ~2-5 MiB per worker. We assert any
+        increase rather than a percentage threshold.
         """
         small = _make_params(avg_isl_tokens=512, avg_osl_tokens=128, streaming=True)
         large = _make_params(avg_isl_tokens=4096, avg_osl_tokens=2048, streaming=True)
@@ -826,7 +831,7 @@ class TestScalingScenarios:
         est_l = MemoryEstimator(large).estimate()
         assert (
             est_l.worker_pod.total_steady_state_mib
-            > est_s.worker_pod.total_steady_state_mib * 1.05
+            > est_s.worker_pod.total_steady_state_mib
         )
 
     def test_rp_token_pressure_at_high_isl_osl(self) -> None:

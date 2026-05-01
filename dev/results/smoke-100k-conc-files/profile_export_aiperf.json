@@ -1,0 +1,447 @@
+{
+  "schema_version": "1.0",
+  "aiperf_version": "0.8.0",
+  "benchmark_id": "6478f6aac7c34ceb8b9fd97abd63d5b3",
+  "request_throughput": {
+    "unit": "requests/sec",
+    "avg": 3400.2168222410205
+  },
+  "request_latency": {
+    "unit": "ms",
+    "avg": 17785.016842910754,
+    "p1": 126.25434059999999,
+    "p5": 1346.7682297,
+    "p10": 3959.2200037000002,
+    "p25": 10060.499107,
+    "p50": 16428.066493,
+    "p75": 22444.73102475,
+    "p90": 33350.277793500005,
+    "p95": 36649.9410171,
+    "p99": 54340.43933500999,
+    "min": 1.7658239999999998,
+    "max": 119465.648676,
+    "std": 12419.062594600558
+  },
+  "request_count": {
+    "unit": "requests",
+    "avg": 481414.0
+  },
+  "time_to_first_token": {
+    "unit": "ms",
+    "avg": 11205.91161602855,
+    "p1": 53.18815564,
+    "p5": 85.17566335000001,
+    "p10": 595.6656786,
+    "p25": 5718.44834525,
+    "p50": 9539.0889685,
+    "p75": 15360.63146425,
+    "p90": 21587.5757342,
+    "p95": 27490.63562579998,
+    "p99": 36193.81841633999,
+    "min": 1.246696,
+    "max": 119460.04308199999,
+    "std": 9827.95001797953
+  },
+  "time_to_second_token": {
+    "unit": "ms",
+    "avg": 0.0,
+    "p1": 0.0,
+    "p5": 0.0,
+    "p10": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "inter_token_latency": {
+    "unit": "ms",
+    "avg": 65.79105226882206,
+    "p1": 0.0,
+    "p5": 0.0,
+    "p10": 0.31996112000000004,
+    "p25": 0.74060534,
+    "p50": 46.22239606,
+    "p75": 113.44552020999998,
+    "p90": 134.396858563,
+    "p95": 189.26587306949992,
+    "p99": 267.2358264817,
+    "min": 0.0,
+    "max": 1183.86576898,
+    "std": 78.09703274683804
+  },
+  "output_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 343421.89904634305
+  },
+  "output_token_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 706.1069532070225,
+    "p1": 3.7351855044542686,
+    "p5": 4.5917878475274225,
+    "p10": 7.409804528252558,
+    "p25": 8.367199292324658,
+    "p50": 17.480369047369283,
+    "p75": 198.3770961460844,
+    "p90": 2251.153162316556,
+    "p95": 2960.687365578201,
+    "p99": 6490.119663847238,
+    "min": 0.8446903578110753,
+    "max": 344960.81245170545,
+    "std": 3272.690427699904
+  },
+  "output_sequence_length": {
+    "unit": "tokens",
+    "avg": 101.0,
+    "p1": 101.0,
+    "p5": 101.0,
+    "p10": 101.0,
+    "p25": 101.0,
+    "p50": 101.0,
+    "p75": 101.0,
+    "p90": 101.0,
+    "p95": 101.0,
+    "p99": 101.0,
+    "min": 101.0,
+    "max": 101.0,
+    "std": 0.0
+  },
+  "input_sequence_length": {
+    "unit": "tokens",
+    "avg": 128.0,
+    "p1": 128.0,
+    "p5": 128.0,
+    "p10": 128.0,
+    "p25": 128.0,
+    "p50": 128.0,
+    "p75": 128.0,
+    "p90": 128.0,
+    "p95": 128.0,
+    "p99": 128.0,
+    "min": 128.0,
+    "max": 128.0,
+    "std": 0.0
+  },
+  "output_token_count": {
+    "unit": "tokens",
+    "avg": 101.0,
+    "p1": 101.0,
+    "p5": 101.0,
+    "p10": 101.0,
+    "p25": 101.0,
+    "p50": 101.0,
+    "p75": 101.0,
+    "p90": 101.0,
+    "p95": 101.0,
+    "p99": 101.0,
+    "min": 101.0,
+    "max": 101.0,
+    "std": 0.0
+  },
+  "inter_chunk_latency": {
+    "unit": "ms",
+    "avg": 66.45560835234551,
+    "p1": 0.0,
+    "p5": 0.0,
+    "p10": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 54.688316235362805,
+    "min": 0.0,
+    "max": 118385.801568,
+    "std": 991.0218637696742
+  },
+  "total_output_tokens": {
+    "unit": "tokens",
+    "avg": 48622814.0
+  },
+  "benchmark_duration": {
+    "unit": "sec",
+    "avg": 141.58332399600002
+  },
+  "total_isl": {
+    "unit": "tokens",
+    "avg": 61620992.0
+  },
+  "total_osl": {
+    "unit": "tokens",
+    "avg": 48622814.0
+  },
+  "error_request_count": {
+    "unit": "requests",
+    "avg": 18586.0
+  },
+  "error_isl": {
+    "unit": "tokens",
+    "avg": 128.0,
+    "p1": 128.0,
+    "p5": 128.0,
+    "p10": 128.0,
+    "p25": 128.0,
+    "p50": 128.0,
+    "p75": 128.0,
+    "p90": 128.0,
+    "p95": 128.0,
+    "p99": 128.0,
+    "min": 128.0,
+    "max": 128.0,
+    "std": 0.0
+  },
+  "total_error_isl": {
+    "unit": "tokens",
+    "avg": 2379008.0
+  },
+  "input_config": {
+    "models": {
+      "strategy": "round_robin",
+      "items": [
+        {
+          "name": "mock"
+        }
+      ]
+    },
+    "endpoint": {
+      "urls": [
+        "http://aiperf-mock-server-rs.acasagrande-aiperf-bench.svc.cluster.local:8000/v1/chat/completions"
+      ],
+      "url_strategy": "round_robin",
+      "type": "chat",
+      "timeout": 600.0,
+      "ready_check_timeout": 0.0,
+      "ready_check_mode": "inference",
+      "ready_check_interval": 5.0,
+      "streaming": true,
+      "connection_reuse": "pooled",
+      "use_legacy_max_tokens": false,
+      "use_server_token_count": false,
+      "headers": {},
+      "extra": {},
+      "download_video_content": false
+    },
+    "datasets": [
+      {
+        "name": "main",
+        "type": "synthetic",
+        "entries": 200,
+        "sampling": "sequential",
+        "prompts": {
+          "isl": {
+            "mean": 128.0,
+            "stddev": 0.0
+          },
+          "osl": {
+            "mean": 128.0,
+            "stddev": 0.0
+          },
+          "batch_size": 1
+        },
+        "turn_delay_ratio": 1.0
+      }
+    ],
+    "phases": [
+      {
+        "name": "profiling",
+        "type": "concurrency",
+        "exclude_from_results": false,
+        "requests": 500000,
+        "concurrency": 100000,
+        "seamless": false
+      }
+    ],
+    "artifacts": {
+      "dir": "/results",
+      "prefix": "aiperf",
+      "summary": [
+        "json"
+      ],
+      "records": [
+        "jsonl"
+      ],
+      "raw": false,
+      "trace": false,
+      "per_chunk_data": false,
+      "show_trace_timing": false,
+      "benchmark_id": "6478f6aac7c34ceb8b9fd97abd63d5b3",
+      "user_files": []
+    },
+    "tokenizer": {
+      "name": "builtin",
+      "revision": "main",
+      "trust_remote_code": false
+    },
+    "gpu_telemetry": {
+      "enabled": true,
+      "urls": [],
+      "collector": "dcgm",
+      "mode": "summary"
+    },
+    "server_metrics": {
+      "enabled": true,
+      "urls": [],
+      "formats": [
+        "json",
+        "csv",
+        "parquet"
+      ],
+      "discovery": {
+        "mode": "auto"
+      }
+    },
+    "runtime": {
+      "ui": "simple",
+      "workers": 40,
+      "record_processors": 4,
+      "service_run_type": "kubernetes",
+      "communication": {
+        "type": "dual",
+        "ipc_path": "/aiperf/ipc",
+        "tcp_host": "0.0.0.0",
+        "records_port": 5557,
+        "credit_router_port": 5564,
+        "control_port": 5667,
+        "event_bus_proxy": {
+          "frontend_port": 5663,
+          "backend_port": 5664
+        },
+        "dataset_manager_proxy": {
+          "frontend_port": 5661,
+          "backend_port": 5662
+        },
+        "raw_inference_proxy": {
+          "frontend_port": 5665,
+          "backend_port": 5666
+        }
+      },
+      "api_port": 9090,
+      "api_host": "0.0.0.0",
+      "dataset_api_base_url": "http://aiperf-smoke-rs-c100k-controller-0-0.aiperf-smoke-rs-c100k.acasagrande-aiperf-bench.svc.cluster.local:9090/api/dataset",
+      "workers_per_pod": 10,
+      "record_processors_per_pod": 1
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "metrics": {},
+    "variables": {}
+  },
+  "was_cancelled": false,
+  "error_summary": [
+    {
+      "error_details": {
+        "message": "ClientConnectorError(ConnectionKey(host='aiperf-mock-server-rs.acasagrande-aiperf-bench.svc.cluster.local', port=8000, is_ssl=False, ssl=True, proxy=None, proxy_auth=None, proxy_headers_hash=None), ConnectionRefusedError(111, \"Connect call failed ('34.118.231.89', 8000)\"))",
+        "type": "ClientConnectorError",
+        "cause": "ConnectionRefusedError(111, \"Connect call failed ('34.118.231.89', 8000)\")",
+        "cause_chain": [
+          "ClientConnectorError",
+          "ConnectionRefusedError"
+        ]
+      },
+      "count": 18586
+    }
+  ],
+  "start_time": "2026-05-01T05:29:24.409521",
+  "end_time": "2026-05-01T05:31:46.005908",
+  "time_to_first_output_token": {
+    "unit": "ms",
+    "avg": 11205.91161602855,
+    "p1": 53.18815564,
+    "p5": 85.17566335000001,
+    "p10": 595.6656786,
+    "p25": 5718.44834525,
+    "p50": 9539.0889685,
+    "p75": 15360.63146425,
+    "p90": 21587.5757342,
+    "p95": 27490.63562579998,
+    "p99": 36193.81841633999,
+    "min": 1.246696,
+    "max": 119460.04308199999,
+    "std": 9827.95001797953
+  },
+  "e2e_output_token_throughput": {
+    "unit": "tokens/sec/user",
+    "avg": 35.104505676671316,
+    "p1": 1.8586526211273031,
+    "p5": 2.755802525121771,
+    "p10": 3.0284605314089648,
+    "p25": 4.499942542804933,
+    "p50": 6.148015047482078,
+    "p75": 10.039263353226831,
+    "p90": 25.51007519336589,
+    "p95": 74.99434407656598,
+    "p99": 799.9724961766902,
+    "min": 0.8454313111706256,
+    "max": 57197.09325504694,
+    "std": 340.2409715616017
+  },
+  "osl_mismatch_diff_pct": {
+    "unit": "%",
+    "avg": -21.09375,
+    "p1": -21.09375,
+    "p5": -21.09375,
+    "p10": -21.09375,
+    "p25": -21.09375,
+    "p50": -21.09375,
+    "p75": -21.09375,
+    "p90": -21.09375,
+    "p95": -21.09375,
+    "p99": -21.09375,
+    "min": -21.09375,
+    "max": -21.09375,
+    "std": 0.0
+  },
+  "prefill_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 170.8519969894096,
+    "p1": 3.5365155046237278,
+    "p5": 4.656130973974536,
+    "p10": 5.929336465442086,
+    "p25": 8.332990756178798,
+    "p50": 13.418472185626207,
+    "p75": 22.383694365718085,
+    "p90": 214.88563906905173,
+    "p95": 1502.7766731801562,
+    "p99": 2406.5508293559,
+    "min": 1.0714879778851074,
+    "max": 102671.38099424398,
+    "std": 774.9720151043988
+  },
+  "osl_mismatch_count": {
+    "unit": "requests",
+    "avg": 481414.0,
+    "p1": null,
+    "p5": null,
+    "p10": null,
+    "p25": null,
+    "p50": null,
+    "p75": null,
+    "p90": null,
+    "p95": null,
+    "p99": null,
+    "min": null,
+    "max": null,
+    "std": null
+  },
+  "total_token_throughput": {
+    "unit": "tokens/sec",
+    "avg": 778649.6522931937,
+    "p1": null,
+    "p5": null,
+    "p10": null,
+    "p25": null,
+    "p50": null,
+    "p75": null,
+    "p90": null,
+    "p95": null,
+    "p99": null,
+    "min": null,
+    "max": null,
+    "std": null
+  }
+}

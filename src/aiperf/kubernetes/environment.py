@@ -9,7 +9,7 @@ Resource settings per container type use AIPERF_K8S_{SERVICE}_{FIELD} naming.
 Examples:
     AIPERF_K8S_SYSTEM_CONTROLLER_CPU=250m
     AIPERF_K8S_DATASET_MANAGER_MEMORY=512Mi
-    AIPERF_K8S_WORKER_POD_MEMORY=4Gi
+    AIPERF_K8S_WORKER_POD_MEMORY=8Gi
     AIPERF_K8S_HEALTH_INITIAL_DELAY_SECONDS=10
 
 See also: ``aiperf.operator.environment.OperatorEnvironment`` (operator-process
@@ -439,7 +439,9 @@ class _K8sEnvironment(BaseSettings):
     #
     # These are the container-level requests/limits applied to K8s manifests.
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
-    # Calibrated via scripts/measure_cpu_usage.py and scripts/calibrate_memory_estimates.py.
+    # Calibrated via ``src/aiperf/analysis/measure_cpu_usage.py`` and
+    # ``src/aiperf/analysis/calibrate_memory_estimates.py``; cross-checked
+    # against ``dev/results/sweep-isl-osl-mem-findings.md`` real RSS sweeps.
     #
     # Controller pod: one container per control-plane service.
     #   Defaults are low requests for burstable QoS. They reserve enough for
@@ -448,20 +450,22 @@ class _K8sEnvironment(BaseSettings):
     #
     # Worker pod: one worker-pod-manager plus one container per worker and
     # record processor, all sharing the WORKER_POD request budget.
-    #   The default budget targets tiny synthetic jobs; high-concurrency or
-    #   memory-heavy datasets should raise AIPERF_K8S_WORKER_POD_{CPU,MEMORY}.
+    #   The 4Gi default holds the per-pod RSS we measured at up to 10K
+    #   concurrency (1.8-3 GiB working-set per pod). Push higher with
+    #   AIPERF_K8S_WORKER_POD_MEMORY for memory-heavy datasets or extreme
+    #   concurrency.
     # fmt: off
-    SYSTEM_CONTROLLER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SYSTEM_CONTROLLER_", "75m", "128Mi"), description="SystemController container resources")
-    WORKER_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_MANAGER_", "50m", "128Mi"), description="WorkerManager container resources")
-    TIMING_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("TIMING_MANAGER_", "50m", "128Mi"), description="TimingManager container resources")
-    DATASET_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("DATASET_MANAGER_", "50m", "128Mi"), description="DatasetManager container resources")
-    RECORDS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("RECORDS_MANAGER_", "75m", "128Mi"), description="RecordsManager container resources")
+    SYSTEM_CONTROLLER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SYSTEM_CONTROLLER_", "75m", "192Mi"), description="SystemController container resources")
+    WORKER_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_MANAGER_", "50m", "192Mi"), description="WorkerManager container resources")
+    TIMING_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("TIMING_MANAGER_", "50m", "192Mi"), description="TimingManager container resources")
+    DATASET_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("DATASET_MANAGER_", "50m", "256Mi"), description="DatasetManager container resources")
+    RECORDS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("RECORDS_MANAGER_", "75m", "256Mi"), description="RecordsManager container resources")
     API: ResourceSettings = Field(default_factory=lambda: _resource_settings("API_", "75m", "256Mi"), description="API container resources")
-    GPU_TELEMETRY_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("GPU_TELEMETRY_MANAGER_", "25m", "64Mi"), description="GPU telemetry container resources")
-    SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "25m", "64Mi"), description="Server metrics container resources")
-    RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "25m", "64Mi"), description="Results sidecar resources for serving exported files")
+    GPU_TELEMETRY_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("GPU_TELEMETRY_MANAGER_", "25m", "192Mi"), description="GPU telemetry container resources")
+    SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "25m", "192Mi"), description="Server metrics container resources")
+    RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "25m", "192Mi"), description="Results sidecar resources for serving exported files")
     EVENT_BUS_PROXY: ResourceSettings = Field(default_factory=lambda: _resource_settings("EVENT_BUS_PROXY_", "50m", "64Mi"), description="Event-bus XPUB/XSUB proxy sidecar resources; isolates pub/sub socket I/O from control-plane")
-    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "150m", "512Mi"), description="Worker pod container resources (workers + record processors + WPM)")
+    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "150m", "4Gi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
     RECORD_PROCESSOR_CPU_REQUEST: str | None = Field(
         default=None,

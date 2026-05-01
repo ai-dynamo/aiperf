@@ -54,9 +54,9 @@ spec:
             description: Top-level spec for an AIPerfSweep CR.
             properties:
               sweep:
+                type: object
                 x-kubernetes-preserve-unknown-fields: true
                 description: Variation generator (grid | scenarios). Reuses aiperf.config.sweep.SweepConfig.
-                type: object
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.sweep is immutable after creation
@@ -363,6 +363,20 @@ spec:
                               resourceClaims, overhead). Typed fields are preferred when available because preflight checks,
                               env merging, and securityContext merging only apply to typed fields.'
                             additionalProperties: true
+                      scheduling:
+                        type: object
+                        description: Kueue gang-scheduling configuration. Set scheduling.queueName to a LocalQueue name to
+                          admit this job's controller + worker pods atomically via Kueue. When unset, the operator falls back
+                          to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME (operator-deploy env). Safe to leave unset on clusters
+                          without Kueue.
+                        properties:
+                          queueName:
+                            type: string
+                            description: Kueue LocalQueue name for gang-scheduling
+                          priorityClass:
+                            type: string
+                            description: Kueue WorkloadPriorityClass name (for queue admission ordering). Distinct from podTemplate.priorityClassName,
+                              which is the native K8s PriorityClass used by the default scheduler for preemption.
                       skipEndpointCheck:
                         type: boolean
                         description: Skip the operator-side endpoint reachability probe before deploying.
@@ -611,8 +625,8 @@ spec:
                               dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level
                               is normalized to a one-entry list with name='default'.
                             items:
-                              x-kubernetes-preserve-unknown-fields: true
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             minItems: 1
                           dataset:
                             description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted
@@ -627,8 +641,8 @@ spec:
                               shorthand ({''type'': ''concurrency'', ...}) is normalized to a list of one. Top-level ''warmup:''/''profiling:''
                               shorthand is normalized to a [warmup, profiling] list pre-validation.'
                             items:
-                              x-kubernetes-preserve-unknown-fields: true
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             minItems: 1
                           warmup:
                             description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases`
@@ -659,11 +673,9 @@ spec:
                               summary:
                                 x-kubernetes-preserve-unknown-fields: true
                                 description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
-                                type: object
                               records:
                                 x-kubernetes-preserve-unknown-fields: true
                                 description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
-                                type: object
                               raw:
                                 type: boolean
                                 description: Export raw request/response payloads as JSONL.
@@ -886,10 +898,10 @@ spec:
                                   kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces
                                   ''kubernetes'' on the controller pod; do not set this in a CR spec.]'
                               communication:
+                                type: object
                                 x-kubernetes-preserve-unknown-fields: true
                                 description: Inter-process communication configuration. Defaults to IPC for single-machine
                                   operation.
-                                type: object
                               apiPort:
                                 type: integer
                                 minimum: 1
@@ -949,13 +961,6 @@ spec:
                           metrics:
                             type: object
                             description: Metrics aggregation configuration for benchmark summaries.
-                            properties:
-                              listMetricAggregation:
-                                type: string
-                                description: Aggregation mode for list-valued metrics in benchmark summaries.
-                                enum:
-                                - exact
-                                - tdigest
                           accuracy:
                             type: object
                             description: |-
@@ -1025,10 +1030,10 @@ spec:
                               them again at run time.
                             additionalProperties: true
                           sweep:
+                            type: object
                             x-kubernetes-preserve-unknown-fields: true
                             description: Sweep configuration for parameter exploration. Supports grid (Cartesian product),
                               scenarios (hand-picked), and sequential (ordered) sweep strategies.
-                            type: object
                           multiRun:
                             type: object
                             description: Multi-run benchmarking configuration for statistical reporting. When num_runs > 1,

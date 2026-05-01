@@ -277,15 +277,20 @@ class ArtifactsConfig(BaseConfig):
 
 
 class ServerMetricsDiscoveryConfig(BaseConfig):
-    """Kubernetes-based auto-discovery of Prometheus /metrics endpoints.
+    """Kubernetes-based auto-discovery of inference-server /metrics endpoints.
 
-    When mode is 'auto' or 'kubernetes', queries the K8s API for pods with:
-    1. Dynamo label: nvidia.com/metrics-enabled=true
-    2. Prometheus annotation: prometheus.io/scrape=true
-    3. User-provided label_selector (server-side filter)
+    When mode is 'auto' or 'kubernetes', queries the K8s API for pods that
+    are recognizable inference servers (vLLM, SGLang, Triton Inference Server,
+    TensorRT-LLM, NVIDIA Dynamo). Eligibility (any one is enough):
+    1. Dynamo opt-in label: nvidia.com/metrics-enabled=true
+    2. AIPerf opt-in annotation: aiperf.nvidia.com/metrics-paths=...
+    3. A container image matching a known inference-server signature
+    4. User-provided label_selector (server-side filter)
 
-    Prometheus annotations (prometheus.io/port, prometheus.io/path,
-    prometheus.io/scheme) control the constructed scrape URL when present.
+    The broad ``prometheus.io/scrape=true`` annotation is intentionally NOT a
+    trigger: Loki, Grafana, kube-state-metrics, and many platform components
+    set it without being inference servers. ``prometheus.io/{port,path,scheme}``
+    are still honored to construct the scrape URL when an eligible pod sets them.
     """
 
     model_config = ConfigDict(extra="forbid", validate_default=True)

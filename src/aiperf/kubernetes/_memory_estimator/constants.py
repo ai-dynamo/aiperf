@@ -4,18 +4,25 @@
 
 All values are static (formulas derived from code inspection, not runtime
 profiling). Constants can be recalibrated against real RSS measurements via
-``scripts/calibrate_memory_estimates.py``.
+``src/aiperf/analysis/calibrate_memory_estimates.py``.
 """
 
 from __future__ import annotations
 
-# Python subprocess overhead: interpreter + core libs + GC + imports
-# Control-plane subprocesses fork from SystemController and share loaded modules
-# via copy-on-write, so they cost less than a fresh interpreter.
-_PYTHON_SUBPROCESS_BASE_MIB = 35
-# Worker/RP subprocesses share the WPM parent's module pages via COW.
-# Effective private RSS is lower (~18 MiB) than a fresh process.
-_PYTHON_CHILD_SUBPROCESS_BASE_MIB = 18
+# Python subprocess working-set baseline. Captures interpreter + core libs +
+# GC + every module loaded by an AIPerf service (numpy, pandas, msgspec,
+# pydantic, orjson, aiohttp, ZMQ, asyncio). Calibrated from
+# ``dev/results/sweep-isl-osl-mem-findings.md`` (cell 1: 5K conc / ISL=128 /
+# OSL=128 sums to 2569 MiB across 12 containers — ~214 MiB / container at the
+# minimum-workload floor; subtracting per-service deltas leaves ~150 MiB
+# common Python+libs baseline).
+#
+# COW (copy-on-write) does not materially shrink the working-set we measure
+# — ``container_memory_working_set_bytes`` is per-container anonymous + active
+# file cache, and Python's heap rapidly diverges across processes once each
+# starts allocating per-task state. We model parent and child the same.
+_PYTHON_SUBPROCESS_BASE_MIB = 150
+_PYTHON_CHILD_SUBPROCESS_BASE_MIB = 150
 
 # Per-service base overhead beyond subprocess (ZMQ sockets, Pydantic models, etc.)
 _SERVICE_BASE_MIB: dict[str, int] = {
@@ -41,9 +48,19 @@ _NUM_ZMQ_PROXIES = 3
 # (WorkerProcessingStats per worker, not per request)
 _BYTES_PER_WORKER_TRACKING = 256
 
-# GrowableArray overhead factor (doubling strategy).
-# Calibrated: measured 1.05x-1.64x across scales, average ~1.3x.
-_GROWABLE_ARRAY_OVERHEAD = 1.3
+# Wrapper-class overhead atop a numpy-backed time-series array
+# (``MetricArray``, ``GpuMetricTimeSeries``, ``ScalarTimeSeries``,
+# ``HistogramTimeSeries``). Calibrated via
+# ``src/aiperf/analysis/rebaseline_memory_constants.py`` — at fully-filled
+# capacity the wrapper class adds ~0-2% above the raw numpy bytes (dict
+# of metric names, bucket-le tuple, sum tracker, etc.).
+#
+# Historical note: this constant used to be 1.3 to model "doubling
+# strategy waste". That waste is now captured by ``_ceil_pow2(N)`` in
+# the formula's capacity calculation, so the multiplier is only for
+# wrapper overhead. 1.05 keeps a small safety margin without
+# double-counting capacity slack.
+_GROWABLE_ARRAY_OVERHEAD = 1.05
 
 # Numpy element sizes
 _FLOAT64_BYTES = 8
@@ -55,26 +72,33 @@ _TOKENIZER_CACHE_MIB = 150
 # aiohttp connection pool: per-connection kernel + userspace buffers
 _BYTES_PER_CONNECTION = 1024
 
-# Per-request base overhead: Pydantic RequestRecord shell + metadata fields.
-# Calibrated: empty RequestRecord = 1.6 KiB.
-_REQUEST_RECORD_BASE_BYTES = 1600
+# Per-request base overhead: msgspec.Struct RequestRecord shell + metadata
+# fields, with empty turns/responses lists.
+# Calibrated via ``src/aiperf/analysis/rebaseline_memory_constants.py``;
+# pympler-measured deep size of an empty RequestRecord is 504 B.
+_REQUEST_RECORD_BASE_BYTES = 504
 
-# SSE streaming: per output token, each creates an SSEField dataclass (~150 bytes
-# object overhead) plus the JSON chunk string (~70 bytes).
-# Calibrated: SSEField = 856 B deep including the ~70-char value string.
-# We model as: base_overhead(SSEMessage shell) + OSL × per_chunk.
-_SSE_MESSAGE_BASE_BYTES = 200  # SSEMessage + list overhead
-_SSE_BYTES_PER_CHUNK = 200  # SSEField object + short JSON string (calibrated ~150-200B)
+# SSE streaming: per output token, each creates an SSEField dataclass plus
+# a JSON chunk string.
+# Calibrated via the rebaseline script with **unique** chunk values (so
+# Python string interning doesn't deduplicate chunks). Linear fit on
+# SSEMessage(OSL=0..4096) yields per-chunk = 152 B (SSEField + small JSON
+# value string), base = 136 B (SSEMessage + empty packets list).
+_SSE_MESSAGE_BASE_BYTES = 136  # SSEMessage + list overhead
+_SSE_BYTES_PER_CHUNK = 152  # SSEField object + short unique JSON string
 
 # Non-streaming: single TextResponse with full JSON body.
-# Calibrated: ISL=2048 OSL=512 text response = 5.7 KiB total record.
-# Response body ~ OSL * 4 chars + JSON wrapper.
-_TEXT_RESPONSE_BASE_BYTES = 400  # TextResponse Pydantic overhead
+# Calibrated by the rebaseline script: empty TextResponse = 152 B,
+# plus ~4 B/token for the response body (chars-per-token in synthetic
+# OpenAI-shaped JSON).
+_TEXT_RESPONSE_BASE_BYTES = 152  # TextResponse msgspec overhead
 _TEXT_RESPONSE_BYTES_PER_TOKEN = 4  # ~4 chars per token in response body
 
-# Turn (prompt) storage per in-flight request: Turn Pydantic model + text content.
-# Calibrated: Turn with ISL=512 adds ~2 KiB. Text is ISL * 4 chars.
-_TURN_BASE_BYTES = 400  # Turn Pydantic overhead
+# Turn (prompt) storage per in-flight request: Turn msgspec.Struct +
+# Text(contents=[...]) + the prompt string itself.
+# Calibrated by the rebaseline script: Turn(role="user", texts=[]) = 408 B,
+# plus ~4 B/token for the text content.
+_TURN_BASE_BYTES = 408  # Turn + Text msgspec overhead
 _TURN_BYTES_PER_TOKEN = 4  # ~4 chars per input token
 
 # Multi-turn session state: per-token in conversation history
@@ -99,6 +123,14 @@ _STEADY_STATE_MARGIN = 1.2  # 20% headroom for request recommendation
 _PEAK_MARGIN = 1.3  # 30% headroom for limit recommendation
 _HEADROOM_WARNING_PCT = 15.0  # warn below 15% headroom
 _RECORDS_MANAGER_WARN_PCT = 50.0  # warn when RM uses >50% of limit
+
+# "Adequate headroom" threshold for the recommendation that the current
+# limits comfortably hold this workload. Tuned to 30% (vs the old 50%)
+# because realistic per-process Python baselines (~150 MiB) consume a
+# meaningful fraction of even small workloads' limits — at default
+# benchmarks the typical headroom sits in the 30-50% band, which is
+# adequate, not borderline.
+_ADEQUATE_HEADROOM_PCT = 30.0
 
 # Standard metrics computed per record (TTFT, TPOT, ITL, E2E, throughput, etc.)
 _DEFAULT_NUM_STANDARD_METRICS = 25

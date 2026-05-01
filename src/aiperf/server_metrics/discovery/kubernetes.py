@@ -3,12 +3,18 @@
 
 """Kubernetes metrics endpoint discovery using kubernetes_asyncio.
 
-Discovers Prometheus /metrics endpoints from running pods. Eligibility per pod:
-1) Label: nvidia.com/metrics-enabled=true   (Dynamo)
-2) Annotation: prometheus.io/scrape=true   (standard)
-3) User-provided label_selector (server-side filter; treated as fallback eligibility)
+Discovers Prometheus /metrics endpoints from inference-server pods only.
+Eligibility per pod (any one is enough):
+1) Label: ``nvidia.com/metrics-enabled=true`` (Dynamo opt-in)
+2) Annotation: ``aiperf.nvidia.com/metrics-paths=...`` (explicit AIPerf opt-in)
+3) Any container image matches a known inference-server signature
+   (vLLM, SGLang, Triton Inference Server, TensorRT-LLM, NVIDIA Dynamo)
+4) User-provided ``label_selector`` (server-side filter; explicit override)
 
-Prometheus annotations control scheme/port/path when present.
+The broad ``prometheus.io/scrape=true`` annotation is intentionally NOT a trigger:
+it is set by Loki, Grafana, kube-state-metrics, and many platform components
+that are not inference servers. ``prometheus.io/{port,path,scheme}`` are still
+honored to construct the scrape URL when an eligible pod sets them.
 """
 
 from __future__ import annotations
@@ -28,7 +34,6 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 DYNAMO_METRICS_ENABLED = "nvidia.com/metrics-enabled"
-PROM_SCRAPE = "prometheus.io/scrape"
 PROM_PORT = "prometheus.io/port"
 PROM_PATH = "prometheus.io/path"
 PROM_SCHEME = "prometheus.io/scheme"
@@ -37,6 +42,23 @@ AIPERF_METRICS_PATHS = "aiperf.nvidia.com/metrics-paths"
 DEFAULT_SCHEME = "http"
 DEFAULT_PATH = "/metrics"
 PREFERRED_PORT_NAME = "metrics"
+
+# Lowercase substrings matched against container image refs to identify
+# inference-server pods. Kept narrow on purpose so platform components
+# (Loki, Grafana, kube-state-metrics, node-exporter, etc.) are NOT scraped
+# even when they carry prometheus.io/scrape=true.
+INFERENCE_SERVER_IMAGE_MARKERS: tuple[str, ...] = (
+    "vllm",
+    "sglang",
+    "tritonserver",
+    "triton-server",
+    "triton-inference-server",
+    "tensorrt-llm",
+    "tensorrtllm",
+    "trt-llm",
+    "trtllm",
+    "dynamo",
+)
 
 
 def is_running_in_kubernetes() -> bool:
@@ -108,7 +130,7 @@ def _pod_to_urls(pod: V1Pod, label_selector: str | None) -> list[str]:
         (pod.metadata.annotations or {}) if pod.metadata else {}
     )
 
-    if not _is_eligible(labels, annotations, label_selector):
+    if not _is_eligible(pod, labels, annotations, label_selector):
         return []
 
     scheme = annotations.get(PROM_SCHEME, DEFAULT_SCHEME)
@@ -129,17 +151,44 @@ def _pod_to_urls(pod: V1Pod, label_selector: str | None) -> list[str]:
 
 
 def _is_eligible(
+    pod: V1Pod,
     labels: dict[str, str],
     annotations: dict[str, str],
     label_selector: str | None,
 ) -> bool:
-    """Check discovery eligibility by label/annotation/selector."""
+    """Check discovery eligibility — only inference-server pods qualify.
+
+    Triggers (any one is enough):
+    - Dynamo opt-in label ``nvidia.com/metrics-enabled=true``
+    - AIPerf opt-in annotation ``aiperf.nvidia.com/metrics-paths`` is set
+    - Any container image matches a known inference-server signature
+      (see ``INFERENCE_SERVER_IMAGE_MARKERS``)
+    - User passed ``--label-selector`` (already applied server-side)
+
+    The standalone ``prometheus.io/scrape=true`` annotation is intentionally
+    not a trigger: Loki, Grafana, kube-state-metrics, and many platform
+    components set it without being inference servers.
+    """
     if labels.get(DYNAMO_METRICS_ENABLED, "").lower() == "true":
         return True
-    if annotations.get(PROM_SCRAPE, "").lower() == "true":
+    if annotations.get(AIPERF_METRICS_PATHS):
+        return True
+    if _has_inference_server_container(pod):
         return True
     # label_selector already applied server-side; all returned pods are eligible
     return label_selector is not None
+
+
+def _has_inference_server_container(pod: V1Pod) -> bool:
+    """Return True if any container's image matches an inference-server signature."""
+    containers = (pod.spec.containers or []) if pod.spec else []
+    for container in containers:
+        image = (container.image or "").lower()
+        if not image:
+            continue
+        if any(marker in image for marker in INFERENCE_SERVER_IMAGE_MARKERS):
+            return True
+    return False
 
 
 def _normalize_path(path: str) -> str:

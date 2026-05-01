@@ -283,18 +283,24 @@ def _estimate_record_processor(
 def _estimate_gpu_telemetry(
     num_gpus: int, duration_s: float, sample_interval_s: float, num_metrics: int
 ) -> ComponentEstimate:
-    """GPU telemetry: columnar numpy arrays per GPU per metric."""
-    base = _SERVICE_BASE_MIB["gpu_telemetry_manager"] + _PYTHON_SUBPROCESS_BASE_MIB
+    """GPU telemetry: columnar numpy arrays per GPU per metric.
 
+    When DCGM is disabled (``num_gpus == 0``) the operator omits the
+    container entirely — we report 0 MiB so the controller-pod aggregate
+    matches measured RSS (which excludes containers that were never
+    scheduled).
+    """
     if num_gpus == 0:
         return ComponentEstimate(
             name="GPU Telemetry",
-            base_mib=base,
+            base_mib=0,
             variable_mib=0,
-            peak_mib=base,
-            formula="disabled (no DCGM URLs)",
+            peak_mib=0,
+            formula="disabled (no DCGM URLs) — container not deployed",
             dominant_factor="N/A",
         )
+
+    base = _SERVICE_BASE_MIB["gpu_telemetry_manager"] + _PYTHON_SUBPROCESS_BASE_MIB
 
     n_samples = int(duration_s / max(sample_interval_s, 0.1))
     capacity = _ceil_pow2(n_samples)
@@ -326,18 +332,23 @@ def _estimate_server_metrics(
     histogram_count: int,
     histogram_buckets: int,
 ) -> ComponentEstimate:
-    """Server metrics: scalar + histogram time series per endpoint."""
-    base = _SERVICE_BASE_MIB["server_metrics_manager"] + _PYTHON_SUBPROCESS_BASE_MIB
+    """Server metrics: scalar + histogram time series per endpoint.
 
+    When Prometheus scraping is disabled (``num_endpoints == 0``) the
+    operator omits the container — we report 0 MiB to match measured RSS
+    (which excludes never-scheduled containers).
+    """
     if num_endpoints == 0:
         return ComponentEstimate(
             name="Server Metrics",
-            base_mib=base,
+            base_mib=0,
             variable_mib=0,
-            peak_mib=base,
-            formula="disabled (no Prometheus URLs)",
+            peak_mib=0,
+            formula="disabled (no Prometheus URLs) — container not deployed",
             dominant_factor="N/A",
         )
+
+    base = _SERVICE_BASE_MIB["server_metrics_manager"] + _PYTHON_SUBPROCESS_BASE_MIB
 
     n_scrapes = int(duration_s / max(scrape_interval_s, 0.1))
     capacity = _ceil_pow2(n_scrapes)

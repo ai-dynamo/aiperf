@@ -14,6 +14,7 @@ from aiperf.kubernetes._memory_estimator.components import (
     _estimate_worker,
 )
 from aiperf.kubernetes._memory_estimator.constants import (
+    _ADEQUATE_HEADROOM_PCT,
     _NUM_ZMQ_PROXIES,
     _RECORDS_MANAGER_WARN_PCT,
     _TOKENIZER_CACHE_MIB,
@@ -311,7 +312,10 @@ def _warn_multi_turn(p: MemoryEstimationParams) -> list[str]:
 
 def _build_recommendations(est: ClusterMemoryEstimate) -> list[str]:
     recommendations: list[str] = []
-    if est.controller.headroom_pct > 50 and est.worker_pod.headroom_pct > 50:
+    if (
+        est.controller.headroom_pct > _ADEQUATE_HEADROOM_PCT
+        and est.worker_pod.headroom_pct > _ADEQUATE_HEADROOM_PCT
+    ):
         recommendations.append(
             "Current resource limits have adequate headroom for this workload."
         )

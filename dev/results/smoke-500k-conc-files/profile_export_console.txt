@@ -1,0 +1,38 @@
+
+
+                                                       NVIDIA AIPerf | LLM Metrics                                                       
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃                                        Metric ┃          avg ┃    min ┃        max ┃        p99 ┃        p90 ┃        p50 ┃       std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│                      Time to First Token (ms) │         2.15 │   0.45 │     215.35 │      10.79 │       4.23 │       1.48 │      2.24 │
+│                     Time to Second Token (ms) │         0.00 │   0.00 │       2.73 │       0.00 │       0.00 │       0.00 │      0.01 │
+│               Time to First Output Token (ms) │         2.15 │   0.45 │     215.35 │      10.79 │       4.23 │       1.48 │      2.24 │
+│                          Request Latency (ms) │         3.47 │   0.80 │     223.07 │      20.42 │       6.94 │       2.10 │      4.48 │
+│                      Inter Token Latency (ms) │         0.01 │   0.00 │       2.16 │       0.11 │       0.02 │       0.01 │      0.04 │
+│              Output Token Throughput Per User │   152,968.98 │ 463.06 │ 526,828.75 │ 330,406.29 │ 236,516.88 │ 157,660.32 │ 70,916.39 │
+│                             (tokens/sec/user) │              │        │            │            │            │            │           │
+│ E2E Output Token Throughput (tokens/sec/user) │    45,399.93 │ 452.78 │ 126,578.47 │  89,332.94 │  68,314.79 │  48,155.36 │ 19,763.35 │
+│               Output Sequence Length (tokens) │       101.00 │ 101.00 │     101.00 │     101.00 │     101.00 │     101.00 │      0.00 │
+│                Input Sequence Length (tokens) │       128.00 │ 128.00 │     128.00 │     128.00 │     128.00 │     128.00 │      0.00 │
+│          Output Token Throughput (tokens/sec) │   625,547.61 │    N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
+│             Request Throughput (requests/sec) │     6,193.54 │    N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
+│                      Request Count (requests) │ 2,000,000.00 │    N/A │        N/A │        N/A │        N/A │        N/A │       N/A │
+└───────────────────────────────────────────────┴──────────────┴────────┴────────────┴────────────┴────────────┴────────────┴───────────┘
+
+╭───────────────────────────────────── Output Sequence Length Mismatch Warning ──────────────────────────────────────╮
+│  2,000,000 of 2,000,000 requests (100.0%) have output length differing from requested by more than the threshold.  │
+│  Threshold (tokens): min(requested x 5%, 50)                                                                       │
+│  Average mismatch: -21.1%                                                                                          │
+│                                                                                                                    │
+│  Why: Server hit EOS token before reaching requested output length.                                                │
+│                                                                                                                    │
+│  Fix Options:                                                                                                      │
+│    • --extra-inputs ignore_eos:true — Generate until max_tokens (vLLM, TensorRT-LLM)                               │
+│    • --extra-inputs min_tokens:<N> — Set minimum output length (vLLM, TensorRT-LLM, SGLang)                        │
+│    • --use-server-token-count — Use server-reported token counts if tokenizer mismatch suspected                   │
+│                                                                                                                    │
+│  Diagnostics:                                                                                                      │
+│    • Review profile_export.jsonl → osl_mismatch_diff_pct for per-request values                                    │
+│    • Adjust: AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD=5                                                           │
+│    • Adjust: AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD=50                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

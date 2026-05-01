@@ -24,8 +24,9 @@ class _Port:
 
 
 class _Container:
-    def __init__(self, ports=None):
+    def __init__(self, ports=None, image: str | None = None):
         self.ports = ports
+        self.image = image
 
 
 class _PodSpec:
@@ -63,6 +64,7 @@ def _make_pod(
     labels: dict | None = None,
     annotations: dict | None = None,
     ports: list[dict] | None = None,
+    image: str | None = None,
 ) -> _Pod:
     """Build a typed-ish V1Pod stand-in with the given manifest pieces."""
     container_ports = None
@@ -74,7 +76,10 @@ def _make_pod(
             )
             for p in ports
         ]
-    containers = [_Container(ports=container_ports)] if ports is not None else []
+    if ports is not None or image is not None:
+        containers = [_Container(ports=container_ports, image=image)]
+    else:
+        containers = []
     return _Pod(
         metadata=_PodMeta(labels=labels or {}, annotations=annotations or {}),
         status=_PodStatus(pod_ip=pod_ip, phase="Running"),
@@ -109,22 +114,69 @@ class TestIsRunningInKubernetes:
 # ---------------------------------------------------------------------------
 class TestIsEligible:
     def test_eligible_via_dynamo_label(self):
-        assert _is_eligible({"nvidia.com/metrics-enabled": "true"}, {}, None) is True
+        pod = _make_pod(labels={"nvidia.com/metrics-enabled": "true"})
+        assert _is_eligible(pod, pod.metadata.labels, {}, None) is True
 
     def test_eligible_via_dynamo_label_case_insensitive(self):
-        assert _is_eligible({"nvidia.com/metrics-enabled": "True"}, {}, None) is True
+        pod = _make_pod(labels={"nvidia.com/metrics-enabled": "True"})
+        assert _is_eligible(pod, pod.metadata.labels, {}, None) is True
 
-    def test_eligible_via_prometheus_annotation(self):
-        assert _is_eligible({}, {"prometheus.io/scrape": "true"}, None) is True
+    def test_eligible_via_aiperf_metrics_paths_annotation(self):
+        annotations = {"aiperf.nvidia.com/metrics-paths": "/metrics,/vllm/metrics"}
+        pod = _make_pod(annotations=annotations)
+        assert _is_eligible(pod, {}, annotations, None) is True
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            param("vllm/vllm-openai:v0.6.3", id="vllm"),
+            param("lmsysorg/sglang:latest", id="sglang"),
+            param("nvcr.io/nvidia/tritonserver:24.05-py3", id="tritonserver"),
+            param("nvcr.io/nvidia/tritonserver:24.05-trtllm-python-py3", id="trtllm"),
+            param("nvcr.io/nvidia/dynamo:0.1.0", id="dynamo"),
+            param("VLLM/Vllm-Openai:Latest", id="case-insensitive"),
+        ],
+    )  # fmt: skip
+    def test_eligible_via_inference_server_image(self, image: str):
+        pod = _make_pod(image=image, ports=[{"containerPort": 8000}])
+        assert _is_eligible(pod, {}, {}, None) is True
 
     def test_eligible_via_label_selector_fallback(self):
-        assert _is_eligible({}, {}, "app=vllm") is True
+        pod = _make_pod()
+        assert _is_eligible(pod, {}, {}, "app=vllm") is True
 
     def test_not_eligible_without_markers_or_selector(self):
-        assert _is_eligible({}, {}, None) is False
+        pod = _make_pod()
+        assert _is_eligible(pod, {}, {}, None) is False
 
     def test_not_eligible_when_dynamo_label_is_false(self):
-        assert _is_eligible({"nvidia.com/metrics-enabled": "false"}, {}, None) is False
+        pod = _make_pod(labels={"nvidia.com/metrics-enabled": "false"})
+        assert _is_eligible(pod, pod.metadata.labels, {}, None) is False
+
+    def test_not_eligible_for_loki_with_prometheus_scrape(self):
+        # Regression: Loki / Grafana / kube-state-metrics all set
+        # prometheus.io/scrape=true but are not inference servers.
+        annotations = {"prometheus.io/scrape": "true"}
+        pod = _make_pod(
+            annotations=annotations,
+            image="grafana/loki:2.9.0",
+            ports=[{"containerPort": 3100}],
+        )
+        assert _is_eligible(pod, {}, annotations, None) is False
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            param("grafana/loki:2.9.0", id="loki"),
+            param("grafana/grafana:10.2.0", id="grafana"),
+            param("quay.io/prometheus/node-exporter:v1.7.0", id="node-exporter"),
+            param("registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.10.0", id="kube-state-metrics"),
+            param("nginx:1.25", id="nginx"),
+        ],
+    )  # fmt: skip
+    def test_not_eligible_for_non_inference_images(self, image: str):
+        pod = _make_pod(image=image, ports=[{"containerPort": 9090}])
+        assert _is_eligible(pod, {}, {}, None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -203,13 +255,16 @@ class TestResolvePort:
 # ---------------------------------------------------------------------------
 class TestPodToUrl:
     def test_url_with_prometheus_annotations(self):
+        # prometheus.io annotations are honored when the pod is otherwise
+        # eligible (here: a vLLM image triggers eligibility).
         pod = _make_pod(
             annotations={
-                "prometheus.io/scrape": "true",
                 "prometheus.io/port": "9090",
                 "prometheus.io/path": "/custom/metrics",
                 "prometheus.io/scheme": "https",
             },
+            image="vllm/vllm-openai:latest",
+            ports=[{"containerPort": 8000}],
         )
         assert _pod_to_urls(pod, None) == ["https://10.1.2.3:9090/custom/metrics"]
 
@@ -220,6 +275,13 @@ class TestPodToUrl:
         )
         assert _pod_to_urls(pod, None) == ["http://10.1.2.3:8080/metrics"]
 
+    def test_url_with_inference_server_image(self):
+        pod = _make_pod(
+            image="nvcr.io/nvidia/tritonserver:24.05-py3",
+            ports=[{"containerPort": 8002}],
+        )
+        assert _pod_to_urls(pod, None) == ["http://10.1.2.3:8002/metrics"]
+
     def test_url_with_label_selector_fallback(self):
         pod = _make_pod(ports=[{"containerPort": 8080}])
         assert _pod_to_urls(pod, "app=vllm") == ["http://10.1.2.3:8080/metrics"]
@@ -228,13 +290,26 @@ class TestPodToUrl:
         pod = _make_pod(ports=[{"containerPort": 8080}])
         assert _pod_to_urls(pod, None) == []
 
+    def test_returns_none_for_loki_pod_with_prometheus_scrape(self):
+        # Regression: prometheus.io/scrape=true alone must not trigger discovery.
+        pod = _make_pod(
+            annotations={"prometheus.io/scrape": "true"},
+            image="grafana/loki:2.9.0",
+            ports=[{"containerPort": 3100}],
+        )
+        assert _pod_to_urls(pod, None) == []
+
     def test_returns_none_when_missing_pod_ip(self):
-        pod = _make_pod(pod_ip="", annotations={"prometheus.io/scrape": "true"})
+        pod = _make_pod(
+            pod_ip="",
+            image="vllm/vllm-openai:latest",
+            ports=[{"containerPort": 8000}],
+        )
         assert _pod_to_urls(pod, None) == []
 
     def test_returns_none_when_no_port(self):
         pod = _make_pod(
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[],
         )
         assert _pod_to_urls(pod, None) == []
@@ -248,9 +323,9 @@ class TestPodToUrl:
         assert _pod_to_urls(pod, None) == []
 
     def test_multi_path_annotation(self):
+        # The metrics-paths annotation is itself an opt-in signal.
         pod = _make_pod(
             annotations={
-                "prometheus.io/scrape": "true",
                 "prometheus.io/port": "8000",
                 "aiperf.nvidia.com/metrics-paths": "/metrics,/vllm/metrics,/sglang/metrics",
             },
@@ -264,7 +339,6 @@ class TestPodToUrl:
     def test_multi_path_overrides_single_path(self):
         pod = _make_pod(
             annotations={
-                "prometheus.io/scrape": "true",
                 "prometheus.io/port": "8000",
                 "prometheus.io/path": "/default",
                 "aiperf.nvidia.com/metrics-paths": "/a,/b",
@@ -293,7 +367,7 @@ class TestDiscoverKubernetesEndpoints:
     @pytest.mark.asyncio
     async def test_discovers_urls_from_pods(self):
         pod = _make_pod(
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         mock_api = MagicMock()
@@ -316,12 +390,12 @@ class TestDiscoverKubernetesEndpoints:
     async def test_deduplicates_urls(self):
         pod1 = _make_pod(
             pod_ip="10.1.2.3",
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         pod2 = _make_pod(
             pod_ip="10.1.2.3",
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         mock_api = MagicMock()
@@ -344,12 +418,12 @@ class TestDiscoverKubernetesEndpoints:
     async def test_sorts_urls(self):
         pod_a = _make_pod(
             pod_ip="10.1.2.9",
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         pod_b = _make_pod(
             pod_ip="10.1.2.1",
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         mock_api = MagicMock()
@@ -395,7 +469,7 @@ class TestDiscoverKubernetesEndpoints:
     async def test_skips_ineligible_pods(self):
         eligible = _make_pod(
             pod_ip="10.1.2.3",
-            annotations={"prometheus.io/scrape": "true"},
+            image="vllm/vllm-openai:latest",
             ports=[{"containerPort": 9100}],
         )
         ineligible = _make_pod(

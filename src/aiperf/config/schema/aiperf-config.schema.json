@@ -2947,15 +2947,6 @@
       "title": "IpcCommunicationConfig",
       "type": "object"
     },
-    "ListMetricAggregationMode": {
-      "description": "Aggregation strategy for list-valued metrics in benchmark summaries.",
-      "enum": [
-        "exact",
-        "tdigest"
-      ],
-      "title": "ListMetricAggregationMode",
-      "type": "string"
-    },
     "LogNormalDistribution": {
       "additionalProperties": false,
       "description": "Log-normal parameterized by mean and median (right-skewed, always positive).\n\nSkew is controlled by the mean/median ratio: larger ratio = heavier right tail.\nWhen mean == median the distribution is deterministic.\n\nInternally: sigma = sqrt(2 * log(mean / median)), mu = log(median).",
@@ -3087,14 +3078,8 @@
     },
     "MetricsConfig": {
       "additionalProperties": false,
-      "description": "Configuration for benchmark metric aggregation behavior.",
-      "properties": {
-        "listMetricAggregation": {
-          "$ref": "#/$defs/ListMetricAggregationMode",
-          "default": "exact",
-          "description": "Aggregation mode for list-valued metrics in benchmark summaries."
-        }
-      },
+      "description": "Configuration for benchmark metric aggregation behavior.\n\nCurrently empty — list-valued record metrics aggregate via t-digest at\nfirst-touch (see :mod:`aiperf.metrics.list_metric_aggregation`); the\nsketch compression is tunable via ``AIPERF_METRICS_TDIGEST_COMPRESSION``.\nReserved as the home for any future user-facing metric-aggregation knobs.",
+      "properties": {},
       "title": "MetricsConfig",
       "type": "object"
     },
@@ -5025,7 +5010,7 @@
     },
     "ServerMetricsDiscoveryConfig": {
       "additionalProperties": false,
-      "description": "Kubernetes-based auto-discovery of Prometheus /metrics endpoints.\n\nWhen mode is 'auto' or 'kubernetes', queries the K8s API for pods with:\n1. Dynamo label: nvidia.com/metrics-enabled=true\n2. Prometheus annotation: prometheus.io/scrape=true\n3. User-provided label_selector (server-side filter)\n\nPrometheus annotations (prometheus.io/port, prometheus.io/path,\nprometheus.io/scheme) control the constructed scrape URL when present.",
+      "description": "Kubernetes-based auto-discovery of inference-server /metrics endpoints.\n\nWhen mode is 'auto' or 'kubernetes', queries the K8s API for pods that\nare recognizable inference servers (vLLM, SGLang, Triton Inference Server,\nTensorRT-LLM, NVIDIA Dynamo). Eligibility (any one is enough):\n1. Dynamo opt-in label: nvidia.com/metrics-enabled=true\n2. AIPerf opt-in annotation: aiperf.nvidia.com/metrics-paths=...\n3. A container image matching a known inference-server signature\n4. User-provided label_selector (server-side filter)\n\nThe broad ``prometheus.io/scrape=true`` annotation is intentionally NOT a\ntrigger: Loki, Grafana, kube-state-metrics, and many platform components\nset it without being inference servers. ``prometheus.io/{port,path,scheme}``\nare still honored to construct the scrape URL when an eligible pod sets them.",
       "properties": {
         "mode": {
           "$ref": "#/$defs/ServerMetricsDiscoveryMode",

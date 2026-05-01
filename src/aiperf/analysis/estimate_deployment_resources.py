@@ -7,19 +7,39 @@ Runs the memory estimator across common deployment scenarios and prints
 a comparison table showing per-pod and cluster-wide resource usage.
 
 Usage:
-    uv run python scripts/estimate_deployment_resources.py
-    uv run python scripts/estimate_deployment_resources.py --concurrency 100000
+    uv run python -m aiperf.analysis.estimate_deployment_resources
+    uv run python -m aiperf.analysis.estimate_deployment_resources --concurrency 100000
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 
+from aiperf.common.environment import Environment
+from aiperf.kubernetes._memory_estimator.constants import (
+    _DEFAULT_GPU_METRICS,
+    _DEFAULT_NUM_STANDARD_METRICS,
+)
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.memory_estimator import (
     MemoryEstimationParams,
     MemoryEstimator,
     format_estimate,
 )
+
+# Production estimator's default connections-per-worker (matches
+# ``estimate_memory(...)`` in ``aiperf.kubernetes.memory_estimator``).
+_DEFAULT_CONNECTIONS_PER_WORKER = 200
+
+# Stress-test overrides for at-scale Prometheus / DCGM scenarios. The
+# corresponding ``_DEFAULT_*`` constants in
+# ``aiperf.kubernetes._memory_estimator.constants`` (200 / 20 / 10) describe
+# a typical single-endpoint deployment; this script intentionally simulates
+# busier metric surfaces.
+_STRESS_UNIQUE_METRIC_SERIES = 500
+_STRESS_HISTOGRAM_METRICS = 50
+_STRESS_HISTOGRAM_BUCKETS = 15
 
 
 def _make_params(
@@ -34,15 +54,16 @@ def _make_params(
     num_gpus: int = 0,
     num_server_metrics_endpoints: int = 0,
 ) -> MemoryEstimationParams:
-    wpp = 10
-    pods = max(1, workers // wpp)
-    rp_per_pod = 2
+    wpp = Environment.WORKER.DEFAULT_WORKERS_PER_POD
+    pods = max(1, math.ceil(workers / wpp))
+    actual_wpp = min(workers, wpp)
+    rp_per_pod = max(1, actual_wpp // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR)
     return MemoryEstimationParams(
         max_concurrency=concurrency,
         total_requests=concurrency * req_multiplier,
         total_benchmark_duration_s=duration_s,
         total_workers=workers,
-        workers_per_pod=wpp,
+        workers_per_pod=actual_wpp,
         num_worker_pods=pods,
         record_processors_per_pod=rp_per_pod,
         dataset_count=10000,
@@ -51,24 +72,25 @@ def _make_params(
         max_turns=1,
         streaming=streaming,
         num_endpoints=max(1, pods // 25),
-        connections_per_worker=500,
+        connections_per_worker=_DEFAULT_CONNECTIONS_PER_WORKER,
         num_gpus=num_gpus,
         gpu_sample_interval_s=1.0,
-        num_gpu_metrics=12,
+        num_gpu_metrics=_DEFAULT_GPU_METRICS,
         num_server_metrics_endpoints=num_server_metrics_endpoints,
         server_metrics_scrape_interval_s=5.0,
-        est_unique_metric_series=500,
-        est_histogram_metrics=50,
-        est_histogram_buckets=15,
+        est_unique_metric_series=_STRESS_UNIQUE_METRIC_SERIES,
+        est_histogram_metrics=_STRESS_HISTOGRAM_METRICS,
+        est_histogram_buckets=_STRESS_HISTOGRAM_BUCKETS,
         num_models=num_models,
-        num_standard_metrics=25,
+        num_standard_metrics=_DEFAULT_NUM_STANDARD_METRICS,
         export_http_trace=False,
     )
 
 
 def run_comparison_table(target_concurrency: int) -> None:
     workers = max(10, target_concurrency // 100)
-    pods = max(1, workers // 10)
+    wpp = Environment.WORKER.DEFAULT_WORKERS_PER_POD
+    pods = max(1, math.ceil(workers / wpp))
 
     scenarios = [
         ("SSE ISL=128  OSL=32", 128, 32, True),

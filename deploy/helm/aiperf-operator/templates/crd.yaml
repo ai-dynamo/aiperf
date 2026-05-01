@@ -337,8 +337,8 @@ spec:
                       list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry
                       list with name='default'.
                     items:
-                      x-kubernetes-preserve-unknown-fields: true
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     minItems: 1
                   dataset:
                     description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into `datasets`
@@ -352,8 +352,8 @@ spec:
                       ''concurrency'', ...}) is normalized to a list of one. Top-level ''warmup:''/''profiling:'' shorthand
                       is normalized to a [warmup, profiling] list pre-validation.'
                     items:
-                      x-kubernetes-preserve-unknown-fields: true
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     minItems: 1
                   warmup:
                     description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as the
@@ -382,11 +382,9 @@ spec:
                       summary:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
-                        type: object
                       records:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
-                        type: object
                       raw:
                         type: boolean
                         description: Export raw request/response payloads as JSONL.
@@ -607,9 +605,9 @@ spec:
                           kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces ''kubernetes''
                           on the controller pod; do not set this in a CR spec.]'
                       communication:
+                        type: object
                         x-kubernetes-preserve-unknown-fields: true
                         description: Inter-process communication configuration. Defaults to IPC for single-machine operation.
-                        type: object
                       apiPort:
                         type: integer
                         minimum: 1
@@ -669,13 +667,6 @@ spec:
                   metrics:
                     type: object
                     description: Metrics aggregation configuration for benchmark summaries.
-                    properties:
-                      listMetricAggregation:
-                        type: string
-                        description: Aggregation mode for list-valued metrics in benchmark summaries.
-                        enum:
-                        - exact
-                        - tdigest
                   accuracy:
                     type: object
                     description: |-
@@ -745,10 +736,10 @@ spec:
                       run time.
                     additionalProperties: true
                   sweep:
+                    type: object
                     x-kubernetes-preserve-unknown-fields: true
                     description: Sweep configuration for parameter exploration. Supports grid (Cartesian product), scenarios
                       (hand-picked), and sequential (ordered) sweep strategies.
-                    type: object
                   multiRun:
                     type: object
                     description: Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes
