@@ -227,4 +227,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,src/aiperf/operator/ui-v1/vendor/*,tests/_js_cache/*"
-ignore-words-list = "timeslice,timeslices,aks,ot"
+ignore-words-list = "timeslice,timeslices,aks,ot,genrate"
