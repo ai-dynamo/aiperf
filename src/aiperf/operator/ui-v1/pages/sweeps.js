@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
-import { sweeps } from '../lib/state.js';
+import { sweeps, dedupeByNsName } from '../lib/state.js';
 import { navigate, query, setQuery } from '../lib/router.js';
 import { palette, phaseColor } from '../lib/theme.js';
 import { NsPill, ModelPill } from '../components/pills.js';
@@ -42,7 +42,12 @@ function sweepValue(s, key) {
     case 'variations': return s.total_variations ?? 0;
     case 'model': return s.model ?? '';
     case 'source': return s.source ?? '';
-    case 'age': return s.age_seconds ?? 0;
+    // Negate so descending sort (dir=-1, the default) yields newest first.
+    // The API only ships ``age_seconds`` (seconds-since-creation), where
+    // *smaller* = newer; without the flip, dir=-1 would list oldest first
+    // and disagree with the JobTable's ``case 'age'`` which keys on a
+    // monotonically-increasing ``created`` timestamp.
+    case 'age': return -(s.age_seconds ?? 0);
     default: return '';
   }
 }
@@ -118,7 +123,7 @@ export function Sweeps() {
     poll(async () => {
       try {
         const data = await api.listSweeps();
-        const next = data?.sweeps ?? [];
+        const next = dedupeByNsName(data?.sweeps ?? []);
         sweeps.value = next;
         setList(next);
         setLoadError(null);
@@ -360,10 +365,10 @@ export function Sweeps() {
                         })()}
                       </td>
                       <td class="job-table-td"
-                          style=${s.failed_runs > 0 ? `color:${palette.red}` : ''}>
-                        ${s.failed_runs}
+                          style=${(s.failed_runs ?? 0) > 0 ? `color:${palette.red}` : ''}>
+                        ${s.failed_runs ?? 0}
                       </td>
-                      <td class="job-table-td">${s.total_variations}</td>
+                      <td class="job-table-td">${s.total_variations ?? html`<span class="text-dim">—</span>`}</td>
                       <td class="job-table-td">
                         ${s.model
                           ? html`<${ModelPill} model=${s.model} testId=${'sweep-row-model-' + s.model} />`

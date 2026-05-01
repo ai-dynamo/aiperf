@@ -123,7 +123,94 @@ export const api = {
   getIndex() {
     return apiFetch('/index');
   },
+
+  /** Get K8s events for a job (involvedObject=AIPerfJob + owned pods). */
+  getJobEvents(ns, name) {
+    return apiFetch(
+      `/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`,
+    );
+  },
+
+  /** Stream a run's per-request export (``profile_export.jsonl``) as a list
+   *  of JSON-decoded record objects.
+   *
+   *  Returns ``{records, skipped}`` so the caller can distinguish an
+   *  intentionally-skipped run (no per-request data, file too big, transport
+   *  failure) from a successful empty response.
+   *
+   *  Size cap: 200 MB (via Content-Length) to keep the browser responsive
+   *  on huge runs.
+   */
+  async fetchRunRequests(ns, jobId, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    const file = 'profile_export.jsonl';
+    const url = epoch && epoch !== 'latest'
+      ? `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}/${file}`
+      : `${BASE}/results/${nsSeg}/${idSeg}/${file}`;
+
+    let resp;
+    try {
+      resp = await fetch(url, { headers: { Accept: 'application/x-ndjson, text/plain' } });
+    } catch (err) {
+      return { records: [], skipped: `fetch failed: ${err.message}` };
+    }
+    if (resp.status === 404) return { records: [], skipped: 'no per-request data' };
+    if (!resp.ok) return { records: [], skipped: `API ${resp.status}` };
+
+    const lenHeader = resp.headers.get('Content-Length');
+    const size = lenHeader != null ? Number(lenHeader) : null;
+    if (size != null && size > 200 * 1024 * 1024) {
+      return { records: [], skipped: `file too large (${Math.round(size / 1024 / 1024)} MB)` };
+    }
+
+    const text = await resp.text();
+    const records = [];
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        records.push(JSON.parse(s));
+      } catch (_e) { /* skip malformed line */ }
+    }
+    return { records, skipped: null };
+  },
+
+  /** Fetch pod logs for a job. See ``getJobLogs`` below. */
+  getJobLogs(ns, name, opts) {
+    return getJobLogs(ns, name, opts);
+  },
 };
+
+/**
+ * Pod logs fetcher with optional follow streaming. Response in non-follow
+ * mode is a string of raw text; in follow mode it's the raw ``Response``
+ * so the caller can pump ``response.body.getReader()`` for live updates.
+ *
+ * Defined outside ``api`` so it can return either a Response or text
+ * without forcing an extra branch in every callsite.
+ *
+ * @param {string} ns
+ * @param {string} name
+ * @param {{pod: string, container?: string, follow?: boolean, tailLines?: number, signal?: AbortSignal}} opts
+ * @returns {Promise<string|Response>}
+ */
+async function getJobLogs(ns, name, opts) {
+  const { pod, container, follow, tailLines, signal } = opts ?? {};
+  const params = new URLSearchParams();
+  if (pod) params.set('pod', pod);
+  if (container) params.set('container', container);
+  if (follow) params.set('follow', '1');
+  if (tailLines != null) params.set('tail_lines', String(tailLines));
+  const url = `${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
+  const resp = await fetch(url, { headers: { Accept: 'text/plain' }, signal });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    throw new Error(`API ${resp.status}: ${text}`);
+  }
+  if (follow) return resp;
+  return resp.text();
+}
 
 /**
  * Polling helper. Calls fn() immediately, then every intervalMs.

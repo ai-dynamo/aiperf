@@ -74,3 +74,53 @@ export function setLoading(key, value) {
 export function setError(message) {
   globalError.value = message;
 }
+
+/**
+ * Frontend dedupe safety net for the live + archive union endpoints
+ * (``/api/v1/jobs`` and ``/api/v1/sweeps``).
+ *
+ * The backend in :mod:`aiperf.operator.job_union` and
+ * :mod:`aiperf.operator.sweep_union` already merges by ``(namespace, name)``
+ * and tags overlap entries with ``source="both"``. This helper catches
+ * any future regression on that path without papering over data: when
+ * dupes exist, prefer the live-side entry (CR has authoritative phase /
+ * worker / progress) and copy any non-null fields from the archive
+ * sibling so we don't drop summary-derived columns.
+ *
+ * @template T
+ * @param {T[] | null | undefined} rows - Raw list from the API.
+ * @returns {T[]} Deduped list, stably ordered by first appearance.
+ */
+export function dedupeByNsName(rows) {
+  if (!Array.isArray(rows)) return [];
+  const seen = new Map();
+  const order = [];
+  for (const row of rows) {
+    if (row == null || typeof row !== 'object') continue;
+    const ns = row.namespace ?? 'default';
+    const name = row.name ?? '';
+    if (!name) continue;
+    const key = ns + '/' + name;
+    const prior = seen.get(key);
+    if (!prior) {
+      seen.set(key, row);
+      order.push(key);
+      continue;
+    }
+    // Pick the live-side (or "both") entry as the base; backfill any
+    // null fields from the archived sibling so columns like throughput /
+    // latency that the CR is silent about don't disappear.
+    const liveLike = (s) => s === 'live' || s === 'both';
+    const base = liveLike(prior.source) ? prior
+                : liveLike(row.source) ? row
+                : prior;
+    const other = base === prior ? row : prior;
+    const merged = { ...base };
+    for (const k of Object.keys(other)) {
+      if (merged[k] == null && other[k] != null) merged[k] = other[k];
+    }
+    if (base === row) merged.source = 'both';
+    seen.set(key, merged);
+  }
+  return order.map((k) => seen.get(k));
+}

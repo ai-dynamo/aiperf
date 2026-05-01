@@ -89,7 +89,7 @@ export const colors = {
 export function phaseColor(phase) {
   const p = (phase || '').toLowerCase();
   if (p === 'running') return colors.phaseRunning;
-  if (p === 'completed' || p === 'succeeded') return colors.phaseCompleted;
+  if (p === 'completed' || p === 'succeeded' || p === 'archived') return colors.phaseCompleted;
   if (p === 'failed' || p === 'error') return colors.phaseFailed;
   if (p === 'pending' || p === 'initializing') return colors.phasePending;
   return colors.phaseUnknown;

@@ -28,6 +28,11 @@
   --amber: #ffc107;
   --red: #ef5350;
   --pink: #ab47bc;
+  /* Dim variants used by the legacy log-strip and chip styles imported
+   * from operator/ui. Same alpha as --accent-dim. */
+  --blue-dim: rgba(59, 130, 246, 0.15);
+  --green-dim: rgba(118, 185, 0, 0.15);
+  --pink-dim: rgba(171, 71, 188, 0.15);
 
   /* Typography */
   --font-sans: 'IBM Plex Mono', ui-monospace, monospace;
@@ -37,6 +42,11 @@
   --font-size-base: 0.875rem;
   --font-size-md: 1rem;
   --font-size-lg: 1.125rem;
+  /* Aliases consumed by the legacy run-events / run-logs panel CSS
+   * imported from operator/ui. Mapped to the closest ui-v1 token. */
+  --font-xs: var(--font-size-xs);
+  --bg-tile: var(--bg-card);
+  --accent-hot: var(--accent);
   --font-size-xl: 1.25rem;
   --font-size-2xl: 1.5rem;
   --font-size-3xl: 1.875rem;
@@ -633,9 +643,7 @@ select, input {
   border-radius: var(--radius);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  transition: border-color var(--transition-fast);
 }
-.status-tile:hover { border-color: var(--border-hover); }
 .status-tile--live { border-color: rgba(118, 185, 0, 0.45); }
 .status-tile__icon {
   width: 36px;
@@ -2370,3 +2378,205 @@ select, input {
   width: 100%;
   max-width: 160px;
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Events + Logs panels
+ *
+ * Copied verbatim from ``operator/ui/style.css`` to support the
+ * ``EventsPane`` / ``LogsPane`` components ported from the legacy run
+ * view. Class names and structure are kept identical so the components
+ * can be lifted unchanged.
+ *
+ * Includes the dependent ``.btn`` / ``.btn--primary`` / ``.btn--ghost``
+ * and ``.empty`` rules (also from the legacy stylesheet) which the
+ * panels reference and ui-v1 didn't otherwise have.
+ * ───────────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--sub);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.btn:hover { border-color: var(--border-hover); color: var(--text); }
+.btn--primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.btn--primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
+.btn--ghost { background: transparent; border-color: var(--border); }
+
+.empty {
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-style: italic;
+}
+
+.run-events, .run-logs {
+  display: grid; gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+.run-events--err { border-color: rgba(239, 83, 80, 0.45); }
+.run-events-title, .run-logs-title { font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); font-weight: 600; }
+.run-events-list {
+  font-family: var(--font-mono); font-size: var(--font-xs); line-height: 1.6;
+  max-height: 240px; overflow-y: auto;
+}
+.run-event { color: var(--sub); }
+.run-event--warn  { color: var(--amber); }
+.run-event--error { color: var(--red); }
+.run-event-ts { color: var(--dim); margin-right: 8px; }
+
+.run-logs-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.run-logs-controls select, .run-logs-controls input {
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: var(--font-xs);
+  font-family: var(--font-mono);
+}
+.run-logs-body {
+  font-family: var(--font-mono); font-size: var(--font-xs); line-height: 1.6;
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--sub);
+}
+.run-logs-error { color: var(--red); margin-top: 6px; }
+.run-logs-jump  { align-self: flex-end; font-size: var(--font-xs); }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Latency Timeline chart (completed runs)
+ *
+ * Copied verbatim from ``operator/ui/style.css``. ``.chart-box`` is the
+ * shared chart-canvas wrapper from the legacy ui's chart system; ui-v1's
+ * own ``ChartWrapper`` is a separate component, so we bring this rule
+ * along for the LatencyTimelineChart that calls ``window.Chart``
+ * directly.
+ * ───────────────────────────────────────────────────────────────────── */
+
+.chart-box {
+  position: relative;
+  height: 260px;
+}
+.chart-box canvas { display: block; width: 100% !important; height: 100% !important; }
+
+.run-latency-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * LogStrip — bottom-pinned event feed
+ *
+ * Copied verbatim from ``operator/ui/style.css``. Only adaptation:
+ * dropped ``grid-area: log;`` because ui-v1's ``.app`` is a flex column,
+ * not a grid. The flex layout already pins the strip to the bottom (it's
+ * the last child; ``.content`` above carries ``flex: 1``).
+ *
+ * ``--log-strip-height: 180px`` mirrors the legacy default; the strip
+ * sets ``flex: 0 0 auto`` and respects ``min-height: 0`` so its body
+ * scrolls instead of pushing siblings.
+ * ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  --log-strip-height: 180px;
+}
+
+.log-strip {
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  min-height: 0;
+  height: var(--log-strip-height);
+  flex: 0 0 auto;
+}
+.log-strip-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.log-strip-title {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+.log-strip-filters { display: flex; gap: 4px; }
+.log-strip-filter {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--sub);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.log-strip-filter:hover { color: var(--text); border-color: var(--border-hover); }
+.log-strip-filter--active {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.log-strip-filter-count {
+  font-size: 9px;
+  background: var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+  color: var(--sub);
+}
+.log-strip-filter--active .log-strip-filter-count { background: var(--accent-dim); color: var(--accent); }
+
+.log-strip-body {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 16px 12px;
+  flex: 1;
+  overflow-y: auto;
+}
+.log-strip-entry { color: var(--sub); }
+.log-strip-entry .ts { color: var(--dim); margin-right: 8px; }
+.log-strip-entry--warn  { color: var(--amber); }
+.log-strip-entry--error { color: var(--red); }
+.log-strip-entry--warn .ts, .log-strip-entry--error .ts { color: rgba(255, 255, 255, 0.35); }
+.log-strip-cat {
+  display: inline-block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--border);
+  color: var(--dim);
+}
+.log-strip-cat--phase   { background: var(--blue-dim);  color: var(--blue); }
+.log-strip-cat--worker  { background: var(--pink-dim);  color: var(--pink); }
+.log-strip-cat--records { background: var(--green-dim); color: var(--green); }

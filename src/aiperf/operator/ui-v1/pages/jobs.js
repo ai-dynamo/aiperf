@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
-import { jobs } from '../lib/state.js';
+import { jobs, dedupeByNsName } from '../lib/state.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 import { palette } from '../lib/theme.js';
 import { JobTable } from '../components/job-table.js';
@@ -82,7 +82,7 @@ export function Jobs() {
       async () => {
         try {
           const data = await api.listJobs();
-          const list = data?.jobs ?? [];
+          const list = dedupeByNsName(data?.jobs ?? []);
           jobs.value = list;
           setLocalJobs(list);
           setLoadError(null);

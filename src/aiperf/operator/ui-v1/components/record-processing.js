@@ -105,7 +105,6 @@ export function RecordProcessing({ phases }) {
             <th>Errors</th>
             <th>rec/s</th>
             <th>Progress</th>
-            <th>vs Reqs</th>
           </tr>
         </thead>
         <tbody>
@@ -115,10 +114,7 @@ export function RecordProcessing({ phases }) {
             const re = p.recordsError ?? 0;
             const rps = p.recordsPerSecond ?? 0;
             const recPct = p.recordsProgressPercent ?? 0;
-            const reqDone = p.requestsCompleted ?? 0;
-            const reqTotal = p.requestsTotal ?? 0;
             const phaseRecords = rs + re;
-            const lag = Math.max(0, reqDone - phaseRecords);
             const sendingComplete = p.sendingComplete ?? false;
             const wasCancelled = p.wasCancelled ?? false;
             const timedOut = p.timeoutTriggered ?? false;
@@ -147,11 +143,6 @@ export function RecordProcessing({ phases }) {
                     </div>
                     <span class="record-progress-pct">${fmtNumber(recPct, 1)}%</span>
                   </div>
-                </td>
-                <td class="num" title=${'records ' + fmtInt(phaseRecords) + ' / requests-completed ' + fmtInt(reqDone)}>
-                  ${reqTotal > 0 || reqDone > 0
-                    ? html`<span class=${lag > 0 ? 'record-cell--warn' : 'record-cell--ok'}>${lag > 0 ? '-' + fmtInt(lag) : '0'}</span>`
-                    : '---'}
                 </td>
               </tr>
             `;

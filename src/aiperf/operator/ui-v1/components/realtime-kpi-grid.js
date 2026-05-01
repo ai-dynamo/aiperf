@@ -278,10 +278,10 @@ function ReliabilityTile({ summary, slos, timeseries }) {
   const errVal = (typeof errorCount === 'number') ? errorCount : (errorCount?.avg ?? 0);
   const kind = errVal === 0 ? 'good' : 'warn';
   // Sparkline: error_rate trend (lower is better) — fall back to
-  // error_request_count if error_rate isn't streamed. Both are emitted
-  // by the records-manager when available.
-  const sparkPoints = pluck(ts['error_rate'], 'avg').length > 0
-    ? pluck(ts['error_rate'], 'avg')
+  // error_request_count if error_rate isn't streamed.
+  const errorRateSeries = pluck(ts['error_rate'], 'avg');
+  const sparkPoints = errorRateSeries.length > 0
+    ? errorRateSeries
     : pluck(ts['error_request_count'], 'avg');
   const sparkStroke = kind === 'good' ? 'var(--accent)' : 'var(--red)';
   const sparkFill = kind === 'good' ? 'var(--accent-dim)' : 'rgba(239,83,80,0.15)';

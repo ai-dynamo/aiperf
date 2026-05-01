@@ -6,6 +6,7 @@ import { TopNav } from './components/top-nav.js';
 import { Breadcrumb } from './components/breadcrumb.js';
 import { ClusterStatsBanner } from './components/cluster-stats-banner.js';
 import { CommandPalette } from './components/command-palette.js';
+import { LogStrip } from './components/log-strip.js';
 import { Dashboard } from './pages/dashboard.js';
 import { Jobs } from './pages/jobs.js';
 import { JobDetail } from './pages/job-detail.js';
@@ -78,6 +79,7 @@ function App() {
         </div>
       `}
       <div class="content">${page}</div>
+      <${LogStrip} />
       ${showPalette && html`<${CommandPalette} onClose=${() => setShowPalette(false)} />`}
     </div>
   `;
