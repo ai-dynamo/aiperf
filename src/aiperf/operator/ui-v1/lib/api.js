@@ -65,6 +65,15 @@ export const api = {
     return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/children${q}`);
   },
 
+  /** Create an AIPerfJob from a parsed manifest object. POSTs the manifest
+   *  wrapped under {manifest: ...} as the operator API expects. Returns the
+   *  created object's {namespace, name} on success; throws ``Error("API <n>: <body>")``
+   *  on non-2xx so callers can extract status + body.detail.
+   */
+  createJob(manifest) {
+    return apiFetch('/jobs', { method: 'POST', body: JSON.stringify({ manifest }) });
+  },
+
   /** Cancel a running job */
   cancelJob(ns, name) {
     return apiFetch(
