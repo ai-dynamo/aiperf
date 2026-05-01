@@ -1076,8 +1076,6 @@ accuracy_grader:
     description: |
       Math grader that evaluates mathematical expressions for equivalence.
       Handles symbolic comparison, numeric tolerance, and expression normalization.
-    metadata:
-      is_implemented: false
 
   multiple_choice:
     class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
@@ -1113,11 +1111,15 @@ accuracy_benchmark:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
     description: |
       AIME (American Invitational Mathematics Examination) benchmark for
-      advanced high school mathematics problems.
+      advanced high school mathematics problems. Aligned with the trt-llm
+      benchmark recipe's DeepEval-backed AIME path: same dataset
+      (Maxwell-Jia/AIME_2024), same prompt template, same default n_shots
+      (8) and chain-of-thought (on), same default system prompt.
     metadata:
       default_grader: math
-      default_n_shots: 0
-      is_implemented: false
+      default_n_shots: 8
+      default_enable_cot: true
+      default_system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
 
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark

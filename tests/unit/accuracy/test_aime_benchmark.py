@@ -1,23 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for ``AIMEBenchmark``.
+"""Unit tests for ``AIMEBenchmark`` after trt-llm reference alignment.
 
-The HuggingFace dataset is mocked end-to-end so the suite is fully offline
-and deterministic. Coverage targets:
-
-1. Prompt construction (completions form): instruction, few-shots, CoT.
-2. Chat-message construction: lighteval-style multi-turn structure with
-   the instruction on the first user message only and ``\\boxed{}``
-   assistant primers.
-3. Few-shot sampling: order-stable, capped at dataset size, empty when
-   ``n_shots <= 0``.
-4. ``load_problems`` end-to-end: returns one ``BenchmarkProblem`` per row
-   with the right field shape (``raw_messages``, ``ground_truth``,
-   ``metadata.generation_size``, ``task``), and the ``tasks`` parameter
-   is correctly ignored.
-5. Pathological dataset rows: empty splits, very long problems, integer
-   answers stringified, unicode in problem text.
+The expected prompt strings in this suite are byte-equal to the output
+of the recipe's ``AIMETemplate.generate_output``
+(``trt-llm-benchmark-recipe/src/accuracy/aime/template.py``) — any
+divergence between aiperf and the reference would be caught here.
 """
 
 from __future__ import annotations
@@ -28,8 +17,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.accuracy.benchmarks.aime import (
+    COT_SUFFIX,
     DEFAULT_GENERATION_SIZE,
-    INSTRUCTION_PREFIX,
+    DEFAULT_N_SHOTS,
+    FEW_SHOT_HEADER,
+    MAX_N_SHOTS,
+    NO_COT_SUFFIX,
     TASK_NAME,
     AIMEBenchmark,
 )
@@ -50,17 +43,15 @@ def _make_user_config() -> UserConfig:
     )
 
 
-def _make_row(problem: str = "What is 1+1?", answer: int = 2) -> dict[str, Any]:
-    return {"Problem": problem, "Answer": answer}
+def _make_row(
+    problem: str = "What is 1+1?",
+    answer: int = 2,
+    solution: str = "Add the numbers.",
+) -> dict[str, Any]:
+    return {"Problem": problem, "Answer": answer, "Solution": solution}
 
 
 def _make_fake_dataset(rows: list[dict[str, Any]]) -> MagicMock:
-    """Return a MagicMock that quacks like a HuggingFace ``Dataset``.
-
-    Supports iteration (``for row in ds``), length (``len(ds)``), and
-    integer indexing (``ds[i]``) — the three operations the AIME loader
-    actually uses.
-    """
     ds = MagicMock()
     ds.__iter__ = MagicMock(side_effect=lambda: iter(rows))
     ds.__len__ = MagicMock(return_value=len(rows))
@@ -73,157 +64,128 @@ def bench() -> AIMEBenchmark:
     return AIMEBenchmark(user_config=_make_user_config())
 
 
+class TestDefaults:
+    """Defaults must mirror the trt-llm recipe."""
+
+    def test_n_shots_default_is_8(self) -> None:
+        assert DEFAULT_N_SHOTS == 8
+
+    def test_max_n_shots_is_8(self) -> None:
+        """Recipe asserts ``n_shots <= 8`` — we mirror that cap."""
+        assert MAX_N_SHOTS == 8
+
+    def test_generation_size_default_is_32k(self) -> None:
+        """Recipe runs unbounded; lighteval-aligned tasks use 32768."""
+        assert DEFAULT_GENERATION_SIZE == 32768
+
+
 class TestFormatPrompt:
-    """Flat-completions prompt construction."""
+    """Flat prompt must be byte-equal to recipe ``AIMETemplate.generate_output``."""
 
-    def test_instruction_prefix_is_present(self, bench: AIMEBenchmark) -> None:
-        prompt = bench._format_prompt(
-            _make_row("What is 5+5?", 10), few_shots=[], enable_cot=False
+    def test_zero_shot_no_cot_matches_recipe(self, bench: AIMEBenchmark) -> None:
+        """Zero shots, CoT off — recipe emits no header, no examples,
+        and the no-CoT suffix after **Answer**:."""
+        row = _make_row(problem="Compute 2+2.", answer=4)
+        prompt = bench._format_prompt(row, few_shots=[], enable_cot=False)
+        expected = (
+            "**Problem**: Compute 2+2.\n"
+            "**Answer**: \n"
+            "\n"
+            "No explanation needed. Just return a number."
         )
-        assert prompt.startswith(INSTRUCTION_PREFIX)
+        assert prompt == expected
 
-    def test_problem_text_appears(self, bench: AIMEBenchmark) -> None:
-        prompt = bench._format_prompt(
-            _make_row("Compute 2^10.", 1024),
-            few_shots=[],
-            enable_cot=False,
+    def test_zero_shot_with_cot_matches_recipe(self, bench: AIMEBenchmark) -> None:
+        row = _make_row(problem="Compute 2+2.", answer=4)
+        prompt = bench._format_prompt(row, few_shots=[], enable_cot=True)
+        expected = (
+            "**Problem**: Compute 2+2.\n**Answer**: \n\nLet's think step-by-step."
         )
-        assert "Compute 2^10." in prompt
+        assert prompt == expected
 
-    def test_zero_shot_no_cot_ends_with_answer_marker(
+    def test_one_shot_with_cot_includes_solution(self, bench: AIMEBenchmark) -> None:
+        """Recipe includes **Solution**: in few-shot blocks ONLY when CoT is on."""
+        shot = bench._format_example(
+            _make_row(problem="What is 1+1?", answer=2, solution="Trivial.")
+        )
+        row = _make_row(problem="What is 2+2?", answer=4)
+        prompt = bench._format_prompt(row, few_shots=[shot], enable_cot=True)
+        expected = (
+            FEW_SHOT_HEADER
+            + "**Problem**: What is 1+1?\n"
+            + "**Solution**: Trivial.\n"
+            + "**Answer**: 2\n"
+            + "\n"
+            + "**Problem**: What is 2+2?\n"
+            + "**Answer**: \n"
+            + "\n"
+            + COT_SUFFIX
+        )
+        assert prompt == expected
+
+    def test_one_shot_no_cot_omits_solution(self, bench: AIMEBenchmark) -> None:
+        shot = bench._format_example(
+            _make_row(problem="What is 1+1?", answer=2, solution="Trivial.")
+        )
+        row = _make_row(problem="What is 2+2?", answer=4)
+        prompt = bench._format_prompt(row, few_shots=[shot], enable_cot=False)
+        # No **Solution**: line in few-shot block
+        assert "**Solution**:" not in prompt
+        # No-CoT suffix at the end
+        assert prompt.endswith(NO_COT_SUFFIX)
+
+    def test_zero_shot_emits_no_header(self, bench: AIMEBenchmark) -> None:
+        """When n_shots=0 the recipe emits no header at all (the
+        ``FEW_SHOT_HEADER`` only appears for n_shots > 0)."""
+        prompt = bench._format_prompt(_make_row(), few_shots=[], enable_cot=False)
+        assert FEW_SHOT_HEADER not in prompt
+
+    def test_few_shot_header_present_when_shots_present(
         self, bench: AIMEBenchmark
     ) -> None:
-        prompt = bench._format_prompt(
-            _make_row("trivial", 1), few_shots=[], enable_cot=False
-        )
-        assert prompt.endswith("Answer:")
-        assert "step by step" not in prompt
+        shot = bench._format_example(_make_row())
+        prompt = bench._format_prompt(_make_row(), few_shots=[shot], enable_cot=False)
+        assert prompt.startswith(FEW_SHOT_HEADER)
 
-    def test_cot_inserts_step_by_step_before_answer(self, bench: AIMEBenchmark) -> None:
-        prompt = bench._format_prompt(
-            _make_row("trivial", 1), few_shots=[], enable_cot=True
-        )
-        assert "Let's think step by step" in prompt
-        assert prompt.endswith("Answer:")
 
-    def test_few_shot_examples_precede_test_problem(self, bench: AIMEBenchmark) -> None:
-        shot = bench._format_example(_make_row("FIRST", 1))
-        prompt = bench._format_prompt(
-            _make_row("SECOND", 2), few_shots=[shot], enable_cot=False
-        )
-        assert prompt.index("FIRST") < prompt.index("SECOND")
+class TestFormatExample:
+    def test_collects_problem_solution_answer(self, bench: AIMEBenchmark) -> None:
+        ex = bench._format_example(_make_row(problem="Q?", answer=42, solution="S"))
+        assert ex["problem"] == "Q?"
+        assert ex["solution"] == "S"
+        assert ex["answer"] == "42"
+        assert isinstance(ex["answer"], str)
 
-    def test_few_shot_uses_boxed_answer(self, bench: AIMEBenchmark) -> None:
-        """Few-shot examples must show \\boxed{} so the model is primed
-        to emit the same format."""
-        shot = bench._format_example(_make_row("ex", 7))
-        prompt = bench._format_prompt(
-            _make_row("test", 8), few_shots=[shot], enable_cot=False
-        )
-        assert "\\boxed{7}" in prompt
-
-    def test_few_shot_does_not_use_boxed_for_test_query(
-        self, bench: AIMEBenchmark
-    ) -> None:
-        """The trailing test query has no boxed answer (the model must
-        produce one)."""
-        shot = bench._format_example(_make_row("ex", 7))
-        prompt = bench._format_prompt(
-            _make_row("test", 8), few_shots=[shot], enable_cot=False
-        )
-        # The "8" answer is the gold for the test query and must NOT appear
-        # in the prompt (would be cheating).
-        assert "\\boxed{8}" not in prompt
+    def test_missing_solution_field_handled(self, bench: AIMEBenchmark) -> None:
+        """Some upstream rows omit Solution; we tolerate that with empty."""
+        row = {"Problem": "Q?", "Answer": 1}
+        ex = bench._format_example(row)
+        assert ex["solution"] == ""
 
 
 class TestBuildChatMessages:
-    """lighteval-style multi-turn chat construction."""
+    """Chat-message form is the recipe's flat prompt wrapped in one user message.
+
+    The trt-llm recipe sends AIME prompts as a single string to DeepEval
+    (no multi-turn conversation), so our chat representation does the
+    same: one user message containing the recipe-rendered prompt.
+    """
 
     def test_zero_shot_zero_cot_is_single_user_message(
         self, bench: AIMEBenchmark
     ) -> None:
-        msgs = bench._build_chat_messages(
-            _make_row("Q?", 1), few_shots=[], enable_cot=False
-        )
+        msgs = bench._build_chat_messages(_make_row(), few_shots=[], enable_cot=False)
         assert len(msgs) == 1
         assert msgs[0]["role"] == "user"
 
-    def test_zero_shot_user_message_includes_instruction(
-        self, bench: AIMEBenchmark
-    ) -> None:
-        msgs = bench._build_chat_messages(
-            _make_row("Q?", 1), few_shots=[], enable_cot=False
-        )
-        assert "non-negative integer" in msgs[0]["content"]
-        assert "\\boxed" in msgs[0]["content"]
-
-    def test_cot_appends_step_by_step(self, bench: AIMEBenchmark) -> None:
-        msgs = bench._build_chat_messages(
-            _make_row("Q?", 1), few_shots=[], enable_cot=True
-        )
-        assert "step by step" in msgs[-1]["content"]
-
-    def test_few_shot_pairs_are_user_then_assistant(self, bench: AIMEBenchmark) -> None:
-        shots = [
-            bench._format_example(_make_row("A", 1)),
-            bench._format_example(_make_row("B", 2)),
-        ]
-        msgs = bench._build_chat_messages(
-            _make_row("C", 3), few_shots=shots, enable_cot=False
-        )
-        # Expected: user/assistant/user/assistant/user
-        assert [m["role"] for m in msgs] == [
-            "user",
-            "assistant",
-            "user",
-            "assistant",
-            "user",
-        ]
-
-    def test_only_first_user_message_has_instruction(
-        self, bench: AIMEBenchmark
-    ) -> None:
-        shots = [
-            bench._format_example(_make_row("A", 1)),
-            bench._format_example(_make_row("B", 2)),
-        ]
-        msgs = bench._build_chat_messages(
-            _make_row("C", 3), few_shots=shots, enable_cot=False
-        )
-        user_messages = [m["content"] for m in msgs if m["role"] == "user"]
-        assert "non-negative integer" in user_messages[0]
-        for content in user_messages[1:]:
-            assert "non-negative integer" not in content
-
-    def test_assistant_messages_use_boxed_format(self, bench: AIMEBenchmark) -> None:
-        shots = [bench._format_example(_make_row("A", 7))]
-        msgs = bench._build_chat_messages(
-            _make_row("B", 8), few_shots=shots, enable_cot=False
-        )
-        assistant = [m for m in msgs if m["role"] == "assistant"]
-        assert assistant[0]["content"] == "\\boxed{7}"
-
-
-class TestFormatExample:
-    """Few-shot example formatting helper."""
-
-    def test_answer_is_stringified(self, bench: AIMEBenchmark) -> None:
-        ex = bench._format_example(_make_row("Q?", 42))
-        assert ex["answer"] == "42"
-        assert isinstance(ex["answer"], str)
-
-    def test_formatted_uses_boxed_answer(self, bench: AIMEBenchmark) -> None:
-        ex = bench._format_example(_make_row("Q?", 42))
-        assert "\\boxed{42}" in ex["formatted"]
-
-    def test_formatted_contains_problem_text(self, bench: AIMEBenchmark) -> None:
-        ex = bench._format_example(_make_row("MyProblem", 1))
-        assert "MyProblem" in ex["formatted"]
+    def test_chat_content_equals_flat_prompt(self, bench: AIMEBenchmark) -> None:
+        row = _make_row(problem="Sample.", answer=7)
+        flat = bench._format_prompt(row, few_shots=[], enable_cot=True)
+        msgs = bench._build_chat_messages(row, few_shots=[], enable_cot=True)
+        assert msgs[0]["content"] == flat
 
 
 class TestBuildFewShots:
-    """Few-shot sampling: order-stable, bounded, sequential."""
-
     def test_zero_shots_returns_empty(self, bench: AIMEBenchmark) -> None:
         ds = _make_fake_dataset([_make_row("a", 1), _make_row("b", 2)])
         assert bench._build_few_shots(ds, n_shots=0) == []
@@ -249,8 +211,6 @@ class TestBuildFewShots:
 
 
 class TestLoadProblems:
-    """End-to-end ``load_problems`` with a mocked HuggingFace dataset."""
-
     @pytest.mark.asyncio
     async def test_returns_one_problem_per_row(self) -> None:
         rows = [_make_row(f"q{i}", i) for i in range(5)]
@@ -306,7 +266,7 @@ class TestLoadProblems:
         assert problems[0].metadata["generation_size"] == DEFAULT_GENERATION_SIZE
 
     @pytest.mark.asyncio
-    async def test_raw_messages_populated_for_chat_endpoint(self) -> None:
+    async def test_raw_messages_populated(self) -> None:
         rows = [_make_row("q", 1)]
         with patch(
             "aiperf.accuracy.benchmarks.aime.load_dataset",
@@ -317,27 +277,19 @@ class TestLoadProblems:
                 tasks=None, n_shots=0, enable_cot=False
             )
         assert problems[0].raw_messages is not None
-        assert len(problems[0].raw_messages) >= 1
+        assert len(problems[0].raw_messages) == 1
         assert problems[0].raw_messages[0]["role"] == "user"
 
     @pytest.mark.asyncio
-    async def test_few_shot_count_matches_n_shots(self) -> None:
-        rows = [_make_row(f"q{i}", i) for i in range(10)]
-        with patch(
-            "aiperf.accuracy.benchmarks.aime.load_dataset",
-            return_value=_make_fake_dataset(rows),
-        ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
-            problems = await bench.load_problems(
-                tasks=None, n_shots=3, enable_cot=False
-            )
-        # With 3 few-shots, every problem's chat messages should have:
-        # 3 user + 3 assistant + 1 user = 7 messages.
-        assert len(problems[0].raw_messages) == 7
+    async def test_max_n_shots_enforced(self) -> None:
+        """The recipe asserts ``n_shots <= 8``; we raise ``ValueError``
+        rather than silently accepting more."""
+        bench = AIMEBenchmark(user_config=_make_user_config())
+        with pytest.raises(ValueError, match="at most 8"):
+            await bench.load_problems(tasks=None, n_shots=9, enable_cot=False)
 
     @pytest.mark.asyncio
     async def test_tasks_argument_is_ignored(self) -> None:
-        """AIME has no subtasks; ``tasks=["foo"]`` must not filter or error."""
         rows = [_make_row("a", 1), _make_row("b", 2)]
         with patch(
             "aiperf.accuracy.benchmarks.aime.load_dataset",
@@ -350,10 +302,7 @@ class TestLoadProblems:
             named_problems = await bench.load_problems(
                 tasks=["aime"], n_shots=0, enable_cot=False
             )
-            unknown_problems = await bench.load_problems(
-                tasks=["does-not-exist"], n_shots=0, enable_cot=False
-            )
-        assert len(none_problems) == len(named_problems) == len(unknown_problems) == 2
+        assert len(none_problems) == len(named_problems) == 2
 
     @pytest.mark.asyncio
     async def test_cot_propagates_to_every_problem(self) -> None:
@@ -364,12 +313,11 @@ class TestLoadProblems:
         ):
             bench = AIMEBenchmark(user_config=_make_user_config())
             problems = await bench.load_problems(tasks=None, n_shots=0, enable_cot=True)
-        assert all("step by step" in p.prompt for p in problems)
+        # Every prompt ends with the CoT suffix.
+        assert all(p.prompt.endswith(COT_SUFFIX) for p in problems)
 
 
 class TestPathologicalDatasetRows:
-    """Adversarial / boundary inputs that must not crash the loader."""
-
     @pytest.mark.asyncio
     async def test_empty_dataset_returns_empty_list(self) -> None:
         with patch(
@@ -414,8 +362,6 @@ class TestPathologicalDatasetRows:
     async def test_zero_padded_three_digit_answer_stringifies_cleanly(
         self,
     ) -> None:
-        """AIME answers can be 0-999; some sources zero-pad. Our schema
-        uses Python ints, so str(7) == '7' (no padding). Document via test."""
         rows = [_make_row("q", 7)]
         with patch(
             "aiperf.accuracy.benchmarks.aime.load_dataset",
@@ -426,17 +372,3 @@ class TestPathologicalDatasetRows:
                 tasks=None, n_shots=0, enable_cot=False
             )
         assert problems[0].ground_truth == "7"
-
-    @pytest.mark.asyncio
-    async def test_n_shots_larger_than_dataset_clamps(self) -> None:
-        rows = [_make_row("only-one", 1)]
-        with patch(
-            "aiperf.accuracy.benchmarks.aime.load_dataset",
-            return_value=_make_fake_dataset(rows),
-        ):
-            bench = AIMEBenchmark(user_config=_make_user_config())
-            problems = await bench.load_problems(
-                tasks=None, n_shots=999, enable_cot=False
-            )
-        # 1 few-shot pair (user + assistant) + 1 main user = 3 messages.
-        assert len(problems[0].raw_messages) == 3

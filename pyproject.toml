@@ -97,6 +97,10 @@ dev = [
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
 ]
+accuracy = [
+    "latex2sympy2-extended>=1.11.0",
+    "sympy>=1.14.0",
+]
 
 [dependency-groups]
 dev = [
