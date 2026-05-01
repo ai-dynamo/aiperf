@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { html } from 'htm/preact';
+import { useState } from 'preact/hooks';
 
 /**
  * Dot color for a pod based on phase and ready state.
@@ -26,9 +27,17 @@ const MAX_VISIBLE_PODS = 100;
 
 /**
  * Pods status table — colored status dot, name, phase, ready, restarts.
+ *
+ * Renders a slim collapsed view by default (just the dots + ready / restart
+ * totals); click the toggle to expand into the full per-pod table. Sweep
+ * jobs spawn 200+ pods, so the default-collapsed shape keeps the page
+ * skim-friendly while preserving access to the detail.
+ *
  * @param {{ pods: Array<{name: string, phase: string, ready: boolean, restarts: number}> }} props
  */
 export function PodsBar({ pods }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!pods || pods.length === 0) {
     return html`<div class="pods-bar pods-bar--empty">No pods</div>`;
   }
@@ -39,8 +48,59 @@ export function PodsBar({ pods }) {
   const overflowCount = Math.max(0, pods.length - MAX_VISIBLE_PODS);
   const visiblePods = overflowCount > 0 ? pods.slice(0, MAX_VISIBLE_PODS) : pods;
 
+  const dots = html`
+    <div class="pods-bar-dots" data-testid="pods-bar-dots">
+      ${visiblePods.map((pod) => html`
+        <span
+          key=${pod.name}
+          class=${'pod-dot ' + podDotClass(pod)}
+          title=${pod.name + ' · ' + (pod.phase ?? 'unknown') + (pod.ready ? ' · ready' : '')}
+        />
+      `)}
+      ${overflowCount > 0 && html`
+        <span class="pods-bar-dots-overflow" title=${'+' + overflowCount + ' more pods'}>
+          +${overflowCount}
+        </span>
+      `}
+    </div>
+  `;
+
+  const summary = html`
+    <div class="pods-bar-summary">
+      <span class="pods-bar-ready">${readyCount}/${pods.length} ready</span>
+      ${totalRestarts > 0 && html`
+        <span class="pods-bar-restarts">${totalRestarts} restart${totalRestarts !== 1 ? 's' : ''}</span>
+      `}
+    </div>
+  `;
+
+  const toggle = html`
+    <button
+      type="button"
+      class="pods-bar-toggle"
+      data-testid="pods-bar-toggle"
+      aria-expanded=${expanded}
+      onclick=${() => setExpanded(v => !v)}
+    >
+      ${expanded ? 'Hide pod details' : 'Show pod details'}
+    </button>
+  `;
+
+  if (!expanded) {
+    return html`
+      <div class="pods-bar pods-bar--slim">
+        ${dots}
+        <div class="pods-bar-meta">
+          ${summary}
+          ${toggle}
+        </div>
+      </div>
+    `;
+  }
+
   return html`
     <div class="pods-bar">
+      ${dots}
       <table class="pods-table" data-testid="pods-table">
         <thead>
           <tr>
@@ -80,11 +140,9 @@ export function PodsBar({ pods }) {
           `}
         </tbody>
       </table>
-      <div class="pods-bar-summary">
-        <span class="pods-bar-ready">${readyCount}/${pods.length} ready</span>
-        ${totalRestarts > 0 && html`
-          <span class="pods-bar-restarts">${totalRestarts} restart${totalRestarts !== 1 ? 's' : ''}</span>
-        `}
+      <div class="pods-bar-meta">
+        ${summary}
+        ${toggle}
       </div>
     </div>
   `;

@@ -1861,6 +1861,42 @@ select, input {
   font-weight: 500;
 }
 
+.pods-bar-dots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.pods-bar-dots-overflow {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.pods-bar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.pods-bar--slim .pods-bar-meta {
+  margin-top: 0;
+}
+
+.pods-bar-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--sub);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.pods-bar-toggle:hover { color: var(--text); border-color: var(--sub); }
+
 /* ──────────────────────────────────────────────────────────────
    Metric Selector
 ────────────────────────────────────────────────────────────── */
