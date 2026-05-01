@@ -86,7 +86,9 @@ def _wait_for_tcp(host: str, port: int, deadline_s: float = 30.0) -> None:
     )
 
 
-async def test_router_serves_from_subprocess_populated_hf_home(tmp_path: Path) -> None:
+async def test_router_serves_from_subprocess_populated_hf_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     hf_home = tmp_path / "hf"
     hf_home.mkdir()
     ctx = multiprocessing.get_context("spawn")
@@ -120,10 +122,8 @@ async def test_router_serves_from_subprocess_populated_hf_home(tmp_path: Path) -
         # Round-trip: load the downloaded snapshot offline, verify token IDs
         # match the warmer's output. HF_HOME points at the hermetic dir so the
         # parent's cache doesn't shadow the bundle under test.
-        import os
-
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
         from transformers import AutoTokenizer
 
         actual = AutoTokenizer.from_pretrained(str(local_path)).encode("Hello, world!")
