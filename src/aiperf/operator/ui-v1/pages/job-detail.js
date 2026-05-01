@@ -1521,29 +1521,51 @@ function formatRunSelectorTime(epochSeconds) {
 function RunSelectorCard({ namespace, name, epochs, current, hasLive, isRunning }) {
   const rows = buildRunSelectorRows({ namespace, name, epochs, current, hasLive, isRunning });
   if (rows.length === 0) return null;
+  const epochCount = rows.filter(r => r.kind === 'epoch').length;
   return html`
-    <div class="card run-selector-card" data-testid="job-detail-run-selector">
-      <div class="card-title">Runs</div>
-      <div class="run-selector-list">
-        ${rows.map(row => html`
-          <a
-            key=${row.kind + ':' + (row.epoch || 'live')}
-            href=${row.href}
-            onclick=${e => { e.preventDefault(); navigate(row.href.slice(1)); }}
-            class=${'run-selector-row' + (row.selected ? ' run-selector-row--selected' : '')}
-            data-testid=${row.kind === 'live' ? 'run-selector-live' : 'run-selector-epoch'}
-          >
-            <div class="run-selector-main">
-              <span class="run-selector-label">${row.label}</span>
-              ${row.isLatest && html`<span class="metric-source-chip">LATEST</span>`}
-              ${row.selected && html`<span class="metric-source-chip">CURRENT</span>`}
-            </div>
-            <div class="run-selector-meta">
-              <span>${row.kind === 'live' ? 'current CR status' : formatRunSelectorTime(row.mtimeEpoch)}</span>
-              <span>${row.fileCount == null ? 'live' : `${fmtInt(row.fileCount)} files`}</span>
-            </div>
-          </a>
-        `)}
+    <div class="run-selector-card" data-testid="job-detail-run-selector">
+      <div class="run-selector-bar">
+        <span class="run-selector-bar-title">Runs</span>
+        ${epochCount > 0 && html`<span class="run-selector-bar-count">${epochCount}</span>`}
+        <div class="run-selector-pills" role="tablist">
+          ${rows.map(row => {
+            const isLive = row.kind === 'live';
+            const dotClass = isLive
+              ? (isRunning ? ' run-pill-dot--running' : ' run-pill-dot--idle')
+              : '';
+            const meta = isLive
+              ? null
+              : formatRunSelectorTime(row.mtimeEpoch);
+            const fileSuffix = isLive
+              ? null
+              : (row.fileCount != null ? ` · ${fmtInt(row.fileCount)} files` : '');
+            const title = isLive
+              ? (isRunning ? 'Live — streaming current-run metrics' : 'Latest persisted run')
+              : `Epoch ${row.label}${fileSuffix ?? ''}${row.isLatest ? ' (latest)' : ''}`;
+            return html`
+              <a
+                key=${row.kind + ':' + (row.epoch || 'live')}
+                href=${row.href}
+                onclick=${e => { e.preventDefault(); navigate(row.href.slice(1)); }}
+                class=${'run-pill'
+                  + (isLive ? ' run-pill--live' : '')
+                  + (row.selected ? ' run-pill--selected' : '')
+                  + (row.isLatest && !row.selected ? ' run-pill--latest' : '')}
+                data-testid=${isLive ? 'run-selector-live' : 'run-selector-epoch'}
+                role="tab"
+                aria-selected=${row.selected ? 'true' : 'false'}
+                title=${title}
+              >
+                ${isLive
+                  ? html`<span class=${'run-pill-dot' + dotClass}></span>`
+                  : null}
+                <span class="run-pill-label">${row.label}</span>
+                ${meta && html`<span class="run-pill-meta">${meta}</span>`}
+                ${row.isLatest && !isLive && html`<span class="run-pill-badge">latest</span>`}
+              </a>
+            `;
+          })}
+        </div>
       </div>
     </div>
   `;
@@ -2064,6 +2086,35 @@ export function JobDetail({ namespace, name, epoch }) {
     return palette.overlay1;
   }
 
+  // Per-extension chip that renders before each filename in the artifact list.
+  // Label is short (the extension, uppercase); color tints the background +
+  // border so users can scan the table by type. Unknown extensions fall back
+  // to a neutral grey so we never silently drop the chip.
+  function fileTypeChip(filename) {
+    const ext = (filename.split('.').pop() || '').toLowerCase();
+    const TYPES = {
+      json:    { label: 'JSON',    color: palette.yellow },
+      jsonl:   { label: 'JSONL',   color: palette.peach },
+      csv:     { label: 'CSV',     color: palette.green },
+      parquet: { label: 'PARQUET', color: palette.lavender },
+      txt:     { label: 'TXT',     color: palette.blue },
+      log:     { label: 'LOG',     color: palette.sapphire },
+      ansi:    { label: 'ANSI',    color: palette.sky },
+      yaml:    { label: 'YAML',    color: palette.teal },
+      yml:     { label: 'YAML',    color: palette.teal },
+      html:    { label: 'HTML',    color: palette.pink },
+      htm:     { label: 'HTML',    color: palette.pink },
+      zip:     { label: 'ZIP',     color: palette.overlay1 },
+      gz:      { label: 'GZ',      color: palette.overlay1 },
+      tar:     { label: 'TAR',     color: palette.overlay1 },
+      png:     { label: 'PNG',     color: palette.mauve },
+      jpg:     { label: 'JPG',     color: palette.mauve },
+      jpeg:    { label: 'JPG',     color: palette.mauve },
+      svg:     { label: 'SVG',     color: palette.mauve },
+    };
+    return TYPES[ext] ?? { label: (ext || 'FILE').toUpperCase().slice(0, 6), color: palette.overlay1 };
+  }
+
   return html`
     <div class="job-detail" data-testid="page-job-detail">
       <!-- Header -->
@@ -2462,6 +2513,7 @@ export function JobDetail({ namespace, name, epoch }) {
             ${files.map(f => {
               const ext = f.name.split('.').pop().toLowerCase();
               const previewable = PREVIEWABLE.has(ext);
+              const chip = fileTypeChip(f.name);
               const action = () => openFile(f.name);
               return html`
                 <div
@@ -2483,8 +2535,15 @@ export function JobDetail({ namespace, name, epoch }) {
                   onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
                   onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
                 >
-                  <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name)}>${f.name}</span>
-                  <div style="display: flex; align-items: center; gap: var(--space-2)">
+                  <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 0">
+                    <span
+                      class="file-type-chip"
+                      style=${'background: ' + chip.color + '22; color: ' + chip.color + '; border: 1px solid ' + chip.color + '55'}
+                      title=${'File type: ' + chip.label.toLowerCase()}
+                    >${chip.label}</span>
+                    <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap'}>${f.name}</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0">
                     <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
                     <span class="text-dim" style="font-size: var(--font-size-xs)">${humanSize(f.size_bytes)}</span>
                   </div>
