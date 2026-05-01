@@ -1868,6 +1868,46 @@ select, input {
   background: var(--bg-card);
 }
 
+/* Shared "polished select" — apply ``class="ui-select"`` to any <select>
+   that should match the standard styled chrome (custom chevron, hover/focus
+   ring, accent-tinted glow). Use for filter dropdowns and metric pickers
+   anywhere in the UI; keeps the look consistent without per-site inline
+   styles. */
+.ui-select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  padding: 6px 2rem 6px 10px;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color var(--transition-fast),
+              background-color var(--transition-fast),
+              box-shadow var(--transition-fast);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236a6a88' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+}
+.ui-select:hover {
+  border-color: var(--border-hover);
+}
+.ui-select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.ui-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.ui-select option {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
 /* ──────────────────────────────────────────────────────────────
    Command Palette
 ────────────────────────────────────────────────────────────── */
@@ -2434,17 +2474,28 @@ select, input {
 .run-event--warn  { color: var(--amber); }
 .run-event--error { color: var(--red); }
 .run-event-ts { color: var(--dim); margin-right: 8px; }
-
-.run-logs-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.run-logs-controls select, .run-logs-controls input {
-  background: var(--bg-tile);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  padding: 4px 8px;
-  font-size: var(--font-xs);
-  font-family: var(--font-mono);
+.run-event-cat {
+  display: inline-block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--border);
+  color: var(--dim);
 }
+.run-event-cat--normal    { background: var(--blue-dim); color: var(--blue); }
+.run-event-cat--warning   { background: rgba(255, 193, 7, 0.18); color: var(--amber); }
+.run-event-cat--scheduled { background: var(--blue-dim); color: var(--blue); }
+.run-event-cat--pulling   { background: rgba(38, 198, 218, 0.18); color: var(--cyan); }
+.run-event-cat--pulled    { background: var(--green-dim); color: var(--green); }
+.run-event-cat--created   { background: var(--pink-dim); color: var(--pink); }
+.run-event-cat--started   { background: rgba(118, 185, 0, 0.28); color: var(--accent); }
+.run-event-cat--killing   { background: rgba(251, 146, 60, 0.20); color: var(--peach); }
+.run-event-cat--warn      { background: rgba(255, 193, 7, 0.18); color: var(--amber); }
+.run-event-cat--error     { background: rgba(239, 83, 80, 0.20); color: var(--red); }
+
 .run-logs-body {
   font-family: var(--font-mono); font-size: var(--font-xs); line-height: 1.6;
   background: var(--bg-tile);
@@ -2458,6 +2509,121 @@ select, input {
 }
 .run-logs-error { color: var(--red); margin-top: 6px; }
 .run-logs-jump  { align-self: flex-end; font-size: var(--font-xs); }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Logs picker — title-cased control-plane chips + worker dropdown
+ * ───────────────────────────────────────────────────────────────────── */
+
+.run-logs-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.run-logs-actions {
+  display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.run-logs-tail {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--font-xs); color: var(--muted);
+}
+.run-logs-tail input {
+  width: 64px;
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color var(--transition-fast),
+              background-color var(--transition-fast),
+              box-shadow var(--transition-fast);
+  -moz-appearance: textfield;
+}
+.run-logs-tail input:hover { border-color: var(--border-hover); }
+.run-logs-tail input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.run-logs-tail input[type="number"]::-webkit-outer-spin-button,
+.run-logs-tail input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.run-logs-meta {
+  font-size: var(--font-xs);
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.logs-picker {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+}
+.logs-picker-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.logs-picker-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  min-width: 92px;
+}
+
+.cp-chips {
+  display: inline-flex; flex-wrap: wrap; gap: 6px;
+}
+.cp-chip {
+  display: inline-flex; align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--sub);
+  font-size: var(--font-xs);
+  font-family: var(--font-sans, inherit);
+  cursor: pointer;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
+.cp-chip:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card);
+  color: var(--text);
+}
+.cp-chip:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.cp-chip--active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cp-chip--active:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ui-select--rounded {
+  border-radius: 999px;
+  padding: 6px 2rem 6px 14px;
+  min-width: 240px;
+}
+.ui-select--sm {
+  min-width: 0;
+  padding: 4px 1.6rem 4px 10px;
+  font-size: var(--font-xs);
+}
 
 /* ─────────────────────────────────────────────────────────────────────
  * Latency Timeline chart (completed runs)

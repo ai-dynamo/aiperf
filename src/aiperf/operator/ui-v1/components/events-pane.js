@@ -11,6 +11,8 @@ import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 
+const pad = n => String(n).padStart(2, '0');
+
 function relTime(iso) {
   if (!iso) return '—';
   const t = new Date(iso).getTime();
@@ -20,6 +22,37 @@ function relTime(iso) {
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
+}
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (!isFinite(d.getTime())) return '—';
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+// Map a k8s event reason to a chip-color tone. Colors follow pod lifecycle:
+// blue=admission, cyan=in-progress fetch, green=ready/running, pink=container
+// shell created, peach=intentional teardown, amber=warning, red=hard failure.
+function eventCatTone(reason, type) {
+  const r = (reason ?? '').toLowerCase();
+  if (!r) return type === 'Warning' ? 'warning' : 'normal';
+
+  if (/(backoff|oom|evict|preempt)/.test(r)) return 'error';
+  if (r.startsWith('failed') || r.endsWith('failed')) return 'error';
+  if (/(error|invalid)/.test(r)) return 'error';
+
+  if (/^(killing|stopping|drain)/.test(r)) return 'killing';
+
+  if (r === 'unhealthy' || r === 'probewarning') return 'warn';
+
+  if (r === 'scheduled') return 'scheduled';
+  if (r.startsWith('pulling')) return 'pulling';
+  if (r.startsWith('pulled')) return 'pulled';
+  if (r === 'created' || r === 'sandboxchanged') return 'created';
+  if (r === 'started' || r === 'running' || r.startsWith('noderead') || r.startsWith('successful')) return 'started';
+
+  return type === 'Warning' ? 'warning' : 'normal';
 }
 
 export function EventsPane({ ns, name }) {
@@ -111,11 +144,13 @@ export function EventsPane({ ns, name }) {
               const tone = isWarn ? 'warn' : '';
               const ts = e.lastTimestamp ?? e.firstTimestamp;
               const obj = e.involvedObject ?? {};
+              const catTone = eventCatTone(e.reason, e.type);
+              const reason = e.reason ?? (isWarn ? 'warning' : 'event');
               return html`
                 <div key=${(e.reason ?? '') + '-' + (ts ?? i)} class=${'run-event' + (tone ? ' run-event--' + tone : '')}>
-                  <span class="run-event-ts">${ts ? relTime(ts) : '—'}</span>
-                  <strong>${e.reason ?? ''}</strong>
-                  ${e.message ? ' · ' + e.message : ''}
+                  <span class="run-event-ts" title=${ts ? relTime(ts) : ''}>${fmtTs(ts)}</span>
+                  <span class=${'run-event-cat run-event-cat--' + catTone}>${reason}</span>
+                  ${e.message ? html`<span>${e.message}</span>` : ''}
                   ${obj.kind ? html` <span style="color:var(--dim)">· ${obj.kind}${obj.name ? '/' + obj.name : ''}</span>` : ''}
                   ${e.count > 1 ? html` <span style="color:var(--dim)">· ×${e.count}</span>` : ''}
                 </div>

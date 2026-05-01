@@ -14,6 +14,57 @@ import { api } from '../lib/api.js';
 
 const LOGS_MAX_LINES = 2000;
 
+// Container names that are sidecar-ish noise; skipped when picking the
+// default container so the user lands on the workload container by default.
+// Mirrors ``_default_container`` in ``jobs_logs.py``.
+const SIDECAR_NAMES = new Set(['event-bus', 'results', 'istio-proxy']);
+
+// Display order for control-plane container chips. Containers not listed
+// here are appended at the end in the order returned by the API.
+const CONTROL_PLANE_ORDER = [
+  'control-plane',
+  'dataset-manager',
+  'timing-manager',
+  'records-manager',
+  'api',
+  'gpu-telemetry-manager',
+  'server-metrics-manager',
+  'event-bus-proxy',
+  'results-sidecar',
+];
+
+// Words that should stay all-caps when title-casing container names.
+const ACRONYMS = new Set(['api', 'gpu', 'cpu']);
+
+function titleCaseContainer(name) {
+  if (!name) return '';
+  return name.split(/[-_]/).map(w => {
+    if (!w) return '';
+    if (ACRONYMS.has(w.toLowerCase())) return w.toUpperCase();
+    return w[0].toUpperCase() + w.slice(1).toLowerCase();
+  }).join(' ');
+}
+
+function isControllerPod(pod) {
+  return (pod?.containers ?? []).includes('control-plane');
+}
+
+function orderControlPlane(containers) {
+  const present = new Set(containers);
+  const ordered = CONTROL_PLANE_ORDER.filter(c => present.has(c));
+  const known = new Set(ordered);
+  const extras = containers.filter(c => !known.has(c));
+  return [...ordered, ...extras];
+}
+
+function pickDefaultContainer(containers) {
+  if (!containers || containers.length === 0) return null;
+  for (const c of containers) {
+    if (!SIDECAR_NAMES.has(c)) return c;
+  }
+  return containers[0];
+}
+
 function truncPodName(name, max = 24) {
   if (!name) return '—';
   if (name.length <= max) return name;
@@ -22,7 +73,12 @@ function truncPodName(name, max = 24) {
 
 export function LogsPane({ ns, name, pods }) {
   const podList = (pods ?? []).filter(p => p?.name);
+  const controllerPod = podList.find(isControllerPod) ?? null;
+  const workerPods = podList.filter(p => !isControllerPod(p));
+  const cpContainers = controllerPod ? orderControlPlane(controllerPod.containers ?? []) : [];
+
   const [selectedPod, setSelectedPod] = useState(null);
+  const [selectedContainer, setSelectedContainer] = useState(null);
   const [tailLines, setTailLines] = useState(200);
   const [follow, setFollow] = useState(true);
   const [tail, setTail] = useState([]);
@@ -32,16 +88,38 @@ export function LogsPane({ ns, name, pods }) {
   const bodyRef = useRef(null);
   const autoScrollRef = useRef(true);
 
-  // Auto-select first pod; re-align when pod list changes.
+  // Auto-select on first load and re-align when pod list changes. Prefer
+  // the controller pod with its first control-plane container; fall back
+  // to the first worker pod.
   useEffect(() => {
-    if (podList.length === 0) { setSelectedPod(null); return; }
-    if (!selectedPod || !podList.find(p => p.name === selectedPod)) {
-      const pod = podList[0];
-      setSelectedPod(pod.name);
-      // default follow=ON iff pod is Running
-      setFollow((pod.phase ?? '').toLowerCase() === 'running');
+    if (podList.length === 0) { setSelectedPod(null); setSelectedContainer(null); return; }
+    if (selectedPod && podList.find(p => p.name === selectedPod)) return;
+    if (controllerPod) {
+      setSelectedPod(controllerPod.name);
+      setSelectedContainer(cpContainers[0] ?? null);
+      setFollow((controllerPod.phase ?? '').toLowerCase() === 'running');
+      return;
     }
+    const w = workerPods[0];
+    setSelectedPod(w.name);
+    setSelectedContainer(pickDefaultContainer(w.containers ?? []));
+    setFollow((w.phase ?? '').toLowerCase() === 'running');
   }, [podList.map(p => p.name).join('|')]);
+
+  // Reset / re-align container selection whenever the pod (or its container
+  // list) changes. Keeps the picker showing a valid container at all times.
+  const selectedPodObj = podList.find(p => p.name === selectedPod) ?? null;
+  const containerList = selectedPodObj?.containers ?? [];
+  const containerKey = containerList.join('|');
+  useEffect(() => {
+    if (containerList.length === 0) {
+      setSelectedContainer(null);
+      return;
+    }
+    if (!selectedContainer || !containerList.includes(selectedContainer)) {
+      setSelectedContainer(pickDefaultContainer(containerList));
+    }
+  }, [selectedPod, containerKey]);
 
   useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
 
@@ -73,7 +151,8 @@ export function LogsPane({ ns, name, pods }) {
       try {
         if (follow) {
           const res = await api.getJobLogs(ns, name, {
-            pod: selectedPod, follow: true, tailLines: clampedTail, signal: ac.signal,
+            pod: selectedPod, container: selectedContainer ?? undefined,
+            follow: true, tailLines: clampedTail, signal: ac.signal,
           });
           const reader = res.body?.getReader();
           if (!reader) {
@@ -95,7 +174,8 @@ export function LogsPane({ ns, name, pods }) {
           if (leftover) appendText(leftover + '\n');
         } else {
           const text = await api.getJobLogs(ns, name, {
-            pod: selectedPod, follow: false, tailLines: clampedTail, signal: ac.signal,
+            pod: selectedPod, container: selectedContainer ?? undefined,
+            follow: false, tailLines: clampedTail, signal: ac.signal,
           });
           appendText(text);
         }
@@ -107,7 +187,7 @@ export function LogsPane({ ns, name, pods }) {
     })();
 
     return () => ac.abort();
-  }, [ns, name, selectedPod, follow, tailLines]);
+  }, [ns, name, selectedPod, selectedContainer, follow, tailLines]);
 
   // Auto-scroll to bottom on new data, unless user scrolled up.
   useEffect(() => {
@@ -143,22 +223,14 @@ export function LogsPane({ ns, name, pods }) {
     `;
   }
 
+  const selectedIsController = selectedPodObj && isControllerPod(selectedPodObj);
+  const workerContainerList = !selectedIsController ? containerList : [];
+
   return html`
     <section class="run-logs" id="run-logs" data-testid="run-logs">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+      <div class="run-logs-head">
         <div class="run-logs-title">Logs</div>
-        <div class="run-logs-controls">
-          <select
-            value=${selectedPod ?? ''}
-            onchange=${e => setSelectedPod(e.target.value)}
-            data-testid="run-logs-pod"
-          >
-            ${podList.map(p => html`
-              <option key=${p.name} value=${p.name}>
-                ${truncPodName(p.name, 40)} · ${(p.phase ?? 'unknown').toLowerCase()}
-              </option>
-            `)}
-          </select>
+        <div class="run-logs-actions">
           <button
             class=${'btn' + (follow ? ' btn--primary' : ' btn--ghost')}
             onclick=${() => setFollow(f => !f)}
@@ -167,7 +239,7 @@ export function LogsPane({ ns, name, pods }) {
           >
             ${follow ? 'Following' : 'Paused'}
           </button>
-          <label style="display:inline-flex; align-items:center; gap:4px; font-size:var(--font-xs); color:var(--muted)">
+          <label class="run-logs-tail">
             Tail
             <input
               type="number"
@@ -179,14 +251,80 @@ export function LogsPane({ ns, name, pods }) {
                 setTailLines(v);
               }}
               data-testid="run-logs-tail"
-              style="width:64px"
             />
           </label>
-          <span style="font-size:var(--font-xs); color:var(--muted); font-family:var(--font-mono)">
+          <span class="run-logs-meta">
             ${tail.length} line${tail.length === 1 ? '' : 's'}${follow ? ' · live' : ''}
           </span>
         </div>
       </div>
+
+      <div class="logs-picker">
+        ${controllerPod && cpContainers.length > 0 && html`
+          <div class="logs-picker-row">
+            <span class="logs-picker-label">Control plane</span>
+            <div class="cp-chips" role="tablist" aria-label="Control plane services">
+              ${cpContainers.map(c => {
+                const active = selectedPod === controllerPod.name && selectedContainer === c;
+                return html`
+                  <button
+                    key=${c}
+                    type="button"
+                    class=${'cp-chip' + (active ? ' cp-chip--active' : '')}
+                    role="tab"
+                    aria-selected=${active}
+                    data-testid=${'cp-chip-' + c}
+                    onclick=${() => {
+                      setSelectedPod(controllerPod.name);
+                      setSelectedContainer(c);
+                    }}
+                  >
+                    ${titleCaseContainer(c)}
+                  </button>
+                `;
+              })}
+            </div>
+          </div>
+        `}
+
+        ${workerPods.length > 0 && html`
+          <div class="logs-picker-row">
+            <span class="logs-picker-label">Worker</span>
+            <select
+              class="ui-select ui-select--rounded"
+              value=${selectedIsController ? '' : (selectedPod ?? '')}
+              onchange=${e => {
+                const wp = workerPods.find(p => p.name === e.target.value);
+                if (!wp) return;
+                setSelectedPod(wp.name);
+                setSelectedContainer(pickDefaultContainer(wp.containers ?? []));
+              }}
+              data-testid="run-logs-pod"
+            >
+              <option value="" disabled hidden>Select a worker pod…</option>
+              ${workerPods.map(p => html`
+                <option key=${p.name} value=${p.name}>
+                  ${truncPodName(p.name, 40)} · ${(p.phase ?? 'unknown').toLowerCase()}
+                </option>
+              `)}
+            </select>
+            ${!selectedIsController && workerContainerList.length > 1 && html`
+              <select
+                class="ui-select ui-select--rounded ui-select--sm"
+                value=${selectedContainer ?? ''}
+                onchange=${e => setSelectedContainer(e.target.value)}
+                title="Select container to tail"
+                data-testid="run-logs-container"
+              >
+                ${workerContainerList.map(c => html`
+                  <option key=${c} value=${c}>${c}</option>
+                `)}
+              </select>
+            `}
+          </div>
+        `}
+      </div>
+
       <pre class="run-logs-body" ref=${bodyRef} onscroll=${onScroll} data-testid="run-logs-body">${tail.join('\n')}</pre>
       ${err && html`<div class="run-logs-error">${err}</div>`}
       ${!autoScroll && html`
