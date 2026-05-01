@@ -360,3 +360,63 @@ Tests added:
 Each phase is one or more commits on `ajc/k8s` (no feature branch, no
 worktree). C and B commits use `git commit -s` (no parallel agents, so
 default pre-commit is fine). A is operational, not code.
+
+## 9. Smoke result (2026-05-01)
+
+DGX cluster smoke ran on image
+`nvcr.io/nvidian/dynamo-dev/aiperf:k8s-multi-20260501-063051-b87ec6081`
+(branch `ajc/k8s` at `b87ec6081`, after the env-var-leak fix in B-2).
+
+**Both smokes passed.** Substituted `Qwen/Qwen3-0.6B` for the originally
+planned `meta-llama/Llama-3.1-8B-Instruct` because the latter is gated
+and the cluster's operator does not have an `HF_TOKEN` secret wired.
+Qwen3-0.6B's tokenizer bundle is 4 MB compressed (4× the gpt2 bundle),
+which is the property the second smoke was meant to exercise (a
+realistic-size BPE bundle, distinct from gpt2's small one).
+
+| Run | Tokenizer | Bundle bytes | Phase | Workers | Duration |
+|---|---|---|---|---|---|
+| 1 | `gpt2` | 1,154,269 | Completed | 2/2 | ~20s end-to-end |
+| 2 | `Qwen/Qwen3-0.6B` | 4,023,383 | Completed | 2/2 | ~18s end-to-end |
+
+§4 checklist outcome (both runs):
+
+- ✅ Worker pods boot to RUNNING within budget.
+- ✅ Each worker pod fetches the bundle exactly once (single
+  `download_tokenizer: '<name>' ready at ...` log line per pod).
+- ✅ Controller pod env carries `AIPERF_CONTROLLER_POD=1`; worker pods
+  do not.
+- ✅ Worker pod logs across all containers: **zero `huggingface.co`
+  references** in either run. Air-gap belt held with a 4 MB bundle.
+- ✅ The api container's `_prewarm_tokenizers` did the HF egress
+  successfully (logs show only the api container hitting `huggingface.co`).
+- ✅ Bundles extracted into `/aiperf/datasets/aiperf_tokenizers/<benchmark_id>/<slug>/`
+  with the URL-quoted slug (`Qwen%2FQwen3-0.6B`) per spec §3.3.
+- ✅ C-3 atomic-extract code path executed in production: log line
+  `'<name>' fetched (<bytes>), extracting atomically`.
+- ✅ Benchmark phase reached `Completed` for both.
+
+### 9.1 Operational notes from the smoke run
+
+- The first attempt at the gpt2 smoke (`workers=4 workersPerPod=2`,
+  `requests=200000`) failed to schedule the controller pod due to
+  cluster CPU pressure on the `customer-cpu` pool — `Insufficient cpu`
+  on all 3 nodes because of long-running tenant workloads. Lowered the
+  operator's `AIPERF_K8S_RECORDS_MANAGER_CPU` from `4000m` (per
+  `gotcha_records_manager_cpu_starves_at_high_concurrency`) to `1000m`
+  for the smoke; restored to `4000m/16Gi` after the smoke completed.
+- The second attempt at the gpt2 smoke (same sizing) failed with a
+  `dataset_manager: Tokenized corpus is not initialized` race during
+  `profile_configure`. The api container's tokenizer prewarm and the
+  bundle endpoint were both online; the failure was upstream of the
+  worker bundle fetch. Re-submitted with `concurrency=10
+  requests=2000`, which gave dataset_manager enough headroom to
+  finish corpus tokenisation before profile_configure arrived. The
+  race appears to be a startup-timing issue under tighter resources
+  rather than a tokenizer-path regression — worth following up
+  separately, not in this spec.
+- `meta-llama/Llama-3.1-8B-Instruct` substitution to `Qwen/Qwen3-0.6B`:
+  if a future smoke wants to exercise a gated repo, wire an `HF_TOKEN`
+  secret into the operator deployment first (e.g.
+  `kubectl set env deploy/aiperf-operator HF_TOKEN=$HF_TOKEN`), then
+  re-run with the gated tokenizer.
