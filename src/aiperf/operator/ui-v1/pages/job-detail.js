@@ -1817,44 +1817,11 @@ export function JobDetail({ namespace, name, epoch }) {
           } else {
             setServerMetricsLoaded(true);
           }
-          if (fileList.some(f => f.name === 'profile_export.jsonl')) {
-            fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })
-              .then(r => r.ok ? r.text() : null)
-              .then(async text => {
-                if (!text || ac.signal.aborted) return;
-                const lines = text.split('\n');
-                // Chunk the parse so the main thread can paint between batches.
-                // 50k records parse in well under a second total; 2k per yield
-                // keeps each frame under ~16ms even on slow hardware.
-                const CHUNK = 2000;
-                const recs = [];
-                setJsonlProgress({ done: 0, total: lines.length });
-                for (let i = 0; i < lines.length; i += CHUNK) {
-                  if (ac.signal.aborted) return;
-                  const end = Math.min(i + CHUNK, lines.length);
-                  for (let j = i; j < end; j++) {
-                    const line = lines[j];
-                    if (!line || line.trim() === '') continue;
-                    try { recs.push(JSON.parse(line)); } catch { /* skip bad line */ }
-                  }
-                  setJsonlProgress({ done: end, total: lines.length });
-                  // Yield to the event loop so the UI can repaint.
-                  await new Promise(r => setTimeout(r, 0));
-                }
-                if (ac.signal.aborted) return;
-                setJsonlProgress(null);
-                setJsonlRecords(recs.length > 0 ? recs : null);
-                setJsonlLoaded(true);
-              })
-              .catch(err => {
-                if (ac.signal.aborted) return;
-                setJsonlProgress(null);
-                setJsonlLoaded(true);
-                setJsonlError(err?.message ?? 'Per-request records could not be read.');
-              });
-          } else {
-            setJsonlLoaded(true);
-          }
+          // Per-request records (profile_export.jsonl) intentionally NOT
+          // auto-fetched. At high concurrency these files reach hundreds of
+          // MB compressed / multiple GB decompressed, which OOM-kills the
+          // browser tab. Users who need the data download the file.
+          setJsonlLoaded(true);
         })
         .catch(() => {
           setFilesLoaded(true);
@@ -2392,26 +2359,23 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Feature 8: Run Metadata (completed only) -->
       ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
 
-      <!-- Per-Record Analysis from profile_export.jsonl -->
-      ${isCompleted && jsonlRecords
-        ? html`<${PerRecordAnalysis} records=${jsonlRecords} />`
-        : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && !jsonlLoaded && html`
-          <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
-            <${Spinner} size="sm" />
-            <span class="text-dim" style="font-size: var(--font-size-sm)">
-              ${jsonlProgress
-                ? `Parsing per-request records — ${fmtInt(jsonlProgress.done)} of ${fmtInt(jsonlProgress.total)}…`
-                : 'Loading per-request records…'}
-            </span>
+      <!-- Per-Record Analysis: never auto-fetched (large runs OOM the browser).
+           Show a static card with a download link when the file is present. -->
+      ${isCompleted && (() => {
+        const f = files.find(x => x.name === 'profile_export.jsonl');
+        if (!f) return null;
+        return html`
+          <div class="card" style="margin-top: var(--space-4)">
+            <div class="card-title">Per-Request Records</div>
+            <div style="font-size: var(--font-size-sm); color: var(--text-dim); margin-bottom: var(--space-2)">
+              ${humanSize(f.size_bytes)} compressed. Not loaded in-browser — download to analyze offline.
+            </div>
+            <button class="btn btn-secondary" onclick=${() => downloadFile('profile_export.jsonl')}>
+              Download profile_export.jsonl
+            </button>
           </div>
-        `)
-      }
-      ${isCompleted && jsonlError && html`
-        <div class="card" style=${'margin-top: var(--space-4); border-color: ' + colors.error + '44; color: ' + colors.error}>
-          <div class="card-title">Per-Record Analysis</div>
-          <span style="font-size: var(--font-size-sm)">${jsonlError}</span>
-        </div>
-      `}
+        `;
+      })()}
 
       <!-- Feature 3: Concurrency vs Throughput (completed only) -->
       ${isCompleted && html`<${ConcurrencyThroughputChart} status=${status} />`}
@@ -2420,12 +2384,29 @@ export function JobDetail({ namespace, name, epoch }) {
       ${isCompleted && results && html`<${LatencyPercentileChart} results=${results} />`}
 
       <!-- Latency Timeline (completed only; needs a pinned epoch — the
-           non-epoch results endpoint refuses run-scoped artifacts) -->
-      ${isCompleted && epoch !== undefined && html`
-        <div style="margin-top: var(--space-4)">
-          <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
-        </div>
-      `}
+           non-epoch results endpoint refuses run-scoped artifacts).
+           Skipped when profile_export.jsonl is too big to parse safely
+           (large runs would OOM the tab). -->
+      ${isCompleted && epoch !== undefined && (() => {
+        const f = files.find(x => x.name === 'profile_export.jsonl');
+        const LATENCY_CHART_MAX_BYTES = 10 * 1024 * 1024;  // 10 MB compressed
+        if (f && f.size_bytes > LATENCY_CHART_MAX_BYTES) {
+          return html`
+            <div class="card" style="margin-top: var(--space-4)">
+              <div class="card-title">Latency Timeline</div>
+              <span class="text-dim" style="font-size: var(--font-size-sm)">
+                Skipped — profile_export.jsonl is ${humanSize(f.size_bytes)} compressed
+                (chart loads up to ${humanSize(LATENCY_CHART_MAX_BYTES)}).
+              </span>
+            </div>
+          `;
+        }
+        return html`
+          <div style="margin-top: var(--space-4)">
+            <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
+          </div>
+        `;
+      })()}
 
       <!-- Feature 4: ISL Distribution (completed only) -->
       ${isCompleted && results && html`<${ISLDistributionChart} results=${results} />`}
