@@ -210,6 +210,22 @@ export const api = {
   getJobLogs(ns, name, opts) {
     return getJobLogs(ns, name, opts);
   },
+
+  /** Build a URL for the full job-results bundle as a single zip.
+   *
+   *  Hits ``/results/<ns>/<jobId>/runs/<epoch>.zip`` when an epoch is pinned,
+   *  and ``/results/<ns>/<jobId>.zip`` for the non-epoch (live "latest")
+   *  variant. Use as ``<a href={url} download>``; the operator streams the
+   *  zip with ``Content-Disposition`` set, so the browser saves it directly.
+   */
+  resultBundleUrl(ns, jobId, epoch = null) {
+    const nsSeg = encodeURIComponent(ns);
+    const idSeg = encodeURIComponent(jobId);
+    if (epoch && epoch !== 'latest') {
+      return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
+    }
+    return `${BASE}/results/${nsSeg}/${idSeg}.zip`;
+  },
 };
 
 /**

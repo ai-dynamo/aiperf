@@ -2044,6 +2044,10 @@ export function JobDetail({ namespace, name, epoch }) {
   };
 
   const hasExportFile = files.some(f => f.name === 'profile_export_aiperf.json');
+  // Sum file sizes for the "Download .zip (N MB)" label. Files without a known
+  // size (older API shapes) contribute 0; the label hides the size suffix
+  // entirely when the total is 0 so we never show a misleading "0 B" badge.
+  const totalArtifactBytes = files.reduce((s, f) => s + (Number(f.size_bytes) || 0), 0);
 
   // Warmup hint: running, but no live KPI numbers yet — typical for the first ~30s
   // while the workers ramp and TimingManager hasn't issued enough credits to populate
@@ -2386,7 +2390,7 @@ export function JobDetail({ namespace, name, epoch }) {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
           <div class="card-title" style="margin: 0">Result Files</div>
           ${files.length > 0 && html`
-            <div style="display: flex; gap: var(--space-2)">
+            <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
               ${hasExportFile && html`
                 <button
                   onclick=${exportJson}
@@ -2395,9 +2399,20 @@ export function JobDetail({ namespace, name, epoch }) {
                   Export JSON
                 </button>
               `}
+              <a
+                class="btn"
+                href=${api.resultBundleUrl(namespace, name, epoch)}
+                download
+                data-testid="artifacts-bundle"
+                style=${'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
+                title=${'Download all ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' as a single .zip'}
+              >
+                Download .zip${totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : ''}
+              </a>
               <button
                 onclick=${downloadAll}
                 style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
+                title="Trigger one download per file (browser saves them individually)"
               >
                 Download All
               </button>
