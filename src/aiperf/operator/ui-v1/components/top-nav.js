@@ -19,8 +19,6 @@ const NAV_GROUPS = [
   },
 ];
 
-const PLOTS_LINK = { path: '/dashboard/', label: 'Plots', external: true };
-
 function isActive(itemPath, currentRoute) {
   if (itemPath === '/') return currentRoute === '/' || currentRoute === '';
   return currentRoute.startsWith(itemPath);
@@ -64,18 +62,6 @@ export function TopNav({ onSearchClick }) {
               </button>
             `)}
           `)}
-          <span class="nav-sep" />
-          <a
-            class="nav-tab"
-            href=${PLOTS_LINK.path}
-            target="_blank"
-            rel="noopener"
-            title="Opens classic Plots dashboard in a new tab"
-            aria-label="Plots (opens in new tab)"
-          >
-            ${PLOTS_LINK.label}
-            <span class="nav-external" aria-hidden="true">\u2197</span>
-          </a>
         </nav>
       </div>
       <div class="topbar-right">
