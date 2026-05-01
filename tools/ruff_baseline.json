@@ -13,9 +13,29 @@
   ],
   "violations": [
     [
+      "ANN201",
+      "src/aiperf/operator/results_db.py",
+      "ResultsDB.compare"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/operator/results_db.py",
+      "ResultsDB.history"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/operator/results_db.py",
+      "ResultsDB.leaderboard"
+    ],
+    [
       "BLE001",
       "src/aiperf/analysis/calibrate_memory_estimates.py",
       "measure_record_processor"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/operator/runs_index.py",
+      "lazy_backfill_run"
     ],
     [
       "C901",
@@ -70,7 +90,17 @@
     [
       "C901",
       "src/aiperf/operator/routers/jobs.py",
+      "_fetch_cluster_name"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/jobs.py",
       "create_jobs_router"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/routers/results_files.py",
+      "_extract_model_endpoint"
     ],
     [
       "C901",
@@ -81,6 +111,11 @@
       "C901",
       "src/aiperf/operator/routers/sweeps.py",
       "create_sweeps_router"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/runs_index.py",
+      "bootstrap"
     ],
     [
       "C901",
@@ -273,6 +308,51 @@
       "main"
     ],
     [
+      "D103",
+      "src/aiperf/controller/system_controller.py",
+      "profile_results_have_successes"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "compare"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "get_run"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "get_summary_blob"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "history"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "leaderboard"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "list_runs_for_job"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "list_sweep_epochs_for_sweep"
+    ],
+    [
+      "D103",
+      "src/aiperf/operator/runs_index.py",
+      "list_sweep_variations"
+    ],
+    [
       "PLR0912",
       "src/aiperf/analysis/analyze_profile_export.py",
       "analyze_metrics"
@@ -316,6 +396,16 @@
       "PLR0912",
       "src/aiperf/operator/routers/jobs.py",
       "_fetch_cluster_gpu_stats"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/operator/routers/results_files.py",
+      "_extract_model_endpoint"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/operator/runs_index.py",
+      "bootstrap"
     ],
     [
       "PLR0912",
@@ -471,6 +561,11 @@
       "PLR0915",
       "src/aiperf/transports/aiohttp_trace.py",
       "create_aiohttp_trace_config"
+    ],
+    [
+      "TID251",
+      "src/aiperf/common/tokenizer_validator.py",
+      "validate_tokenizer_early::aiperf.config.v1"
     ]
   ]
 }

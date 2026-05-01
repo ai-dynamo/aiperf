@@ -17,7 +17,6 @@ from aiperf.common.tokenizer import (
 from aiperf.common.tokenizer_validator import (
     _partition_cached_names,
     _prefetch_tokenizers,
-    set_default_registry,
     validate_tokenizer_early,
 )
 
@@ -101,13 +100,6 @@ class TestPrefetchTokenizers:
     preload_tokenizers helper: cache-hit short-circuit, dedup via set semantics,
     early return when nothing to fetch, and per-model failure handling.
     """
-
-    @pytest.fixture(autouse=True)
-    def _no_registry(self) -> Iterator[None]:
-        """Ensure tests start without a registered default registry."""
-        set_default_registry(None)
-        yield
-        set_default_registry(None)
 
     @pytest.fixture
     def _logger(self) -> AIPerfLogger:

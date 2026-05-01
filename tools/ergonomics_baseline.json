@@ -38,6 +38,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/cli_runner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/artifacts.py",
       ""
     ],
@@ -93,6 +98,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/operator/handlers/completion.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/operator/handlers/monitor.py",
       ""
     ],
@@ -103,7 +113,17 @@
     ],
     [
       "file-size",
+      "src/aiperf/operator/results_layout.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/operator/routers/jobs.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/operator/runs_index.py",
       ""
     ],
     [
@@ -129,6 +149,11 @@
     [
       "file-size",
       "src/aiperf/records/records_manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/sweep_controller/main.py",
       ""
     ],
     [
@@ -198,6 +223,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/common/tokenizer_validator.py",
+      "validate_tokenizer_early"
+    ],
+    [
+      "function-size",
       "src/aiperf/controller/system_controller.py",
       "_check_sibling_containers_alive"
     ],
@@ -225,6 +255,11 @@
       "function-size",
       "src/aiperf/operator/handlers/monitor.py",
       "_maybe_recover_terminated_controller"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/handlers/monitor.py",
+      "_reconcile_missing_jobset"
     ],
     [
       "function-size",
@@ -260,11 +295,6 @@
       "function-size",
       "src/aiperf/operator/routers/jobs.py",
       "create_jobs_router"
-    ],
-    [
-      "function-size",
-      "src/aiperf/orchestrator/orchestrator.py",
-      "execute"
     ],
     [
       "function-size",
@@ -543,6 +573,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/operator/routers/sweeps.py",
+      "_get_children_impl"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
       "create_custom_plot"
     ],
@@ -610,6 +645,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "v1-import-leak",
+      "src/aiperf/common/tokenizer_validator.py",
+      "aiperf.config.v1"
     ]
   ]
 }

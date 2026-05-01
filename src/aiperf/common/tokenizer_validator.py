@@ -26,31 +26,11 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from aiperf.common.tokenizer_bundle_registry import TokenizerBundleRegistry
-
 if TYPE_CHECKING:
     from rich.console import Console
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkConfig
-
-
-# ---------------------------------------------------------------------------
-# Default registry hook
-# ---------------------------------------------------------------------------
-
-_DEFAULT_REGISTRY: TokenizerBundleRegistry | None = None
-
-
-def set_default_registry(registry: TokenizerBundleRegistry | None) -> None:
-    """Module-level hook so the FastAPI app and validator share one registry."""
-    global _DEFAULT_REGISTRY
-    _DEFAULT_REGISTRY = registry
-
-
-def get_default_registry() -> TokenizerBundleRegistry | None:
-    """Return the registry installed by ``set_default_registry``, if any."""
-    return _DEFAULT_REGISTRY
 
 
 # ---------------------------------------------------------------------------
@@ -90,14 +70,7 @@ def _partition_cached_names(
     revision: str,
     logger: AIPerfLogger,
 ) -> tuple[set[str], set[str]]:
-    """Split *names* into (already_cached, to_fetch) using on-disk cache state.
-
-    Cache hits are registered with the bundle registry here so the downstream
-    TokenizerRouter/WGM can ship snapshot dirs to sibling pods without the
-    subprocess fetch step.
-    """
-    from pathlib import Path
-
+    """Split *names* into (already_cached, to_fetch) using on-disk cache state."""
     from aiperf.common.tokenizer import _is_hf_cached
 
     already_cached: set[str] = set()
@@ -109,22 +82,7 @@ def _partition_cached_names(
             to_fetch.add(name)
 
     if already_cached:
-        from huggingface_hub import snapshot_download
-
         logger.info(f"HF cache hit (skipping prefetch): {sorted(already_cached)}")
-        registry = _DEFAULT_REGISTRY
-        if registry is not None:
-            for name in already_cached:
-                registry.register_pending(name)
-                snapshot_dir = Path(
-                    snapshot_download(
-                        repo_id=name,
-                        revision=revision,
-                        repo_type="model",
-                        local_files_only=True,
-                    )
-                )
-                registry.mark_ready(name, snapshot_dir)
 
     return already_cached, to_fetch
 
@@ -143,7 +101,6 @@ def _prefetch_tokenizers(
     """
     import logging as _logging
     from concurrent.futures import ProcessPoolExecutor, as_completed
-    from pathlib import Path
 
     from aiperf.common.models import ErrorDetails
     from aiperf.common.tokenizer_display import display_tokenizer_validation_error
@@ -158,10 +115,6 @@ def _prefetch_tokenizers(
     logger.info(
         f"Prefetching {count} tokenizer{'s' if count > 1 else ''} into HF cache..."
     )
-    registry = _DEFAULT_REGISTRY
-    if registry is not None:
-        for name in names:
-            registry.register_pending(name)
     start = time.perf_counter()
     with ProcessPoolExecutor(
         max_workers=count,
@@ -177,18 +130,6 @@ def _prefetch_tokenizers(
             try:
                 _, elapsed = future.result()
                 logger.info(f"  Cached {name} ({elapsed:.2f}s)")
-                if registry is not None:
-                    from huggingface_hub import snapshot_download
-
-                    snapshot_dir = Path(
-                        snapshot_download(
-                            repo_id=name,
-                            revision=revision,
-                            repo_type="model",
-                            local_files_only=True,
-                        )
-                    )
-                    registry.mark_ready(name, snapshot_dir)
             except Exception as e:  # noqa: BLE001 - tokenizer prefetch may raise arbitrary HF/network/subprocess errors; surface via rich panel
                 details = ErrorDetails.from_exception(e)
                 display_tokenizer_validation_error(

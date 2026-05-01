@@ -2,13 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tokenizer router -- serves tar+zstd of HF snapshot dirs from the shared cache.
 
-The api container has zero HF egress. Snapshots are populated by the
-controller-pod warmer (``tokenizer_validator._prefetch_tokenizers``) writing
-to the shared ``tokenizer-cache`` emptyDir volume mounted at ``HF_HOME``.
-This router calls ``snapshot_download(local_files_only=True)`` against that
-shared cache and streams the resulting directory back as a single
-``application/zstd`` payload. Worker pods retry through 503s while the
-warmer is still running.
+The api container has zero HF egress at request time. Snapshots are populated
+by the api container's own ``_prewarm_tokenizers`` (which runs before uvicorn
+binds), writing into the shared ``tokenizer-cache`` emptyDir mounted at
+``HF_HOME``. This router calls ``snapshot_download(local_files_only=True)``
+against that shared cache and streams the resulting directory back as a single
+``application/zstd`` payload.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import zstandard
 from fastapi import APIRouter, HTTPException
@@ -24,20 +22,11 @@ from fastapi.responses import StreamingResponse
 
 from aiperf.common.environment import Environment
 
-if TYPE_CHECKING:
-    from aiperf.common.tokenizer_bundle_registry import TokenizerBundleRegistry
-
 _CHUNK_SIZE = 1 << 16  # 64 KiB
 
 
 def _materialize_bundle(snapshot_dir: Path) -> bytes:
-    """Build the full tar+zstd payload for ``snapshot_dir`` once.
-
-    The bundles are small (tokenizer files only — single-digit MB
-    compressed), so it's cheaper to materialize once into RAM and serve
-    every subsequent worker-pod request from the cached bytes than to
-    re-walk the directory and re-tar/re-compress per request.
-    """
+    """Build the full tar+zstd payload for ``snapshot_dir`` once."""
     import io as _io
     import tarfile as _tarfile
 
@@ -57,27 +46,13 @@ def _stream_bytes(payload: bytes) -> AsyncIterator[bytes]:
     return _iter()
 
 
-async def _resolve_snapshot_dir(
-    name: str, registry: TokenizerBundleRegistry | None = None
-) -> Path:
+async def _resolve_snapshot_dir(name: str) -> Path:
     """Return the local snapshot dir for ``name`` from the shared HF cache.
 
-    Returns 503 when the warmer hasn't populated the cache yet (worker pods
-    retry through this) and 404 when the warmer asked for a name HF doesn't
-    know about. Never reaches the network.
-
-    When ``registry`` is provided and has a ready entry for ``name``, the
-    registered snapshot dir is returned without consulting HF Hub at all —
-    this is the path component-integration tests exercise via a hermetic
-    HF_HOME.
+    Returns 503 when the cache is cold (worker pods retry through this) and
+    404 when HF Hub doesn't recognise the name. Never reaches the network at
+    request time.
     """
-    if registry is not None:
-        entry = registry.get(name)
-        if entry is not None:
-            snapshot_dir, ready = entry
-            if snapshot_dir is not None and ready.is_set():
-                return snapshot_dir
-
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import (
         EntryNotFoundError,
@@ -102,28 +77,16 @@ async def _resolve_snapshot_dir(
     except (RepositoryNotFoundError, RevisionNotFoundError, EntryNotFoundError) as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"tokenizer '{name}' not found on HuggingFace Hub: {exc}",
+            detail=f"tokenizer '{name}' not configured for this run",
         ) from exc
     return Path(path)
 
 
-def build_tokenizer_router(
-    registry: TokenizerBundleRegistry | None = None,
-) -> APIRouter:
-    """Return an APIRouter exposing ``GET /api/tokenizer/{name:path}/bundle``.
-
-    When ``registry`` is supplied, snapshot-dir resolution prefers the
-    registry's entries before falling back to ``snapshot_download``. The
-    operator-pod path uses this; the component-integration round-trip test
-    exercises it with a hermetic HF cache.
-    """
+def build_tokenizer_router() -> APIRouter:
+    """Return an APIRouter exposing ``GET /api/tokenizer/{name:path}/bundle``."""
     router = APIRouter(
         prefix="/api/tokenizer", tags=["Tokenizer"], include_in_schema=False
     )
-    # Per-name bundle cache: materialize tar+zstd once per tokenizer, serve
-    # subsequent worker-pod requests from RAM. Bounded by the number of
-    # distinct tokenizers in the run config (typically 1, never more than a
-    # handful), so no eviction policy is needed.
     bundle_cache: dict[str, bytes] = {}
     cache_lock = asyncio.Lock()
 
@@ -135,7 +98,7 @@ def build_tokenizer_router(
             cached = bundle_cache.get(name)
             if cached is not None:
                 return cached
-            snapshot_dir = await _resolve_snapshot_dir(name, registry)
+            snapshot_dir = await _resolve_snapshot_dir(name)
             payload = await asyncio.to_thread(_materialize_bundle, snapshot_dir)
             bundle_cache[name] = payload
             return payload
