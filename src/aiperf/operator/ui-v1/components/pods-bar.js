@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { html } from 'htm/preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
 /**
  * Dot color for a pod based on phase and ready state.
@@ -26,17 +26,45 @@ function podDotClass(pod) {
 const MAX_VISIBLE_PODS = 100;
 
 /**
+ * Auto-expand threshold. Single-job runs hover around 4-8 pods (system
+ * controller + records manager + 1-4 worker pods); when we're below this
+ * count, expanding by default is more useful than the slim peek because the
+ * full table fits without crowding the page. Sweep jobs (200+ pods) stay
+ * collapsed-by-default.
+ */
+const AUTO_EXPAND_MAX = 10;
+
+/**
  * Pods status table — colored status dot, name, phase, ready, restarts.
  *
  * Renders a slim collapsed view by default (just the dots + ready / restart
  * totals); click the toggle to expand into the full per-pod table. Sweep
  * jobs spawn 200+ pods, so the default-collapsed shape keeps the page
- * skim-friendly while preserving access to the detail.
+ * skim-friendly while preserving access to the detail. Single-job runs
+ * (≤ AUTO_EXPAND_MAX pods) auto-expand because the table fits cleanly and
+ * the per-pod detail is more useful than the dot strip alone.
  *
  * @param {{ pods: Array<{name: string, phase: string, ready: boolean, restarts: number}> }} props
  */
 export function PodsBar({ pods }) {
+  const podCount = pods?.length ?? 0;
   const [expanded, setExpanded] = useState(false);
+  // Track whether the user has manually toggled. Until they do, we follow
+  // the pod-count heuristic (small fleets auto-expand, big sweeps stay
+  // collapsed). Once they click, we respect their choice for the rest of
+  // the page lifecycle so a poll that briefly drops a pod can't yank the
+  // table closed.
+  const userTouchedRef = useRef(false);
+
+  useEffect(() => {
+    if (userTouchedRef.current) return;
+    setExpanded(podCount > 0 && podCount <= AUTO_EXPAND_MAX);
+  }, [podCount]);
+
+  function toggle() {
+    userTouchedRef.current = true;
+    setExpanded(v => !v);
+  }
 
   if (!pods || pods.length === 0) {
     return html`<div class="pods-bar pods-bar--empty">No pods</div>`;
@@ -80,7 +108,7 @@ export function PodsBar({ pods }) {
       class="pods-bar-toggle"
       data-testid="pods-bar-toggle"
       aria-expanded=${expanded}
-      onclick=${() => setExpanded(v => !v)}
+      onclick=${toggle}
     >
       ${expanded ? 'Hide pod details' : 'Show pod details'}
     </button>
