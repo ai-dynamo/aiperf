@@ -336,3 +336,55 @@ export function curateServerMetrics(serverMetrics) {
   if (kpis.length === 0 && detailRows.length === 0 && summary.backends.length === 0) return null;
   return { summary, kpis, detailRows, sources };
 }
+
+/**
+ * Collapse a single normalized server-metrics snapshot into the five
+ * numbers the server-metrics KPI tiles surface, keyed by the same KPI ids
+ * `curateServerMetrics` produces. Used by the per-job WS layer to push
+ * one sample per scrape into a per-KPI rolling buffer.
+ *
+ * The latency tile id flips between `'p99-ttft'` and `'p99-e2e-latency'`
+ * depending on which histogram is present in the snapshot; the resolved id
+ * is returned alongside the values so the WS layer can key its buffer
+ * consistently.
+ *
+ * Note: the latency value is returned in seconds (the raw histogram unit);
+ * the curator multiplies by 1000 for display. Keep the buffer in seconds
+ * and let the rendering layer scale on read.
+ *
+ * @param {object} normalizedServerMetrics - shape produced by
+ *   `normalizeServerMetrics`
+ * @returns {{ values: Object<string, number>, latencyKpiId: string|null }}
+ */
+export function aggregateSparklineSnapshot(normalizedServerMetrics) {
+  const out = { values: {}, latencyKpiId: null };
+  if (!normalizedServerMetrics) return out;
+  const metrics = normalizedServerMetrics.metrics ?? {};
+  const backendsPresent = detectBackends(metrics);
+
+  const reqHit = pickBestMetricHit(metrics, backendsPresent, 'reqRate');
+  const genHit = pickBestMetricHit(metrics, backendsPresent, 'genTokRate');
+  const kvHit = pickBestMetricHit(metrics, backendsPresent, 'kvCachePct');
+  const ttftHit = pickBestMetricHit(metrics, backendsPresent, 'ttft');
+  const e2eHit = pickBestMetricHit(metrics, backendsPresent, 'e2eLatency');
+  const waitHit = pickBestMetricHit(metrics, backendsPresent, 'requestsWaiting');
+  const latencyHit = ttftHit || e2eHit;
+
+  const reqRate = reqHit ? sumOf(metrics[reqHit.name], reqHit.statField) : null;
+  const genRate = genHit ? aggregateForHit(metrics, genHit) : null;
+  const kvPeak = kvHit ? normalizePercent(maxOf(metrics[kvHit.name], 'max')) : null;
+  const latencyP99 = latencyHit ? histogramStat(metrics[latencyHit.name], 'p99_estimate') : null;
+  const waitingAvg = waitHit ? avgOf(metrics[waitHit.name], 'avg') : null;
+
+  const ifNum = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+
+  if (ifNum(reqRate) != null) out.values['request-rate'] = reqRate;
+  if (ifNum(genRate) != null) out.values['generation-token-rate'] = genRate;
+  if (ifNum(kvPeak) != null) out.values['kv-cache-pressure'] = kvPeak;
+  if (ifNum(waitingAvg) != null) out.values['requests-waiting'] = waitingAvg;
+  if (ifNum(latencyP99) != null) {
+    out.latencyKpiId = latencyHit === ttftHit ? 'p99-ttft' : 'p99-e2e-latency';
+    out.values[out.latencyKpiId] = latencyP99;
+  }
+  return out;
+}
