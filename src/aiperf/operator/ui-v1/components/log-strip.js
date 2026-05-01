@@ -92,7 +92,10 @@ function useEventFeed() {
       }
       prevRef.current = next;
       if (fresh.length > 0) {
-        setEvents(prev => [...fresh.reverse(), ...prev].slice(0, MAX_EVENTS));
+        // Append new events at the tail so the strip reads oldest → newest;
+        // trim from the head when we exceed MAX_EVENTS so the most recent
+        // ones stay on screen.
+        setEvents(prev => [...prev, ...fresh].slice(-MAX_EVENTS));
       }
     });
     return unsubscribe;
@@ -104,6 +107,8 @@ function useEventFeed() {
 export function LogStrip() {
   const events = useEventFeed();
   const [filter, setFilter] = useState('all');
+  const bodyRef = useRef(null);
+  const stickyRef = useRef(true);
 
   const counts = {
     all: events.length,
@@ -115,6 +120,20 @@ export function LogStrip() {
     if (filter === 'all') return true;
     return e.severity === filter;
   });
+
+  // Auto-scroll the strip to the bottom on each new event so the freshest
+  // line stays in view. Skip when the user has scrolled up (>32 px from the
+  // bottom) so reading older entries isn't interrupted.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !stickyRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [visible.length]);
+
+  function onScroll(e) {
+    const el = e.currentTarget;
+    stickyRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+  }
 
   const filters = [
     { key: 'all',   label: 'All' },
@@ -142,7 +161,7 @@ export function LogStrip() {
           `)}
         </div>
       </div>
-      <div class="log-strip-body">
+      <div class="log-strip-body" ref=${bodyRef} onscroll=${onScroll}>
         ${visible.map((e, i) => {
           const sevClass = e.severity === 'error' ? ' log-strip-entry--error'
                          : e.severity === 'warn'  ? ' log-strip-entry--warn'

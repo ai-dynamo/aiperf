@@ -8,7 +8,7 @@
  */
 
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 
 const pad = n => String(n).padStart(2, '0');
@@ -59,6 +59,12 @@ export function EventsPane({ ns, name }) {
   const [state, setState] = useState({ kind: 'loading' });
   const [filter, setFilter] = useState('all');
   const [refreshed, setRefreshed] = useState(null);
+  const listRef = useRef(null);
+  // Track whether the user is "stuck to bottom" so we only auto-scroll when
+  // they haven't manually scrolled up to read older entries. Anything past
+  // 32px from the bottom is treated as "user is reading" and we leave the
+  // scroll position alone.
+  const stickyRef = useRef(true);
 
   useEffect(() => {
     let cancel = false;
@@ -115,7 +121,15 @@ export function EventsPane({ ns, name }) {
   }
 
   const events = state.events ?? [];
-  const shown = filter === 'warn' ? events.filter(e => e.type === 'Warning') : events;
+  // Display oldest → newest (ascending by event timestamp). The API order is
+  // not guaranteed; sort by last_timestamp / first_timestamp / count fallback
+  // so the freshest line always sits at the bottom of the pane.
+  const sortedEvents = [...events].sort((a, b) => {
+    const ta = new Date(a.last_timestamp ?? a.first_timestamp ?? 0).getTime();
+    const tb = new Date(b.last_timestamp ?? b.first_timestamp ?? 0).getTime();
+    return (isFinite(ta) ? ta : 0) - (isFinite(tb) ? tb : 0);
+  });
+  const shown = filter === 'warn' ? sortedEvents.filter(e => e.type === 'Warning') : sortedEvents;
   const metaText = `${events.length} total${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
   const filterControls = html`
     <span style="display:inline-flex; gap:4px">
@@ -132,13 +146,28 @@ export function EventsPane({ ns, name }) {
     </span>
   `;
 
+  // Auto-scroll the list to the bottom whenever the visible event count
+  // grows AND the user hasn't scrolled up to read older entries. We snap on
+  // shown.length / refreshed because each poll either appends or replaces;
+  // either way the bottom anchor is what the user wants to see.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !stickyRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [shown.length, refreshed]);
+
+  function onScroll(e) {
+    const el = e.currentTarget;
+    stickyRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+  }
+
   return html`
     <section class="run-events" id="run-events" data-testid="run-events">
       ${headerRow(metaText, filterControls)}
       ${shown.length === 0
         ? html`<div class="empty">No ${filter === 'warn' ? 'warning ' : ''}events.</div>`
         : html`
-          <div class="run-events-list">
+          <div class="run-events-list" ref=${listRef} onscroll=${onScroll}>
             ${shown.map((e, i) => {
               const isWarn = e.type === 'Warning';
               const tone = isWarn ? 'warn' : '';
