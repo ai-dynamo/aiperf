@@ -217,7 +217,11 @@ function parseYaml(text) {
         const child = {};
         top.val.push(child);
         stack.push({ val: child, indent });
-      } else if (rest.includes(':') && !rest.match(/^["'[{]/)) {
+      } else if (
+        rest.includes(':') &&
+        !rest.match(/^["'[{]/) &&
+        !rest.match(/^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//)
+      ) {
         const child = {};
         top.val.push(child);
         const [k, ...vparts] = rest.split(':');
