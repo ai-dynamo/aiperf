@@ -30,12 +30,19 @@ class TestCompressOnlyInit:
         store = MemoryMapDatasetBackingStore(benchmark_id="test-default")
         assert store._compress_only is False
 
-    def test_compressed_paths_use_zst_extension(self) -> None:
+    def test_compress_only_paths_use_zst_extension(self) -> None:
         store = MemoryMapDatasetBackingStore(
             benchmark_id="test-paths", compress_only=True
         )
-        assert store._compressed_data_path.suffix == ".zst"
-        assert store._compressed_index_path.suffix == ".zst"
+        assert store._data_path.name == "dataset.dat.zst"
+        assert store._index_path.name == "index.dat.zst"
+
+    def test_normal_paths_use_dat_extension(self) -> None:
+        store = MemoryMapDatasetBackingStore(
+            benchmark_id="test-paths-normal", compress_only=False
+        )
+        assert store._data_path.name == "dataset.dat"
+        assert store._index_path.name == "index.dat"
 
 
 class TestCompressOnlyRoundTrip:
@@ -57,22 +64,19 @@ class TestCompressOnlyRoundTrip:
         await store.finalize()
 
         metadata = store.get_client_metadata()
-        assert metadata.compressed_data_file_path is not None
-        assert metadata.compressed_data_file_path.exists()
-        assert metadata.compressed_index_file_path is not None
-        assert metadata.compressed_index_file_path.exists()
+        assert metadata.compressed is True
+        assert metadata.data_file_path.exists()
+        assert metadata.index_file_path.exists()
         assert metadata.compressed_size_bytes > 0
 
         dctx = zstandard.ZstdDecompressor()
         # Stream-compressed data doesn't include content size; use stream_reader
         with (
-            open(metadata.compressed_data_file_path, "rb") as fh,
+            open(metadata.data_file_path, "rb") as fh,
             dctx.stream_reader(fh) as reader,
         ):
             decompressed_data = reader.read()
-        decompressed_index = dctx.decompress(
-            metadata.compressed_index_file_path.read_bytes()
-        )
+        decompressed_index = dctx.decompress(metadata.index_file_path.read_bytes())
 
         roundtrip_conv = Conversation.model_validate_json(decompressed_data)
         assert roundtrip_conv.session_id == "sess-1"
@@ -104,9 +108,7 @@ class TestCompressOnlyRoundTrip:
         assert metadata.conversation_count == 5
 
         dctx = zstandard.ZstdDecompressor()
-        decompressed_index = dctx.decompress(
-            metadata.compressed_index_file_path.read_bytes()
-        )
+        decompressed_index = dctx.decompress(metadata.index_file_path.read_bytes())
         index = MemoryMapDatasetIndex.model_validate_json(decompressed_index)
         assert index.conversation_ids == ids
 
@@ -117,7 +119,7 @@ class TestCompressOnlyMetadata:
     """Test metadata produced by compress_only mode."""
 
     @pytest.mark.asyncio
-    async def test_get_client_metadata_compress_only_includes_compressed_fields(
+    async def test_get_client_metadata_compress_only(
         self, tmp_path, monkeypatch
     ) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
@@ -130,17 +132,14 @@ class TestCompressOnlyMetadata:
 
         meta = store.get_client_metadata()
         assert isinstance(meta, MemoryMapClientMetadata)
-        assert meta.compressed_data_file_path is not None
-        assert meta.compressed_index_file_path is not None
+        assert meta.compressed is True
         assert meta.compressed_size_bytes > 0
         assert meta.total_size_bytes > 0
 
         await store.stop()
 
     @pytest.mark.asyncio
-    async def test_get_client_metadata_normal_mode_has_no_compressed_fields(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    async def test_get_client_metadata_normal_mode(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
         store = MemoryMapDatasetBackingStore(
             benchmark_id="meta-normal", compress_only=False
@@ -150,8 +149,7 @@ class TestCompressOnlyMetadata:
         await store.finalize()
 
         meta = store.get_client_metadata()
-        assert meta.compressed_data_file_path is None
-        assert meta.compressed_index_file_path is None
+        assert meta.compressed is False
         assert meta.compressed_size_bytes == 0
 
         await store.stop()
@@ -224,10 +222,10 @@ class TestCompressOnlyCleanup:
         await store.finalize()
 
         meta = store.get_client_metadata()
-        assert meta.compressed_data_file_path.exists()
-        assert meta.compressed_index_file_path.exists()
+        assert meta.data_file_path.exists()
+        assert meta.index_file_path.exists()
 
         await store.stop()
 
-        assert not meta.compressed_data_file_path.exists()
-        assert not meta.compressed_index_file_path.exists()
+        assert not meta.data_file_path.exists()
+        assert not meta.index_file_path.exists()

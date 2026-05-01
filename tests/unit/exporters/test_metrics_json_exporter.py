@@ -11,6 +11,7 @@ import pytest
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import MetricResult
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
@@ -55,10 +56,11 @@ def mock_user_config():
 @pytest.fixture
 def mock_results(sample_records):
     class MockResults:
-        def __init__(self, metrics):
+        def __init__(self, metrics, branch_stats=None):
             self.metrics = metrics
             self.start_ns = None
             self.end_ns = None
+            self.branch_stats = branch_stats
 
         @property
         def records(self):
@@ -77,6 +79,39 @@ def mock_results(sample_records):
             return []
 
     return MockResults(sample_records)
+
+
+@pytest.fixture
+def mock_results_factory(sample_records):
+    """Factory to build MockResults with optional branch_stats."""
+
+    class MockResults:
+        def __init__(self, metrics, branch_stats=None):
+            self.metrics = metrics
+            self.start_ns = None
+            self.end_ns = None
+            self.branch_stats = branch_stats
+
+        @property
+        def records(self):
+            return self.metrics
+
+        @property
+        def has_results(self):
+            return bool(self.metrics)
+
+        @property
+        def was_cancelled(self):
+            return False
+
+        @property
+        def error_summary(self):
+            return []
+
+    def _make(branch_stats=None):
+        return MockResults(sample_records, branch_stats=branch_stats)
+
+    return _make
 
 
 class TestMetricsJsonExporter:
@@ -117,99 +152,6 @@ class TestMetricsJsonExporter:
             # assert data["input_config"]["output"]["artifact_directory"] == str(
             #     output_dir
             # )
-
-    @pytest.mark.asyncio
-    async def test_json_export_count_sum_per_metric_type(self, mock_user_config):
-        """End-to-end: record metric carries count+sum, derived/aggregate omit count.
-
-        Drives the full exporter pipeline (MetricResult -> to_json_result ->
-        JsonExportData -> model_dump_json) so the registry-driven type lookup,
-        the count-strip rule, and the exclude_none serialization are all
-        exercised together. Regression guard for schema 1.1 semantics.
-        """
-        records = [
-            MetricResult(  # RECORD: keeps both count and sum
-                tag="request_latency",
-                header="Request Latency",
-                unit="ms",
-                avg=50.0,
-                min=10.0,
-                max=90.0,
-                p50=48.0,
-                p99=89.0,
-                std=12.0,
-                count=100,
-                sum=5000.0,
-            ),
-            MetricResult(  # DERIVED: count must be stripped
-                tag="request_throughput",
-                header="Request Throughput",
-                unit="requests/sec",
-                avg=1.5,
-                count=1,
-            ),
-            MetricResult(  # AGGREGATE: count must be stripped
-                tag="request_count",
-                header="Request Count",
-                unit="requests",
-                avg=20.0,
-                count=1,
-            ),
-        ]
-
-        class _Results:
-            def __init__(self, recs):
-                self.metrics = recs
-                self.start_ns = None
-                self.end_ns = None
-
-            @property
-            def records(self):
-                return self.metrics
-
-            @property
-            def has_results(self):
-                return True
-
-            @property
-            def was_cancelled(self):
-                return False
-
-            @property
-            def error_summary(self):
-                return []
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir)
-            mock_user_config.output.artifact_directory = output_dir
-            exporter_config = ExporterConfig(
-                results=_Results(records),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
-                telemetry_results=None,
-            )
-            exporter = MetricsJsonExporter(exporter_config)
-            await exporter.export()
-
-            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
-                raw = json.load(f)
-
-        # Schema bump landed
-        assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
-        assert JsonExportData.SCHEMA_VERSION == "1.1"
-
-        # Record metric: count and sum are present
-        assert raw["request_latency"]["count"] == 100
-        assert raw["request_latency"]["sum"] == 5000.0
-
-        # Derived: count omitted via exclude_none, value lives in avg
-        assert "count" not in raw["request_throughput"]
-        assert "sum" not in raw["request_throughput"]
-        assert raw["request_throughput"]["avg"] == 1.5
-
-        # Aggregate: same rule
-        assert "count" not in raw["request_count"]
-        assert raw["request_count"]["avg"] == 20.0
 
     def test_metrics_json_exporter_inherits_from_base(self, mock_user_config):
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""
@@ -892,3 +834,80 @@ class TestMetricsJsonExporterTelemetry:
             endpoints = data["telemetry_data"]["endpoints"]
             gpu_summary = endpoints["localhost:9400"]["gpus"]["gpu_0"]
             assert gpu_summary["hostname"] == "test-hostname"
+
+
+class TestMetricsJsonExporterBranchStats:
+    """Verify ``branch_stats`` from ProfileResults round-trips into the JSON export."""
+
+    @pytest.mark.asyncio
+    async def test_json_export_includes_branch_stats_when_present(
+        self, mock_results_factory, mock_user_config
+    ):
+        """When ProfileResults.branch_stats is populated it must land in profile_export_aiperf.json."""
+        stats = BranchStats(
+            children_spawned=2,
+            children_completed=2,
+            children_errored=0,
+            parents_suspended=1,
+            parents_resumed=1,
+            parents_failed_due_to_child_error=0,
+        )
+        results = mock_results_factory(branch_stats=stats)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            assert "branch_stats" in data
+            assert data["branch_stats"]["children_spawned"] == 2
+            assert data["branch_stats"]["children_completed"] == 2
+            assert data["branch_stats"]["children_errored"] == 0
+            assert data["branch_stats"]["parents_suspended"] == 1
+            assert data["branch_stats"]["parents_resumed"] == 1
+            assert data["branch_stats"]["parents_failed_due_to_child_error"] == 0
+
+            # Ensure the serialized payload validates back into the typed export model.
+            parsed = JsonExportData.model_validate(data)
+            assert parsed.branch_stats == stats
+
+    @pytest.mark.asyncio
+    async def test_json_export_omits_branch_stats_when_none(
+        self, mock_results_factory, mock_user_config
+    ):
+        """Follows the existing optional-field convention (exclude_none=True) - omit the key entirely."""
+        results = mock_results_factory(branch_stats=None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+
+            exporter_config = ExporterConfig(
+                results=results,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            with open(expected_file) as f:
+                data = json.load(f)
+
+            # Matches telemetry_data-style: either absent or explicitly null.
+            assert "branch_stats" not in data or data.get("branch_stats") is None

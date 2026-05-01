@@ -46,6 +46,21 @@ class AudioFormat(CaseInsensitiveStrEnum):
     """MP3 format. Compressed audio, smaller file sizes, good quality."""
 
 
+class CacheBustTarget(CaseInsensitiveStrEnum):
+    """Where (and how) to inject a per-conversation cache-bust marker.
+
+    Prefix variants diverge at token 0 of the prompt (most aggressive — defeats
+    KV-cache prefix matching for the entire prompt). Suffix variants append
+    after existing content (preserves leading-prefix caching).
+    """
+
+    NONE = "none"
+    SYSTEM_PREFIX = "system_prefix"
+    SYSTEM_SUFFIX = "system_suffix"
+    FIRST_TURN_PREFIX = "first_turn_prefix"
+    FIRST_TURN_SUFFIX = "first_turn_suffix"
+
+
 class CommAddress(CaseInsensitiveStrEnum):
     """Enum for specifying the address type for communication clients.
     This is used to lookup the address in the communication config."""
@@ -94,6 +109,52 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     FAILURE = "failure"
     SUCCESS = "success"
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+
+
+class ConversationBranchMode(CaseInsensitiveStrEnum):
+    """Mode discriminator for ``ConversationBranchInfo``.
+
+    Distinguishes two kinds of DAG branches sharing one primitive:
+
+    - ``FORK``: child inherits the parent's accumulated message context and
+      sticky-routes to the parent's worker (prefix-cache locality). Used by
+      aiperf's native DAG conversation-forking semantics.
+    - ``SPAWN``: child starts with a fresh context, free routing. Used for
+      kv-cache-tester-v2-style agentic sub-agent scenarios where the child
+      is a distinct agent invocation, not a continuation.
+    """
+
+    FORK = "fork"
+    """Child inherits parent's turn_list (accumulated message history + captured
+    live responses); sticky-routes to parent's worker for prefix-cache locality."""
+
+    SPAWN = "spawn"
+    """Child gets a fresh context; free routing (no sticky pin to parent)."""
+
+
+class PrerequisiteKind(CaseInsensitiveStrEnum):
+    """Types of conditions that can gate a turn's dispatch.
+
+    Extensible: v1 orchestrator only honors SPAWN_JOIN; the remaining values
+    are reserved and rejected at load time by
+    ``validate_for_orchestrator_v1``. Each deferred value is pinned to a
+    future orchestrator capability in the DAG prereq-gating design doc.
+    """
+
+    SPAWN_JOIN = "spawn_join"
+    """All blocking children from a named branch have completed."""
+
+    CHILD_SESSION_COMPLETE = "child_session_complete"
+    """A specific child runtime session has completed (reserved)."""
+
+    TIMER = "timer"
+    """Wall-clock delay has elapsed (reserved)."""
+
+    EXTERNAL_EVENT = "external_event"
+    """Named external signal has been received (reserved)."""
+
+    BARRIER = "barrier"
+    """Runtime-diamond join on a shared barrier_id (reserved)."""
 
 
 class ConversationContextMode(CaseInsensitiveStrEnum):
@@ -156,7 +217,7 @@ class ExportLevel(CaseInsensitiveStrEnum):
     """Export level for benchmark data."""
 
     SUMMARY = "summary"
-    """Export only aggregated/summarized metrics (default, most compact)"""
+    """Export only aggregated/summarized metrics (most compact)"""
 
     RECORDS = "records"
     """Export per-record metrics after aggregation with display unit conversion"""
@@ -236,6 +297,16 @@ class LifecycleState(CaseInsensitiveStrEnum):
     FAILED = "failed"
 
 
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Storage format for memory-mapped dataset files."""
+
+    CONVERSATION = "conversation"
+    """Each entry is a JSON-serialized Conversation object."""
+
+    PAYLOAD_BYTES = "payload_bytes"
+    """Each entry is pre-encoded payload bytes for verbatim API replay."""
+
+
 class MediaType(CaseInsensitiveStrEnum):
     """The various types of media (e.g. text, image, audio, video)."""
 
@@ -268,6 +339,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASE_START = "credit_phase_start"
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
+    DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
@@ -353,6 +425,16 @@ class PrometheusMetricType(CaseInsensitiveStrEnum):
             return cls.UNKNOWN
 
 
+class PromptCorpus(CaseInsensitiveStrEnum):
+    """Corpus used for synthetic prompt text generation."""
+
+    SONNET = "sonnet"
+    """Shakespeare sonnets (default). Classic prose for filler text."""
+
+    CODING = "coding"
+    """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
+
+
 class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"
@@ -421,6 +503,24 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
+
+
+class SubagentType(CaseInsensitiveStrEnum):
+    """Optional sub-agent classification carried on DAG Conversation nodes.
+
+    Used for DAG-benchmark bucket metrics and future routing policies. Unused
+    by core aiperf today; present so manifests authored for kv-cache-tester-v2
+    can round-trip through aiperf models without validation errors.
+    """
+
+    EXPLORE = "explore"
+    """Exploratory agent branch (e.g. breadth-first search child)."""
+
+    GENERAL = "general"
+    """General-purpose agent branch (default when unspecified)."""
+
+    PLAN = "plan"
+    """Planning/decomposition agent branch."""
 
 
 class SystemState(CaseInsensitiveStrEnum):

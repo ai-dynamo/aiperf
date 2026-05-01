@@ -19,6 +19,8 @@ class OutputConfig(BaseConfig):
     A configuration class for defining output related settings.
     """
 
+    _CLI_GROUP = Groups.OUTPUT
+
     artifact_directory: Annotated[
         Path,
         Field(
@@ -31,7 +33,7 @@ class OutputConfig(BaseConfig):
                 "--output-artifact-dir",
                 "--artifact-dir",  # GenAI-Perf
             ),
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = OutputDefaults.ARTIFACT_DIRECTORY
 
@@ -47,7 +49,7 @@ class OutputConfig(BaseConfig):
                 "--profile-export-prefix",
                 "--profile-export-file",  # GenAI-Perf
             ),
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -61,7 +63,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = OutputDefaults.EXPORT_LEVEL
 
@@ -74,7 +76,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--slice-duration"),
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = OutputDefaults.SLICE_DURATION
 
@@ -87,7 +89,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name="--export-http-trace",
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = OutputDefaults.EXPORT_HTTP_TRACE
 
@@ -100,7 +102,7 @@ class OutputConfig(BaseConfig):
         ),
         CLIParameter(
             name="--show-trace-timing",
-            group=Groups.OUTPUT,
+            group=_CLI_GROUP,
         ),
     ] = OutputDefaults.SHOW_TRACE_TIMING
 

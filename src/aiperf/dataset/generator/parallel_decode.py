@@ -17,6 +17,8 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
+from aiperf.dataset._mp_context import get_loader_mp_context
+
 if TYPE_CHECKING:
     from aiperf.common.tokenizer import Tokenizer
 
@@ -51,14 +53,23 @@ def _init_worker(
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-        from aiperf.common.tokenizer import Tokenizer
+        from aiperf.dataset._tokenizer_preload import get_preloaded
 
-        _worker_tokenizer = Tokenizer.from_pretrained(
+        tok = get_preloaded(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,
-            resolve_alias=False,
         )
+        if tok is None:
+            from aiperf.common.tokenizer import Tokenizer
+
+            tok = Tokenizer.from_pretrained(
+                tokenizer_name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+                resolve_alias=False,
+            )
+        _worker_tokenizer = tok
         _worker_tokenizer_key = requested_key
 
 
@@ -138,6 +149,11 @@ def parallel_decode(
             _set_daemon(False)
         with ProcessPoolExecutor(
             max_workers=num_workers,
+            mp_context=get_loader_mp_context(
+                preload_tokenizer=tokenizer_name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+            ),
             initializer=_init_worker,
             initargs=(tokenizer_name, trust_remote_code, revision),
         ) as executor:

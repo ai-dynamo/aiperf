@@ -558,6 +558,15 @@
       "title": "Dataset Composer Plugin",
       "description": "Dataset composers create conversation datasets from various sources.\nHandles synthetic generation, custom file loading, and specialized formats.\nOne-to-one mapping based on composer_type configuration."
     },
+    "PromptCorpus": {
+      "description": "Corpus used for synthetic prompt text generation.",
+      "enum": [
+        "sonnet",
+        "coding"
+      ],
+      "title": "PromptCorpus",
+      "type": "string"
+    },
     "CustomDatasetLoaderPlugin": {
       "type": "object",
       "properties": {
@@ -600,6 +609,11 @@
               "default": null,
               "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
               "title": "Default Block Size"
+            },
+            "default_prompt_corpus": {
+              "$ref": "#/$defs/PromptCorpus",
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces (e.g. weka_trace) override to 'coding' so reconstructed prompts resemble real tool-use content."
             }
           },
           "title": "CustomDatasetLoaderMetadata",
@@ -769,6 +783,31 @@
               "default": null,
               "description": "Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
               "title": "Prompt Template"
+            },
+            "is_trace": {
+              "default": false,
+              "description": "Whether this loader handles trace-format datasets. Trace public datasets reuse hash_ids-based prompt generation, require a tokenizer, and prefer sequential sampling. Mirrors the field of the same name on CustomDatasetLoaderMetadata so trace loaders can live in either pipeline.",
+              "title": "Is Trace",
+              "type": "boolean"
+            },
+            "default_block_size": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids.",
+              "title": "Default Block Size"
+            },
+            "default_prompt_corpus": {
+              "$ref": "#/$defs/PromptCorpus",
+              "default": "sonnet",
+              "description": "Default synthetic prompt corpus for this loader. Applied when the user does not explicitly pass --prompt-corpus. Loaders for coding agent traces override to 'coding'."
             }
           },
           "title": "PublicDatasetLoaderMetadata",

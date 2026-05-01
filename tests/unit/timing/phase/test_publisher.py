@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -54,6 +55,19 @@ class TestPhasePublisher:
         assert isinstance(msg, CreditPhaseCompleteMessage)
         assert msg.service_id == "tm-001"
         assert msg.stats is sample_phase_stats
+        assert msg.branch_stats is None
+
+    async def test_publish_phase_complete_with_branch_stats(
+        self, mock_pub_client: MagicMock, sample_phase_stats: CreditPhaseStats
+    ) -> None:
+        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        branch_stats = BranchStats(children_spawned=2, parents_resumed=1)
+        await pub.publish_phase_complete(sample_phase_stats, branch_stats=branch_stats)
+        mock_pub_client.publish.assert_called_once()
+        msg = mock_pub_client.publish.call_args[0][0]
+        assert isinstance(msg, CreditPhaseCompleteMessage)
+        assert msg.stats is sample_phase_stats
+        assert msg.branch_stats == branch_stats
 
     async def test_publish_progress(
         self, mock_pub_client: MagicMock, sample_phase_stats: CreditPhaseStats

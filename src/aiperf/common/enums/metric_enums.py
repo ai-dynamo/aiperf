@@ -17,12 +17,12 @@ from aiperf.common.enums.base_enums import (
 from aiperf.common.exceptions import MetricUnitError
 
 if TYPE_CHECKING:
-    from aiperf.metrics.metric_dicts import MetricAggregator
+    from aiperf.metrics.metric_dicts import MetricArray
 
 MetricValueTypeT: TypeAlias = int | float | list[float] | list[int]
 MetricValueTypeVarT = TypeVar("MetricValueTypeVarT", bound=MetricValueTypeT)
 MetricDictValueTypeT: TypeAlias = (
-    "MetricValueTypeT | list[MetricValueTypeT] | MetricAggregator"
+    "MetricValueTypeT | list[MetricValueTypeT] | MetricArray"
 )
 
 

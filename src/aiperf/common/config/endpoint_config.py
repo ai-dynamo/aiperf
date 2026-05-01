@@ -38,6 +38,8 @@ class EndpointConfig(BaseConfig):
     A configuration class for defining endpoint related settings.
     """
 
+    _CLI_GROUP = Groups.ENDPOINT
+
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
         """Validate that streaming is supported for the endpoint type."""
@@ -91,7 +93,7 @@ class EndpointConfig(BaseConfig):
                 "--model",  # GenAI-Perf
                 "-m",  # GenAI-Perf
             ),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ]
 
@@ -106,7 +108,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--model-selection-strategy",  # GenAI-Perf
             ),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.MODEL_SELECTION_STRATEGY
 
@@ -122,7 +124,7 @@ class EndpointConfig(BaseConfig):
                 "--custom-endpoint",
                 "--endpoint",  # GenAI-Perf
             ),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.CUSTOM_ENDPOINT
 
@@ -137,7 +139,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--endpoint-type",  # GenAI-Perf
             ),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.TYPE
 
@@ -152,7 +154,7 @@ class EndpointConfig(BaseConfig):
             name=(
                 "--streaming",  # GenAI-Perf
             ),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.STREAMING
 
@@ -171,7 +173,7 @@ class EndpointConfig(BaseConfig):
                 "-u",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = [EndpointDefaults.URL]
 
@@ -183,7 +185,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--url-strategy",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.URL_STRATEGY
 
@@ -201,7 +203,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-timeout-seconds"),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.TIMEOUT
 
@@ -214,7 +216,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--api-key"),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.API_KEY
 
@@ -232,7 +234,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-timeout",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_TIMEOUT
 
@@ -245,7 +247,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-interval",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_INTERVAL
 
@@ -263,7 +265,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--wait-for-model-mode",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.WAIT_FOR_MODEL_MODE
 
@@ -276,7 +278,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -288,7 +290,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-legacy-max-tokens",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.USE_LEGACY_MAX_TOKENS
 
@@ -307,7 +309,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--use-server-token-count",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
@@ -324,7 +326,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--connection-reuse-strategy",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.CONNECTION_REUSE_STRATEGY
 
@@ -339,7 +341,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--download-video-content",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
 
@@ -354,7 +356,7 @@ class EndpointConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-content-type",),
-            group=Groups.ENDPOINT,
+            group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.REQUEST_CONTENT_TYPE
 

@@ -15,12 +15,15 @@ from aiperf.common.config.config_defaults import (
     PromptDefaults,
 )
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import CacheBustTarget, PromptCorpus
 
 
 class InputTokensConfig(BaseConfig):
     """
     A configuration class for defining input token related settings.
     """
+
+    _CLI_GROUP = Groups.INPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
         int,
@@ -36,7 +39,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-mean",  # GenAI-Perf
                 "--isl",  # GenAI-Perf
             ),
-            group=Groups.INPUT_SEQUENCE_LENGTH,
+            group=_CLI_GROUP,
         ),
     ] = InputTokensDefaults.MEAN
 
@@ -54,7 +57,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-stddev",  # GenAI-Perf
                 "--isl-stddev",
             ),
-            group=Groups.INPUT_SEQUENCE_LENGTH,
+            group=_CLI_GROUP,
         ),
     ] = InputTokensDefaults.STDDEV
 
@@ -73,7 +76,7 @@ class InputTokensConfig(BaseConfig):
                 "--synthetic-input-tokens-block-size",
                 "--isl-block-size",
             ),
-            group=Groups.INPUT_SEQUENCE_LENGTH,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -82,6 +85,8 @@ class OutputTokensConfig(BaseConfig):
     """
     A configuration class for defining output token related settings.
     """
+
+    _CLI_GROUP = Groups.OUTPUT_SEQUENCE_LENGTH
 
     mean: Annotated[
         int | None,
@@ -98,7 +103,7 @@ class OutputTokensConfig(BaseConfig):
                 "--output-tokens-mean",  # GenAI-Perf
                 "--osl",  # GenAI-Perf
             ),
-            group=Groups.OUTPUT_SEQUENCE_LENGTH,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -117,7 +122,7 @@ class OutputTokensConfig(BaseConfig):
                 "--output-tokens-stddev",  # GenAI-Perf
                 "--osl-stddev",
             ),
-            group=Groups.OUTPUT_SEQUENCE_LENGTH,
+            group=_CLI_GROUP,
         ),
     ] = OutputTokensDefaults.STDDEV
 
@@ -126,6 +131,8 @@ class PrefixPromptConfig(BaseConfig):
     """
     A configuration class for defining prefix prompt related settings.
     """
+
+    _CLI_GROUP = Groups.PREFIX_PROMPT
 
     pool_size: Annotated[
         int,
@@ -141,7 +148,7 @@ class PrefixPromptConfig(BaseConfig):
                 "--prefix-prompt-pool-size",
                 "--num-prefix-prompts",  # GenAI-Perf
             ),
-            group=Groups.PREFIX_PROMPT,
+            group=_CLI_GROUP,
         ),
     ] = PrefixPromptDefaults.POOL_SIZE
 
@@ -162,7 +169,7 @@ class PrefixPromptConfig(BaseConfig):
                 "--prompt-prefix-length",
                 "--prefix-prompt-length",  # GenAI-Perf
             ),
-            group=Groups.PREFIX_PROMPT,
+            group=_CLI_GROUP,
         ),
     ] = PrefixPromptDefaults.LENGTH
 
@@ -179,7 +186,7 @@ class PrefixPromptConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--shared-system-prompt-length",),
-            group=Groups.PREFIX_PROMPT,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -197,15 +204,48 @@ class PrefixPromptConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--user-context-prompt-length",),
-            group=Groups.PREFIX_PROMPT,
+            group=_CLI_GROUP,
         ),
     ] = None
+
+
+class CacheBustConfig(BaseConfig):
+    """Per-conversation cache-bust marker injected into the prompt.
+
+    Prefix variants diverge at token 0 (defeats KV-cache prefix matching for
+    the entire prompt — recommended when --shared-system-prompt-length is
+    large). Suffix variants append after existing content (lighter bust;
+    preserves leading-prefix caching). Marker is deterministic from
+    (benchmark_id, recycle_pass, trajectory_index) — reproducible across
+    reruns. Same marker for all turns within a conversation; fresh marker
+    on each recycle of a trace_id.
+    """
+
+    _CLI_GROUP = Groups.CACHE_BUST
+
+    target: Annotated[
+        CacheBustTarget,
+        Field(
+            description=(
+                "Where (and how) to inject a per-conversation cache-bust marker. "
+                "Prefix variants prepend at token 0 (most aggressive); "
+                "suffix variants append after existing content. "
+                "'none' disables the feature (default)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust",),
+            group=_CLI_GROUP,
+        ),
+    ] = CacheBustTarget.NONE
 
 
 class PromptConfig(BaseConfig):
     """
     A configuration class for defining prompt related settings.
     """
+
+    _CLI_GROUP = Groups.PROMPT
 
     @model_validator(mode="after")
     def validate_sequence_distribution_format(self) -> Self:
@@ -238,13 +278,29 @@ class PromptConfig(BaseConfig):
                 "--batch-size",  # GenAI-Perf
                 "-b",  # GenAI-Perf
             ),
-            group=Groups.PROMPT,
+            group=_CLI_GROUP,
         ),
     ] = PromptDefaults.BATCH_SIZE
 
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+    cache_bust: CacheBustConfig = CacheBustConfig()
+
+    prompt_corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
+            "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
+            "agentic-coding loaders such as weka_trace default to 'coding').",
+        ),
+        CLIParameter(
+            name=("--prompt-corpus",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
 
     sequence_distribution: Annotated[
         str | None,

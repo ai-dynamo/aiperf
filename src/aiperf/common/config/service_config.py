@@ -26,6 +26,7 @@ _logger = AIPerfLogger(__name__)
 class ServiceConfig(BaseConfig):
     """Base configuration for all services. It will be provided to all services during their __init__ function."""
 
+    _CLI_GROUP = Groups.SERVICE
     _comm_config: BaseZMQCommunicationConfig | None = None
 
     @model_validator(mode="after")
@@ -110,7 +111,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--log-level"),
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.LOG_LEVEL
 
@@ -123,7 +124,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--verbose", "-v"),
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.VERBOSE
 
@@ -136,7 +137,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--extra-verbose", "-vv"),
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.EXTRA_VERBOSE
 
@@ -150,7 +151,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--record-processor-service-count", "--record-processors"),
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.RECORD_PROCESSOR_SERVICE_COUNT
 
@@ -165,7 +166,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--ui-type", "--ui"),
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = ServiceDefaults.UI_TYPE
 
@@ -178,7 +179,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name="--api-port",
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -189,7 +190,7 @@ class ServiceConfig(BaseConfig):
         ),
         CLIParameter(
             name="--api-host",
-            group=Groups.SERVICE,
+            group=_CLI_GROUP,
         ),
     ] = None
 

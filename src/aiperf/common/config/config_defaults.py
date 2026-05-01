@@ -67,6 +67,9 @@ class InputDefaults:
     FIXED_SCHEDULE_AUTO_OFFSET = False
     FIXED_SCHEDULE_START_OFFSET = None
     FIXED_SCHEDULE_END_OFFSET = None
+    DISABLE_AUTO_FIXED_SCHEDULE = False
+    IGNORE_TRACE_DELAYS = False
+    USE_THINK_TIME_ONLY = False
     GOODPUT = None
     PUBLIC_DATASET = None
     CUSTOM_DATASET_TYPE = None
@@ -196,6 +199,7 @@ class TokenizerDefaults:
     NAME = None
     REVISION = "main"
     TRUST_REMOTE_CODE = False
+    APPLY_CHAT_TEMPLATE = False
 
 
 @dataclass(frozen=True)

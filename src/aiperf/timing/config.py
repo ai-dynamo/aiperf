@@ -43,6 +43,17 @@ class TimingConfig(AIPerfBaseModel):
         default=URLSelectionStrategy.ROUND_ROBIN,
         description="Strategy for selecting URLs when multiple URLs are provided.",
     )
+    concurrency: int | None = Field(
+        default=None,
+        gt=0,
+        description="User-configured target concurrency. Required by AGENTIC_REPLAY "
+        "to size the trajectory list built once at PhaseOrchestrator construction.",
+    )
+    random_seed: int | None = Field(
+        default=None,
+        description="User-configured random seed. Used by AGENTIC_REPLAY to derive "
+        "deterministic per-trace start-turn indices for trajectories.",
+    )
 
     @classmethod
     def from_user_config(cls, user_config: UserConfig) -> TimingConfig:
@@ -68,6 +79,8 @@ class TimingConfig(AIPerfBaseModel):
             ),
             urls=user_config.endpoint.urls,
             url_selection_strategy=user_config.endpoint.url_selection_strategy,
+            concurrency=loadgen.concurrency,
+            random_seed=user_config.input.random_seed,
         )
 
 
@@ -197,6 +210,32 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
         of None (disabled) because warmup should always complete all requests.
     """
     loadgen = user_config.loadgen
+
+    # AGENTIC_REPLAY auto-creates a warmup phase sized to the trajectory list.
+    # The strategy owns its credit count (one per trajectory) and dispatches
+    # as a single CONCURRENCY_BURST; grace period is infinite so the warmup
+    # barrier holds.
+    # `total_expected_requests=concurrency` lets `SendingCompleteStopCondition`
+    # fire after the warmup burst completes; if pool_size < concurrency the
+    # strategy emits `mark_sending_complete()` itself in `_execute_warmup`.
+    if user_config.timing_mode == TimingMode.AGENTIC_REPLAY:
+        return CreditPhaseConfig(
+            phase=CreditPhase.WARMUP,
+            timing_mode=TimingMode.AGENTIC_REPLAY,
+            total_expected_requests=loadgen.concurrency,
+            expected_duration_sec=None,
+            expected_num_sessions=None,
+            concurrency=loadgen.concurrency,
+            prefill_concurrency=loadgen.prefill_concurrency,
+            request_rate=None,
+            arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+            arrival_smoothness=loadgen.arrival_smoothness,
+            seamless=False,
+            grace_period_sec=loadgen.warmup_grace_period
+            if loadgen.warmup_grace_period is not None
+            else float("inf"),
+        )
+
     if not (
         loadgen.warmup_request_count
         or loadgen.warmup_duration

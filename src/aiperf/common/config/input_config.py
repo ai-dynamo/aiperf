@@ -16,7 +16,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
-from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
@@ -47,6 +47,10 @@ class InputConfig(BaseConfig):
     A configuration class for defining input related settings.
     """
 
+    _CLI_GROUP = Groups.INPUT
+
+    _use_think_time_only_explicitly_set: bool = False
+
     @model_validator(mode="before")
     @classmethod
     def initialize_rng(cls, data: dict) -> dict:
@@ -66,6 +70,14 @@ class InputConfig(BaseConfig):
         """Validate the fixed schedule configuration."""
         if self.fixed_schedule and self.file is None:
             raise ValueError("Fixed schedule requires a file to be provided")
+        if self.fixed_schedule and self.disable_auto_fixed_schedule:
+            raise ValueError(
+                "The --fixed-schedule and --no-fixed-schedule options cannot be used together"
+            )
+        if self.ignore_trace_delays and self.use_think_time_only:
+            raise ValueError(
+                "The --ignore-trace-delays and --use-think-time-only options cannot be used together"
+            )
         return self
 
     @model_validator(mode="after")
@@ -100,6 +112,10 @@ class InputConfig(BaseConfig):
             raise ValueError(
                 "The --public-dataset and --custom-dataset-type options cannot be set together"
             )
+        if self.custom_dataset_type is not None and self.detected_loader is None:
+            self.detected_loader = str(self.custom_dataset_type)
+        if self.public_dataset is not None and self.detected_loader is None:
+            self.detected_loader = str(self.public_dataset)
         return self
 
     @model_validator(mode="after")
@@ -132,6 +148,40 @@ class InputConfig(BaseConfig):
                 "--synthesis-max-isl, --synthesis-max-osl) "
                 "require a trace dataset type (e.g., mooncake_trace, bailian_trace)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _record_explicit_set_flags(self) -> Self:
+        """Snapshot which fields were explicitly provided by the user.
+
+        Scenario validation needs to distinguish "user explicitly set X to a
+        non-required value" (raise) from "X is at default; auto-fill" (info log).
+        Pydantic's `model_fields_set` already tracks this, but we surface a
+        stable underscore-prefixed flag for the validator's defensive `getattr`.
+        """
+        self._use_think_time_only_explicitly_set = (
+            "use_think_time_only" in self.model_fields_set
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _seed_extra_inputs_parsed(self) -> Self:
+        """Mirror `extra` into a stable `extra_inputs_parsed` dict for the validator.
+
+        Scenario validation may inject keys (e.g. ignore_eos=true) and the
+        downstream consumers expect a dict shape; the user-facing `extra` field
+        is `Any` (list[tuple] / dict / etc). We canonicalize once here.
+        """
+        raw = self.extra
+        if isinstance(raw, dict):
+            self.extra_inputs_parsed = dict(raw)
+        elif raw is None:
+            self.extra_inputs_parsed = {}
+        else:
+            try:
+                self.extra_inputs_parsed = dict(raw)
+            except (TypeError, ValueError):
+                self.extra_inputs_parsed = {}
         return self
 
     @model_validator(mode="after")
@@ -169,10 +219,29 @@ class InputConfig(BaseConfig):
                 "--extra-inputs",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
     ] = InputDefaults.EXTRA
+
+    extra_inputs_parsed: Annotated[
+        dict,
+        Field(
+            description="Runtime-canonicalized dict view of `extra` for downstream consumers (scenario validator, request builders). Auto-populated from `extra`; not user-settable on the CLI.",
+            json_schema_extra={"add_to_template": False},
+        ),
+        DisableCLI(reason="Runtime-stamped from --extra-inputs"),
+    ] = {}
+
+    detected_loader: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Runtime-stamped name of the dataset loader actually selected (e.g. 'weka_trace'). Set by loader auto-detection; used by scenario validation.",
+            json_schema_extra={"add_to_template": False},
+        ),
+        DisableCLI(reason="Runtime-stamped by loader auto-detection"),
+    ] = None
 
     headers: Annotated[
         Any,
@@ -189,7 +258,7 @@ class InputConfig(BaseConfig):
                 "-H",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.HEADERS
 
@@ -205,7 +274,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--input-file",  # GenAI-Perf,
             ),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FILE
 
@@ -219,7 +288,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--fixed-schedule",  # GenAI-Perf
             ),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE
 
@@ -232,7 +301,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-auto-offset",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
 
@@ -247,7 +316,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-start-offset",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_START_OFFSET
 
@@ -261,9 +330,51 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-end-offset",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
+
+    disable_auto_fixed_schedule: Annotated[
+        bool,
+        Field(
+            description="Suppress automatic fixed-schedule activation for trace datasets. By default, AIPerf auto-enables fixed-schedule "
+            "mode when a trace dataset with timestamps is loaded so the recorded arrival pattern is replayed exactly. Pass this flag "
+            "to opt out and run the trace under whichever load-generation mode is otherwise selected (concurrency, request-rate, etc.). "
+            "Mutually exclusive with `--fixed-schedule`.",
+        ),
+        CLIParameter(
+            name=("--no-fixed-schedule",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.DISABLE_AUTO_FIXED_SCHEDULE
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, "
+            "Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back "
+            "instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode "
+            "before they could be ignored — combine with `--no-fixed-schedule` if you want both behaviors).",
+        ),
+        CLIParameter(
+            name=("--ignore-trace-delays",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.IGNORE_TRACE_DELAYS
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) "
+            "instead of the full `t_curr − t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded "
+            "`api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta "
+            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.",
+        ),
+        CLIParameter(
+            name=("--use-think-time-only",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.USE_THINK_TIME_ONLY
 
     public_dataset: Annotated[
         PublicDatasetType | None,
@@ -275,7 +386,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--public-dataset"),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.PUBLIC_DATASET
 
@@ -288,7 +399,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--hf-subset",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -305,7 +416,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--custom-dataset-type"),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
@@ -320,7 +431,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -335,7 +446,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--random-seed",  # GenAI-Perf
             ),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.RANDOM_SEED
 
@@ -356,7 +467,7 @@ class InputConfig(BaseConfig):
         BeforeValidator(parse_str_as_numeric_dict),
         CLIParameter(
             name=("--goodput",),
-            group=Groups.INPUT,
+            group=_CLI_GROUP,
         ),
     ] = InputDefaults.GOODPUT
 

@@ -21,14 +21,16 @@ from aiperf.common.hooks import on_init, on_start
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
+from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
+    from aiperf.common.config import UserConfig
     from aiperf.common.models import DatasetMetadata
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.config import TimingConfig
@@ -86,6 +88,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         dataset_metadata: DatasetMetadata,
+        user_config: UserConfig | None = None,
         **kwargs,
     ) -> None:
         """Initialize timing strategy and orchestration components.
@@ -95,12 +98,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             phase_publisher: Publishes phase events to message bus
             credit_router: Routes credits to workers
             dataset_metadata: Dataset for conversation sampling
+            user_config: Full UserConfig for strategies that need it (e.g.
+                AgenticReplayStrategy reads ``prompt.cache_bust`` and
+                ``benchmark_id``). Optional; strategies that don't need it
+                ignore the value.
         """
         super().__init__(**kwargs)
         self._config = config
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._dataset_metadata = dataset_metadata
+        self._user_config = user_config
 
         # Create dataset sampler
         SamplerClass = plugins.get_class(
@@ -109,14 +117,33 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         )
         self._dataset_sampler = SamplerClass(
             conversation_ids=[
-                c.conversation_id for c in self._dataset_metadata.conversations
+                c.conversation_id
+                for c in self._dataset_metadata.conversations
+                if c.is_root
             ],
         )
 
         # Long-lived components (shared across phases)
-        self._conversation_source = ConversationSource(
-            self._dataset_metadata, self._dataset_sampler
-        )
+        # AGENTIC_REPLAY needs trajectories built once at orchestrator-construction
+        # time so trajectory state survives the WARMUP -> PROFILING boundary.
+        if any(
+            pc.timing_mode == TimingMode.AGENTIC_REPLAY for pc in config.phase_configs
+        ):
+            if config.concurrency is None:
+                raise ValueError(
+                    "AGENTIC_REPLAY timing mode requires concurrency to be set on "
+                    "TimingConfig (sourced from loadgen.concurrency)."
+                )
+            self._conversation_source = TrajectorySource(
+                dataset_metadata=self._dataset_metadata,
+                dataset_sampler=self._dataset_sampler,
+                concurrency=config.concurrency,
+                random_seed=config.random_seed if config.random_seed is not None else 0,
+            )
+        else:
+            self._conversation_source = ConversationSource(
+                self._dataset_metadata, self._dataset_sampler
+            )
         self._concurrency_manager = ConcurrencyManager()
         self._cancellation_policy = RequestCancellationSimulator(
             config.request_cancellation
@@ -131,6 +158,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             self._url_sampler = StrategyClass(urls=config.urls)
 
         # Callback handler registered directly with router (no orchestrator in middle)
+        # Subagent orchestrator (DAG) is attached via ``set_branch_orchestrator``
+        # by Task 14 wiring once the orchestrator is constructed with its issuer.
         self._callback_handler = CreditCallbackHandler(self._concurrency_manager)
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
@@ -197,6 +226,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 cancellation_policy=self._cancellation_policy,
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
+                user_config=self._user_config,
             )
 
             # For seamless non-final phases, set callback to remove from active runners

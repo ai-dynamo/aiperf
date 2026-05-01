@@ -40,6 +40,8 @@ class VideoAudioConfig(BaseConfig):
             )
         return self
 
+    _CLI_GROUP = Groups.VIDEO_INPUT
+
     sample_rate: Annotated[
         float,
         Field(
@@ -51,7 +53,7 @@ class VideoAudioConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-audio-sample-rate",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoAudioDefaults.SAMPLE_RATE
 
@@ -67,7 +69,7 @@ class VideoAudioConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-audio-num-channels",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoAudioDefaults.CHANNELS
 
@@ -81,7 +83,7 @@ class VideoAudioConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-audio-codec",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoAudioDefaults.CODEC
 
@@ -95,7 +97,7 @@ class VideoAudioConfig(BaseConfig):
         BeforeValidator(_coerce_int_literal),
         CLIParameter(
             name=("--video-audio-depth",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoAudioDefaults.DEPTH
 
@@ -116,6 +118,8 @@ class VideoConfig(BaseConfig):
             raise ValueError("Height is specified but width is not")
         return self
 
+    _CLI_GROUP = Groups.VIDEO_INPUT
+
     batch_size: Annotated[
         int,
         Field(
@@ -129,7 +133,7 @@ class VideoConfig(BaseConfig):
                 "--video-batch-size",
                 "--batch-size-video",
             ),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.BATCH_SIZE
 
@@ -143,7 +147,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-duration",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.DURATION
 
@@ -157,7 +161,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-fps",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.FPS
 
@@ -170,7 +174,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-width",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.WIDTH
 
@@ -183,7 +187,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-height",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.HEIGHT
 
@@ -196,7 +200,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-synth-type",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.SYNTH_TYPE
 
@@ -209,7 +213,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-format",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.FORMAT
 
@@ -227,7 +231,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-codec",),
-            group=Groups.VIDEO_INPUT,
+            group=_CLI_GROUP,
         ),
     ] = VideoDefaults.CODEC
 

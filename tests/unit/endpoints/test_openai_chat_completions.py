@@ -15,6 +15,25 @@ from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_request_info
 
 
+def _build_with_prepend(
+    endpoint: ChatEndpoint,
+    turns,
+    *,
+    system_message: str | None = None,
+    user_context_message: str | None = None,
+) -> list[dict]:
+    """Mirror ``ChatEndpoint.format_payload``'s pre-pend step around
+    ``build_messages`` so tests can assert on the final messages array
+    without constructing a full request-info shim."""
+    messages: list[dict] = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    if user_context_message:
+        messages.append({"role": "user", "content": user_context_message})
+    messages.extend(endpoint.build_messages(turns))
+    return messages
+
+
 class TestChatEndpoint:
     """Test ChatEndpoint."""
 
@@ -163,7 +182,7 @@ class TestChatEndpoint:
         endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
+        messages = endpoint.build_messages(turns)
         assert messages[0]["role"] == (turn.role or "user")
         assert "name" not in messages[0]
         assert messages[0]["content"] == turn.texts[0].contents[0]
@@ -175,7 +194,7 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
+        messages = endpoint.build_messages(turns)
         assert messages[0]["role"] == (turn.role or "user")
         assert "name" not in messages[0]
         assert messages[0]["content"] == ""
@@ -188,7 +207,7 @@ class TestChatEndpoint:
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
         with pytest.raises(ValueError):
-            endpoint._create_messages(turns, None, None)
+            endpoint.build_messages(turns)
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
@@ -232,7 +251,7 @@ class TestChatEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
-            endpoint._create_messages(turns, None, None)
+            endpoint.build_messages(turns)
 
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations
@@ -241,7 +260,7 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
-        messages = endpoint._create_messages(turns, system_message, None)
+        messages = _build_with_prepend(endpoint, turns, system_message=system_message)
 
         # First message should be the system message
         assert messages[0]["role"] == "system"
@@ -257,7 +276,9 @@ class TestChatEndpoint:
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, None, user_context)
+        messages = _build_with_prepend(
+            endpoint, turns, user_context_message=user_context
+        )
 
         # First message should be the user context
         assert messages[0]["role"] == "user"
@@ -274,7 +295,12 @@ class TestChatEndpoint:
         turns = [turn]
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        messages = _build_with_prepend(
+            endpoint,
+            turns,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
 
         # First message should be system
         assert messages[0]["role"] == "system"
@@ -293,7 +319,12 @@ class TestChatEndpoint:
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        messages = _build_with_prepend(
+            endpoint,
+            turns,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
 
         # Should have system + user context + 2 turns = 4 messages
         assert len(messages) == 4

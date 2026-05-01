@@ -78,6 +78,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._init_trace_scope()
         items: list[BurstGPTTrace] = []
 
         with open(self.filename, newline="") as f:

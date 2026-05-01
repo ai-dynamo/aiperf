@@ -153,7 +153,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         # This contains the delay_ms or timestamp_ms for the next turn
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit)
+        turn = TurnToSend.from_previous_credit(credit, next_meta)
 
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(

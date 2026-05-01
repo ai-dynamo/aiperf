@@ -7,8 +7,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
@@ -93,6 +95,18 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ```
     """
 
+    def __init__(
+        self,
+        *,
+        filename: str,
+        user_config: UserConfig,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        self._delay_cap_tracker = DelayCapTracker(
+            cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
+        )
+
     @classmethod
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
@@ -166,10 +180,11 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                             audios=media[MediaType.AUDIO],
                             videos=media[MediaType.VIDEO],
                             timestamp=single_turn.timestamp,
-                            delay=single_turn.delay,
+                            delay=self._delay_cap_tracker.clamp(single_turn.delay),
                             role=single_turn.role,
                             max_tokens=single_turn.output_length,
                         )
                     )
             conversations.append(conversation)
+        self._delay_cap_tracker.log_summary(logger_name=__name__)
         return conversations

@@ -6,10 +6,15 @@ All over-the-wire structs use tag_field="t" for efficient polymorphic decoding v
 Tag values are short strings for minimal wire overhead.
 """
 
+from typing import TYPE_CHECKING
+
 from msgspec import Struct
 from typing_extensions import Self
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
+
+if TYPE_CHECKING:
+    from aiperf.common.models.dataset_models import TurnMetadata
 
 # =============================================================================
 # Credit Struct (sent from router to worker)
@@ -46,6 +51,20 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    agent_depth: int = 0
+    parent_correlation_id: str | None = None
+    has_forks: bool = False
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    """DAG branch mode for this credit. Ignored when parent_correlation_id is None
+    (i.e. for root sessions). FORK = inherit parent turn_list; SPAWN =
+    fresh context. Default FORK keeps wire footprint small via msgspec omit_defaults."""
+
+    cache_bust_marker: str | None = None
+    """Pre-rendered cache-bust marker text (already includes whitespace boundaries).
+    None when the cache-bust feature is disabled."""
+
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
+    """Where (and how) to inject `cache_bust_marker` at request-build time."""
 
     @property
     def is_final_turn(self) -> bool:
@@ -93,17 +112,43 @@ class TurnToSend(Struct, frozen=True):
     x_correlation_id: str
     turn_index: int
     num_turns: int
+    agent_depth: int = 0
+    parent_correlation_id: str | None = None
+    has_forks: bool = False
+    branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+
+    cache_bust_marker: str | None = None
+    """Pre-rendered cache-bust marker text (already includes whitespace boundaries).
+    None when the cache-bust feature is disabled."""
+
+    cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
+    """Where (and how) to inject `cache_bust_marker` at request-build time."""
 
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
 
     @classmethod
-    def from_previous_credit(cls, credit: Credit) -> Self:
-        """Create the next turn to send from the previous turn's credit."""
+    def from_previous_credit(
+        cls, credit: Credit, next_meta: "TurnMetadata | None" = None
+    ) -> Self:
+        """Create the next turn to send from the previous turn's credit.
+
+        Args:
+            credit: The previous turn's credit.
+            next_meta: Metadata for the NEW turn being built. When provided, the
+                ``has_forks`` flag is derived from it so the sticky
+                router can defer parent-entry eviction until DAG children drain.
+        """
         return cls(
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
+            has_forks=next_meta.has_forks if next_meta is not None else False,
+            branch_mode=credit.branch_mode,
+            cache_bust_marker=credit.cache_bust_marker,
+            cache_bust_target=credit.cache_bust_target,
         )

@@ -10,6 +10,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.dataset.loader.models import CustomDatasetT
+from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 class BaseLoader(AIPerfLoggerMixin, ABC):
@@ -66,6 +67,21 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str | Path, user_config: UserConfig, **kwargs):
+    def __init__(self, *, filename: str | Path | None = None, user_config: UserConfig, **kwargs):
         super().__init__(user_config=user_config, **kwargs)
         self.filename = Path(filename) if isinstance(filename, str) else filename
+
+
+class BaseRawPayloadLoader(BaseFileLoader):
+    """Base for loaders that produce verbatim raw_payload conversations.
+
+    Provides shared defaults: MESSAGE_ARRAY_WITH_RESPONSES context mode and SEQUENTIAL sampling.
+    """
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
+        return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        return DatasetSamplingStrategy.SEQUENTIAL

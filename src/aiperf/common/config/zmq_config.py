@@ -194,6 +194,7 @@ class ZMQIPCProxyConfig(BaseZMQProxyConfig):
 class ZMQTCPConfig(BaseZMQCommunicationConfig):
     """Configuration for TCP transport."""
 
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
     comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_TCP
 
     @model_validator(mode="after")
@@ -217,7 +218,7 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
         ),
         CLIParameter(
             name=("--zmq-host"),
-            group=Groups.ZMQ_COMMUNICATION,
+            group=_CLI_GROUP,
         ),
     ] = "127.0.0.1"
     records_push_pull_port: Annotated[int, DisableCLI()] = Field(
@@ -268,6 +269,7 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
 class ZMQIPCConfig(BaseZMQCommunicationConfig):
     """Configuration for IPC transport."""
 
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
     comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_IPC
 
     @model_validator(mode="after")
@@ -294,7 +296,7 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         ),
         CLIParameter(
             name=("--zmq-ipc-path"),
-            group=Groups.ZMQ_COMMUNICATION,
+            group=_CLI_GROUP,
         ),
     ] = None
 
@@ -433,6 +435,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     - If controller_host is set: use TCP to connect to that host (remote deployment)
     """
 
+    _CLI_GROUP = Groups.ZMQ_COMMUNICATION
     comm_backend: ClassVar[CommunicationBackend] = CommunicationBackend.ZMQ_DUAL_BIND
 
     @property

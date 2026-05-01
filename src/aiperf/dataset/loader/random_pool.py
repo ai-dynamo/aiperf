@@ -149,7 +149,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             False otherwise (including for regular files without explicit type).
         """
 
-        if data is not None and data.get("type") == CustomDatasetType.RANDOM_POOL:
+        if isinstance(data, dict) and data.get("type") == CustomDatasetType.RANDOM_POOL:
             try:
                 RandomPool.model_validate(data)
                 return True

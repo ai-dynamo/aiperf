@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.AGENTX.*         - InferenceX AgentX scenario settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.CONFIG.*         - Configuration file paths for distributed deployments
@@ -81,6 +82,34 @@ class _APIServerSettings(BaseSettings):
         le=300.0,
         default=5.0,
         description="Timeout in seconds for graceful API server shutdown before force-cancelling",
+    )
+
+
+class _AgentXSettings(BaseSettings):
+    """Settings for the InferenceX AgentX scenario family.
+
+    Controls runtime detection knobs for the agentx scenario, currently the
+    substring allowlist used to classify a server response as a
+    context-overflow error (RFC 2026-04-26 §7).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_AGENTX_",
+    )
+
+    CONTEXT_OVERFLOW_SUBSTRINGS: list[str] = Field(
+        default=[
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+        description="Case-insensitive substring allowlist used to classify a "
+        "server error response as a context-overflow event. Matched against "
+        "the raw response body and the OpenAI-style nested 'error.message' "
+        "field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to "
+        "support additional inference-server vocabularies (vLLM, TGI, "
+        "TensorRT-LLM, ...). Empty list disables runtime detection.",
     )
 
 
@@ -179,6 +208,23 @@ class _DatasetSettings(BaseSettings):
         le=100,
         default=10,
         description="Maximum number of concurrent media URL downloads",
+    )
+    WEKA_PARALLEL_WORKERS: int = Field(
+        ge=0,
+        le=256,
+        default=0,
+        description="Number of worker processes for WekaTraceLoader parallel "
+        "reconstruction. 0 = auto (min(cpu_count - 1, 16, num_traces)). Set to 1 "
+        "to force serial reconstruction.",
+    )
+    WEKA_PARALLEL_THRESHOLD: int = Field(
+        ge=1,
+        le=100000,
+        default=8,
+        description="Minimum number of parent traces required before "
+        "WekaTraceLoader switches to the multi-process parallel reconstruction "
+        "path. Below this, the in-process serial path is used (Pool startup "
+        "overhead exceeds the speedup for tiny corpora).",
     )
 
 
@@ -454,12 +500,6 @@ class _MetricsSettings(BaseSettings):
         ge=1,
         default=50,
         description="Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens)",
-    )
-    TDIGEST_COMPRESSION: int = Field(
-        ge=20,
-        le=10000,
-        default=500,
-        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
     )
 
 
@@ -980,6 +1020,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    AGENTX: _AgentXSettings = Field(
+        default_factory=_AgentXSettings,
+        description="InferenceX AgentX scenario settings",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",

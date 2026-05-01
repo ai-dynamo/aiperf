@@ -173,11 +173,28 @@ class CreditCounter:
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
         """Atomically increment sent count and return (credit_index, is_final_credit).
 
+        DAG children (``turn_to_send.agent_depth > 0``) count as real HTTP
+        requests and DO bump ``_requests_sent`` — the user-visible
+        "requests sent" metric must reflect actual wire traffic including
+        DAG offspring. They do NOT bump ``_sent_sessions`` or
+        ``_total_session_turns`` because they inherit the parent's
+        session slot (``CreditIssuer.issue_credit`` skips session-slot
+        acquisition for them). Children also never flip
+        ``is_final_credit`` — the ``TimingStrategy`` loop's "sending
+        complete" signal is root-plan-driven, not wire-volume-driven.
+
         Lock-free: no async calls.
         """
         credit_index = self._requests_sent
-
         new_sent_count = self._requests_sent + 1
+
+        if turn_to_send.agent_depth > 0:
+            # Children: bump request count only (observability), leave
+            # session counters alone (slot is inherited), never signal
+            # plan exhaustion.
+            self._requests_sent = new_sent_count
+            return credit_index, False
+
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
 
@@ -200,26 +217,44 @@ class CreditCounter:
 
         return credit_index, is_final_credit
 
-    def increment_returned(self, is_final_turn: bool, cancelled: bool) -> bool:
+    def increment_returned(
+        self,
+        is_final_turn: bool,
+        cancelled: bool,
+        *,
+        is_child: bool = False,
+    ) -> bool:
         """Atomically increment returned count and check phase completion.
+
+        DAG children DO bump ``_requests_completed`` / ``_requests_cancelled``
+        — these are user-visible metrics of actual HTTP activity, symmetric
+        with ``_requests_sent`` being bumped on the dispatch side. They do
+        NOT bump ``_completed_sessions`` / ``_cancelled_sessions`` (session
+        slot was inherited, not acquired).
 
         Lock-free: no async calls.
 
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
             cancelled: Whether the credit was cancelled
+            is_child: True when ``credit.agent_depth > 0``. Session-level
+                counters are skipped for children; request-level counters
+                still tick.
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
             (phase sending must be complete for this to ever return True).
+            The DAG deferral lives in ``CreditCallbackHandler``: even when
+            this returns True the completion event is held until
+            ``BranchOrchestrator.has_pending_branch_work`` drains.
         """
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn:
+            if is_final_turn and not is_child:
                 self._cancelled_sessions += 1
         else:
             self._requests_completed += 1
-            if is_final_turn:
+            if is_final_turn and not is_child:
                 self._completed_sessions += 1
 
         return self.check_all_returned_or_cancelled()

@@ -9,7 +9,10 @@ import msgspec
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.models import CreditPhaseStats
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.credit.messages import (
+    CreditPhaseCompleteMessage,
     CreditReturn,
     FirstToken,
     WorkerToRouterMessage,
@@ -144,6 +147,47 @@ class TestCreditReturnValidation:
 
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
+
+
+# =============================================================================
+# CreditPhaseCompleteMessage Validation Tests (DAG sub-agent stats carrier)
+# =============================================================================
+
+
+class TestCreditPhaseCompleteMessageBranchStats:
+    """CreditPhaseCompleteMessage carries optional BranchStats for DAG runs."""
+
+    def _phase_stats(self) -> CreditPhaseStats:
+        return CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            requests_sent=10,
+            requests_completed=10,
+            final_requests_sent=10,
+            start_ns=1_000_000,
+        )
+
+    def test_branch_stats_defaults_to_none(self):
+        msg = CreditPhaseCompleteMessage(
+            service_id="tm-1",
+            stats=self._phase_stats(),
+        )
+        assert msg.branch_stats is None
+
+    def test_roundtrip_with_branch_stats(self):
+        stats = BranchStats(
+            children_spawned=3,
+            children_completed=3,
+            parents_suspended=1,
+            parents_resumed=1,
+        )
+        msg = CreditPhaseCompleteMessage(
+            service_id="tm-1",
+            stats=self._phase_stats(),
+            branch_stats=stats,
+        )
+        restored = CreditPhaseCompleteMessage.model_validate_json(msg.model_dump_json())
+        assert restored.branch_stats == stats
+        assert restored.stats.phase == CreditPhase.PROFILING
 
 
 # =============================================================================
