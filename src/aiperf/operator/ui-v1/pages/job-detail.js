@@ -22,6 +22,7 @@ import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
+import { RelaunchButton } from '../components/relaunch-button.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -837,20 +838,27 @@ const BACKDROP_STYLE = [
   'display: flex; align-items: center; justify-content: center;',
 ].join(' ');
 
-const MODAL_STYLE = [
+const MODAL_BASE_STYLE = [
   'background: ' + palette.mantle + ';',
   'border: 1px solid ' + palette.surface0 + ';',
   'border-radius: var(--radius-md);',
-  'max-width: 80vw; max-height: 80vh;',
-  'width: 900px;',
+  'max-height: 80vh;',
   'display: flex; flex-direction: column;',
   'overflow: hidden;',
 ].join(' ');
 
-function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, children }) {
+// Default modal sizing (used by the spec/YAML viewer).
+const MODAL_STYLE = MODAL_BASE_STYLE + ' max-width: 80vw; width: 900px;';
+
+// Wider sizing for file viewers (profile_export_aiperf.json and friends —
+// pretty-printed JSON nested several levels deep needs the horizontal room).
+const MODAL_STYLE_WIDE = MODAL_BASE_STYLE + ' max-width: 95vw; width: 1400px;';
+
+function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, wide, children }) {
+  const modalStyle = wide ? MODAL_STYLE_WIDE : MODAL_STYLE;
   return html`
     <div style=${BACKDROP_STYLE} onclick=${e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style=${MODAL_STYLE}>
+      <div style=${modalStyle}>
         <div style=${'display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid ' + palette.surface0 + '; flex-shrink: 0'}>
           <span style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
           <div style="display: flex; gap: var(--space-2); align-items: center">
@@ -1043,6 +1051,7 @@ function FileViewerModal({ filename, url, onClose }) {
       onDownload=${handleDownload}
       onClose=${onClose}
       copyLabel=${copyLabel}
+      wide=${true}
     >
       ${body}
     </${ModalChrome}>
@@ -2137,6 +2146,11 @@ export function JobDetail({ namespace, name, epoch }) {
               `}
             </div>
           `}
+          ${isTerminal && jobConfig?.spec && html`
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
+              <${RelaunchButton} namespace=${namespace} name=${name} config=${jobConfig} />
+            </div>
+          `}
         </div>
       </div>
 
@@ -2243,13 +2257,6 @@ export function JobDetail({ namespace, name, epoch }) {
               </div>
             `
           }
-
-          ${epoch === undefined && html`
-            <div style="margin-top: var(--space-4); display: grid; gap: var(--space-4)">
-              <${EventsPane} ns=${namespace} name=${name} />
-              <${LogsPane} ns=${namespace} name=${name} pods=${pods} />
-            </div>
-          `}
         </div>
 
         <!-- Right: Charts -->
@@ -2269,6 +2276,14 @@ export function JobDetail({ namespace, name, epoch }) {
           `}
         </div>
       </div>
+
+      <!-- Events + Logs (full width, below the two-column split) -->
+      ${epoch === undefined && html`
+        <div style="margin-top: var(--space-4); display: grid; gap: var(--space-4)">
+          <${EventsPane} ns=${namespace} name=${name} />
+          <${LogsPane} ns=${namespace} name=${name} pods=${pods} />
+        </div>
+      `}
 
       <!-- Feature 6: SLA Compliance (completed only, only when SLOs declared on the CR) -->
       ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
