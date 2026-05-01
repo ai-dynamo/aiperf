@@ -102,7 +102,7 @@ export function PodsBar({ pods }) {
     </div>
   `;
 
-  const toggle = html`
+  const toggleButton = html`
     <button
       type="button"
       class="pods-bar-toggle"
@@ -120,7 +120,7 @@ export function PodsBar({ pods }) {
         ${dots}
         <div class="pods-bar-meta">
           ${summary}
-          ${toggle}
+          ${toggleButton}
         </div>
       </div>
     `;
@@ -170,7 +170,7 @@ export function PodsBar({ pods }) {
       </table>
       <div class="pods-bar-meta">
         ${summary}
-        ${toggle}
+        ${toggleButton}
       </div>
     </div>
   `;
