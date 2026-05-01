@@ -21,6 +21,7 @@ Expected = Literal[
     "GRACEFUL_FAILURE_REQUIRED",
     "INTERRUPT_OK",
     "FLAG_FOR_REVIEW",
+    "SKIP_UNSUPPORTED",
 ]
 
 CRASH_MARKERS = (
@@ -58,7 +59,14 @@ def create_context(root_name: str = "aiperf-local-adversarial") -> Context:
     url = os.environ.get("AIPERF_ADVERSARIAL_URL", LOCAL_DEFAULT_URL)
     root = BASE / "tests" / "scripts" / ".chaos_runs" / time.strftime("%Y%m%d-%H%M%S")
     if root_name != "aiperf-local-adversarial":
-        root = BASE / "tests" / "scripts" / ".chaos_runs" / root_name / time.strftime("%Y%m%d-%H%M%S")
+        root = (
+            BASE
+            / "tests"
+            / "scripts"
+            / ".chaos_runs"
+            / root_name
+            / time.strftime("%Y%m%d-%H%M%S")
+        )
     logs = root / "logs"
     artifacts = root / "artifacts"
     fixtures = root / "fixtures"
@@ -157,24 +165,57 @@ def command_case(
     return Case(name=name, expected=expected, run=_run, why=why)
 
 
-def pass_case(name: str, cmd: list[str], timeout: int = 60, why: str = "expected successful command") -> Case:
+def pass_case(
+    name: str,
+    cmd: list[str],
+    timeout: int = 60,
+    why: str = "expected successful command",
+) -> Case:
     return command_case(name, cmd, "PASS_REQUIRED", why, timeout)
 
 
-def graceful_failure_case(name: str, cmd: list[str], timeout: int = 60, why: str = "expected graceful failure") -> Case:
+def graceful_failure_case(
+    name: str, cmd: list[str], timeout: int = 60, why: str = "expected graceful failure"
+) -> Case:
     return command_case(name, cmd, "GRACEFUL_FAILURE_REQUIRED", why, timeout)
+
+
+def skip_case(name: str, why: str) -> Case:
+    def _run(ctx: Context, case_name: str, log: Path) -> tuple[int, str]:
+        log.write_text(f"SKIPPED: {why}\n")
+        return 0, log.read_text()
+
+    return Case(name=name, expected="SKIP_UNSUPPORTED", run=_run, why=why)
 
 
 def verdict_for(expected: Expected, rc: int, text: str) -> str:
     crashed = any(marker in text for marker in CRASH_MARKERS)
     if expected == "PASS_REQUIRED":
-        return "OK_PASS" if rc == 0 and not crashed else ("BUG_CRASH" if crashed else "BUG_UNEXPECTED_FAIL")
+        return (
+            "OK_PASS"
+            if rc == 0 and not crashed
+            else ("BUG_CRASH" if crashed else "BUG_UNEXPECTED_FAIL")
+        )
     if expected == "GRACEFUL_FAILURE_REQUIRED":
-        return "OK_GRACEFUL_FAILURE" if rc != 0 and rc != 124 and not crashed else ("BUG_CRASH" if crashed else "BUG_UNEXPECTED_PASS_OR_TIMEOUT")
+        return (
+            "OK_GRACEFUL_FAILURE"
+            if rc != 0 and rc != 124 and not crashed
+            else ("BUG_CRASH" if crashed else "BUG_UNEXPECTED_PASS_OR_TIMEOUT")
+        )
     if expected == "INTERRUPT_OK":
-        return "OK_INTERRUPT" if rc != 0 and rc != 124 and not crashed else ("BUG_CRASH" if crashed else "BUG_INTERRUPT_HUNG_OR_ZERO")
+        return (
+            "OK_INTERRUPT"
+            if rc != 0 and rc != 124 and not crashed
+            else ("BUG_CRASH" if crashed else "BUG_INTERRUPT_HUNG_OR_ZERO")
+        )
     if expected == "FLAG_FOR_REVIEW":
-        return "FLAG_FOR_REVIEW" if not crashed and rc != 124 else ("BUG_CRASH" if crashed else "BUG_TIMEOUT")
+        return (
+            "FLAG_FOR_REVIEW"
+            if not crashed and rc != 124
+            else ("BUG_CRASH" if crashed else "BUG_TIMEOUT")
+        )
+    if expected == "SKIP_UNSUPPORTED":
+        return "OK_SKIP"
     raise AssertionError(expected)
 
 
@@ -213,19 +254,26 @@ def run_cases(cases: list[Case], ctx: Context, label: str) -> None:
             }
         )
     summary = ctx.root / "summary.json"
-    summary.write_text(json.dumps({"root": str(ctx.root), "url": ctx.url, "results": results}, indent=2))
+    summary.write_text(
+        json.dumps(
+            {"root": str(ctx.root), "url": ctx.url, "results": results}, indent=2
+        )
+    )
     bugs = [r for r in results if str(r["verdict"]).startswith("BUG")]
     flags = [r for r in results if r["verdict"] == "FLAG_FOR_REVIEW"]
+    skips = [r for r in results if r["verdict"] == "OK_SKIP"]
     print(f"SUMMARY={summary}", flush=True)
     print(
-        f"OK={len(results) - len(bugs) - len(flags)} FLAGS={len(flags)} BUGS={len(bugs)} TOTAL={len(results)}",
+        f"OK={len(results) - len(bugs) - len(flags) - len(skips)} "
+        f"FLAGS={len(flags)} SKIPS={len(skips)} BUGS={len(bugs)} TOTAL={len(results)}",
         flush=True,
     )
     if flags:
         print("FLAG_NAMES=" + ",".join(str(r["name"]) for r in flags), flush=True)
     if bugs:
         print(
-            "BUG_NAMES=" + ",".join(str(r["name"]) + ":" + str(r["verdict"]) for r in bugs),
+            "BUG_NAMES="
+            + ",".join(str(r["name"]) + ":" + str(r["verdict"]) for r in bugs),
             flush=True,
         )
         raise SystemExit(1)
