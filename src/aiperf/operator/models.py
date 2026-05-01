@@ -223,6 +223,12 @@ _SUMMARY_TAGS: tuple[str, ...] = (
     "output_token_count",
     "error_request_count",
     "benchmark_duration",
+    # Goodput tags drive the RealtimeKpiGrid's Goodput tile. They're only
+    # populated by the controller when the user declared SLOs via --goodput,
+    # but mirroring them unconditionally is harmless: absent in input → absent
+    # in output.
+    "goodput",
+    "good_request_count",
 )
 
 

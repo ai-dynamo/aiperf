@@ -87,6 +87,47 @@ def _summary_path(run: Path) -> Path | None:
     return None
 
 
+def _kpi_fields_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Project the KPI fields the live ``AIPerfJobCR.to_info`` path emits.
+
+    Returns a dict with ``ttft_ms``, ``output_token_throughput_tps``,
+    ``inter_token_latency_ms``, ``total_requests``, ``error_rate``, all
+    ``None`` when the corresponding metric / scalar is absent. The lookup
+    shape matches live ``status.summary`` because we project through
+    :class:`MetricsSummary` first.
+    """
+    projected = MetricsSummary.from_metrics(summary).to_status_dict()
+
+    def _stat(tag: str, stat: str) -> float | None:
+        entry = projected.get(tag)
+        if not isinstance(entry, dict):
+            return None
+        val = entry.get(stat)
+        return float(val) if isinstance(val, (int, float)) else None
+
+    total_requests: int | None = None
+    raw_total = projected.get("total_requests")
+    if isinstance(raw_total, (int, float)):
+        total_requests = int(raw_total)
+    if total_requests is None:
+        rc = _stat("request_count", "avg")
+        if rc is not None:
+            total_requests = int(rc)
+
+    error_rate: float | None = None
+    raw_err = projected.get("error_rate")
+    if isinstance(raw_err, (int, float)):
+        error_rate = float(raw_err)
+
+    return {
+        "ttft_ms": _stat("time_to_first_token", "avg"),
+        "output_token_throughput_tps": _stat("output_token_throughput", "avg"),
+        "inter_token_latency_ms": _stat("inter_token_latency", "avg"),
+        "total_requests": total_requests,
+        "error_rate": error_rate,
+    }
+
+
 def _archived_from_summary(
     namespace: str,
     name: str,
@@ -109,6 +150,8 @@ def _archived_from_summary(
     throughput = rt.get("avg") if isinstance(rt, dict) else None
     lat = summary.get("request_latency") or {}
     latency_p99 = lat.get("p99") if isinstance(lat, dict) else None
+
+    kpi = _kpi_fields_from_summary(summary)
 
     ic = summary.get("input_config") or {}
     models = (ic.get("models") or {}).get("items") or []
@@ -143,6 +186,11 @@ def _archived_from_summary(
         progress_percent=100.0,
         throughput_rps=float(throughput) if throughput is not None else None,
         latency_p99_ms=float(latency_p99) if latency_p99 is not None else None,
+        ttft_ms=kpi["ttft_ms"],
+        output_token_throughput_tps=kpi["output_token_throughput_tps"],
+        inter_token_latency_ms=kpi["inter_token_latency_ms"],
+        total_requests=kpi["total_requests"],
+        error_rate=kpi["error_rate"],
         model=model,
         endpoint=endpoint_url,
         source="archived",

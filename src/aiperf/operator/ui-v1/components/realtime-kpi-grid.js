@@ -102,11 +102,11 @@ const UNIT_BY_TAG = {
 };
 
 function pickStat(metric, key) {
-  if (!metric) return null;
+  if (!metric) return { value: null, stat: null };
   const v = metric[key];
-  if (v != null) return v;
-  if (metric.avg != null) return metric.avg;
-  return null;
+  if (v != null) return { value: v, stat: key };
+  if (metric.avg != null) return { value: metric.avg, stat: 'avg' };
+  return { value: null, stat: null };
 }
 
 function formatStat(value, unit) {
@@ -141,8 +141,8 @@ function pluck(series, statKey) {
 }
 
 function KpiTile({ spec, metric, slos, series }) {
-  const primaryVal = pickStat(metric, spec.primary);
-  const secondaryVal = pickStat(metric, spec.secondary);
+  const { value: primaryVal, stat: primaryStat } = pickStat(metric, spec.primary);
+  const { value: secondaryVal } = pickStat(metric, spec.secondary);
   const unit = metric?.unit ?? UNIT_BY_TAG[spec.tag] ?? '';
 
   const sloThreshold = (slos && spec.sloTag) ? slos[spec.sloTag] ?? null : null;
@@ -155,7 +155,13 @@ function KpiTile({ spec, metric, slos, series }) {
         : fmtNumber(secondaryVal, 2))
     : '---';
 
-  const sparkPoints = pluck(series, spec.primary);
+  // Sparkline pulls from the *actual* stat the headline used so the line
+  // matches the big number when REST data falls back from `current` → `avg`.
+  const sparkPoints = pluck(series, primaryStat ?? spec.primary);
+  // Surface the stat actually displayed (may differ from spec.primary when
+  // current fell back to avg on REST-only views) so users don't read "current"
+  // next to a value that's really an average.
+  const primaryLabel = primaryStat ?? spec.primary;
   const sparkStroke = slo?.kind === 'bad' ? 'var(--red)'
     : slo?.kind === 'good' ? 'var(--accent)'
     : 'var(--sub)';
@@ -168,7 +174,7 @@ function KpiTile({ spec, metric, slos, series }) {
       <div class="kpi-tile-head">
         <div class="kpi-tile-label">
           <span>${spec.label}</span>
-          <span class="kpi-tile-primary-stat">${spec.primary}</span>
+          <span class="kpi-tile-primary-stat">${primaryLabel}</span>
         </div>
         ${slo && html`
           <span class=${'kpi-chip kpi-chip--' + slo.kind}
@@ -200,7 +206,7 @@ function ReliabilityTile({ summary, slos, timeseries }) {
 
   if (hasSlo) {
     const gp = summary['goodput'] ?? summary['good_request_count'] ?? null;
-    const primary = pickStat(gp, 'avg');
+    const { value: primary } = pickStat(gp, 'avg');
     const goodCount = summary['good_request_count'];
     const reqCount = summary['request_count'];
     const goodVal = goodCount?.avg;

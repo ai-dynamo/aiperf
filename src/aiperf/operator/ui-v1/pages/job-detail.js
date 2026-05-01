@@ -1518,8 +1518,8 @@ function formatRunSelectorTime(epochSeconds) {
   });
 }
 
-function RunSelectorCard({ namespace, name, epochs, current, hasLive }) {
-  const rows = buildRunSelectorRows({ namespace, name, epochs, current, hasLive });
+function RunSelectorCard({ namespace, name, epochs, current, hasLive, isRunning }) {
+  const rows = buildRunSelectorRows({ namespace, name, epochs, current, hasLive, isRunning });
   if (rows.length === 0) return null;
   return html`
     <div class="card run-selector-card" data-testid="job-detail-run-selector">
@@ -1664,11 +1664,18 @@ export function JobDetail({ namespace, name, epoch }) {
     summary: {}, timeseries: {}, serverSummary: null, serverTimeseries: {}, connected: false,
   });
 
-  // Open the per-job WebSocket only while the run is active and we're on the
-  // live (non-epoch) view. The proxy refuses non-running CRs anyway, but
-  // gating here saves a connect/4404/reconnect loop.
+  // Open the per-job WebSocket whenever the run is active AND the URL points
+  // at the currently-running epoch — either the no-epoch live URL, or
+  // /runs/<currentRunEpoch> (which is what every dashboard/history link
+  // produces via buildJobPath). Pinned views of *past* archived epochs of
+  // a now-rerunning job skip the WS so live current-run stats don't bleed
+  // into the archived render. The proxy refuses non-running CRs anyway,
+  // but gating here saves a connect/4404/reconnect loop.
   const livePhaseLower = (job?.job?.phase ?? job?.status?.phase ?? '').toLowerCase();
-  const wsActive = epoch === undefined && livePhaseLower === 'running';
+  const liveRunEpoch = job?.status?.runEpoch != null ? String(job.status.runEpoch) : null;
+  const viewingCurrentRun = epoch === undefined
+    || (liveRunEpoch != null && epoch === liveRunEpoch);
+  const wsActive = livePhaseLower === 'running' && viewingCurrentRun;
   useEffect(() => {
     if (!wsActive) {
       // Clear stale live state so a finished job doesn't keep painting old samples.
@@ -1913,7 +1920,14 @@ export function JobDetail({ namespace, name, epoch }) {
   // job.job has flat camelCase fields, job.status has raw CR status
   const info = job?.job ?? {};
   const status = job?.status ?? {};
-  const resolvedEpoch = epoch ?? (status.runEpoch != null ? String(status.runEpoch) : null);
+  // Redirect target falls back through three sources so the URL gets pinned
+  // to /runs/<epoch> for any state where one is knowable: pinned URL > CR
+  // status.runEpoch (current/last run) > latest persisted epoch from the
+  // index (covers archived jobs whose CR is gone or never had runEpoch set).
+  const latestPersistedEpoch = epochs.find(e => e?.isLatest)?.epoch;
+  const resolvedEpoch = epoch
+    ?? (status.runEpoch != null ? String(status.runEpoch) : null)
+    ?? (latestPersistedEpoch != null ? String(latestPersistedEpoch) : null);
 
   const phase = info.phase ?? status.phase ?? 'Unknown';
   const phaseClr = phaseColor(phase);
@@ -1928,7 +1942,7 @@ export function JobDetail({ namespace, name, epoch }) {
   // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
   // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
   const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
-  const liveServerMetricsBase = epoch === undefined ? status.serverMetrics : null;
+  const liveServerMetricsBase = viewingCurrentRun ? status.serverMetrics : null;
   const liveServerMetrics = (liveData.connected && liveData.serverSummary)
     ? liveData.serverSummary
     : liveServerMetricsBase;
@@ -2160,6 +2174,7 @@ export function JobDetail({ namespace, name, epoch }) {
         epochs=${epochs}
         current=${epoch}
         hasLive=${true}
+        isRunning=${isRunning}
       />
 
       <!-- Conditions -->
@@ -2242,7 +2257,7 @@ export function JobDetail({ namespace, name, epoch }) {
             </div>
           `}
 
-          ${epoch === undefined
+          ${viewingCurrentRun
             ? (pods.length > 0 && html`
               <div class="card" data-testid="job-detail-pods">
                 <div class="card-title">Pods</div>
@@ -2278,7 +2293,7 @@ export function JobDetail({ namespace, name, epoch }) {
       </div>
 
       <!-- Events + Logs (full width, below the two-column split) -->
-      ${epoch === undefined && html`
+      ${viewingCurrentRun && html`
         <div style="margin-top: var(--space-4); display: grid; gap: var(--space-4)">
           <${EventsPane} ns=${namespace} name=${name} />
           <${LogsPane} ns=${namespace} name=${name} pods=${pods} />
@@ -2293,7 +2308,7 @@ export function JobDetail({ namespace, name, epoch }) {
         ? html`<${ServerMetricsSection}
                  serverMetrics=${displayedServerMetrics}
                  source=${serverMetricsSource}
-                 sparklines=${epoch === undefined ? liveData.serverTimeseries : null} />`
+                 sparklines=${viewingCurrentRun ? liveData.serverTimeseries : null} />`
         : (isTerminal && files.some(f => f.name === 'server_metrics_export.json') && !serverMetricsLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />
@@ -2349,8 +2364,9 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Latency percentile chart (completed only) -->
       ${isCompleted && results && html`<${LatencyPercentileChart} results=${results} />`}
 
-      <!-- Latency Timeline (completed only) -->
-      ${isCompleted && html`
+      <!-- Latency Timeline (completed only; needs a pinned epoch — the
+           non-epoch results endpoint refuses run-scoped artifacts) -->
+      ${isCompleted && epoch !== undefined && html`
         <div style="margin-top: var(--space-4)">
           <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
         </div>

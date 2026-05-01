@@ -290,9 +290,10 @@ export function Dashboard() {
   const bestTtft = findMin(allJobs, 'ttftMs');
   const bestTokenTps = findBest(allJobs, 'tokenThroughput');
 
-  // Recent jobs: most-recently-created across all phases. Falls back to
-  // startTime when ``created`` is missing (older CR shapes).
-  const recent = [...allJobs]
+  // Recent jobs: most-recently-created completed/succeeded runs only —
+  // in-flight and failed jobs surface in their own sections above. Falls
+  // back to startTime when ``created`` is missing (older CR shapes).
+  const recent = [...completed]
     .map(j => ({ j, ts: jobCreatedTs(j) }))
     .sort((a, b) => b.ts - a.ts)
     .slice(0, 5)
