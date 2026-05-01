@@ -266,3 +266,45 @@ def test_curate_server_metrics_latency_points_scaled_to_ms() -> None:
         }}));
     """
     assert _run_node(script) == '{"firstMs":50,"secondMs":60,"valueIsMs":true}'
+
+
+KPI_CARD = (
+    REPO / "src" / "aiperf" / "operator" / "ui-v1" / "components" / "kpi-card-tone.js"
+).as_uri()
+
+
+def test_kpi_card_spark_colors_by_tone() -> None:
+    """sparkColors(tone) returns stroke/fill matching the existing tile
+    color signal: accent for ok/default, red for warn/bad, dim for
+    neutral/ok/null. Helper lives in kpi-card-tone.js (no preact import)
+    so node can resolve it without the operator UI's importmap; kpi-card.js
+    re-exports it for component callers."""
+    script = f"""
+        import {{ sparkColors }} from {KPI_CARD!r};
+        console.log(JSON.stringify({{
+          accent: sparkColors('accent'),
+          warn: sparkColors('warn'),
+          bad: sparkColors('bad'),
+          ok: sparkColors('ok'),
+          neutral: sparkColors('neutral'),
+          undef: sparkColors(undefined),
+          nul: sparkColors(null),
+          unknown: sparkColors('something-else'),
+        }}));
+    """
+    out = _run_node(script)
+    import orjson
+
+    data = orjson.loads(out)
+    assert data["accent"] == {"stroke": "var(--accent)", "fill": "var(--accent-dim)"}
+    assert data["warn"] == {"stroke": "var(--red)", "fill": "rgba(239,83,80,0.15)"}
+    assert data["bad"] == {"stroke": "var(--red)", "fill": "rgba(239,83,80,0.15)"}
+    # ok / neutral / undefined / null: dim (gray) — not warn, not accent
+    for key in ("ok", "neutral", "undef", "nul"):
+        assert data[key] == {
+            "stroke": "var(--sub)",
+            "fill": "rgba(167,167,167,0.10)",
+        }, key
+    # unknown tone falls back to accent so the function is permissive of
+    # future tone values.
+    assert data["unknown"] == {"stroke": "var(--accent)", "fill": "var(--accent-dim)"}

@@ -1,4 +1,10 @@
 import { html } from 'htm/preact';
+import { Sparkline } from './sparkline.js';
+import { sparkColors } from './kpi-card-tone.js';
+
+// Re-export so callers and tests can import the tone-color mapping from
+// the same module that defines the tile component.
+export { sparkColors };
 
 const slugifyLabel = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, '-');
 
@@ -122,6 +128,7 @@ export function KpiCard({
   tone,
   progress,
   progressTone,
+  sparkline,
 }) {
   const valueStyle = color ? `color: ${color}` : '';
   const valueClass = 'metric-val' + (!color && tone ? ` metric-val--${tone}` : '');
@@ -166,6 +173,14 @@ export function KpiCard({
           ${sub && html`<div class="metric-sub">${sub}</div>`}
         </div>
       </div>
+      ${sparkline?.points?.length > 1 && (() => {
+        const sc = sparkColors(tone);
+        return html`<${Sparkline}
+                      points=${sparkline.points}
+                      stroke=${sparkline.stroke ?? sc.stroke}
+                      fill=${sparkline.fill ?? sc.fill}
+                      width=${140} height=${26} />`;
+      })()}
       ${progress != null && html`
         <div class="metric-bar" aria-hidden="true">
           <div class=${'metric-bar__fill metric-bar__fill--' + barTone}
