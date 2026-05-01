@@ -64,6 +64,11 @@
     ],
     [
       "ANN201",
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint.extract_payload_inputs"
+    ],
+    [
+      "ANN201",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_all_callbacks"
     ],
@@ -319,6 +324,16 @@
     ],
     [
       "BLE001",
+      "src/aiperf/common/scenario/context_overflow.py",
+      "_extract_openai_error_message"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/common/scenario/context_overflow.py",
+      "is_context_overflow_response"
+    ],
+    [
+      "BLE001",
       "src/aiperf/common/tokenizer.py",
       "resolve_alias"
     ],
@@ -351,6 +366,26 @@
       "BLE001",
       "src/aiperf/controller/system_controller.py",
       "SystemController._process_heartbeat_message"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler._credit_will_dispatch_children"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._profile_configure_command"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/loader/inputs_json.py",
+      "InputsJsonPayloadLoader.can_load"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader.can_load"
     ],
     [
       "BLE001",
@@ -586,6 +621,11 @@
       "BLE001",
       "src/aiperf/post_processors/metric_results_processor.py",
       "MetricResultsProcessor.update_derived_metrics"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/post_processors/raw_record_writer_processor.py",
+      "RawRecordWriterProcessor.buffered_write"
     ],
     [
       "BLE001",
@@ -829,8 +869,33 @@
     ],
     [
       "C901",
+      "src/aiperf/common/scenario/context_overflow.py",
+      "is_context_overflow_response"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/scenario/validator.py",
+      "validate_scenario"
+    ],
+    [
+      "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "C901",
+      "src/aiperf/common/validators/orchestrator_v1.py",
+      "validate_for_orchestrator_v1"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "C901",
@@ -854,13 +919,53 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._desugar_forks"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._parse_lines"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._resolve_and_validate"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_parallel"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
     [
       "C901",
-      "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint._render_turn_content"
+    ],
+    [
+      "C901",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "C901",
@@ -869,13 +974,13 @@
     ],
     [
       "C901",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint.format_payload"
     ],
     [
       "C901",
       "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._set_item_content"
+      "ResponsesEndpoint._extract_response_content"
     ],
     [
       "C901",
@@ -1109,6 +1214,16 @@
     ],
     [
       "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.dispatch_pre_session_branches"
+    ],
+    [
+      "C901",
       "src/aiperf/timing/phase/runner.py",
       "PhaseRunner.run"
     ],
@@ -1146,6 +1261,11 @@
       "D103",
       "src/aiperf/common/config/config_validators.py",
       "print_str_or_list"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/scenario/registry.py",
+      "get_scenario"
     ],
     [
       "D103",
@@ -1194,6 +1314,11 @@
     ],
     [
       "D103",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "longest_common_prefix"
+    ],
+    [
+      "D103",
       "src/aiperf/records/record_processor_service.py",
       "main"
     ],
@@ -1224,8 +1349,28 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/common/scenario/validator.py",
+      "validate_scenario"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/common/validators/orchestrator_v1.py",
+      "validate_for_orchestrator_v1"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "PLR0912",
@@ -1244,13 +1389,43 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._desugar_forks"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._resolve_and_validate"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
     [
       "PLR0912",
-      "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint._render_turn_content"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "PLR0912",
@@ -1369,6 +1544,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1390,12 +1570,22 @@
     [
       "PLR0915",
       "src/aiperf/cli_runner.py",
+      "_print_aggregate_summary"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
     [
       "PLR0915",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/common/scenario/validator.py",
+      "validate_scenario"
     ],
     [
       "PLR0915",
@@ -1409,8 +1599,28 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/dataset/loader/dag_jsonl.py",
+      "DagJsonlLoader._desugar_forks"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/endpoints/base_endpoint.py",
+      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "PLR0915",
@@ -1541,6 +1751,16 @@
       "PLR0915",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner.run"
     ],
     [
       "PLR0915",

@@ -52,6 +52,7 @@ from aiperf.common.models import (
     TelemetryRecord,
     WorkerProcessingStats,
 )
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -133,6 +134,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
         self._metric_state = ErrorTrackingState()
+
+        # Orchestrator-emitted DAG sub-agent stats, received via
+        # CreditPhaseCompleteMessage. Keyed by phase so ProfileResults for the
+        # profiling phase can include the orchestrator's final counters.
+        self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = []  # fmt: skip
         self._gpu_telemetry_processors: list[GPUTelemetryProcessorProtocol] = []  # fmt: skip
@@ -408,6 +414,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
+        if message.branch_stats is not None:
+            self._phase_branch_stats[message.stats.phase] = message.branch_stats
         if message.stats.phase == CreditPhase.PROFILING:
             phase_stats = self._records_tracker.create_stats_for_phase(
                 message.stats.phase
@@ -573,6 +581,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         return metric_results
 
+    def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
+        """Return the orchestrator-published BranchStats for ``phase``.
+
+        Returns ``None`` for non-DAG runs or for phases where the TimingManager
+        never published sub-agent counters on ``CreditPhaseCompleteMessage``.
+        """
+        return self._phase_branch_stats.get(phase)
+
     async def _process_results(
         self, phase: CreditPhase, cancelled: bool
     ) -> ProcessRecordsResult:
@@ -634,6 +650,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
                 was_cancelled=cancelled,
+                branch_stats=self._snapshot_branch_stats(phase),
             ),
             errors=error_results,
         )

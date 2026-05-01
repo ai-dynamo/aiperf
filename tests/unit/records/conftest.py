@@ -4,6 +4,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
 from aiperf.common.config import ServiceConfig
@@ -24,8 +25,23 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.records.inference_result_parser import InferenceResultParser
+
+
+def _chat_model_endpoint(model_name: str = "test-model") -> ModelEndpointInfo:
+    """Minimal ``ModelEndpointInfo`` bound to the chat endpoint for tests."""
+    return ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=model_name)],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+        ),
+        endpoint=EndpointInfo(
+            type=EndpointType.CHAT,
+            base_url="http://localhost:8000/v1/test",
+        ),
+    )
 
 
 def create_test_request_info(
@@ -34,25 +50,46 @@ def create_test_request_info(
     turn_index: int = 0,
     turns: list[Turn] | None = None,
 ) -> RequestInfo:
-    """Create a RequestInfo for testing."""
-    return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
-        turns=turns or [],
+    """Create a RequestInfo for testing.
+
+    Populates ``payload_bytes`` via the real chat endpoint's
+    ``format_payload`` so ``compute_input_token_count`` has authentic
+    wire bytes to tokenise — matching what ``inference_client`` does
+    before the transport call.
+    """
+    turns = turns or []
+    info = RequestInfo(
+        model_endpoint=_chat_model_endpoint(model_name),
+        turns=turns,
         turn_index=turn_index,
         credit_num=0,
         credit_phase=CreditPhase.PROFILING,
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
+    )
+    if turns:
+        rebuild_payload_bytes(info)
+    return info
+
+
+def rebuild_payload_bytes(request_info: RequestInfo) -> None:
+    """Regenerate ``request_info.payload_bytes`` from the current
+    ``turns`` / ``system_message`` / ``user_context_message`` via the
+    chat endpoint's ``format_payload``.
+
+    Tests that mutate the scalar fields on a ``RequestInfo`` fixture must
+    call this after the mutation for ``compute_input_token_count`` to see
+    the change — the parser reads only from ``payload_bytes`` and never
+    re-tokenises the scalars additively.
+    """
+    if not request_info.turns:
+        request_info.payload_bytes = None
+        return
+    request_info.payload_bytes = orjson.dumps(
+        ChatEndpoint(model_endpoint=request_info.model_endpoint).format_payload(
+            request_info
+        )
     )
 
 
@@ -102,15 +139,39 @@ def inference_result_parser(user_config):
             service_config=ServiceConfig(),
             user_config=user_config,
         )
+        # The plugin-loading path is patched above so the parser's default
+        # endpoint is a MagicMock. Tests that drive ISL through
+        # ``compute_input_token_count`` need a real endpoint whose
+        # ``extract_payload_inputs`` returns an ``ExtractedPayload``; swap
+        # in a real ChatEndpoint here. Tests that want a specific mock
+        # override ``parser.endpoint`` directly.
+        from aiperf.endpoints.openai_chat import ChatEndpoint
+
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        )
+        parser.endpoint = ChatEndpoint(model_endpoint=model_endpoint)
         return parser
 
 
 @pytest.fixture
 def setup_inference_parser(inference_result_parser, mock_tokenizer_cls):
-    """Setup InferenceResultParser for testing with mocked tokenizer."""
+    """Setup InferenceResultParser for testing with mocked tokenizer.
+
+    ``inference_result_parser`` already provides a real ``ChatEndpoint``
+    so ``extract_payload_inputs`` returns a proper ``ExtractedPayload``
+    end-to-end. Tests that need a specific mocked endpoint should
+    override ``parser.endpoint`` directly inside the test.
+    """
     tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
     inference_result_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
-    inference_result_parser.endpoint = MagicMock()
     return inference_result_parser
 
 
@@ -141,7 +202,6 @@ def create_invalid_record(
     record = RequestRecord(
         request_info=create_test_request_info(model_name=model_name, turns=turns),
         model_name=model_name,
-        turns=turns or [],
     )
 
     if has_error:

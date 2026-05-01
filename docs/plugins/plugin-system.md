@@ -64,7 +64,7 @@ Registry (singleton)
 | Built-in Plugins | `src/aiperf/plugin/plugins.yaml` | Built-in plugin registrations |
 | Schemas | `src/aiperf/plugin/schema/schemas.py` | Pydantic models for validation |
 | Enums | `src/aiperf/plugin/enums.py` | Auto-generated enums from registry |
-| CLI | `src/aiperf/cli_commands/plugins_cli.py` | Plugin exploration commands |
+| CLI | `src/aiperf/plugin/cli.py` | Plugin exploration commands |
 
 ## Architecture
 
@@ -100,13 +100,13 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 25 plugin categories organized by function:
+AIPerf supports 27 plugin categories organized by function:
 
 ### Timing Categories
 
 | Category | Enum | Description |
 |----------|------|-------------|
-| `timing_strategy` | `TimingMode` | Request scheduling strategies (fixed schedule, request rate, user-centric) |
+| `timing_strategy` | `TimingMode` | Request scheduling strategies (fixed schedule, request rate, user-centric, agentic replay) |
 | `arrival_pattern` | `ArrivalPattern` | Inter-arrival time distributions (constant, Poisson, gamma, concurrency burst) |
 | `ramp` | `RampType` | Value ramping strategies (linear, exponential, Poisson) |
 
@@ -117,8 +117,9 @@ AIPerf supports 25 plugin categories organized by function:
 | `dataset_backing_store` | `DatasetBackingStoreType` | Server-side dataset storage |
 | `dataset_client_store` | `DatasetClientStoreType` | Worker-side dataset access |
 | `dataset_sampler` | `DatasetSamplingStrategy` | Sampling strategies (random, sequential, shuffle) |
-| `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
+| `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, synthetic_rankings, public) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
+| `public_dataset_loader` | `PublicDatasetType` | Shared benchmark datasets fetched without a local file (HTTP, HuggingFace) |
 
 ### Endpoint and Transport Categories
 
@@ -156,6 +157,7 @@ AIPerf supports 25 plugin categories organized by function:
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
 | `service_manager` | `ServiceRunType` | Service orchestration (multiprocessing, Kubernetes) |
+| `api_router` | `APIRouterType` | Lifecycle-managed HTTP/WebSocket routers exposed by the controller API |
 
 ### Visualization and Telemetry Categories
 
@@ -331,7 +333,7 @@ $ aiperf plugins endpoint chat
 | Priority | Rule |
 |----------|------|
 | 1 | Higher `priority` value wins |
-| 2 | External packages beat built-in (equal priority) |
+| 2 | Non-built-in packages beat built-in (when priority is equal) |
 | 3 | First registered wins (with warning) |
 
 > [!TIP]
@@ -373,9 +375,12 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
 | `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
 | `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
+| `image_retrieval` | `ImageRetrievalEndpoint` | NIM Image Retrieval (e.g., bounding-box detection) via /v1/infer |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
+| `responses` | `ResponsesEndpoint` | OpenAI Responses API (multi-modal, streaming) via /v1/responses |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
+| `raw` | `RawEndpoint` | Raw payload passthrough for verbatim API replay |
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
 | `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
 
@@ -386,6 +391,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `fixed_schedule` | `FixedScheduleStrategy` | Send requests at exact timestamps |
 | `request_rate` | `RequestRateStrategy` | Send requests at specified rate |
 | `user_centric_rate` | `UserCentricStrategy` | Each session acts as separate user |
+| `agentic_replay` | `AgenticReplayStrategy` | Multi-turn trajectory replay (InferenceX AgentX-MVP) |
 
 ### Arrival Patterns
 
@@ -403,6 +409,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
 | `custom` | `CustomDatasetComposer` | Load from JSONL files |
 | `synthetic_rankings` | `SyntheticRankingsDatasetComposer` | Generate ranking tasks |
+| `public` | `PublicDatasetComposer` | Loads public benchmark datasets via registered public_dataset_loader plugins |
 
 ### UI Types
 

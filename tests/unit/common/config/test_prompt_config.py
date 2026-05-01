@@ -13,6 +13,8 @@ from aiperf.common.config import (
     PromptConfig,
     PromptDefaults,
 )
+from aiperf.common.config.prompt_config import CacheBustConfig
+from aiperf.common.enums import CacheBustTarget
 
 
 def test_prompt_config_defaults():
@@ -161,3 +163,20 @@ def test_prompt_config_sequence_distribution_none_handling():
     config = PromptConfig(sequence_distribution=None)
     assert config.sequence_distribution is None
     assert config.get_sequence_distribution() is None
+
+
+def test_cache_bust_config_default_is_none():
+    cfg = CacheBustConfig()
+    assert cfg.target == CacheBustTarget.NONE
+
+
+def test_cache_bust_config_accepts_each_target():
+    for target in CacheBustTarget:
+        cfg = CacheBustConfig(target=target)
+        assert cfg.target == target
+
+
+def test_prompt_config_exposes_cache_bust():
+    pc = PromptConfig()
+    assert isinstance(pc.cache_bust, CacheBustConfig)
+    assert pc.cache_bust.target == CacheBustTarget.NONE

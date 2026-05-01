@@ -377,6 +377,23 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Fallback endpoint for non-standard APIs. Does not format payloads or
+      append a URL path. Parses responses using auto-detection with optional
+      JMESPath extraction via response_field. Prefer a regular endpoint type
+      when the target API is supported.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
@@ -514,6 +531,46 @@ custom_dataset_loader:
       batching. Supports text, images, audio with optional timestamps or delays.
       Does NOT support multi-turn features.
 
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a complete
+      API request body sent directly to the transport with zero formatting.
+      Supports single file (one conversation per line) and directory mode
+      (one JSONL file per multi-turn conversation).
+
+  dag_jsonl:
+    class: aiperf.dataset.loader.dag_jsonl:DagJsonlLoader
+    description: |
+      DAG-shaped conversation JSONL loader. One conversation per line with a
+      required turn-level 'messages' array, optional OpenAI-native fields
+      (max_tokens, model, tools), an 'extra_body' passthrough, and optional
+      'forks: [session_id, ...]' / 'spawns: [session_id, ...]' that dispatch
+      child sessions when a turn completes. FORK children inherit the
+      parent's accumulated turn_list and sticky-route to the parent's worker
+      for prompt-cache reuse; SPAWN children start fresh and route freely.
+
+  weka_trace:
+    class: aiperf.dataset.loader.weka_trace:WekaTraceLoader
+    description: |
+      Weka KV-cache-tester agentic coding trace loader. Replays real Claude
+      Code sessions with preserved per-request hash_ids, timing, and subagent
+      topology. Input is either a single trace JSON file or a directory of
+      per-conversation JSON files. Subagent entries spawn concurrent child
+      sessions via SPAWN + SPAWN_JOIN prerequisites.
+      Usage: --custom-dataset-type weka_trace --input-file path/to/traces/
+    metadata:
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf InputsFile
+      format with pre-formatted payloads. Preserves multi-turn session structure
+      and sends each payload directly to the transport without endpoint formatting.
+
 # =============================================================================
 # Dataset Samplers
 # =============================================================================
@@ -595,6 +652,15 @@ timing_strategy:
       A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
+
+  agentic_replay:
+    class: aiperf.timing.strategies.agentic_replay:AgenticReplayStrategy
+    description: |
+      Trajectory-based multi-turn trace replay with randomized 0-70% conversation
+      start, single-turn warmup with warmup barrier, FIFO trace recycling, and
+      configurable inter-turn delay cap. Designed for SemiAnalysis InferenceX
+      AgentX-MVP scenario but usable bare for any agentic-style benchmark.
+    metadata: {}
 
 # =============================================================================
 # Arrival Pattern (Interval Generators)
@@ -1675,6 +1741,22 @@ public_dataset_loader:
       hf_split: train
       prompt_column: change_request
       prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  semianalysis_cc_traces_weka:
+    class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
+    description: |
+      SemiAnalysis Weka KV-cache-tester agentic coding trace dataset, hosted
+      on HuggingFace as semianalysisai/cc-traces-weka-042026 (657 MB
+      compressed, 739 traces, public, no auth required). Each row is a
+      complete WekaTrace; reconstruction is delegated to WekaTraceLoader so
+      file-based and HF-based replay produce byte-identical conversations.
+      Usage: --public-dataset semianalysis_cc_traces_weka
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-042026
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
 
   # ---------------------------------------------------------------------------
   # ASR (Automatic Speech Recognition) datasets

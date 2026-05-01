@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal
 
 from cyclopts import Parameter
 from pydantic import Field, field_validator, model_validator
+from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -18,6 +19,22 @@ class LoadGeneratorConfig(BaseConfig):
     """A configuration class for defining top-level load generator settings."""
 
     _CLI_GROUP = Groups.LOAD_GENERATOR
+
+    _inter_turn_delay_cap_explicitly_set: bool = False
+
+    @model_validator(mode="after")
+    def _record_explicit_set_flags(self) -> Self:
+        """Snapshot which fields were explicitly provided by the user.
+
+        Scenario validation distinguishes "user explicitly set the cap to a
+        non-required value" (raise) from "cap is at default; auto-fill from
+        scenario spec" (info log). Surface a stable underscore flag for the
+        validator's defensive `getattr`.
+        """
+        self._inter_turn_delay_cap_explicitly_set = (
+            "inter_turn_delay_cap_seconds" in self.model_fields_set
+        )
+        return self
 
     @field_validator("concurrency", mode="before")
     @classmethod
@@ -301,6 +318,22 @@ class LoadGeneratorConfig(BaseConfig):
                 "--request-count",  # GenAI-Perf
                 "--num-requests",  # GenAI-Perf
             ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    inter_turn_delay_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Hard ceiling (seconds) for inter-turn delays in trace replay. "
+            "Applies to all trace formats that emit per-turn delays "
+            "(weka, mooncake, bailian, burstgpt, multi_turn, dag_jsonl) "
+            "and to both think-time-only and full-delta delay sources. "
+            "Defaults to None (no clamp). Set to 60.0 to match the InferenceX AgentX RFC.",
+        ),
+        CLIParameter(
+            name=("--inter-turn-delay-cap-seconds",),
             group=_CLI_GROUP,
         ),
     ] = None

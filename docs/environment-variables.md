@@ -22,6 +22,14 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## AGENTX
+
+Settings for the InferenceX AgentX scenario family. Controls runtime detection knobs for the agentx scenario, currently the substring allowlist used to classify a server response as a context-overflow error (RFC 2026-04-26 §7).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS` | `['context length', 'maximum context', 'context_length_exceeded', 'prompt is too long']` | — | Case-insensitive substring allowlist used to classify a server error response as a context-overflow event. Matched against the raw response body and the OpenAI-style nested 'error.message' field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to support additional inference-server vocabularies (vLLM, TGI, TensorRT-LLM, ...). Empty list disables runtime detection. |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
@@ -63,6 +71,8 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
+| `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` | `0` | ≥ 0, ≤ 256 | Number of worker processes for WekaTraceLoader parallel reconstruction. 0 = auto (min(cpu_count - 1, 16, num_traces)). Set to 1 to force serial reconstruction. |
+| `AIPERF_DATASET_WEKA_PARALLEL_THRESHOLD` | `8` | ≥ 1, ≤ 100000 | Minimum number of parent traces required before WekaTraceLoader switches to the multi-process parallel reconstruction path. Below this, the in-process serial path is used (Pool startup overhead exceeds the speedup for tiny corpora). |
 
 ## GPU
 

@@ -133,18 +133,29 @@ def _create_test_request_info(
     turn_index: int = 0,
     turns: list | None = None,
 ) -> RequestInfo:
-    """Create a RequestInfo for testing post processors."""
-    return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
+    """Create a RequestInfo for testing post processors.
+
+    Populates ``payload_bytes`` via the chat endpoint's ``format_payload``
+    when ``turns`` is non-empty — matches what ``inference_client`` does
+    pre-dispatch so the raw-record exporter's fast path
+    (``payload_bytes``-is-set) is exercised by default.
+    """
+    import orjson
+
+    from aiperf.endpoints.openai_chat import ChatEndpoint
+
+    model_endpoint = ModelEndpointInfo(
+        models=ModelListInfo(
+            models=[ModelInfo(name=model_name)],
+            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
         ),
+        endpoint=EndpointInfo(
+            type=EndpointType.CHAT,
+            base_url="http://localhost:8000/v1/test",
+        ),
+    )
+    info = RequestInfo(
+        model_endpoint=model_endpoint,
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
@@ -153,6 +164,11 @@ def _create_test_request_info(
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
     )
+    if info.turns:
+        info.payload_bytes = orjson.dumps(
+            ChatEndpoint(model_endpoint=model_endpoint).format_payload(info)
+        )
+    return info
 
 
 @pytest.fixture

@@ -56,6 +56,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
+
         return conversations
 
     def get_default_context_mode(self) -> ConversationContextMode | None:
@@ -213,7 +214,25 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     "Trace datasets require a tokenizer for prompt synthesis. "
                     "Ensure the endpoint supports tokenization or provide a --tokenizer."
                 )
-            kwargs["prompt_generator"] = self.prompt_generator
+
+            from aiperf.common.enums import PromptCorpus
+
+            corpus = (
+                self.config.input.prompt.prompt_corpus
+                or loader_metadata.default_prompt_corpus
+            )
+
+            if corpus == PromptCorpus.CODING:
+                from aiperf.dataset.generator.coding_content import (
+                    CodingContentGenerator,
+                )
+
+                kwargs["prompt_generator"] = CodingContentGenerator(
+                    config=self.config.input.prompt,
+                    tokenizer=self.prompt_generator.tokenizer,
+                )
+            else:
+                kwargs["prompt_generator"] = self.prompt_generator
 
             if loader_metadata.default_block_size is not None:
                 kwargs["default_block_size"] = loader_metadata.default_block_size

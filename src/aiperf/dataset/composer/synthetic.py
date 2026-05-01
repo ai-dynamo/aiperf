@@ -133,6 +133,19 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
+        # ISL budget compensation. See ``base.first_turn_isl_adjustment`` and
+        # ``base.subsequent_turn_isl_adjustment`` for the model. Floored at
+        # 1 so prompt generation stays valid for very small ISLs (we still
+        # produce a one-token prompt rather than crashing or generating
+        # empty content).
+        adjustment = (
+            self.first_turn_isl_adjustment
+            if is_first
+            else self.subsequent_turn_isl_adjustment
+        )
+        if adjustment > 0:
+            isl = max(1, isl - adjustment)
+
         # Preserve original variance unless sequence distribution is active
         stddev = (
             0

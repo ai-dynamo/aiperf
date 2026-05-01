@@ -1,0 +1,151 @@
+{
+  "id": "trace_06_n6",
+  "models": [
+    "claude-opus-4-5-20251101"
+  ],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {
+      "t": 0.0,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 200,
+      "out": 30,
+      "hash_ids": [
+        1,
+        2,
+        3
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.0,
+      "think_time": 0.0
+    },
+    {
+      "t": 1.5,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 230,
+      "out": 35,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.05,
+      "think_time": 0.5
+    },
+    {
+      "t": 3.0,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 260,
+      "out": 40,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.1,
+      "think_time": 0.5
+    },
+    {
+      "t": 4.5,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 290,
+      "out": 45,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.15,
+      "think_time": 0.5
+    },
+    {
+      "t": 6.0,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 320,
+      "out": 50,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.2,
+      "think_time": 0.5
+    },
+    {
+      "t": 7.5,
+      "type": "n",
+      "model": "claude-opus-4-5-20251101",
+      "in": 350,
+      "out": 55,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 1.25,
+      "think_time": 0.5
+    }
+  ]
+}

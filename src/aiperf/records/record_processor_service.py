@@ -164,6 +164,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
+            agent_depth=record.request_info.agent_depth,
+            parent_correlation_id=record.request_info.parent_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
@@ -226,13 +228,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         error = record.error
         if self.user_config.output.export_level != ExportLevel.RAW:
             record.responses = None
-        record.turns = None
         record.trace_data = None
         record.request_headers = None
-        if record.request_info:
-            record.request_info.turns = None
-            record.request_info.system_message = None
-            record.request_info.user_context_message = None
         parsed_record.responses = None
         return trace_data, error
 

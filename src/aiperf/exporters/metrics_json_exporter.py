@@ -68,11 +68,58 @@ class MetricsJsonExporter(MetricsBaseExporter):
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,
+            branch_stats=getattr(self._results, "branch_stats", None),
         )
 
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
+
+        # Stamp scenario submission metadata for single-run exports. Mirrors the
+        # carrier-key contract used by AggregateConfidenceJsonExporter: validator
+        # outcome lives on user_config._scenario_outcome (set by
+        # UserConfig._run_scenario_validator) and runtime totals are summed from
+        # the prepared metric results.
+        scenario_name = getattr(self._user_config, "scenario", None)
+        if scenario_name is not None:
+            from aiperf.exporters.aggregate.aggregate_base_exporter import (
+                _build_run_metadata_dict,
+                compute_submission_outcome,
+            )
+
+            outcome = getattr(self._user_config, "_scenario_outcome", None)
+            validator_submission_valid = (
+                outcome.submission_valid if outcome is not None else True
+            )
+            validator_reasons = (
+                list(outcome.submission_invalid_reasons) if outcome is not None else []
+            )
+
+            def _metric_avg(tag: str) -> int:
+                m = prepared_json_metrics.get(tag)
+                if m is None or m.avg is None:
+                    return 0
+                return int(m.avg)
+
+            total_responses = _metric_avg("request_count") + _metric_avg(
+                "error_request_count"
+            )
+            context_overflow_count = _metric_avg("context_overflow_count")
+
+            submission_valid, submission_invalid_reasons = compute_submission_outcome(
+                scenario_name=scenario_name,
+                validator_submission_valid=validator_submission_valid,
+                validator_reasons=validator_reasons,
+                total_responses=total_responses,
+                context_overflow_count=context_overflow_count,
+            )
+            run_metadata = _build_run_metadata_dict(
+                scenario_name=scenario_name,
+                submission_valid=submission_valid,
+                submission_invalid_reasons=submission_invalid_reasons,
+            )
+            if run_metadata:
+                export_data.metadata = run_metadata
 
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",

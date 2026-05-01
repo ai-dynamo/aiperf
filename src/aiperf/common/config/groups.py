@@ -21,6 +21,7 @@ class Groups:
     OUTPUT_SEQUENCE_LENGTH = Group.create_ordered("Output Sequence Length (OSL)")
     PROMPT = Group.create_ordered("Prompt")
     PREFIX_PROMPT = Group.create_ordered("Prefix Prompt")
+    CACHE_BUST = Group.create_ordered("Cache Bust")
     RANKINGS = Group.create_ordered("Rankings")
     ACCURACY = Group.create_ordered("Accuracy")
     SYNTHESIS = Group.create_ordered("Synthesis")

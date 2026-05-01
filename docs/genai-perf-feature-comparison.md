@@ -42,23 +42,27 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **chat** | Standard chat completion API (OpenAI-compatible) | ✅ | ✅ | |
 | **completions** | Text completion API for prompt completion | ✅ | ✅ | |
 | **embeddings** | Text embedding generation for similarity/search | ✅ | ✅ | |
+| **chat_embeddings** | Chat-style embeddings for vLLM multimodal embedding models (e.g. VLM2Vec) | ❌ | ✅ | |
+| **nim_embeddings** | NVIDIA NIM embeddings (text and/or image inputs) | ❌ | ✅ | |
 | **rankings** | Text ranking/re-ranking for search relevance | ✅ | ✅ | GenAI-Perf's generic `rankings` is HF TEI compatible; AIPerf has separate `nim_rankings`, `hf_tei_rankings` and `cohere_rankings` |
 | **hf_tei_rankings** | HuggingFace TEI re-ranker API | ✅ | ✅ | GenAI-Perf uses generic `rankings` endpoint |
 | **nim_rankings** | NVIDIA NIM re-ranker API | ❌ | ✅ | |
 | **cohere_rankings** | Cohere re-ranker API | ❌ | ✅ | |
-| **responses** | OpenAI responses endpoint | ❌ | ❌ | |
+| **responses** | OpenAI Responses API endpoint (`/v1/responses`) | ❌ | ✅ | Multi-modal inputs (text, images, audio); streaming and non-streaming |
 | **dynamic_grpc** | Dynamic gRPC service calls | ✅ | ❌ | |
 | **huggingface_generate** | HuggingFace transformers generate API | ✅ | ✅ | `/generate` and `/generate_stream` supported |
 | **image_generation** | OpenAI-compatible image generation (`/v1/images/generations`) | ❌ | ✅ | Text-to-image benchmarking with SGLang, supports raw export for image extraction |
-| **image_retrieval** | Image search and retrieval endpoints | ✅ | ❌ | |
+| **video_generation** | OpenAI/SGLang text-to-video generation (e.g. HunyuanVideo) | ❌ | ✅ | |
+| **image_retrieval** | Image search and retrieval endpoints | ✅ | ✅ | NIM-based image inference services |
 | **nvclip** | NVIDIA CLIP model endpoints | ✅ | ❌ | |
-| **multimodal** | Multi-modal (text + image/audio) endpoints | ✅ | ✅ | AIPerf uses `chat` endpoint with multimodal content |
+| **Multimodal Endpoints** | Multi-modal (text + image/audio) endpoints | ✅ | 🟡 | AIPerf uses `chat` endpoint with multimodal content (no separate `multimodal` value) |
 | **generate** | Generic text generation endpoints | ✅ | ❌ | |
 | **kserve** | KServe model serving endpoints | ✅ | ❌ | |
 | **template** | Template-based inference endpoints | 🟡 | ✅ | AIPerf supports multimodal and multi-turn templates |
 | **tensorrtllm_engine** | TensorRT-LLM engine direct access | ✅ | ❌ | |
-| **vision** | Computer vision model endpoints | ✅ | ✅ | AIPerf uses `chat` endpoint for VLMs |
+| **Vision Endpoints** | Computer vision model endpoints | ✅ | 🟡 | AIPerf uses `chat` endpoint for VLMs (no separate `vision` value) |
 | **solido_rag** | SOLIDO RAG endpoint | ❌ | ✅ | |
+| **raw** | Fallback endpoint for non-standard APIs; sends payloads verbatim with auto-detected response parsing | ❌ | ✅ | Pairs with `raw_payload` / `inputs_json` custom datasets |
 
 ---
 
@@ -87,8 +91,8 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Custom Headers** | `--header -H` | ✅ | ✅ | |
 | **Input File** | `--input-file` | ✅ | ✅ | |
 | **Dataset Entries/Conversations** | `--num-dataset-entries` | ✅ | ✅ | |
-| **Public Dataset** | `--public-dataset`<br/>`{sharegpt}` | ❌ | ✅ | |
-| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
+| **Public Dataset** | `--public-dataset`<br/>(40+ values: `sharegpt`, `aimo*`, `blazedit_*`, `instruct_coder`, `llava_onevision`, `mmstar`, `spec_bench`, `speed_bench_*`, `vision_arena`, ...; run `aiperf plugins list public_dataset_loader`) | ❌ | ✅ | |
+| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,burst_gpt_trace,raw_payload,inputs_json,dag_jsonl,weka_trace}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format. `dag_jsonl` and `weka_trace` enable agentic / DAG-shaped conversation replay. |
 | **Fixed Schedule** | `--fixed-schedule` | ✅ | ✅ | |
 | **Fixed Schedule Auto Offset** | `--fixed-schedule-auto-offset` | ❌ | ✅ | |
 | **Fixed Schedule Start/End Offset** | `--fixed-schedule-start-offset`<br/>`--fixed-schedule-end-offset` | ❌ | ✅ | |
@@ -203,7 +207,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
 | **Number of Sessions** | `--num-sessions` | ✅ | ✅ | |
-| **Session Concurrency** | `--session-concurrency` | ✅ | ✅ | Use `--concurrency` for AIPerf |
+| **Session Concurrency** | `--session-concurrency` | ✅ | 🟡 | AIPerf has no `--session-concurrency` flag; use `--concurrency` instead |
 | **Session Delay Ratio** | `--session-delay-ratio` | ✅ | ✅ | |
 | **Session Turn Delay Mean** | `--session-turn-delay-mean` | ✅ | ✅ | |
 | **Session Turn Delay Stddev** | `--session-turn-delay-stddev` | ✅ | ✅ | |
@@ -257,7 +261,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|------------|---------|-------|
 | **Audio Length Mean** | `--audio-length-mean` | ✅ | ✅ | |
 | **Audio Length Stddev** | `--audio-length-stddev` | ✅ | ✅ | |
-| **Audio Format** | `--audio-format`<br/>`{wav,mp3,random}` | ✅ | ✅ | |
+| **Audio Format** | `--audio-format`<br/>`{wav,mp3}` | ✅ | ✅ | GenAI-Perf also supports `random`; AIPerf only `wav` and `mp3` |
 | **Audio Depths** | `--audio-depths` | ✅ | ✅ | |
 | **Audio Sample Rates** | `--audio-sample-rates` | ✅ | ✅ | |
 | **Audio Number of Channels** | `--audio-num-channels` | ✅ | ✅ | |
@@ -300,7 +304,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 
 | Feature | CLI Option | GenAI-Perf | AIPerf | Notes |
 |---------|------------|------------|---------|-------|
-| **Goodput Constraints** | `--goodput -g` | ✅ | ✅ | |
+| **Goodput Constraints** | `--goodput`<br/>(GenAI-Perf also: `-g`) | ✅ | ✅ | AIPerf does not register `-g` short alias |
 | **Verbose** | `-v --verbose` | ✅ | ✅ | |
 | **Extra Verbose** | `-vv` | ✅ | ✅ | |
 | **Log Level** | `--log-level` | ❌ | ✅ | `{trace,debug,info,notice,warning,success,error,critical}` |
@@ -349,6 +353,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **GPU Telemetry** | ✅ | ✅ | |
 | **Streaming API support** | ✅ | ✅ | |
 | **Multi-turn conversations** | ✅ | ✅ | Full multi-turn benchmarking with session tracking |
+| **Agentic / DAG benchmarking** | ❌ | ✅ | Conversation DAG replay with fork/spawn modes via `dag_jsonl`; agentic coding traces via `weka_trace` |
 | **Payload scheduling** | ✅ | ✅ | Fixed schedule workloads |
 | **Distributed testing** | ✅ | 🟡 | Multi-node result aggregation |
 | **Custom endpoints** | ✅ | ✅ |  |
