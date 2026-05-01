@@ -55,7 +55,7 @@ For all other metrics: **no change**. Scalar record metrics still use the exact-
 
 ## Where it lives
 
-- Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](../../src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
-- Selection site: [`src/aiperf/post_processors/metric_results_processor.py`](../../src/aiperf/post_processors/metric_results_processor.py) — first-touch dispatch by `isinstance(value, list)`.
+- Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
+- Selection site: [`src/aiperf/post_processors/metric_results_processor.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/post_processors/metric_results_processor.py) — first-touch dispatch by `isinstance(value, list)`.
 - Compression knob: `Environment.METRICS.TDIGEST_COMPRESSION` (env: `AIPERF_METRICS_TDIGEST_COMPRESSION`, default 500).
 - Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained).
