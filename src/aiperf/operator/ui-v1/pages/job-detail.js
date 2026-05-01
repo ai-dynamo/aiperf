@@ -2102,7 +2102,7 @@ export function JobDetail({ namespace, name, epoch }) {
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
               ${cancelState === 'idle' && html`
                 <button
-                  class="btn btn-danger"
+                  class="btn btn--danger"
                   onclick=${() => setCancelState('confirm')}
                   style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
                   data-testid="job-detail-cancel"

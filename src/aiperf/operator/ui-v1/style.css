@@ -55,6 +55,7 @@
   --top-bar-height: 48px;
   --radius: 6px;
   --radius-sm: 4px;
+  --radius-md: 6px;
   --radius-lg: 8px;
 
   /* Spacing */
@@ -62,6 +63,7 @@
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
 
@@ -80,6 +82,7 @@
   --base: #0c0c0c;
   --mantle: #161616;
   --crust: #080808;
+  --ctp-base: var(--bg-card);
   --mauve: #76b900;
   --yellow: #ffc107;
   --lavender: #76b900;
@@ -1780,12 +1783,6 @@ select, input {
   font-style: italic;
 }
 
-.pods-bar-dots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
 .pod-dot {
   display: inline-block;
   width: 10px;
@@ -1799,16 +1796,55 @@ select, input {
 .pod-dot--failed { background: var(--red); }
 .pod-dot--pending { background: var(--muted); }
 
-.pods-bar-names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.pods-bar-name {
+.pods-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: var(--font-size-xs);
-  font-family: var(--font-mono);
+}
+.pods-table thead th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.pods-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
   color: var(--sub);
+  vertical-align: middle;
+}
+.pods-table tbody tr:last-child td { border-bottom: 0; }
+.pods-table tbody tr:hover td { background: var(--bg-tile); }
+
+.pods-table-status {
+  width: 18px;
+  padding-right: 0;
+}
+.pods-table-name {
+  font-family: var(--font-mono);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.pods-table-phase {
+  text-transform: lowercase;
+  color: var(--sub);
+}
+.pods-table-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.pods-table-restarts { color: var(--amber); }
+.pods-table-overflow td {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .pods-bar-summary {
@@ -2450,6 +2486,16 @@ select, input {
 }
 .btn--primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
 .btn--ghost { background: transparent; border-color: var(--border); }
+.btn--danger {
+  background: rgba(239, 83, 80, 0.13);
+  color: var(--red);
+  border-color: rgba(239, 83, 80, 0.27);
+}
+.btn--danger:hover {
+  background: rgba(239, 83, 80, 0.22);
+  border-color: var(--red);
+  color: var(--red);
+}
 
 .empty {
   color: var(--muted);

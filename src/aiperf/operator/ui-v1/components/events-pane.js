@@ -142,8 +142,8 @@ export function EventsPane({ ns, name }) {
             ${shown.map((e, i) => {
               const isWarn = e.type === 'Warning';
               const tone = isWarn ? 'warn' : '';
-              const ts = e.lastTimestamp ?? e.firstTimestamp;
-              const obj = e.involvedObject ?? {};
+              const ts = e.last_timestamp ?? e.first_timestamp;
+              const obj = e.involved_object ?? {};
               const catTone = eventCatTone(e.reason, e.type);
               const reason = e.reason ?? (isWarn ? 'warning' : 'event');
               return html`

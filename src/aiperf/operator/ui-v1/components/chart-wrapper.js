@@ -96,7 +96,7 @@ export function ChartWrapper({ type, data, options = {}, height = 300 }) {
         ? html`<canvas ref=${canvasRef} />`
         : html`<div
             class="chart-empty"
-            style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim,#888);font-size:12px"
+            style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim);font-size:12px"
           >No data to display</div>`
       }
     </div>
