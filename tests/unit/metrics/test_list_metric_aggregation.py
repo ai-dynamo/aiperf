@@ -5,7 +5,8 @@
 The aggregator is the run-level storage for list-valued record metrics
 (today only ``inter_chunk_latency``). It backs percentile reads with a
 t-digest sketch but keeps ``count`` / ``sum`` / ``min`` / ``max`` /
-``avg`` / ``std`` bit-exact via running side-channel scalars.
+``avg`` / ``std`` bit-exact via running side-channel scalars (``std``
+via Welford's online algorithm for numerical stability).
 """
 
 from __future__ import annotations
@@ -13,8 +14,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
-from aiperf.metrics.metric_dicts import MetricArray
+from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray
 
 
 class TestTDigestListMetricAggregator:
@@ -100,8 +102,8 @@ class TestTDigestListMetricAggregator:
         agg = TDigestListMetricAggregator()
         agg.extend(values.tolist())
         result = agg.to_result(tag="t", header="T", unit="ms")
-        # avg = sum / count; std = sqrt(max(0, sum_sq/count - avg^2))
-        # both within float64 round-off of numpy's reference.
+        # avg = sum / count; std = sqrt(M2 / count) via Welford.
+        # Both within float64 round-off of numpy's reference.
         assert result.avg == pytest.approx(float(np.mean(values)), rel=1e-9)
         assert result.std == pytest.approx(float(np.std(values)), rel=1e-9)
 
@@ -149,3 +151,80 @@ class TestTDigestListMetricAggregator:
             assert getattr(digest_result, pct_field) == pytest.approx(
                 getattr(array_result, pct_field), rel=0.005
             )
+
+    def test_extend_batched_matches_per_element_appends(self) -> None:
+        """Single ``extend(list)`` (numpy batched C-level update) must give
+        the same exact stats as N successive ``append(v)`` calls. This is the
+        regression boundary for the new batched code path.
+        """
+        rng = np.random.default_rng(42)
+        values = rng.normal(loc=100.0, scale=15.0, size=10_000)
+
+        agg_batched = TDigestListMetricAggregator()
+        agg_batched.extend(values.tolist())
+        r_batched = agg_batched.to_result(tag="t", header="T", unit="ms")
+
+        agg_streamed = TDigestListMetricAggregator()
+        for v in values:
+            agg_streamed.append(float(v))
+        r_streamed = agg_streamed.to_result(tag="t", header="T", unit="ms")
+
+        # Exact stats (count, sum, min, max, avg, std) must agree to
+        # float64 round-off across the two paths.
+        assert r_batched.count == r_streamed.count
+        assert r_batched.min == pytest.approx(r_streamed.min)
+        assert r_batched.max == pytest.approx(r_streamed.max)
+        assert r_batched.sum == pytest.approx(r_streamed.sum, rel=1e-12)
+        assert r_batched.avg == pytest.approx(r_streamed.avg, rel=1e-12)
+        assert r_batched.std == pytest.approx(r_streamed.std, rel=1e-9)
+
+    def test_welford_std_is_stable_on_large_offset_distribution(self) -> None:
+        """The textbook ``sum_sq/count - avg^2`` formula collapses to zero
+        for large-offset, low-spread data because of catastrophic
+        cancellation. Welford's algorithm preserves precision.
+        """
+        # Mean ~1e9 (e.g. wall-clock ns timestamps), spread ~1.0 — exactly
+        # the regime where the textbook formula loses ~9 of float64's 16
+        # decimal digits.
+        rng = np.random.default_rng(42)
+        values = 1.0e9 + rng.normal(loc=0.0, scale=1.0, size=10_000)
+        agg = TDigestListMetricAggregator()
+        agg.extend(values.tolist())
+        result = agg.to_result(tag="t", header="T", unit="ns")
+        # Welford std should agree with numpy to better than 0.1% even
+        # at this offset/spread ratio. The textbook formula would round
+        # to ~0 here.
+        assert result.std == pytest.approx(float(np.std(values)), rel=1e-3)
+
+    def test_protocol_runtime_isinstance(self) -> None:
+        """Aggregator should satisfy the ``MetricAggregator`` protocol so
+        ``isinstance`` dispatch in ``MetricResultsProcessor`` and
+        ``DerivedSumMetric`` accepts both this and ``MetricArray``."""
+        digest_agg = TDigestListMetricAggregator()
+        array_agg = MetricArray()
+        assert isinstance(digest_agg, MetricAggregator)
+        assert isinstance(array_agg, MetricAggregator)
+
+    def test_compression_env_var_flows_to_underlying_sketch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``AIPERF_METRICS_TDIGEST_COMPRESSION`` must be wired through to
+        ``crick.TDigest`` so operators can tune accuracy/memory without code
+        changes."""
+        monkeypatch.setenv("AIPERF_METRICS_TDIGEST_COMPRESSION", "200")
+        # The compression knob is read in __init__; reset the cached settings
+        # so the env var takes effect for this test.
+        from aiperf.common.environment import _MetricsSettings
+
+        monkeypatch.setattr(Environment, "METRICS", _MetricsSettings(), raising=True)
+        agg = TDigestListMetricAggregator()
+        assert agg._td.compression == 200
+
+    def test_sum_property_for_derived_metric_protocol(self) -> None:
+        """The ``MetricAggregator`` protocol requires a ``sum`` property so
+        :class:`DerivedSumMetric` can compute uniformly across this and
+        :class:`MetricArray`."""
+        agg = TDigestListMetricAggregator()
+        agg.extend([1.0, 2.0, 3.0, 4.0, 5.0])
+        # Property is exposed and returns the running side-channel sum.
+        assert agg.sum == pytest.approx(15.0)
