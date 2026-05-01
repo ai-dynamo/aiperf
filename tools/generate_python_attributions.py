@@ -57,6 +57,7 @@ _SPDX_MAP: dict[str, str] = {
     "modified bsd license": "BSD-3-Clause",
     'bsd 3-clause "new" or "revised" license': "BSD-3-Clause",
     "bsd 3-clause license": "BSD-3-Clause",
+    "3-clause bsd license": "BSD-3-Clause",
     "bsd-3-clause": "BSD-3-Clause",
     "simplified bsd": "BSD-2-Clause",
     'bsd 2-clause "simplified" license': "BSD-2-Clause",
