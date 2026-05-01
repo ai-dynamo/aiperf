@@ -18,7 +18,12 @@
  * ``{"type":"subscribe","message_types":[...]}``). The proxy is transparent.
  */
 
-const SUBSCRIBE_TYPES = ['realtime_metrics'];
+import {
+  normalizeServerMetrics,
+  aggregateSparklineSnapshot,
+} from '../components/server-metrics/helpers.js';
+
+const SUBSCRIBE_TYPES = ['realtime_metrics', 'realtime_server_metrics'];
 const RECONNECT_DELAY_MS = 2000;
 const MAX_POINTS = 120;
 const MAX_AGE_MS = 5 * 60_000;
@@ -41,11 +46,15 @@ export function openJobWs(ns, name, onUpdate) {
 
   const summary = {};
   const timeseries = {};
+  let serverSummary = null;
+  const serverTimeseries = {};
 
   function publish(connected) {
     onUpdate({
       summary: { ...summary },
       timeseries: { ...timeseries },
+      serverSummary,
+      serverTimeseries: { ...serverTimeseries },
       connected,
     });
   }
@@ -57,6 +66,26 @@ export function openJobWs(ns, name, onUpdate) {
     next.push({ t, values: statsObj });
     if (next.length > MAX_POINTS) next.splice(0, next.length - MAX_POINTS);
     timeseries[tag] = next;
+  }
+
+  function pushServerSample(kpiId, t, v) {
+    const series = serverTimeseries[kpiId] ?? [];
+    const cutoff = t - MAX_AGE_MS;
+    const next = series.filter(s => s.t >= cutoff);
+    next.push({ t, v });
+    if (next.length > MAX_POINTS) next.splice(0, next.length - MAX_POINTS);
+    serverTimeseries[kpiId] = next;
+  }
+
+  function applyRealtimeServerMetrics(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    serverSummary = payload;
+    const normalized = normalizeServerMetrics(payload);
+    const { values } = aggregateSparklineSnapshot(normalized);
+    const t = Date.now();
+    for (const [kpiId, v] of Object.entries(values)) {
+      if (typeof v === 'number' && isFinite(v)) pushServerSample(kpiId, t, v);
+    }
   }
 
   function applyRealtimeMetrics(metrics) {
@@ -80,6 +109,9 @@ export function openJobWs(ns, name, onUpdate) {
     const type = msg?.type ?? msg?.message_type;
     if (type === 'realtime_metrics' && Array.isArray(msg.metrics)) {
       applyRealtimeMetrics(msg.metrics);
+      publish(true);
+    } else if (type === 'realtime_server_metrics') {
+      applyRealtimeServerMetrics(msg.endpoint_summaries ? msg : msg.payload ?? null);
       publish(true);
     }
   }
