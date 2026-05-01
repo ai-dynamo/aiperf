@@ -30,6 +30,7 @@ class TestJobProgress:
         assert progress.current_phase is None
         assert progress.error is None
         assert progress.connection_error is None
+        assert progress.results_exported is False
 
     def test_is_complete_no_profiling(self) -> None:
         """Test is_complete returns False when no profiling phase."""
@@ -41,21 +42,23 @@ class TestJobProgress:
         from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
         progress = JobProgress(
+            results_exported=True,
             phases={
                 "profiling": CombinedPhaseStats(
                     phase="profiling",
                     requests_completed=50,
                     total_expected_requests=100,
                 )
-            }
+            },
         )
         assert progress.is_complete is False
 
     def test_is_complete_profiling_complete(self) -> None:
-        """Test is_complete returns True when requests AND records are complete."""
+        """Test is_complete returns True when requests AND records are complete AND results exported."""
         from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
         progress = JobProgress(
+            results_exported=True,
             phases={
                 "profiling": CombinedPhaseStats(
                     phase="profiling",
@@ -64,15 +67,63 @@ class TestJobProgress:
                     requests_end_ns=1000000000,
                     records_end_ns=2000000000,  # Records also complete
                 )
-            }
+            },
         )
         assert progress.is_complete is True
+
+    def test_is_not_complete_results_not_exported(self) -> None:
+        """Test is_complete returns False when phases are complete but results_exported is still False.
+
+        Guards against the sub-second race where requests+records flip
+        complete BEFORE ExporterManager.export_data() returns: the kopf
+        monitor must NOT claim completion until the controller signals
+        artifacts are on disk.
+        """
+        from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+
+        progress = JobProgress(
+            results_exported=False,
+            phases={
+                "profiling": CombinedPhaseStats(
+                    phase="profiling",
+                    requests_completed=100,
+                    total_expected_requests=100,
+                    requests_end_ns=1000000000,
+                    records_end_ns=2000000000,
+                )
+            },
+        )
+        assert progress.is_complete is False
+
+    def test_is_complete_flips_only_after_results_exported(self) -> None:
+        """Test is_complete only flips True after results_exported=True (race fix)."""
+        from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+
+        completed_phase = CombinedPhaseStats(
+            phase="profiling",
+            requests_completed=64,
+            total_expected_requests=64,
+            requests_end_ns=1000000000,
+            records_end_ns=1040000000,
+        )
+        before = JobProgress(
+            results_exported=False,
+            phases={"profiling": completed_phase},
+        )
+        assert before.is_complete is False
+
+        after = JobProgress(
+            results_exported=True,
+            phases={"profiling": completed_phase},
+        )
+        assert after.is_complete is True
 
     def test_is_not_complete_records_still_processing(self) -> None:
         """Test is_complete returns False when requests done but records still processing."""
         from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
         progress = JobProgress(
+            results_exported=True,
             phases={
                 "profiling": CombinedPhaseStats(
                     phase="profiling",
@@ -81,7 +132,7 @@ class TestJobProgress:
                     requests_end_ns=1000000000,
                     records_end_ns=None,  # Records NOT complete
                 )
-            }
+            },
         )
         assert progress.is_complete is False
 
@@ -518,6 +569,20 @@ class TestProgressClientParseResponse:
         progress = client._parse_progress_response({"phases": {}})
 
         assert progress.current_phase is None
+
+    def test_parse_results_exported_default_false(self) -> None:
+        """Test results_exported defaults to False when omitted by older controllers."""
+        client = ProgressClient()
+        progress = client._parse_progress_response({"phases": {}})
+        assert progress.results_exported is False
+
+    def test_parse_results_exported_true(self) -> None:
+        """Test results_exported is read from the response when present."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {"phases": {}, "results_exported": True}
+        )
+        assert progress.results_exported is True
 
 
 class TestProgressClientCheckHealth:

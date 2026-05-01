@@ -24,6 +24,7 @@ import pytest_asyncio
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos.mock_server_injector import MockServerInjector
 from tests.kubernetes.chaos.toxiproxy import (
+    TOXIPROXY_APISERVER_PORT,
     TOXIPROXY_CONTROLLER_HTTP_PORT,
     TOXIPROXY_NAMESPACE,
     TOXIPROXY_SERVICE,
@@ -86,10 +87,14 @@ CONTROLLER_HTTP_OVERRIDE_URL = (
     f"http://{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local:"
     f"{TOXIPROXY_CONTROLLER_HTTP_PORT}"
 )
+APISERVER_SERVICE_HOST_OVERRIDE = (
+    f"{TOXIPROXY_SERVICE}.{TOXIPROXY_NAMESPACE}.svc.cluster.local"
+)
+APISERVER_SERVICE_PORT_OVERRIDE = str(TOXIPROXY_APISERVER_PORT)
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
-async def operator_ready_toxiproxy_routed(
+async def operator_ready_apiserver_toxiproxy_routed(
     kubectl: KubectlClient,
     project_root: Path,
     loaded_images,  # noqa: ANN001 - session-scoped helper, not typed in test surface
@@ -99,18 +104,15 @@ async def operator_ready_toxiproxy_routed(
     operator_job_namespace: str,
     toxiproxy_injector: ToxiproxyInjector,  # noqa: ARG001 - establishes ordering: toxiproxy must exist before we pin the operator at its Service
 ) -> AsyncIterator[OperatorDeployer]:
-    """Operator redeployed with controller-HTTP routed through toxiproxy.
+    """Operator redeployed with apiserver traffic routed through toxiproxy.
 
-    The default ``operator_ready`` fixture leaves
-    ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` unset, so every CR funnels
-    its controller HTTP calls directly to per-CR JobSet pod DNS. For
-    chaos scenarios that need to blackhole, delay, or otherwise
-    fault-inject on that link (C16 and any follow-on controller-HTTP
-    tests), this fixture redeploys the operator once with the override
-    pinned at the chaos-namespace toxiproxy Service
-    (``http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002``) and restores a
-    plain operator at teardown so sibling package tests run with
-    production-shaped routing.
+    The default ``operator_ready`` fixture relies on the cluster-injected
+    ``KUBERNETES_SERVICE_HOST`` / ``KUBERNETES_SERVICE_PORT`` env vars, so all
+    operator -> apiserver traffic goes directly to ``kubernetes.default.svc``.
+    For chaos scenario C15 we need that path to traverse toxiproxy instead.
+    This fixture redeploys the operator once with those env vars pinned at the
+    chaos-namespace toxiproxy Service and restores a plain operator at teardown
+    so sibling package tests run with production-shaped routing.
 
     **Proxy lifecycle is the caller's responsibility.** The toxiproxy
     proxy itself (``add_proxy(name=..., listen=..., upstream=...)``) is
@@ -143,7 +145,8 @@ async def operator_ready_toxiproxy_routed(
         project_root=project_root,
         operator_image=k8s_settings.aiperf_image,
         default_job_namespace=operator_job_namespace,
-        controller_http_url_override=CONTROLLER_HTTP_OVERRIDE_URL,
+        apiserver_service_host_override=APISERVER_SERVICE_HOST_OVERRIDE,
+        apiserver_service_port_override=APISERVER_SERVICE_PORT_OVERRIDE,
     )
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)

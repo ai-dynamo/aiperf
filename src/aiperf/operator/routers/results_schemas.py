@@ -18,6 +18,18 @@ class JobEntry(AIPerfBaseModel):
     job_id: str = Field(description="Job identifier")
     file_count: int = Field(description="Number of stored result files")
     total_size_bytes: int = Field(description="Total size of stored files in bytes")
+    model: str | None = Field(
+        default=None,
+        description="Model name extracted from the CR spec at run time. "
+        "``None`` for jobs whose ``job_spec.json`` is missing or unparseable. "
+        "Used by the UI's `?cluster=<ns> · <model>` deep-link from the "
+        "job-detail similar-runs chip.",
+    )
+    endpoint: str | None = Field(
+        default=None,
+        description="Endpoint URL extracted from the CR spec at run time. "
+        "``None`` when the spec file is missing or doesn't carry one.",
+    )
 
 
 class ResultsHistoryListResponse(AIPerfBaseModel):

@@ -60,6 +60,18 @@ function renderSource(source) {
   return html`<span class="text-dim" style=${`font-size:11px;padding:1px 6px;border:1px solid ${palette.surface0};border-radius:6px`}>${source}</span>`;
 }
 
+// Tighten generic API errors into something actionable. The api lib throws
+// `API <status>: <body>` on HTTP errors; we only re-shape when we recognize
+// the pattern, so unknown errors still surface verbatim.
+function describeLoadError(raw) {
+  const s = String(raw ?? '');
+  if (/API 404/.test(s)) return 'sweeps endpoint not found — operator API may be older than this UI build';
+  if (/API 401|API 403/.test(s)) return 'no permission to list sweeps — check RBAC for the operator service account';
+  if (/API 503|API 502|API 504/.test(s)) return 'operator unreachable — try `kubectl -n aiperf-operator get pods`';
+  if (/Failed to fetch|NetworkError|ECONNREFUSED/i.test(s)) return 'network error reaching operator API — port-forward may have dropped';
+  return s;
+}
+
 function parseSort(s) {
   if (!s) return { key: 'age', dir: -1 };
   const [key, dir] = s.split(':');
@@ -112,7 +124,7 @@ export function Sweeps() {
         setLoadError(null);
         setLastUpdated(Date.now());
       } catch (err) {
-        if (firstLoad) setLoadError(err?.message ?? String(err));
+        if (firstLoad) setLoadError(describeLoadError(err?.message ?? err));
         throw err;
       } finally {
         setFirstLoad(false);
@@ -242,6 +254,7 @@ export function Sweeps() {
             aria-label="Search sweeps by name or namespace"
             value=${searchText}
             oninput=${e => setSearchText(e.target.value)}
+            onkeydown=${e => { if (e.key === 'Enter' && searchText !== urlQ) { e.preventDefault(); setQuery({ q: searchText }); } }}
             style=${`width: 100%; padding: var(--space-2) ${searchText ? '28px' : 'var(--space-3)'} var(--space-2) var(--space-3);
                      background: ${palette.mantle}; border: 1px solid ${palette.surface0};
                      border-radius: var(--radius-md); color: ${palette.text};

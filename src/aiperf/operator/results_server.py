@@ -156,43 +156,65 @@ def _register_k8s_exception_handler(app: FastAPI) -> None:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-def _mount_dashboard(app: FastAPI, base_dir: Path) -> None:
-    """Mount the Plotly Dash dashboard at /dashboard/, with a 503 placeholder if no runs yet.
-
-    Tolerates dashboard-init failures: when ``readOnlyRootFilesystem: true`` is
-    set on the container, ``PlotConfig`` can't auto-create ``$HOME/.aiperf/`` and
-    raises ``OSError [Errno 30]``. The dashboard is non-essential to the
-    results-server's primary job (file serving + analytics), so we swallow init
-    errors and serve a 503 placeholder instead of crashlooping.
-    """
-    try:
-        dash_app, run_count = build_dashboard(base_dir)
-    except OSError as exc:
-        logger.warning(
-            "Dashboard init failed (likely read-only rootfs): %s. "
-            "/dashboard/ will return 503; analytics + file endpoints unaffected.",
-            exc,
+def _pending_dashboard_app(message: bytes):
+    def _app(environ, start_response):
+        start_response(
+            "503 Service Unavailable",
+            [("Content-Type", "text/plain; charset=utf-8")],
         )
-        dash_app, run_count = None, 0
+        return [message]
 
-    if dash_app is not None:
+    return _app
+
+
+def _mount_dashboard(app: FastAPI, base_dir: Path) -> None:
+    """Mount the Plotly Dash dashboard at /dashboard/.
+
+    The dashboard build can take tens of seconds on a large PVC. Mount a cheap
+    placeholder immediately so the results-server can answer /healthz and start
+    serving API traffic before the dashboard scan finishes, then hot-swap the
+    real Dash app in the background.
+    """
+    dashboard_proxy = DashboardProxy(
+        _pending_dashboard_app(b"Dashboard is initializing; retry shortly.")
+    )
+    app.mount("/dashboard", WSGIMiddleware(dashboard_proxy))
+
+    async def _build_and_swap() -> None:
+        try:
+            dash_app, run_count = await asyncio.to_thread(build_dashboard, base_dir)
+        except OSError as exc:
+            logger.warning(
+                "Dashboard init failed (likely read-only rootfs): %s. "
+                "/dashboard/ will return 503; analytics + file endpoints unaffected.",
+                exc,
+            )
+            dashboard_proxy.app = _pending_dashboard_app(
+                b"Dashboard unavailable: read-only filesystem blocked plot config initialization."
+            )
+            return
+        except Exception:
+            logger.exception("Dashboard init failed; keeping placeholder app mounted")
+            dashboard_proxy.app = _pending_dashboard_app(
+                b"Dashboard unavailable: initialization failed."
+            )
+            return
+
+        if dash_app is None:
+            logger.info("No runs on PVC yet; /dashboard/ returns 503 until runs exist")
+            dashboard_proxy.app = _pending_dashboard_app(
+                b"Dashboard not yet available: no completed runs on PVC."
+            )
+            return
+
         logger.info(
             f"Mounting Plotly Dash dashboard with {run_count} runs at /dashboard/"
         )
-        dashboard_proxy = DashboardProxy(dash_app.server)
-    else:
-        logger.info("No runs on PVC yet; /dashboard/ returns 503 until runs exist")
+        dashboard_proxy.app = dash_app.server
 
-        def _pending_app(environ, start_response):
-            start_response(
-                "503 Service Unavailable",
-                [("Content-Type", "text/plain; charset=utf-8")],
-            )
-            return [b"Dashboard not yet available: no completed runs on PVC."]
-
-        dashboard_proxy = DashboardProxy(_pending_app)
-
-    app.mount("/dashboard", WSGIMiddleware(dashboard_proxy))
+    @app.on_event("startup")
+    async def _start_dashboard_build() -> None:
+        asyncio.create_task(_build_and_swap())
 
 
 def create_app(results_dir: Path | None = None) -> FastAPI:

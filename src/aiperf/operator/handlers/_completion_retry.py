@@ -45,7 +45,7 @@ __all__ = ["maybe_raise_for_transient_fetch_failure"]
 def _claim_age_seconds(body: dict[str, Any]) -> float | None:
     """Return seconds since ``Annotations.COMPLETION_CLAIMED`` was stamped.
 
-    Returns None when the annotation is absent or unparseable so the caller
+    Returns None when the annotation is absent or unparsable so the caller
     can fall back to the legacy fail-fast path rather than retrying forever
     on a malformed timestamp.
     """
@@ -90,7 +90,10 @@ def maybe_raise_for_transient_fetch_failure(
     CR and short-circuits.
 
     Gate signals (all must hold):
-        1. ``flags.has_error`` and not ``flags.has_files`` — the race shape.
+        1. Key export files are still missing, and the fetch looks transient:
+           either ``flags.has_error`` is set OR we got partial progress
+           (metrics and/or non-key artifacts) without the authoritative
+           exports.
         2. ``RESULTS.TRANSIENT_FETCH_RETRY_BUDGET_SEC > 0`` — set 0 to disable.
         3. Parseable ``Annotations.COMPLETION_CLAIMED`` timestamp on body.
         4. Wall-clock claim age below the budget.
@@ -99,7 +102,8 @@ def maybe_raise_for_transient_fetch_failure(
     # all on the happy path. Tests that mock OperatorEnvironment.RESULTS
     # without setting the new fields therefore never trip on the budget
     # attribute access below.
-    if not flags.has_error or flags.has_files:
+    has_partial_progress = bool(result.metrics) or bool(result.downloaded)
+    if flags.has_files or (not flags.has_error and not has_partial_progress):
         return
     budget = _coerce_settings_float(
         OperatorEnvironment.RESULTS.TRANSIENT_FETCH_RETRY_BUDGET_SEC

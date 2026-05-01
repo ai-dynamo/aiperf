@@ -120,8 +120,10 @@ def build_warmup(user: UserConfig) -> dict[str, Any] | None:
     _warmup_count_field(w, lg)
     _warmup_pattern_type(w, lg, s)
     _warmup_ramps(w, lg, s)
-    if lg.warmup_prefill_concurrency is not None:
+    if "warmup_prefill_concurrency" in s:
         w["prefill_concurrency"] = lg.warmup_prefill_concurrency
+    elif "prefill_concurrency" in s:
+        w["prefill_concurrency"] = lg.prefill_concurrency
     if lg.warmup_grace_period is not None:
         w["grace_period"] = lg.warmup_grace_period
     return w

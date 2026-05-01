@@ -56,6 +56,50 @@ class TestAPIEndpoints:
         assert data["object"] == "list"
         assert len(data["data"]) == 1
 
+    def test_responses_endpoint(self, test_client):
+        response = test_client.post(
+            "/v1/responses",
+            json={"model": "test-model", "input": "Say hello."},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "response"
+        assert data["output_text"]
+        assert "usage" in data
+
+    def test_video_generation_endpoint(self, test_client):
+        response = test_client.post(
+            "/v1/videos",
+            data={"model": "test-model", "prompt": "A short test video."},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "video"
+        assert data["status"] == "completed"
+        assert data["url"].endswith("/content")
+
+    def test_video_generation_poll_endpoint(self, test_client):
+        response = test_client.get("/v1/videos/video-test-123")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "video-test-123"
+        assert data["status"] == "completed"
+
+    def test_video_generation_content_endpoint(self, test_client):
+        response = test_client.get("/v1/videos/video-test-123/content")
+        assert response.status_code == 200
+        assert response.content.startswith(b"mock-video")
+
+    def test_image_retrieval_documented_endpoint(self, test_client):
+        response = test_client.post(
+            "/v1/infer",
+            json={"input": [{"type": "image_url", "url": "data:image/png;base64,abc"}]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "data" in data
+        assert data["data"][0]["bounding_boxes"]
+
     def test_rankings_endpoint(self, test_client):
         response = test_client.post(
             "/v1/ranking",

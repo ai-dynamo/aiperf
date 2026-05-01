@@ -50,6 +50,7 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
 
+    _preflight_artifact_dir(plan)
     _preflight_endpoint_ready(plan)
 
     if plan.is_single_run:
@@ -57,6 +58,36 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
         _run_single_benchmark(run)
     else:
         _run_multi_benchmark(plan)
+
+
+def _preflight_artifact_dir(plan: BenchmarkPlan) -> None:
+    """Validate that the artifact directory is creatable and writable.
+
+    Why: ``setup_rich_logging`` calls ``log_folder.mkdir(parents=True)`` deep
+    inside the controller bootstrap; without this preflight, an existing-file
+    artifact path or a read-only parent surfaces as a stack-trace-laden
+    ``NotADirectoryError``/``PermissionError`` instead of a clean config error.
+    Surfacing it here lets ``profile.py`` render a single actionable panel via
+    ``exit_on_error(quiet_for=(ConfigurationError,))``.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    artifact_dir: Path = plan.configs[0].artifacts.dir
+    if artifact_dir.exists() and not artifact_dir.is_dir():
+        raise ConfigurationError(
+            f"artifact_dir '{artifact_dir}' exists but is not a directory. "
+            f"Remove the file or pick a different --artifact-dir."
+        )
+
+    parent = artifact_dir if artifact_dir.exists() else artifact_dir.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if parent.exists() and not os.access(parent, os.W_OK):
+        raise ConfigurationError(
+            f"artifact_dir '{artifact_dir}' is not writable "
+            f"(no write permission on existing parent '{parent}'). "
+            f"Pick a different --artifact-dir or fix permissions."
+        )
 
 
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:

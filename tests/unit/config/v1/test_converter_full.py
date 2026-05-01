@@ -8,9 +8,11 @@ Exercises the full composition: each test builds a ``UserConfig`` and a
 and asserts on the resulting validated ``AIPerfConfig``.
 """
 
+from aiperf.common.enums import GPUTelemetryMode
 from aiperf.config.config import AIPerfConfig
 from aiperf.config.v1 import ServiceConfig, UserConfig
 from aiperf.config.v1.converter import convert_user_to_aiperf
+from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 
 def test_minimal_concurrency_run_produces_valid_aiperf_config():
@@ -92,3 +94,43 @@ def test_full_conversion_request_rate_only_uses_synthetic_default():
     cfg = convert_user_to_aiperf(user, ServiceConfig())
     # SyntheticDataset Pydantic default takes effect (no user-set count source)
     assert cfg.datasets[0].entries == 100
+
+
+def test_convert_user_to_aiperf_preserves_gpu_telemetry_tokens():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "gpu_telemetry": ["pynvml", "dashboard"],
+        }
+    )
+
+    config = convert_user_to_aiperf(user, ServiceConfig())
+
+    assert config.gpu_telemetry.collector == GPUTelemetryCollectorType.PYNVML
+    assert config.gpu_telemetry.mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+
+def test_convert_user_to_aiperf_preserves_endpoint_parity_fields():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {
+                "model_names": ["video-model"],
+                "urls": ["http://server:8000"],
+                "type": "video_generation",
+                "ready_check_timeout": 30.0,
+                "ready_check_interval": 2.5,
+                "ready_check_mode": "both",
+                "download_video_content": True,
+                "request_content_type": "multipart/form-data",
+            },
+        }
+    )
+    service = ServiceConfig()
+
+    config = convert_user_to_aiperf(user, service)
+
+    assert config.endpoint.ready_check_timeout == 30.0
+    assert config.endpoint.ready_check_interval == 2.5
+    assert config.endpoint.ready_check_mode == "both"
+    assert config.endpoint.download_video_content is True
+    assert str(config.endpoint.request_content_type) == "multipart/form-data"

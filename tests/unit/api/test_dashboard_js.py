@@ -1592,8 +1592,7 @@ class TestDashboardV2GpuTelemetry:
 
 
 # -----------------------------------------------------------------------------
-# v2: hero strip, sparklines, log severity, server-metrics saturation,
-# throughput-vs-latency chart
+# v2: hero strip, sparklines, log severity, throughput-vs-latency chart
 # -----------------------------------------------------------------------------
 
 
@@ -2030,69 +2029,6 @@ class TestDashboardV2LogPane:
         assert before > after, (
             f"warn+ filter should reduce entries: before={before} after={after}"
         )
-
-
-class TestDashboardV2ServerMetricsContext:
-    """KV-cache utilization and queue depth rows gain saturation bands +
-    tooltips so raw numbers aren't left uninterpreted."""
-
-    @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
-    def test_server_metrics_saturation_classes(self, _page: Page) -> None:
-        """kv_cache_utilization 0.45 → good, 0.80 → warn, 0.95 → bad.
-        queue_depth 3 → good, 20 → warn, 100 → bad."""
-        payload = {
-            "type": "realtime_server_metrics",
-            "endpoint_summaries": [
-                {
-                    "endpoint": "http://srv:8000",
-                    "metrics": [
-                        {
-                            "name": "kv_cache_utilization",
-                            "value": 0.95,
-                            "unit": "ratio",
-                        },
-                        {"name": "queue_depth", "value": 3, "unit": "requests"},
-                        {"name": "batch_size_avg", "value": 22.5, "unit": "requests"},
-                    ],
-                }
-            ],
-        }
-
-        with _run_server(
-            _build_multi_phase_cfg(), extra_ws_payloads=[payload]
-        ) as base_url:
-            _page.goto(f"{base_url}/dashboard-v2", wait_until="networkidle")
-            _page.wait_for_selector(".server-metrics", timeout=10_000)
-            _page.wait_for_function(
-                """() => document.querySelectorAll('.server-metrics-row--bad').length >= 1""",
-                timeout=5_000,
-            )
-
-            rows = _page.evaluate(
-                """() => Array.from(document.querySelectorAll('.server-metrics tbody tr')).map(r => ({
-                    name: r.cells[0]?.textContent?.trim(),
-                    kind: Array.from(r.classList).find(c => c.startsWith('server-metrics-row--'))?.replace('server-metrics-row--','') ?? null,
-                    chip: r.querySelector('.server-chip')?.textContent?.trim() ?? null,
-                    tooltip: r.getAttribute('title') ?? '',
-                }))"""
-            )
-
-        by_name = {r["name"]: r for r in rows}
-        # KV cache at 0.95 → saturated (bad).
-        kv = by_name["kv_cache_utilization"]
-        assert kv["kind"] == "bad", kv
-        assert kv["chip"] == "saturated", kv
-        assert "saturat" in (kv["tooltip"] or "").lower(), kv
-
-        # queue_depth at 3 → good / headroom.
-        qd = by_name["queue_depth"]
-        assert qd["kind"] == "good", qd
-        assert "headroom" in (qd["chip"] or "").lower(), qd
-
-        # Metrics with no guardrail must have no class or chip.
-        bs = by_name["batch_size_avg"]
-        assert bs["kind"] is None, bs
-        assert bs["chip"] is None or bs["chip"] == "", bs
 
 
 class TestDashboardV2ThroughputLatencyChart:

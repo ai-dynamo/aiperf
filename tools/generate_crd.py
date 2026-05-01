@@ -316,6 +316,348 @@ def convert_aiperf_config_fields(
     return result
 
 
+def _add_validation_rules(node: dict[str, Any], rules: tuple[dict, ...]) -> None:
+    """Append ``rules`` to ``node['x-kubernetes-validations']`` (de-duped by rule text)."""
+    bag = node.setdefault("x-kubernetes-validations", [])
+    existing = {r.get("rule") for r in bag if isinstance(r, dict)}
+    for r in rules:
+        if r["rule"] not in existing:
+            bag.append(r)
+            existing.add(r["rule"])
+
+
+def _decorate_aiperf_config_node(node: dict[str, Any]) -> None:
+    """Attach CEL rules + relax ``required`` on AIPerfConfig-shaped nodes.
+
+    Detected by shape (presence of all four shorthand-sibling keys in
+    ``properties``) so AIPerfSweep's nested ``template.spec.benchmark`` is
+    fixed up via the same walker as the AIPerfJob top-level benchmark.
+
+    Bundles every cross-field invariant declared on AIPerfConfig that the
+    apiserver can enforce ahead of the operator's reconcile loop:
+
+    * Shorthand-or-canonical OR-requirement (replaces the structural
+      ``required`` list — the operator's before-validator hoists shorthand
+      after admission).
+    * Shorthand-and-canonical mutual exclusion (you can't set both forms).
+    * Cross-field rules currently encoded as Pydantic ``@model_validator``
+      decorators on ``AIPerfConfig`` and ``BenchmarkConfig``: dataset-name
+      uniqueness, phase-name uniqueness, phase→dataset reference integrity,
+      seamless-not-on-first-phase, ``parameter_sweep_same_seed`` requires
+      ``random_seed``, dashboard UI incompatible with sweeps. See the named
+      validators in ``src/aiperf/config/config.py``.
+    """
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    if not (
+        "model" in props
+        and "dataset" in props
+        and "warmup" in props
+        and "profiling" in props
+    ):
+        return
+
+    # Relax structural required: shorthand siblings cover models/datasets/phases
+    # via the CEL OR-rules below. ``endpoint`` stays required (no shorthand).
+    required = node.get("required")
+    if isinstance(required, list):
+        relaxable = {"models", "datasets", "phases"}
+        node["required"] = [r for r in required if r not in relaxable]
+        if not node["required"]:
+            del node["required"]
+
+    _add_validation_rules(
+        node,
+        (
+            # Tier 1A — OR-requirements (shorthand or canonical).
+            {
+                "rule": "has(self.models) || has(self.model)",
+                "message": (
+                    "benchmark requires either 'models' (canonical: object with "
+                    "'items') or 'model' (shorthand: string, list of strings, "
+                    "or ModelsAdvanced object). The operator hoists 'model' "
+                    "into 'models' before validation."
+                ),
+            },
+            {
+                "rule": "has(self.datasets) || has(self.dataset)",
+                "message": (
+                    "benchmark requires either 'datasets' (canonical: list "
+                    "with named entries) or 'dataset' (shorthand: single dict, "
+                    "hoisted into a one-entry 'datasets' list with "
+                    "name='default')."
+                ),
+            },
+            {
+                "rule": ("has(self.phases) || has(self.warmup) || has(self.profiling)"),
+                "message": (
+                    "benchmark requires either 'phases' (canonical: ordered "
+                    "list with named entries) or shorthand 'warmup'/"
+                    "'profiling' phase dicts. Top-level 'warmup'/'profiling' "
+                    "are hoisted into a [warmup, profiling] phases list "
+                    "before validation."
+                ),
+            },
+            # Tier 1A — mutual exclusion.
+            {
+                "rule": "!(has(self.models) && has(self.model))",
+                "message": (
+                    "set 'models' (canonical) OR 'model' (shorthand), not both"
+                ),
+            },
+            {
+                "rule": "!(has(self.datasets) && has(self.dataset))",
+                "message": (
+                    "set 'datasets' (canonical) OR 'dataset' (shorthand), not both"
+                ),
+            },
+            {
+                "rule": (
+                    "!(has(self.phases) && (has(self.warmup) || has(self.profiling)))"
+                ),
+                "message": (
+                    "use 'phases' (canonical list) OR top-level "
+                    "'warmup'/'profiling' shorthand, not both"
+                ),
+            },
+            {
+                "rule": "!has(self.warmup) || has(self.profiling)",
+                "message": (
+                    "'warmup' shorthand requires 'profiling' alongside it; "
+                    "warmup-only runs are not supported"
+                ),
+            },
+            # Tier 2G — parameter_sweep_same_seed requires random_seed.
+            {
+                "rule": (
+                    "!has(self.multiRun) || "
+                    "!has(self.multiRun.parameterSweepSameSeed) || "
+                    "!self.multiRun.parameterSweepSameSeed || "
+                    "has(self.randomSeed)"
+                ),
+                "message": (
+                    "multiRun.parameterSweepSameSeed=true requires randomSeed "
+                    "to be set; without a base seed every variation already "
+                    "gets a fresh draw, so 'same seed' is meaningless"
+                ),
+            },
+            # Tier 2I — dashboard UI incompatible with sweeps.
+            {
+                "rule": (
+                    "!has(self.sweep) || !has(self.runtime) || "
+                    "!has(self.runtime.ui) || self.runtime.ui != 'dashboard'"
+                ),
+                "message": (
+                    "Dashboard UI cannot multiplex sweep variations (live "
+                    "results would overwrite each other in the console). Use "
+                    "ui='simple' or 'none' with sweep configurations."
+                ),
+            },
+            # Tier 4P/4Q/4R skipped: the array items for `phases` and
+            # `datasets` are opaque (`x-kubernetes-preserve-unknown-fields`)
+            # because their entries are heterogeneous Pydantic discriminated
+            # unions. CEL can't dereference `phases[].name`, `datasets[].name`,
+            # `phases[].dataset`, or `phases[0].seamless` through opaque
+            # items, so phase/dataset name uniqueness, phase→dataset
+            # reference integrity, and "seamless not on first" stay enforced
+            # in the operator-side Pydantic validators
+            # (validate_phase_names_unique, validate_datasets_unique_names,
+            # validate_dataset_references, validate_seamless_not_on_first_phase
+            # in src/aiperf/config/config.py).
+        ),
+    )
+
+
+def _decorate_endpoint_node(node: dict[str, Any]) -> None:
+    """Attach CEL rules to EndpointConfig-shaped nodes.
+
+    Detected by shape: presence of ``urls`` + ``apiKey`` + ``connectionReuse``
+    (a combination unique to ``EndpointConfig``). Mirrors the
+    ``_validate_template_required`` and ``_validate_request_content_type``
+    Pydantic validators in ``src/aiperf/config/endpoint.py``.
+    """
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    if not ("urls" in props and "apiKey" in props and "connectionReuse" in props):
+        return
+    _add_validation_rules(
+        node,
+        (
+            # Tier 1B — type=template requires template.
+            {
+                "rule": (
+                    "!has(self.type) || self.type != 'template' || has(self.template)"
+                ),
+                "message": (
+                    "endpoint.template is required when endpoint.type='template'"
+                ),
+            },
+            {
+                "rule": (
+                    "!has(self.template) || (has(self.type) && self.type == 'template')"
+                ),
+                "message": (
+                    "endpoint.template is only used when endpoint.type='template'"
+                ),
+            },
+            # Tier 2J — multipart/form-data is video_generation-only today.
+            {
+                "rule": (
+                    "!has(self.requestContentType) || "
+                    "self.requestContentType != 'multipart/form-data' || "
+                    "(has(self.type) && self.type == 'video_generation')"
+                ),
+                "message": (
+                    "requestContentType='multipart/form-data' is only "
+                    "supported on endpoint.type='video_generation' today"
+                ),
+            },
+            # Tier 4O — every URL must be a valid URL.
+            {
+                "rule": "self.urls.all(u, isURL(u))",
+                "message": "every endpoint.urls entry must be a valid URL",
+            },
+        ),
+    )
+
+
+def _decorate_runtime_node(node: dict[str, Any]) -> None:
+    """Attach CEL rules to RuntimeConfig-shaped nodes.
+
+    Detected by shape: ``apiPort`` + ``apiHost`` + ``workersPerPod``. Mirrors
+    ``_validate_api_host_requires_port`` (already on this file) plus
+    workersMin/workers ordering.
+    """
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    if not ("apiPort" in props and "apiHost" in props and "workersPerPod" in props):
+        return
+    _add_validation_rules(
+        node,
+        (
+            # Tier 0 — apiHost requires apiPort (was inline; now centralized).
+            {
+                "rule": "!has(self.apiHost) || has(self.apiPort)",
+                "message": ("runtime.apiHost requires runtime.apiPort to be set"),
+            },
+            # Tier 1F — workersMin <= workers when both set.
+            {
+                "rule": (
+                    "!has(self.workersMin) || !has(self.workers) || "
+                    "self.workersMin <= self.workers"
+                ),
+                "message": ("runtime.workersMin must be <= runtime.workers"),
+            },
+        ),
+    )
+
+
+def _decorate_multirun_node(node: dict[str, Any]) -> None:
+    """Attach CEL rules to AIPerfConfig.multiRun-shaped nodes.
+
+    Detected by shape: ``numRuns`` + ``convergenceMetric`` + ``mode`` (a
+    combination unique to ``MultiRunConfig`` in ``_models_runtime``).
+    """
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    if not ("numRuns" in props and "convergenceMetric" in props and "mode" in props):
+        return
+    _add_validation_rules(
+        node,
+        (
+            # Tier 2H — adaptive convergence incompatible with mode='repeated'.
+            {
+                "rule": (
+                    "!has(self.convergenceMetric) || "
+                    "!has(self.mode) || self.mode != 'repeated'"
+                ),
+                "message": (
+                    "adaptive convergence (convergenceMetric) is incompatible "
+                    "with mode='repeated'; use mode='independent'"
+                ),
+            },
+        ),
+    )
+
+
+def _decorate_artifacts_node(node: dict[str, Any]) -> None:
+    """Attach CEL rules to ArtifactsConfig-shaped nodes.
+
+    Detected by shape: ``benchmarkId`` + ``cliCommand`` + ``dir``.
+    """
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if not isinstance(props, dict):
+        return
+    if not ("benchmarkId" in props and "cliCommand" in props and "dir" in props):
+        return
+    _add_validation_rules(
+        node,
+        (
+            # Tier 3K — benchmarkId immutable once set (allow operator to
+            # stamp it on first reconcile when user submits CR without it).
+            {
+                "rule": (
+                    "!has(oldSelf.benchmarkId) || "
+                    "oldSelf.benchmarkId == self.benchmarkId"
+                ),
+                "message": (
+                    "artifacts.benchmarkId is immutable once set; mutating it "
+                    "would orphan artifacts already keyed by the old id"
+                ),
+            },
+        ),
+    )
+
+
+def _decorate_all(node: dict[str, Any]) -> None:
+    """Apply every shape-detector decorator to ``node``."""
+    _decorate_aiperf_config_node(node)
+    _decorate_endpoint_node(node)
+    _decorate_runtime_node(node)
+    _decorate_multirun_node(node)
+    _decorate_artifacts_node(node)
+
+
+def _ensure_type_on_preserve_unknown(node: dict[str, Any]) -> None:
+    """Default ``type: object`` on any node that has the preserve-unknown marker.
+
+    K8s structural-schema validation rejects ``x-kubernetes-preserve-unknown-fields:
+    true`` without a declared ``type``, AND CEL field access compiles only on
+    nodes where the apiserver knows the type. The Pydantic→OpenAPI walker leaves
+    a few branches typeless (mixed-type anyOf, oneOf, sibling markers on $refs),
+    so this pass closes the gap before CRD apply.
+    """
+    if not isinstance(node, dict):
+        return
+    if node.get("x-kubernetes-preserve-unknown-fields") is True and "type" not in node:
+        node["type"] = "object"
+
+
+def _walk_dict_apply(node: Any, fn: Any) -> None:
+    """Depth-first traversal that applies ``fn`` to every dict node."""
+    if isinstance(node, dict):
+        fn(node)
+        for v in node.values():
+            _walk_dict_apply(v, fn)
+    elif isinstance(node, list):
+        for item in node:
+            _walk_dict_apply(item, fn)
+
+
 def _status_schema() -> dict[str, Any]:
     """Return the status sub-schema."""
     return {
@@ -368,38 +710,47 @@ def _status_schema() -> dict[str, Any]:
                 "properties": {
                     "ready": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Dispatch-ready worker count.",
                     },
                     "total": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Declared worker count.",
                     },
                     "dispatchable": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Workers eligible to receive credits.",
                     },
                     "routerConnected": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Workers connected to the router.",
                     },
                     "readyRecordProcessors": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Ready record processors.",
                     },
                     "declaredRecordProcessors": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Declared record processors.",
                     },
                     "readyPods": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Usable worker pods.",
                     },
                     "totalPods": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Observed worker pods.",
                     },
                     "degradedPods": {
                         "type": "integer",
+                        "format": "int32",
                         "description": "Usable but degraded worker pods.",
                     },
                 },
@@ -438,6 +789,7 @@ def _status_schema() -> dict[str, Any]:
             },
             "runEpoch": {
                 "type": "integer",
+                "format": "int64",
                 "minimum": 0,
                 "description": "Epoch-seconds key of the most recent successful run. Use as {epoch} in /api/v1/results/<ns>/<name>/runs/<epoch>/ to pin historical artifacts.",
             },
@@ -453,6 +805,7 @@ def _status_schema() -> dict[str, Any]:
             },
             "resultsTtlDays": {
                 "type": "integer",
+                "format": "int32",
                 "description": "Days to retain result files before cleanup",
             },
             "conditions": {
@@ -562,16 +915,31 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     aiperf_config_raw = AIPerfConfig.model_json_schema(mode="validation")
     aiperf_defs = aiperf_config_raw.get("$defs", {})
     benchmark_walked = _convert_schema(aiperf_config_raw, aiperf_defs, depth=0)
+
     benchmark_walked["description"] = (
         "Benchmark configuration (AIPerfConfig). Strictly typed via the\n"
         "AIPerfConfig schema, with x-kubernetes-preserve-unknown-fields: true\n"
         "at narrow shorthand boundaries (models, distributions, endpoint urls,\n"
-        "top-level shortcut fields, telemetry urls). Snake_case field names —\n"
-        "identical to AIPerf CLI YAML config files. Shorthand forms (e.g.\n"
-        "models: ['name'], single-phase dict) are accepted at marked boundaries\n"
-        "and normalized by the operator before validation."
+        "top-level shortcut fields, telemetry urls).\n"
+        "\n"
+        "Field naming: the apiserver schema enforces camelCase (e.g.\n"
+        "urlStrategy, apiKey, readyCheckTimeout). The Pydantic model also\n"
+        "accepts the snake_case form (url_strategy, api_key, …) used in\n"
+        "AIPerf CLI YAML — those names are accepted by the operator at parse\n"
+        "time but are not advertised by this schema, so kubectl/IDE tooling\n"
+        "should write camelCase. Shorthand forms (e.g. models: ['name'],\n"
+        "single-phase dict, top-level warmup/profiling) are accepted at marked\n"
+        "boundaries and normalized by the operator before validation."
     )
     spec_properties["benchmark"] = benchmark_walked
+
+    # Apply every shape-detector decorator (relaxed-required + cross-field
+    # CEL invariants) across the AIPerfConfig walk. Decorators detect their
+    # target node by its property shape, so they fire on AIPerfJob's
+    # spec.benchmark and on AIPerfSweep's spec.template.spec.benchmark from
+    # the same call. See _decorate_all and the individual _decorate_* helpers.
+    _walk_dict_apply(benchmark_walked, _ensure_type_on_preserve_unknown)
+    _walk_dict_apply(benchmark_walked, _decorate_all)
 
     # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.).
     # skipEndpointCheck lives on AIPerfJobSpec (not DeploymentConfig) and is
@@ -587,6 +955,27 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "default": False,
             }
+
+    # Tier 3N — scheduling.queueName is immutable after admission. Kueue's
+    # own contract treats queueName as immutable, so mirror that at the
+    # apiserver level for a clearer rejection message.
+    scheduling = spec_properties.get("scheduling")
+    if isinstance(scheduling, dict):
+        scheduling.setdefault("type", "object")
+        _add_validation_rules(
+            scheduling,
+            (
+                {
+                    "rule": (
+                        "!has(oldSelf.queueName) || oldSelf.queueName == self.queueName"
+                    ),
+                    "message": (
+                        "scheduling.queueName is immutable once set (Kueue "
+                        "treats queueName as immutable after admission)"
+                    ),
+                },
+            ),
+        )
 
     return {
         "apiVersion": "apiextensions.k8s.io/v1",
@@ -627,11 +1016,14 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
                                     "description": (
                                         "AIPerfJob specification.\n"
                                         "\n"
-                                        "spec.benchmark: AIPerfConfig fields (models, endpoint, datasets,\n"
-                                        "phases, etc.) in snake_case — identical to AIPerf CLI YAML.\n"
+                                        "spec.benchmark holds AIPerfConfig fields (models, endpoint,\n"
+                                        "datasets, phases, etc.) using camelCase aliases (urlStrategy,\n"
+                                        "apiKey, readyCheckTimeout, …). The underlying Pydantic model\n"
+                                        "also accepts the snake_case names used in AIPerf CLI YAML,\n"
+                                        "but the apiserver schema only advertises camelCase.\n"
                                         "\n"
-                                        "Top-level deployment fields (image, podTemplate, scheduling, etc.)\n"
-                                        "use camelCase following Kubernetes API conventions."
+                                        "Top-level deployment fields (image, podTemplate, scheduling,\n"
+                                        "etc.) use camelCase per Kubernetes API conventions."
                                     ),
                                     "properties": spec_properties,
                                 },
@@ -674,11 +1066,11 @@ def _aiperfsweep_status_schema() -> dict[str, Any]:
                     "Cancelled",
                 ],
             },
-            "runEpoch": {"type": "integer"},
-            "totalVariations": {"type": "integer"},
-            "maxTotalRuns": {"type": "integer"},
-            "completedRuns": {"type": "integer"},
-            "failedRuns": {"type": "integer"},
+            "runEpoch": {"type": "integer", "format": "int64"},
+            "totalVariations": {"type": "integer", "format": "int32"},
+            "maxTotalRuns": {"type": "integer", "format": "int32"},
+            "completedRuns": {"type": "integer", "format": "int32"},
+            "failedRuns": {"type": "integer", "format": "int32"},
             "currentCell": {
                 "type": "object",
                 "x-kubernetes-preserve-unknown-fields": True,
@@ -768,7 +1160,102 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
     defs = raw_schema.get("$defs") or {}
     spec_schema = _convert_schema(raw_schema, defs)
 
+    # AIPerfSweepSpec wraps AIPerfJobSpec.benchmark (an AIPerfConfig). Walk the
+    # whole spec tree so every shape-detected node (benchmark, endpoint,
+    # runtime, multiRun, artifacts) picks up the same CEL invariants that the
+    # AIPerfJob CRD does.
+    _walk_dict_apply(spec_schema, _ensure_type_on_preserve_unknown)
+    _walk_dict_apply(spec_schema, _decorate_all)
+
     properties = spec_schema.setdefault("properties", {})
+
+    # Tier 1C — AIPerfSweep axis-combination rules (mirrors
+    # ``_validate_axis_combination`` in src/aiperf/kubernetes/sweep_models.py).
+    # At least one orchestration axis must be set, and convergence pulls in
+    # multiRun (without ``trials``) for cooldown/seed/warmup config.
+    _add_validation_rules(
+        spec_schema,
+        (
+            {
+                "rule": (
+                    "has(self.sweep) || has(self.multiRun) || has(self.convergence)"
+                ),
+                "message": (
+                    "AIPerfSweep requires at least one of sweep/multiRun/"
+                    "convergence; for a single benchmark use AIPerfJob via "
+                    "`aiperf kube profile`"
+                ),
+            },
+            {
+                "rule": "!has(self.convergence) || has(self.multiRun)",
+                "message": (
+                    "convergence requires multiRun (for cooldown/seed/warmup config)"
+                ),
+            },
+            {
+                "rule": (
+                    "!has(self.convergence) || !has(self.multiRun) || "
+                    "!has(self.multiRun.trials)"
+                ),
+                "message": (
+                    "multiRun.trials must be unset when convergence is set; "
+                    "convergence.maxRuns governs the per-cell trial cap"
+                ),
+            },
+        ),
+    )
+
+    # Tier 1E — convergence.minRuns <= maxRuns (mirrors
+    # ``_validate_run_bounds`` in sweep_models.py).
+    if "convergence" in properties:
+        properties["convergence"].setdefault("type", "object")
+        _add_validation_rules(
+            properties["convergence"],
+            (
+                {
+                    "rule": (
+                        "!has(self.minRuns) || !has(self.maxRuns) || "
+                        "self.minRuns <= self.maxRuns"
+                    ),
+                    "message": ("convergence.minRuns must be <= convergence.maxRuns"),
+                },
+            ),
+        )
+
+    # Tier 1D — forbid sweep/multiRun inside template.spec.benchmark.
+    # The orchestration axes belong on AIPerfSweep.spec, not on the per-child
+    # stamp. AIPerfJobSpec's extra='forbid' already rejects unknown keys at
+    # template.spec, but AIPerfConfig's own ``sweep``/``multi_run`` fields
+    # (which exist for non-k8s sweep CLI) would otherwise sneak through.
+    template = properties.get("template")
+    if isinstance(template, dict):
+        template_spec = (template.get("properties") or {}).get("spec")
+        if isinstance(template_spec, dict):
+            template_benchmark = (template_spec.get("properties") or {}).get(
+                "benchmark"
+            )
+            if isinstance(template_benchmark, dict):
+                _add_validation_rules(
+                    template_benchmark,
+                    (
+                        {
+                            "rule": "!has(self.sweep)",
+                            "message": (
+                                "template.spec.benchmark.sweep is forbidden — "
+                                "set spec.sweep at the AIPerfSweep top level "
+                                "instead"
+                            ),
+                        },
+                        {
+                            "rule": "!has(self.multiRun)",
+                            "message": (
+                                "template.spec.benchmark.multiRun is "
+                                "forbidden — set spec.multiRun at the "
+                                "AIPerfSweep top level instead"
+                            ),
+                        },
+                    ),
+                )
 
     # Attach CEL immutability rules to top-level orchestration fields.
     # Re-running a sweep with mutated axes would corrupt the run-epoch ledger

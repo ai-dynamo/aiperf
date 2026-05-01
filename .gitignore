@@ -47,3 +47,6 @@ src/aiperf/_build_info.py
 
 # mem_validate_kind live-run output (reference captures are in results-n*/)
 tools/mem_validate_kind/results/
+
+# Output dir for local chaos/gauntlet script runs
+tests/scripts/.chaos_runs/

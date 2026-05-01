@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { jobs } from '../lib/state.js';
-import { navigate } from '../lib/router.js';
+import { buildJobPath, navigate } from '../lib/router.js';
 
 const PAGES = [
   { label: 'Dashboard', path: '/' },
@@ -41,6 +41,11 @@ export function CommandPalette({ onClose }) {
   const listRef = useRef(null);
 
   // Build items: pages + job entries
+  // ``sub`` rides a single dim text column on the right of every result row,
+  // so we have to disambiguate "Page" from a namespace name (e.g. "default")
+  // — otherwise a job named ``default`` looks identical to a Page row at a
+  // glance. Prefix job entries with the literal ``ns:`` so the namespace is
+  // unambiguous even when the namespace happens to be ``default``/``page``.
   const allItems = [
     ...PAGES.map((p) => ({ label: p.label, sub: 'Page', action: () => navigate(p.path) })),
     ...jobs.value.map((j) => {
@@ -50,8 +55,8 @@ export function CommandPalette({ onClose }) {
       const name = j.name ?? '';
       return {
         label: name,
-        sub: ns,
-        action: () => navigate(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`),
+        sub: `ns: ${ns}`,
+        action: () => navigate(buildJobPath(j)),
       };
     }),
   ];

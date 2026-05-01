@@ -158,13 +158,34 @@ class TemplateEndpoint(BaseEndpoint):
 
         response_data = None
         if self._compiled_jmespath:
+            # User explicitly set `template.responseField`. Honor it strictly:
+            # auto-detect fallback would silently extract a different field, so a
+            # typo in `responseField` would yield "successful" requests that
+            # measure the wrong content. Strict mode = miss is None, the record
+            # downgrades to an error record, and the controller surfaces
+            # NO_SUCCESSFUL_REQUESTS at end-of-run.
             try:
                 if value := self._compiled_jmespath.search(json_obj):
                     response_data = self.convert_to_response_data(value)
             except (jmespath.exceptions.JMESPathError, TypeError) as e:
-                self.warning(f"JMESPath search failed: {e!r}. Trying auto-detection.")
-
-        if not response_data:
+                self.error(
+                    f"JMESPath search failed for response_field "
+                    f"'{self.run.cfg.endpoint.template.response_field}': {e!r}. "
+                    f"Fix `endpoint.template.responseField` or unset it for auto-detection."
+                )
+                return None
+            if response_data is None:
+                self.error(
+                    f"response_field "
+                    f"'{self.run.cfg.endpoint.template.response_field}' "
+                    f"did not match any value in a 200 OK response "
+                    f"(top-level keys: "
+                    f"{sorted(json_obj.keys()) if isinstance(json_obj, dict) else '<non-dict>'}"
+                    f"). Fix `endpoint.template.responseField` or unset it for "
+                    f"auto-detection."
+                )
+                return None
+        else:
             response_data = self.auto_detect_and_extract(json_obj)
 
         return (

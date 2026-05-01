@@ -89,6 +89,14 @@ spec:
         - name: AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE
           value: {{ . | quote }}
         {{- end }}
+        {{- with .Values.chaos.apiserverServiceHostOverride }}
+        - name: KUBERNETES_SERVICE_HOST
+          value: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.chaos.apiserverServicePortOverride }}
+        - name: KUBERNETES_SERVICE_PORT
+          value: {{ . | quote }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz

@@ -50,3 +50,21 @@ class BenchmarkCompleteMessage(
     """Benchmark completion signal."""
 
     was_cancelled: bool = False
+
+
+class ResultsExportedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.RESULTS_EXPORTED.value
+):
+    """Signals that all result artifacts have been written to disk.
+
+    Published by the SystemController after ``ExporterManager.export_data()``
+    completes and (in K8s mode) after ``write_ready_marker(...)`` is on disk.
+    The operator gates ``JobProgress.is_complete`` on this signal: for
+    sub-second benchmarks the existing ``is_requests_complete &&
+    is_records_complete`` check flips True before the controller has finished
+    writing, so the kopf-timer monitor can otherwise claim completion and
+    fetch a partial artifact set. Without this gate, the operator races the
+    controller's exporter and surfaces ``Phase.Failed``.
+    """
+
+    was_cancelled: bool = False

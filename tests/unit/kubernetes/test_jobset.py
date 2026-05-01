@@ -589,6 +589,29 @@ class TestJobSetSpecContainerDetails:
                 assert "requests" in container["resources"]
                 assert "limits" in container["resources"]
 
+    def test_default_single_worker_requests_fit_high_fanout_smoke_jobs(self) -> None:
+        spec = AIPerfJobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            worker_replicas=1,
+            workers_per_pod=1,
+            record_processors_per_pod=1,
+        )
+        manifest = spec.to_k8s_manifest()
+        total_cpu = 0.0
+        total_memory_mib = 0
+        for job in manifest["spec"]["replicatedJobs"]:
+            containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            for container in containers:
+                requests = container["resources"]["requests"]
+                total_cpu += parse_cpu(requests["cpu"])
+                total_memory_mib += parse_memory_mib(requests["memory"])
+
+        assert total_cpu <= 0.61
+        assert total_memory_mib <= 1536
+
     def test_resource_mode_none_omits_resources(self) -> None:
         """Test that resourceMode=none omits the container resources block."""
         manifest = AIPerfJobSetSpec(

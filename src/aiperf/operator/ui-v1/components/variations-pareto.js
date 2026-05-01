@@ -94,6 +94,20 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
       });
     }
 
+    // When every variation produces the same (x,y) — common in tiny sweeps or
+    // when the chosen metric isn't differentiated by the swept dimension —
+    // Chart.js auto-scales to a zero-width range and renders dots that hug
+    // the axis lines, looking blank. Detect the degenerate case and force a
+    // small ±5% pad around the singleton coordinate so the points read clearly.
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const xMin = Math.min(...xs), xMax = Math.max(...xs);
+    const yMin = Math.min(...ys), yMax = Math.max(...ys);
+    const xCollapsed = xMax === xMin;
+    const yCollapsed = yMax === yMin;
+    const xPad = xCollapsed ? Math.max(Math.abs(xMin) * 0.05, 1) : undefined;
+    const yPad = yCollapsed ? Math.max(Math.abs(yMin) * 0.05, 1) : undefined;
+
     const options = {
       plugins: {
         legend: {
@@ -133,12 +147,14 @@ export function VariationsPareto({ variations, xMetric, yMetric, yIsSmallerBette
           title: { display: true, text: `${xMetric.label} (${xMetric.unit})`, color: palette.overlay1, font: { size: 11 } },
           grid: { color: palette.surface0 },
           ticks: { color: palette.overlay1, font: { size: 10 } },
+          ...(xCollapsed ? { min: xMin - xPad, max: xMax + xPad } : {}),
         },
         y: {
           type: 'linear',
           title: { display: true, text: `${yMetric.label} (${yMetric.unit})`, color: palette.overlay1, font: { size: 11 } },
           grid: { color: palette.surface0 },
           ticks: { color: palette.overlay1, font: { size: 10 } },
+          ...(yCollapsed ? { min: yMin - yPad, max: yMax + yPad } : {}),
         },
       },
     };

@@ -504,6 +504,77 @@ The kopf operator gains three handlers in `src/aiperf/operator/main.py` for the 
 - `@kopf.on.update AIPerfSweep field=spec.cancel` (handler in `handlers/sweep/lifecycle.py`) — mirrors the cancel signal into `status.conditions[Cancelling]`. The sweep-controller pod observes `spec.cancel` directly via its own poll and propagates it to the current child.
 - `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, recomputes the parent's `completedRuns`/`failedRuns`/`lastChildEvent`. When all children are terminal, transitions parent to `Aggregating`; the sweep-controller's aggregation step then flips it to `Succeeded` or `PartiallyFailed`. Standalone AIPerfJobs are no-ops.
 
+## CRD Generator
+
+Both CRDs (`aiperfjobs.aiperf.nvidia.com`, `aiperfsweeps.aiperf.nvidia.com`)
+are auto-generated from the `AIPerfConfig` and `AIPerfSweepSpec` Pydantic
+models by `tools/generate_crd.py`. **Never edit the rendered YAML in
+`deploy/helm/aiperf-operator/templates/crd*.yaml` directly** — the next
+regeneration overwrites it.
+
+### Generator pipeline
+
+1. **JSON Schema walk** (`_convert_schema`) — recursively converts the
+   Pydantic-emitted JSON Schema into K8s-compatible OpenAPI v3, resolving
+   `$ref`, collapsing `anyOf`-with-null into nullables, and falling back to
+   `x-kubernetes-preserve-unknown-fields: true` at narrow shorthand
+   boundaries (`models`, `endpoint.urls`, top-level
+   `model`/`dataset`/`warmup`/`profiling`, `sweep`).
+2. **Type-on-marker pass** (`_ensure_type_on_preserve_unknown`) — defaults
+   `type: object` on every node carrying `x-kubernetes-preserve-unknown-fields:
+   true`. K8s structural-schema validation rejects the marker without a
+   declared type, AND CEL field access compiles only on typed nodes.
+3. **Shape-detector decorators** (`_decorate_*_node`) — each helper detects
+   its target node by a unique fingerprint of property keys (e.g. an
+   endpoint node has `urls` + `apiKey` + `connectionReuse`; a runtime node
+   has `apiPort` + `apiHost` + `workersPerPod`). The walker
+   (`_walk_dict_apply`) calls every decorator on every dict node, so the
+   same set of CEL rules fires on both AIPerfJob's `spec.benchmark` and
+   AIPerfSweep's `spec.template.spec.benchmark` from a single pass.
+4. **Path-targeted attachment** — sweep-specific rules that should fire on
+   AIPerfSweep but **not** AIPerfJob (e.g. forbidding `sweep`/`multiRun` in
+   the template benchmark) are attached by explicit path traversal in
+   `build_aiperfsweep_crd` after the walker runs.
+
+### Adding a CEL rule
+
+The user-facing catalog of every rule lives in
+[`docs/kubernetes/crd-validation.md`](../kubernetes/crd-validation.md). To
+add a new one:
+
+1. Identify the **shape** the rule applies to (benchmark, endpoint,
+   runtime, multiRun, artifacts) and pick the matching `_decorate_*_node`
+   helper. If your target is a brand new shape, write a new shape detector
+   modelled on the existing ones.
+2. Append a `{"rule": ..., "message": ...}` entry to that helper's
+   `_add_validation_rules(...)` call. Tag the rule with the tier label
+   (1A/1B/.../4O) in a comment so future-you can grep back to the
+   brainstorm in `docs/kubernetes/crd-validation.md`.
+3. Add a structural assertion in
+   `tests/unit/operator/test_aiperfsweep_crd_generation.py` (the existing
+   tests follow a "rule string is in `rules` set" pattern).
+4. Regenerate with `uv run python tools/generate_crd.py` and confirm
+   idempotency with `tools/generate_crd.py --check`.
+5. Round-trip on a real apiserver (`kind create cluster && kubectl apply
+   --dry-run=server -f crd.yaml`). The K8s apiserver compiles CEL at
+   CRD-install time and rejects rules that reference undeclared fields
+   (`undefined field 'X'`) or opaque preserve-unknown items.
+
+CEL constraints worth remembering:
+
+- `has(self.X)` requires X to be declared in the schema. Anything hidden
+  inside a `x-kubernetes-preserve-unknown-fields: true` blob is invisible.
+- Array items emitted as opaque preserve-unknown blobs cannot be
+  dereferenced. Heterogeneous Pydantic discriminated unions
+  (`phases[]`, `datasets[]`) end up opaque, so item-internal invariants
+  (phase-name uniqueness, phase→dataset reference integrity, "seamless not
+  on first") stay enforced in the operator's `@model_validator` decorators
+  on `AIPerfConfig` rather than at the apiserver.
+- `oldSelf` is only available in transition rules and triggers on
+  `kubectl edit` / `kubectl patch`. Use `!has(oldSelf.X) || oldSelf.X ==
+  self.X` for "first-set freezes after that" semantics (e.g.
+  `artifacts.benchmarkId`, `scheduling.queueName`).
+
 ## Key Architecture Decisions
 
 | Decision | Rationale |

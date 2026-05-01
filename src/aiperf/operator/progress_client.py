@@ -282,6 +282,11 @@ class ProgressClient:
             phases=phases,
             workers=workers,
             error=data.get("error"),
+            # Default False: older controllers (pre-fix) omit this field, so
+            # they look incomplete to the operator — that is intentional, the
+            # whole point of this field is that we don't trust pre-fix
+            # controllers to be race-free for sub-second benchmarks.
+            results_exported=bool(data.get("results_exported", False)),
         )
 
     async def get_worker_startup_states(

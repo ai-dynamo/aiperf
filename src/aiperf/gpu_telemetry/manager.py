@@ -83,7 +83,7 @@ class GPUTelemetryManager(BaseComponentService):
         self._user_explicitly_configured_telemetry = bool(run.cfg.gpu_telemetry.urls)
 
         # Store the collector type (DCGM or PYNVML)
-        self._collector_type = GPUTelemetryCollectorType.DCGM
+        self._collector_type = run.cfg.gpu_telemetry.collector
 
         user_endpoints = run.cfg.gpu_telemetry.urls or []
         if isinstance(user_endpoints, str):

@@ -42,6 +42,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/kubernetes/rbac-security.md](docs/kubernetes/rbac-security.md): Two-role RBAC model (operator `ClusterRole` + per-namespace benchmark `Role`), pod `securityContext`, `NetworkPolicy` allow-list, least-privilege checklist.
 - [docs/kubernetes/monitoring.md](docs/kubernetes/monitoring.md): Metrics endpoints, Prometheus scraping, Loki integration.
 - [docs/kubernetes/validate.md](docs/kubernetes/validate.md): `aiperf kube validate` CLI — offline schema + naming check; JSON output schema for CI gates.
+- [docs/kubernetes/crd-validation.md](docs/kubernetes/crd-validation.md): Apiserver-side CRD validation — shorthand acceptance, the 18 CEL `x-kubernetes-validations` rules, error-message catalog, and how to add new rules to `tools/generate_crd.py`.
 - [docs/kubernetes/preflight.md](docs/kubernetes/preflight.md): Preflight check catalog — tiered validations (K8s version, RBAC, node resources, quotas, image, secrets, ConfigMap size, dry run) with status values, skip mechanisms, and fix recipes.
 - [docs/kubernetes/debug-command.md](docs/kubernetes/debug-command.md): `aiperf kube debug` — one-shot snapshot (events, pod problem map, logs, node resources); triage recipes; contrast with `watch` and `preflight`.
 - [docs/kubernetes/attach.md](docs/kubernetes/attach.md): `aiperf kube attach` — re-attach to a detached AIPerfJob, stream progress via WebSocket, exit codes, port-forward semantics.

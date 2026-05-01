@@ -23,6 +23,7 @@ from aiperf.common.messages.progress_messages import (
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
+    ResultsExportedMessage,
 )
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
@@ -79,6 +80,7 @@ __all__ = [
     "RealtimeTelemetryMetricsMessage",
     "RecordsProcessingStatsMessage",
     "RegistrationMessage",
+    "ResultsExportedMessage",
     "ServerMetricsStatusMessage",
     "StatusMessage",
     "TelemetryStatusMessage",

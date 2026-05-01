@@ -11,6 +11,16 @@ sidebar-title: Config Validation
 and Kubernetes resource-naming rules. It does not contact the cluster — making
 it safe to run in CI, pre-commit hooks, and local editors.
 
+> **Two layers, same rules.** `aiperf kube validate` runs the same structural
+> checks the apiserver enforces at `kubectl apply`. For the catalog of CEL
+> `x-kubernetes-validations` rules (shorthand-vs-canonical, mutual exclusion,
+> `apiHost ⇒ apiPort`, etc.) see [CRD Validation Rules](crd-validation.md).
+> Item-internal Pydantic validators (phase-name uniqueness, phase→dataset
+> reference integrity, "seamless not on first phase") run only at apply
+> time on the operator side because CEL can't see into opaque
+> preserve-unknown array items — the client-side `validate` command runs
+> them via Pydantic, so it catches both layers in one pass.
+
 ## When to use
 
 | Situation | Tool |

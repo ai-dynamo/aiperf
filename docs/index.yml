@@ -165,6 +165,8 @@ navigation:
     path: kubernetes/monitoring.md
   - page: Config Validation
     path: kubernetes/validate.md
+  - page: CRD Validation Rules
+    path: kubernetes/crd-validation.md
   - page: Preflight Checks
     path: kubernetes/preflight.md
   - page: Debug Command

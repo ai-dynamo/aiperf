@@ -1,0 +1,62 @@
+{
+  "benchmark": {
+    "datasets": [
+      {
+        "entries": 64,
+        "name": "main",
+        "prompts": {
+          "isl": {
+            "mean": 550
+          }
+        },
+        "type": "synthetic"
+      }
+    ],
+    "endpoint": {
+      "downloadVideoContent": false,
+      "readyCheckInterval": 5,
+      "readyCheckMode": "inference",
+      "readyCheckTimeout": 0,
+      "streaming": false,
+      "timeout": 600,
+      "urls": [
+        "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
+      ],
+      "useLegacyMaxTokens": false,
+      "useServerTokenCount": false
+    },
+    "models": {
+      "items": [
+        {
+          "name": "mock-model"
+        }
+      ]
+    },
+    "phases": [
+      {
+        "concurrency": 4,
+        "name": "profiling",
+        "requests": 64,
+        "type": "concurrency"
+      }
+    ],
+    "randomSeed": 42,
+    "runtime": {
+      "ui": "none"
+    },
+    "tokenizer": {
+      "name": "gpt2",
+      "revision": "main",
+      "trustRemoteCode": false
+    }
+  },
+  "cancel": false,
+  "connectionsPerWorker": 100,
+  "image": "aiperf:local",
+  "imagePullPolicy": "Never",
+  "keepFailedPods": false,
+  "resourceMode": "burstable",
+  "skipEndpointCheck": false,
+  "timeoutSeconds": 0,
+  "ttlSecondsAfterFinished": 300
+}

@@ -23,6 +23,9 @@ def _url(item: str) -> str:
 
 def build_gpu_telemetry(user: UserConfig) -> dict[str, Any]:
     """Translate v1 ``--gpu-telemetry`` magic-list into the v2 telemetry dict."""
+    from aiperf.common.enums import GPUTelemetryMode
+    from aiperf.plugin.enums import GPUTelemetryCollectorType
+
     if user.no_gpu_telemetry:
         return {"enabled": False}
     if not user.gpu_telemetry:
@@ -30,11 +33,21 @@ def build_gpu_telemetry(user: UserConfig) -> dict[str, Any]:
     urls: list[str] = []
     metrics_file: Path | None = None
     for item in user.gpu_telemetry:
-        if item.endswith(".csv"):
+        token = item.lower()
+        if token == "pynvml":
+            user._gpu_telemetry_collector_type = GPUTelemetryCollectorType.PYNVML
+        elif token == "dashboard":
+            user._gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        elif item.endswith(".csv"):
             metrics_file = Path(item)
         elif item.startswith("http") or ":" in item:
             urls.append(_url(item))
-    gpu_telemetry: dict[str, Any] = {"enabled": True, "urls": urls}
+    gpu_telemetry: dict[str, Any] = {
+        "enabled": True,
+        "urls": urls,
+        "collector": user._gpu_telemetry_collector_type,
+        "mode": user._gpu_telemetry_mode,
+    }
     if metrics_file is not None:
         gpu_telemetry["metrics_file"] = metrics_file
     return gpu_telemetry

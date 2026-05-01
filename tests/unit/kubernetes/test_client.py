@@ -512,6 +512,7 @@ class TestCancelAIPerfJob:
         mock_custom.patch_namespaced_custom_object.assert_awaited_once()
         call_kwargs = mock_custom.patch_namespaced_custom_object.call_args.kwargs
         assert call_kwargs["body"] == {"spec": {"cancel": True}}
+        assert call_kwargs["_content_type"] == "application/merge-patch+json"
         assert call_kwargs["name"] == "n"
         assert call_kwargs["namespace"] == "default"
 

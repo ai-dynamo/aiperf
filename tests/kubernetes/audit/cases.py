@@ -51,14 +51,14 @@ class AuditCase:
         "inputs.json",
         "profile_export_aiperf.json",
         "profile_export_aiperf.csv",
+        "profile_export.jsonl",
     )
     """Filenames that MUST exist on both sides for the structural diff.
 
-    Both sides emit this summary set by default. Per-record exports
-    (profile_export.jsonl, profile_export_records.csv) are intentionally
-    NOT in this list — enabling records triggers a controller-side race
-    where the readiness marker is not written for sub-second benchmarks,
-    causing the operator to mark the job Failed. Summary-only avoids that.
+    Per-record JSONL is included: v2 ArtifactsConfig.records defaults to
+    ['jsonl'] (matches v1's ExportLevel.RECORDS default), and the operator
+    no longer races sub-second benchmarks (the trigger gate on JobProgress.
+    results_exported plus the listing-endpoint marker gate close the race).
     """
 
 
@@ -67,23 +67,23 @@ AUDIT_CASES: tuple[AuditCase, ...] = (
         case_id="baseline-chat",
         endpoint_type="chat",
         concurrency=4,
-        # request_count chosen so each benchmark runs for several seconds at
-        # mock-server throughput (~1500 RPS). Sub-second benchmarks trip an
-        # operator-side race (CompletedBeforeMonitor → ResultsFetchFailed)
-        # that fails AIPerfJob completion before results land.
-        request_count=5000,
+        # Sub-second by design: the trigger + listing-endpoint gates close
+        # the prior CompletedBeforeMonitor → ResultsFetchFailed race, so
+        # 64-request 0.04s benchmarks must converge cleanly. Bumping back up
+        # would mask the regression.
+        request_count=64,
     ),
     AuditCase(
         case_id="baseline-completions",
         endpoint_type="completions",
         concurrency=4,
-        request_count=5000,
+        request_count=64,
     ),
     AuditCase(
         case_id="concurrency-scale",
         endpoint_type="chat",
         concurrency=16,
-        request_count=10000,
+        request_count=64,
         # Higher concurrency on operator side spreads across worker pods;
         # tail latency is structurally noisier than a single bare process.
         metric_tolerance_overrides={

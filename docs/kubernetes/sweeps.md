@@ -131,6 +131,24 @@ failurePolicy:
 A failed child becomes a `failedRuns` count entry on the parent and the sweep
 advances to the next variation. Set `onChildFailure: abort` for stricter behavior.
 
+## Schema invariants enforced at admission
+
+The apiserver rejects malformed `AIPerfSweep` CRs before any pod is scheduled:
+
+- `spec` requires at least one of `sweep`, `multiRun`, `convergence` (use
+  `AIPerfJob` for a single benchmark).
+- `spec.convergence` requires `spec.multiRun` (for cooldown/seed/warmup) and
+  must leave `multiRun.trials` unset (`convergence.maxRuns` governs the
+  per-cell cap).
+- `spec.convergence.minRuns ≤ maxRuns`.
+- `spec.template.spec.benchmark.sweep` and `.multiRun` are forbidden — the
+  orchestration axes belong on the AIPerfSweep top level, not on the
+  per-child stamp.
+- `spec.sweep`, `spec.multiRun`, `spec.convergence` are immutable after
+  creation (mutating them would corrupt the run-epoch ledger).
+
+Full rule catalog: [CRD Validation Rules](crd-validation.md).
+
 ## Listing historical sweep runs
 
 The sweep aggregate is served at the operator's `/api/v1/results/<ns>/<sweep>/aggregate/`

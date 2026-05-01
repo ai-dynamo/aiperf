@@ -64,6 +64,58 @@ _KEY_RESULT_FILES = frozenset(
 )
 
 
+def _has_key_result_files(paths: list[str] | None) -> bool:
+    """Return True when the authoritative AIPerf exports are present.
+
+    Accept both raw and on-disk-compressed names. The operator stores final
+    artifacts as ``*.zst`` when COMPRESS_ON_DISK is enabled, but the completion
+    classifier still needs to recognize those files as authoritative results.
+    """
+    names = set(paths or [])
+    for key in _KEY_RESULT_FILES:
+        if key in names or f"{key}.zst" in names:
+            return True
+    return False
+
+
+def _recover_result_from_disk(
+    *,
+    body: dict[str, Any],
+    namespace: str,
+    job_id: str,
+    result: ControllerFetchResult,
+) -> ControllerFetchResult:
+    """Promote already-downloaded final exports from disk into the fetch result.
+
+    A controller-side transport race can leave ``result.downloaded`` empty even
+    though the operator's results dir already contains the final compressed
+    exports. In that case the on-disk files are authoritative and completion
+    should recover from them instead of stamping ``ResultsFetchFailed``.
+    """
+    epoch = epoch_key_from_body(body)
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+    if not dest_dir.exists():
+        return result
+
+    on_disk = sorted(
+        str(path.relative_to(dest_dir))
+        for path in dest_dir.rglob("*")
+        if path.is_file() and path.name != "latest.txt"
+    )
+    if not _has_key_result_files(on_disk):
+        return result
+
+    metrics = result.metrics or _parse_metrics_from_files(
+        on_disk, namespace, job_id, epoch=epoch
+    )
+    return ControllerFetchResult(
+        metrics=metrics,
+        downloaded=on_disk,
+        checkpoints=result.checkpoints,
+        error="",
+    )
+
+
 async def handle_completion(
     body: dict[str, Any],
     namespace: str,
@@ -104,6 +156,12 @@ async def handle_completion(
         host = controller_dns_name(jobset_name, namespace)
         result = await fetch_results_with_retry(host, namespace, job_id, body=body)
 
+    result = _recover_result_from_disk(
+        body=body,
+        namespace=namespace,
+        job_id=job_id,
+        result=result,
+    )
     flags = _compute_result_flags(result, job_id)
     # Race retry: see _completion_retry for the gate; raises kopf.TemporaryError.
     maybe_raise_for_transient_fetch_failure(
@@ -211,7 +269,7 @@ def _gather_index_inputs(
         if summary_zst.exists():
             blob = summary_zst.read_bytes()
             summary_blob = blob
-            metrics = orjson.loads(zstandard.ZstdDecompressor().decompress(blob))
+            metrics = orjson.loads(runs_index.zstd_decompress(blob))
             end_time = metrics.get("end_time")
         elif summary_raw.exists():
             raw = summary_raw.read_bytes()
@@ -268,7 +326,7 @@ def _compute_result_flags(result: ControllerFetchResult, job_id: str) -> _Result
     real failure signal.
     """
     has_metrics = bool(result.metrics and result.metrics.get("metrics"))
-    has_files = bool(_KEY_RESULT_FILES & set(result.downloaded or []))
+    has_files = _has_key_result_files(result.downloaded)
     has_error = bool(result.error)
     success = has_files and not has_error
 

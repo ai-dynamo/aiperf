@@ -29,6 +29,18 @@ class ProgressResponse(AIPerfBaseModel):
         default_factory=AggregateWorkerStatus,
         description="Controller-authored aggregate worker-pod status.",
     )
+    results_exported: bool = Field(
+        default=False,
+        description=(
+            "True only after the SystemController has written all benchmark "
+            "artifacts to disk (and, in K8s mode, the readiness marker "
+            "``.aiperf_results_ready.json``). The operator gates "
+            "``JobProgress.is_complete`` on this field so sub-second "
+            "benchmarks cannot let the kopf-timer monitor claim completion "
+            "while the exporter is still flushing — without the gate the "
+            "operator races the controller and surfaces ``Phase.Failed``."
+        ),
+    )
 
 
 class WorkersResponse(AIPerfBaseModel):

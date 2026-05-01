@@ -29,3 +29,11 @@ class ResultsListResponse(AIPerfBaseModel):
     files: list[ResultFileInfo] = Field(
         default_factory=list, description="Available result files"
     )
+    ready: bool = Field(
+        default=False,
+        description="Whether the controller has published the final ready marker.",
+    )
+    processing: bool = Field(
+        default=False,
+        description="Whether the controller has marked result export as in progress.",
+    )

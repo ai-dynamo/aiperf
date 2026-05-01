@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/results"))
 SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SIDECAR_PORT", "9091"))
 READY_MARKER_NAME = ".aiperf_results_ready.json"
+PROCESSING_MARKER_NAME = ".aiperf_results_processing.json"
 CHECKPOINTS_DIR_NAME = "checkpoints"
 
 _CONTENT_TYPES: dict[str, str] = {
@@ -53,12 +54,33 @@ def checkpoints_dir(base_dir: Path) -> Path:
     return base_dir / CHECKPOINTS_DIR_NAME
 
 
+def processing_marker_path(base_dir: Path) -> Path:
+    """Return the sidecar processing marker path."""
+    return base_dir / PROCESSING_MARKER_NAME
+
+
+def write_processing_marker(base_dir: Path) -> Path:
+    """Write the processing marker before export starts."""
+    import orjson
+
+    marker = processing_marker_path(base_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_bytes(orjson.dumps({"processing": True}))
+    return marker
+
+
+def clear_processing_marker(base_dir: Path) -> None:
+    """Remove the processing marker once final exports are stable."""
+    processing_marker_path(base_dir).unlink(missing_ok=True)
+
+
 def write_ready_marker(base_dir: Path, *, was_cancelled: bool = False) -> Path:
     """Write the readiness marker after exports complete."""
     import orjson
 
     marker = ready_marker_path(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
+    clear_processing_marker(base_dir)
     marker.write_bytes(
         orjson.dumps(
             {
@@ -83,6 +105,11 @@ def _safe_resolve(base_dir: Path, filename: str) -> Path | None:
 def _is_ready(base_dir: Path) -> bool:
     """Whether the controller has finished exporting results."""
     return ready_marker_path(base_dir).is_file()
+
+
+def _is_processing(base_dir: Path) -> bool:
+    """Whether the controller is still exporting results."""
+    return processing_marker_path(base_dir).is_file()
 
 
 def _is_checkpoint_path(base_dir: Path, path: Path) -> bool:
@@ -123,7 +150,11 @@ async def _list_results(base_dir: Path) -> ResultsListResponse:
     if not await aio_os.path.isdir(base_dir):
         return ResultsListResponse()
     files = await asyncio.to_thread(_collect_result_files, base_dir)
-    return ResultsListResponse(files=files)
+    return ResultsListResponse(
+        files=files,
+        ready=_is_ready(base_dir),
+        processing=_is_processing(base_dir),
+    )
 
 
 async def _resolve_result_file(base_dir: Path, filename: str) -> Path:
@@ -137,9 +168,15 @@ async def _resolve_result_file(base_dir: Path, filename: str) -> Path:
     if not _is_ready(base_dir) and not _is_checkpoint_path(
         base_dir.resolve(), file_path
     ):
+        processing_detail = (
+            " export still processing;" if _is_processing(base_dir) else ""
+        )
         raise HTTPException(
             status_code=404,
-            detail=f"Results not ready for {base_dir.name}; marker file {READY_MARKER_NAME} not present — retry after completion",
+            detail=(
+                f"Results not ready for {base_dir.name};{processing_detail} "
+                f"marker file {READY_MARKER_NAME} not present — retry after completion"
+            ),
         )
     if not await aio_os.path.isfile(file_path):
         raise HTTPException(

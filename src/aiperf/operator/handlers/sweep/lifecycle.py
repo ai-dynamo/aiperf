@@ -99,6 +99,7 @@ async def on_delete(*, name: str, namespace: str, **_: Any) -> None:
                         plural="aiperfjobs",
                         name=child_name,
                         body={"spec": {"cancel": True}},
+                        _content_type="application/merge-patch+json",
                     )
                 except ApiException as e:
                     if e.status not in (404, 409):

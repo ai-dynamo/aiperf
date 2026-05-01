@@ -83,7 +83,7 @@ async def test_upsert_run_phase_updates_only_phase(index_path) -> None:
 async def test_upsert_run_completed_populates_metrics_and_blob(index_path) -> None:
     await runs_index.upsert_run_created("ns", "j", "100", spec={})
 
-    metrics = {
+    metrics_payload = {
         "request_throughput": {"avg": 42.5, "p50": 40.0, "p99": 50.0, "unit": "rps"},
         "request_latency": {"avg": 0.123, "p50": 0.1, "p99": 0.2, "unit": "s"},
         "telemetry_data": {
@@ -92,14 +92,25 @@ async def test_upsert_run_completed_populates_metrics_and_blob(index_path) -> No
             }
         },
     }
-    summary_blob = zstandard.ZstdCompressor().compress(orjson.dumps(metrics))
+    summary_blob = zstandard.ZstdCompressor().compress(orjson.dumps(metrics_payload))
+    metrics_envelope = {
+        "aiperf_version": "0.8.0",
+        "benchmark_id": "bench-1",
+        "model": "mock-model",
+        "endpoint_type": "chat",
+        "streaming": False,
+        "concurrency": 4,
+        "request_rate": None,
+        "metrics": metrics_payload,
+        "telemetry_data": metrics_payload["telemetry_data"],
+    }
 
     await runs_index.upsert_run_completed(
         "ns",
         "j",
         "100",
         summary_blob=summary_blob,
-        metrics=metrics,
+        metrics=metrics_envelope,
         files=["a.json", "b.parquet"],
         mtime_epoch=1714069400,
         end_time="2024-04-25T18:23:20Z",
@@ -112,6 +123,11 @@ async def test_upsert_run_completed_populates_metrics_and_blob(index_path) -> No
     assert row.gpu_name == "H100"
     assert row.mtime_epoch == 1714069400
 
+    narrow = await runs_index.get_run_narrow_metrics("ns", "j", "100")
+    assert narrow is not None
+    assert narrow["request_throughput_avg"] == 42.5
+    assert narrow["request_latency_avg"] == 0.123
+
     blob = await runs_index.get_summary_blob("ns", "j", "100")
     assert (
         orjson.loads(zstandard.ZstdDecompressor().decompress(blob))[
@@ -119,6 +135,54 @@ async def test_upsert_run_completed_populates_metrics_and_blob(index_path) -> No
         ]["avg"]
         == 42.5
     )
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_completed_uses_nested_metrics_payload(index_path) -> None:
+    """Narrow compare columns come from the nested /api/metrics payload.
+
+    Why: the completion handler passes the full controller ``/api/metrics``
+    envelope into ``upsert_run_completed``. Flattening the envelope itself
+    produces all-NULL narrow columns even though the summary blob is present
+    and valid; only the nested ``metrics`` mapping carries the six compare
+    metrics.
+    """
+    await runs_index.upsert_run_created("ns", "j", "101", spec={})
+    payload = {
+        "request_throughput": {"avg": 100.0, "p50": 95.0, "p99": 120.0, "unit": "rps"},
+        "request_latency": {"avg": 0.5, "p50": 0.4, "p99": 0.9, "unit": "ms"},
+        "output_token_throughput": {
+            "avg": 900.0,
+            "p50": 880.0,
+            "p99": 990.0,
+            "unit": "tok/s",
+        },
+    }
+    await runs_index.upsert_run_completed(
+        "ns",
+        "j",
+        "101",
+        summary_blob=zstandard.ZstdCompressor().compress(orjson.dumps(payload)),
+        metrics={
+            "aiperf_version": "0.8.0",
+            "benchmark_id": "bench-2",
+            "model": "mock-model",
+            "endpoint_type": "chat",
+            "streaming": False,
+            "concurrency": 4,
+            "request_rate": None,
+            "metrics": payload,
+        },
+        files=["profile_export_aiperf.json"],
+        mtime_epoch=1714069401,
+        end_time="2024-04-25T18:23:21Z",
+    )
+
+    narrow = await runs_index.get_run_narrow_metrics("ns", "j", "101")
+    assert narrow is not None
+    assert narrow["request_throughput_avg"] == 100.0
+    assert narrow["request_latency_p50"] == 0.4
+    assert narrow["output_token_throughput_p99"] == 990.0
 
 
 @pytest.mark.asyncio

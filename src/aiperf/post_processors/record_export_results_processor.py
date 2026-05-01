@@ -117,3 +117,15 @@ class RecordExportResultsProcessor(
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""
         return []
+
+    async def finalize(self) -> None:
+        """Flush the JSONL writer at end-of-run.
+
+        Called by RecordsManager._process_results AFTER the final summarize()
+        and BEFORE publishing ProcessRecordsResultMessage. Without this,
+        the operator's progress poll sees results_exported=True (set by the
+        controller after marker write) before this processor's @on_stop
+        _close_file fires — opening a window where /api/results/list serves
+        a partial profile_export.jsonl.
+        """
+        await self._close_file()

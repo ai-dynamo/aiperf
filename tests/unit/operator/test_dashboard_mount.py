@@ -112,3 +112,26 @@ class TestBuildDashboard:
         dash_app, run_count = build_dashboard(tmp_path)
         assert dash_app is not None
         assert run_count == 1
+
+    def test_falls_back_to_shipped_plot_config_when_home_is_read_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pathlib import Path as SysPath
+
+        _create_zst_run(tmp_path, "default", "job-1")
+        monkeypatch.setattr(
+            "aiperf.plot.config.Path.home", lambda: tmp_path / "ro-home"
+        )
+
+        original_mkdir = SysPath.mkdir
+
+        def raising_mkdir(self: Path, *args, **kwargs):
+            if self.name == ".aiperf":
+                raise OSError(30, "Read-only file system")
+            return original_mkdir(self, *args, **kwargs)
+
+        monkeypatch.setattr("aiperf.plot.config.Path.mkdir", raising_mkdir)
+
+        dash_app, run_count = build_dashboard(tmp_path)
+        assert dash_app is not None
+        assert run_count == 1

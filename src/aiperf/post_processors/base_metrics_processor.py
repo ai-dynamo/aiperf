@@ -24,6 +24,13 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         self.run = run
         super().__init__(run=run, **kwargs)
 
+    async def finalize(self) -> None:
+        """End-of-run hook; default no-op. Override to flush per-record files
+        before the records-manager publishes ProcessRecordsResultMessage —
+        see ResultsProcessorProtocol.finalize for the race this closes.
+        """
+        return None
+
     def get_filters(self) -> tuple[MetricFlags, MetricFlags]:
         """Get the filters for the metrics based on the config.
         Returns:

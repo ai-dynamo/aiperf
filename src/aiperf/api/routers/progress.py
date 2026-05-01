@@ -19,10 +19,10 @@ from starlette.requests import HTTPConnection
 from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.pod_state_rpc import query_controller_pod_states
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import background_task
-from aiperf.common.messages import WorkerPodStateMessage
+from aiperf.common.hooks import background_task, on_message
+from aiperf.common.messages import ResultsExportedMessage, WorkerPodStateMessage
 from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.mixins.progress_tracker_mixin import (
     CombinedPhaseStats,
@@ -108,9 +108,20 @@ class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
         self._k8s_namespace: str | None = os.environ.get("AIPERF_NAMESPACE")
         self._k8s_patching_enabled = bool(self._k8s_job_id and self._k8s_namespace)
         self._last_patched_annotations: dict[str, str] = {}
+        # Flips True only after the SystemController publishes
+        # ResultsExportedMessage — i.e. after ExporterManager.export_data()
+        # AND (in K8s mode) write_ready_marker() have completed. The operator
+        # gates JobProgress.is_complete on this so sub-second benchmarks don't
+        # let the kopf-timer monitor claim completion mid-export.
+        self._results_exported: bool = False
 
     def get_router(self) -> APIRouter:
         return progress_router
+
+    @on_message(MessageType.RESULTS_EXPORTED)
+    async def _on_results_exported(self, _message: ResultsExportedMessage) -> None:
+        """Record that the controller has finished writing artifacts to disk."""
+        self._results_exported = True
 
     @background_task(interval=_JOBSET_PATCH_INTERVAL, immediate=False)
     async def _patch_jobset_progress(self) -> None:
@@ -156,6 +167,7 @@ async def _patch_jobset_annotations(
             namespace=namespace,
             name=jobset_name,
             body={"metadata": {"annotations": annotations}},
+            _content_type="application/merge-patch+json",
         )
 
 
@@ -223,4 +235,5 @@ async def get_progress(
     return ProgressResponse(
         phases=component._progress_tracker._phases,
         workers=await _get_controller_workers(conn),
+        results_exported=component._results_exported,
     )

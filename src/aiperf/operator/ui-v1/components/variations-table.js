@@ -45,12 +45,20 @@ export function VariationsTable({ variations, headlineMetrics }) {
   }
   const visibleMetrics = headlineMetrics.filter(m => populatedKeys.has(m.key + '.' + m.stat));
 
+  // Wide sweeps (many headline metrics) blow past viewport width and force the
+  // wrapper into horizontal scroll. Pin the variation-label column to the left
+  // so the user keeps their bearings while panning. The thead corner sits at
+  // z:3 (above its row at z:2 and the body sticky cells at z:1) so it stays
+  // on top during simultaneous vertical+horizontal scroll.
+  const stickyTh = 'position:sticky;left:0;z-index:3;background:var(--ctp-base)';
+  const stickyTd = 'position:sticky;left:0;z-index:1;background:var(--ctp-base)';
+
   return html`
     <div data-testid="sweep-variations-table" class="job-table-wrapper" style="max-height:520px;overflow:auto">
       <table class="job-table">
-        <thead style="position:sticky;top:0;z-index:1;background:var(--ctp-base)">
+        <thead style="position:sticky;top:0;z-index:2;background:var(--ctp-base)">
           <tr>
-            <th class="job-table-th">variation</th>
+            <th class="job-table-th" style=${stickyTh}>variation</th>
             <th class="job-table-th" style="text-align:right">trials</th>
             ${visibleMetrics.map(m => html`
               <th key=${m.key + '.' + m.stat} class="job-table-th" style="text-align:right" title=${`${m.label} (${m.unit}) — mean across trials, with coefficient of variation below`}>
@@ -63,7 +71,7 @@ export function VariationsTable({ variations, headlineMetrics }) {
         <tbody>
           ${variations.map(v => html`
             <tr key=${v.variation_index} data-testid=${'variation-row-' + v.variation_index}>
-              <td class="job-table-td"><code style="font-size:var(--font-size-xs)">${v.label || `v${v.variation_index}`}</code></td>
+              <td class="job-table-td" style=${stickyTd}><code style="font-size:var(--font-size-xs)">${v.label || `v${v.variation_index}`}</code></td>
               <td class="job-table-td" style="text-align:right">${v.n_trials}/${v.n_total}</td>
               ${visibleMetrics.map(m => {
                 const r = v.perMetric?.[m.key + '.' + m.stat];

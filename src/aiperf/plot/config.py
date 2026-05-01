@@ -94,16 +94,25 @@ class PlotConfig:
 
         # Priority 2: User home config (auto-create if missing)
         user_config = Path.home() / ".aiperf" / "plot_config.yaml"
+        default_config = Path(__file__).parent / "default_plot_config.yaml"
         if not user_config.exists():
-            default_config = Path(__file__).parent / "default_plot_config.yaml"
             if not default_config.exists():
                 raise FileNotFoundError(
                     f"Default plot config not found at {default_config}. "
                     "This indicates a package installation issue."
                 )
 
-            user_config.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(default_config, user_config)
+            try:
+                user_config.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(default_config, user_config)
+            except OSError as e:
+                _logger.warning(
+                    "Cannot create user plot config at %s: %s. Falling back to shipped default %s",
+                    user_config,
+                    e,
+                    default_config,
+                )
+                return default_config
 
             print(f"\nCreated plot configuration: {user_config}")
             print(

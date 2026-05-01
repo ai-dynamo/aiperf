@@ -65,10 +65,14 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "api_key": "api_key",
     "timeout_seconds": "timeout",
     "ready_check_timeout": "ready_check_timeout",
+    "ready_check_mode": "ready_check_mode",
+    "ready_check_interval": "ready_check_interval",
     "transport": "transport",
     "use_legacy_max_tokens": "use_legacy_max_tokens",
     "use_server_token_count": "use_server_token_count",
     "connection_reuse_strategy": "connection_reuse",
+    "download_video_content": "download_video_content",
+    "request_content_type": "request_content_type",
 }
 
 

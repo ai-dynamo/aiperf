@@ -55,11 +55,14 @@ spec:
             description: |-
               AIPerfJob specification.
 
-              spec.benchmark: AIPerfConfig fields (models, endpoint, datasets,
-              phases, etc.) in snake_case — identical to AIPerf CLI YAML.
+              spec.benchmark holds AIPerfConfig fields (models, endpoint,
+              datasets, phases, etc.) using camelCase aliases (urlStrategy,
+              apiKey, readyCheckTimeout, …). The underlying Pydantic model
+              also accepts the snake_case names used in AIPerf CLI YAML,
+              but the apiserver schema only advertises camelCase.
 
-              Top-level deployment fields (image, podTemplate, scheduling, etc.)
-              use camelCase following Kubernetes API conventions.
+              Top-level deployment fields (image, podTemplate, scheduling,
+              etc.) use camelCase per Kubernetes API conventions.
             properties:
               image:
                 type: string
@@ -85,10 +88,16 @@ spec:
                   Benchmark configuration (AIPerfConfig). Strictly typed via the
                   AIPerfConfig schema, with x-kubernetes-preserve-unknown-fields: true
                   at narrow shorthand boundaries (models, distributions, endpoint urls,
-                  top-level shortcut fields, telemetry urls). Snake_case field names —
-                  identical to AIPerf CLI YAML config files. Shorthand forms (e.g.
-                  models: ['name'], single-phase dict) are accepted at marked boundaries
-                  and normalized by the operator before validation.
+                  top-level shortcut fields, telemetry urls).
+
+                  Field naming: the apiserver schema enforces camelCase (e.g.
+                  urlStrategy, apiKey, readyCheckTimeout). The Pydantic model also
+                  accepts the snake_case form (url_strategy, api_key, …) used in
+                  AIPerf CLI YAML — those names are accepted by the operator at parse
+                  time but are not advertised by this schema, so kubectl/IDE tooling
+                  should write camelCase. Shorthand forms (e.g. models: ['name'],
+                  single-phase dict, top-level warmup/profiling) are accepted at marked
+                  boundaries and normalized by the operator before validation.
                 properties:
                   models:
                     type: object
@@ -245,12 +254,14 @@ spec:
                         enum:
                         - http
                         - http2
-                        description: HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified.
-                          Explicit setting overrides auto-detection.
+                        description: HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over the
+                          URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting overrides
+                          auto-detection.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
-                          new connection per request (includes TCP overhead), sticky_sessions: dedicated connection per session.'
+                          new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per
+                          user session.'
                         enum:
                         - pooled
                         - never
@@ -308,6 +319,17 @@ spec:
                         - multipart/form-data
                     required:
                     - urls
+                    x-kubernetes-validations:
+                    - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
+                      message: endpoint.template is required when endpoint.type='template'
+                    - rule: '!has(self.template) || (has(self.type) && self.type == ''template'')'
+                      message: endpoint.template is only used when endpoint.type='template'
+                    - rule: '!has(self.requestContentType) || self.requestContentType != ''multipart/form-data'' || (has(self.type)
+                        && self.type == ''video_generation'')'
+                      message: requestContentType='multipart/form-data' is only supported on endpoint.type='video_generation'
+                        today
+                    - rule: self.urls.all(u, isURL(u))
+                      message: every endpoint.urls entry must be a valid URL
                   datasets:
                     type: array
                     description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
@@ -316,6 +338,7 @@ spec:
                       list with name='default'.
                     items:
                       x-kubernetes-preserve-unknown-fields: true
+                      type: object
                     minItems: 1
                   dataset:
                     description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into `datasets`
@@ -330,6 +353,7 @@ spec:
                       is normalized to a [warmup, profiling] list pre-validation.'
                     items:
                       x-kubernetes-preserve-unknown-fields: true
+                      type: object
                     minItems: 1
                   warmup:
                     description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as the
@@ -358,9 +382,11 @@ spec:
                       summary:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
+                        type: object
                       records:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
+                        type: object
                       raw:
                         type: boolean
                         description: Export raw request/response payloads as JSONL.
@@ -385,11 +411,12 @@ spec:
                         default: false
                       cliCommand:
                         type: string
-                        description: CLI command used to run the benchmark. Populated automatically when running via CLI.
+                        description: CLI command used to run the benchmark, recorded in artifacts for reproducibility. [auto-populated
+                          by the CLI runner; do not set in a CR spec — any user value is overwritten.]
                       benchmarkId:
                         type: string
                         description: Unique identifier for this benchmark run, used to correlate artifacts across export formats.
-                          Auto-generated if absent.
+                          [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]
                       userFiles:
                         type: array
                         description: User-defined templated files materialized into the run directory before the benchmark
@@ -424,6 +451,10 @@ spec:
                           required:
                           - path
                           - content
+                    x-kubernetes-validations:
+                    - rule: '!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId'
+                      message: artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already keyed
+                        by the old id
                   slos:
                     type: object
                     additionalProperties:
@@ -457,8 +488,9 @@ spec:
                         type: object
                         additionalProperties:
                           type: string
-                        description: Pre-resolved tokenizer names from alias resolution. Set at runtime by the CLI or WorkerGroupManager
-                          after tokenizer validation. Not serialized to JSON/YAML.
+                        description: Pre-resolved tokenizer names from alias resolution. [runtime-only; populated by the CLI
+                          or WorkerGroupManager after tokenizer validation. Excluded from JSON/YAML serialization. Do not
+                          set in a CR spec — any user value is ignored.]
                   gpuTelemetry:
                     type: object
                     description: 'GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization,
@@ -476,6 +508,20 @@ spec:
                       metricsFile:
                         type: string
                         description: Path to CSV file with pre-recorded GPU metrics. Alternative to live DCGM collection.
+                      collector:
+                        type: string
+                        enum:
+                        - dcgm
+                        - pynvml
+                        description: GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for
+                          local PyNVML collection.
+                      mode:
+                        type: string
+                        description: GPU telemetry display mode. Summary emits aggregate console output; realtime_dashboard
+                          enables live dashboard updates.
+                        enum:
+                        - summary
+                        - realtime_dashboard
                     x-kubernetes-preserve-unknown-fields: true
                   serverMetrics:
                     type: object
@@ -544,21 +590,26 @@ spec:
                       workers:
                         type: integer
                         minimum: 1
-                        description: Maximum worker processes. null = auto-detect based on CPU cores.
+                        description: Total worker processes across the deployment (the maximum, ramped up to from `workers_min`).
+                          null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out)
+                          and `workers_min` (lower bound for adaptive ramp).
                       recordProcessors:
                         type: integer
                         minimum: 1
-                        description: Number of parallel record processors. null = auto-detect based on CPU cores.
+                        description: Total parallel record processors across the deployment. null = auto-detect based on CPU
+                          cores. Distinct from `record_processors_per_pod` (per-Kubernetes-pod fan-out).
                       serviceRunType:
                         type: string
                         enum:
                         - kubernetes
                         - multiprocessing
-                        description: 'Type of service run. multiprocessing: local multi-process (default), kubernetes: distributed
-                          across pods.'
+                        description: 'Execution mode. multiprocessing: local multi-process (default for `aiperf profile`).
+                          kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces ''kubernetes''
+                          on the controller pod; do not set this in a CR spec.]'
                       communication:
                         x-kubernetes-preserve-unknown-fields: true
                         description: Inter-process communication configuration. Defaults to IPC for single-machine operation.
+                        type: object
                       apiPort:
                         type: integer
                         minimum: 1
@@ -570,29 +621,42 @@ spec:
                         description: AIPerf API server host. Requires api_port to be set.
                       datasetApiBaseUrl:
                         type: string
-                        description: Base URL for dataset API endpoints in Kubernetes mode. Set by the runner to allow worker
-                          pods to download datasets.
+                        description: Base URL the operator injects into worker pods so they can fetch datasets from the controller-pod
+                          sidecar in Kubernetes mode. [operator-managed; do not set in a CR spec.]
                       workersPerPod:
                         type: integer
                         minimum: 1
                         maximum: 100
-                        description: Number of worker service containers per Kubernetes worker pod.
+                        description: Worker containers packed into each Kubernetes worker pod (Kubernetes mode only). The
+                          total number of worker containers cluster-wide is `workers` (or auto-detected); this knob controls
+                          how that total is fanned across pods. Ignored in multiprocessing mode.
                       recordProcessorsPerPod:
                         type: integer
                         minimum: 1
                         maximum: 100
-                        description: Number of record processor service containers per Kubernetes worker pod.
+                        description: Record-processor containers packed into each Kubernetes worker pod (Kubernetes mode only).
+                          Sibling of `workers_per_pod`; controls per-pod fan-out, not the cluster-wide total. Ignored in multiprocessing
+                          mode.
                       workersMin:
                         type: integer
                         minimum: 1
-                        description: Minimum number of worker processes.
+                        description: Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the upper
+                          bound / target total).
+                    x-kubernetes-validations:
+                    - rule: '!has(self.apiHost) || has(self.apiPort)'
+                      message: runtime.apiHost requires runtime.apiPort to be set
+                    - rule: '!has(self.workersMin) || !has(self.workers) || self.workersMin <= self.workers'
+                      message: runtime.workersMin must be <= runtime.workers
                   logging:
                     type: object
                     description: Logging configuration for verbosity and debug settings.
                     properties:
                       level:
                         type: string
-                        description: 'Global logging verbosity level. trace: most verbose, error: least verbose.'
+                        description: Global logging verbosity level (loguru-style severity ladder; TRACE most verbose, CRITICAL
+                          least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and WARNING) and
+                          have no equivalent in the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want stdlib-compatible
+                          severities.
                         enum:
                         - TRACE
                         - DEBUG
@@ -632,8 +696,9 @@ spec:
                         - math_500
                         - gpqa_diamond
                         - lcb_codegeneration
-                        description: Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking
-                          mode alongside performance profiling.
+                        description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
+                          profiling. AIME variants: ''aime'' is the legacy combined set (deprecated for new runs); prefer
+                          the year-pinned ''aime24'' or ''aime25'' for reproducibility.'
                       tasks:
                         type: array
                         items:
@@ -683,6 +748,7 @@ spec:
                     x-kubernetes-preserve-unknown-fields: true
                     description: Sweep configuration for parameter exploration. Supports grid (Cartesian product), scenarios
                       (hand-picked), and sequential (ordered) sweep strategies.
+                    type: object
                   multiRun:
                     type: object
                     description: Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes
@@ -773,11 +839,38 @@ spec:
                         enum:
                         - independent
                         - repeated
+                    x-kubernetes-validations:
+                    - rule: '!has(self.convergenceMetric) || !has(self.mode) || self.mode != ''repeated'''
+                      message: adaptive convergence (convergenceMetric) is incompatible with mode='repeated'; use mode='independent'
                 required:
-                - models
                 - endpoint
-                - datasets
-                - phases
+                x-kubernetes-validations:
+                - rule: has(self.models) || has(self.model)
+                  message: 'benchmark requires either ''models'' (canonical: object with ''items'') or ''model'' (shorthand:
+                    string, list of strings, or ModelsAdvanced object). The operator hoists ''model'' into ''models'' before
+                    validation.'
+                - rule: has(self.datasets) || has(self.dataset)
+                  message: 'benchmark requires either ''datasets'' (canonical: list with named entries) or ''dataset'' (shorthand:
+                    single dict, hoisted into a one-entry ''datasets'' list with name=''default'').'
+                - rule: has(self.phases) || has(self.warmup) || has(self.profiling)
+                  message: 'benchmark requires either ''phases'' (canonical: ordered list with named entries) or shorthand
+                    ''warmup''/''profiling'' phase dicts. Top-level ''warmup''/''profiling'' are hoisted into a [warmup, profiling]
+                    phases list before validation.'
+                - rule: '!(has(self.models) && has(self.model))'
+                  message: set 'models' (canonical) OR 'model' (shorthand), not both
+                - rule: '!(has(self.datasets) && has(self.dataset))'
+                  message: set 'datasets' (canonical) OR 'dataset' (shorthand), not both
+                - rule: '!(has(self.phases) && (has(self.warmup) || has(self.profiling)))'
+                  message: use 'phases' (canonical list) OR top-level 'warmup'/'profiling' shorthand, not both
+                - rule: '!has(self.warmup) || has(self.profiling)'
+                  message: '''warmup'' shorthand requires ''profiling'' alongside it; warmup-only runs are not supported'
+                - rule: '!has(self.multiRun) || !has(self.multiRun.parameterSweepSameSeed) || !self.multiRun.parameterSweepSameSeed
+                    || has(self.randomSeed)'
+                  message: multiRun.parameterSweepSameSeed=true requires randomSeed to be set; without a base seed every variation
+                    already gets a fresh draw, so 'same seed' is meaningless
+                - rule: '!has(self.sweep) || !has(self.runtime) || !has(self.runtime.ui) || self.runtime.ui != ''dashboard'''
+                  message: Dashboard UI cannot multiplex sweep variations (live results would overwrite each other in the
+                    console). Use ui='simple' or 'none' with sweep configurations.
               resourceMode:
                 type: string
                 description: CPU/memory resource mode for controller and worker pods. 'burstable' (default) sets requests
@@ -957,7 +1050,11 @@ spec:
                     description: Kueue LocalQueue name for gang-scheduling
                   priorityClass:
                     type: string
-                    description: Kueue WorkloadPriorityClass name for scheduling priority
+                    description: Kueue WorkloadPriorityClass name (for queue admission ordering). Distinct from podTemplate.priorityClassName,
+                      which is the native K8s PriorityClass used by the default scheduler for preemption.
+                x-kubernetes-validations:
+                - rule: '!has(oldSelf.queueName) || oldSelf.queueName == self.queueName'
+                  message: scheduling.queueName is immutable once set (Kueue treats queueName as immutable after admission)
           status:
             type: object
             x-kubernetes-preserve-unknown-fields: true
@@ -1000,30 +1097,39 @@ spec:
                 properties:
                   ready:
                     type: integer
+                    format: int32
                     description: Dispatch-ready worker count.
                   total:
                     type: integer
+                    format: int32
                     description: Declared worker count.
                   dispatchable:
                     type: integer
+                    format: int32
                     description: Workers eligible to receive credits.
                   routerConnected:
                     type: integer
+                    format: int32
                     description: Workers connected to the router.
                   readyRecordProcessors:
                     type: integer
+                    format: int32
                     description: Ready record processors.
                   declaredRecordProcessors:
                     type: integer
+                    format: int32
                     description: Declared record processors.
                   readyPods:
                     type: integer
+                    format: int32
                     description: Usable worker pods.
                   totalPods:
                     type: integer
+                    format: int32
                     description: Observed worker pods.
                   degradedPods:
                     type: integer
+                    format: int32
                     description: Usable but degraded worker pods.
               phases:
                 type: object
@@ -1052,6 +1158,7 @@ spec:
                 description: Path to stored results on operator PVC
               runEpoch:
                 type: integer
+                format: int64
                 minimum: 0
                 description: Epoch-seconds key of the most recent successful run. Use as {epoch} in /api/v1/results/<ns>/<name>/runs/<epoch>/
                   to pin historical artifacts.
@@ -1065,6 +1172,7 @@ spec:
                 description: Final summary metrics after benchmark completion
               resultsTtlDays:
                 type: integer
+                format: int32
                 description: Days to retain result files before cleanup
               conditions:
                 type: array

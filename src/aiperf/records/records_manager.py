@@ -475,6 +475,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ],
             return_exceptions=True,
         )
+        # Final flush of per-record streaming files BEFORE publishing the
+        # result. Otherwise the controller writes the readiness marker and
+        # flips results_exported=True while the JSONL/CSV files are still
+        # mid-flush — the operator's progress poll then races a partial
+        # per-record export.
+        finalize_results = await asyncio.gather(
+            *[processor.finalize() for processor in self._metric_results_processors],
+            return_exceptions=True,
+        )
+        for exc in finalize_results:
+            if isinstance(exc, BaseException):
+                self.error(f"Error finalizing results processor: {exc!r}")
         (
             records_results,
             timeslice_metric_results,

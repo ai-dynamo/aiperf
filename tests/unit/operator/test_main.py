@@ -13,7 +13,9 @@ from unittest.mock import patch as mock_patch
 
 import aiohttp
 import kopf
+import orjson
 import pytest
+import zstandard
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
@@ -1082,11 +1084,31 @@ class TestMonitorProgressHandler:
 
     @pytest.mark.asyncio
     async def test_handles_jobset_not_found(self) -> None:
-        """Verify sets Failed phase when JobSet is gone."""
+        """Verify sets Failed phase when JobSet is gone and the CR is a genuine orphan.
+
+        The reconciler now requires positive evidence that the CR is NOT
+        a victim of the JobSet-not-found phase-stomp race (claim annotation
+        absent on cached body, fresh re-read confirms a non-terminal phase
+        with no claim) before stamping FAILED. See
+        ``test_monitor_jobset_not_found_race.py`` for the regression suite
+        on the success-path race.
+        """
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
         kopf_patch.status = {}
+
+        # Two get_namespaced_custom_object calls: JobSet 404, then fresh
+        # AIPerfJob re-read returning a non-terminal phase with no claim.
+        mock_get = AsyncMock(
+            side_effect=[
+                ApiException(status=404, reason="not found"),
+                {
+                    "metadata": {"annotations": {}},
+                    "status": {"phase": str(Phase.RUNNING)},
+                },
+            ]
+        )
 
         with (
             mock_patch(
@@ -1095,11 +1117,7 @@ class TestMonitorProgressHandler:
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
-                return_value=MagicMock(
-                    get_namespaced_custom_object=AsyncMock(
-                        side_effect=ApiException(status=404, reason="not found")
-                    )
-                ),
+                return_value=MagicMock(get_namespaced_custom_object=mock_get),
             ),
         ):
             await monitor_progress(
@@ -2773,6 +2791,103 @@ class TestRecoverTerminatedController:
         mock_handle_completion.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_recovers_from_on_disk_exports_when_salvage_fetch_returns_empty(
+        self, temp_results_dir: Path
+    ) -> None:
+        """Terminated-controller salvage should trust final exports already on disk.
+
+        The controller/sidecar race can leave ``fetch_results_with_retry``
+        returning ``downloaded=[]`` even though the operator's results dir already
+        contains the final compressed key exports. Salvage should still route
+        through ``handle_completion`` instead of stamping Failed.
+        """
+        from aiperf.operator.handlers.monitor import (
+            _maybe_recover_terminated_controller,
+        )
+        from aiperf.operator.status import StatusBuilder
+
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+        sb = StatusBuilder(kopf_patch, {"workers": {"total": 1}})
+
+        controller_pod = _make_pod(
+            name="controller-0-0",
+            container_statuses_raw=[
+                {
+                    "name": "control-plane",
+                    "state": {"terminated": {"reason": "OOMKilled", "exitCode": 137}},
+                },
+                {
+                    "name": "results-sidecar",
+                    "state": {},
+                },
+            ],
+        )
+
+        run_dir = temp_results_dir / "default" / "job-1" / "1714064523"
+        run_dir.mkdir(parents=True)
+        summary = orjson.dumps(
+            {
+                "metrics": {
+                    "request_throughput": {
+                        "avg": 123.0,
+                        "unit": "req/s",
+                    }
+                }
+            }
+        )
+        (run_dir / "profile_export_aiperf.json.zst").write_bytes(
+            zstandard.ZstdCompressor().compress(summary)
+        )
+        (run_dir / "profile_export_aiperf.csv.zst").write_bytes(b"metric,value\n")
+
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(
+                return_value=_V1PodList(items=[controller_pod])
+            )
+        )
+
+        with (
+            mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.fetch_results_with_retry",
+                new_callable=AsyncMock,
+                return_value=ControllerFetchResult(
+                    metrics=None,
+                    downloaded=[],
+                    error="Failed to fetch results: ",
+                ),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new_callable=AsyncMock,
+            ) as mock_handle_completion,
+        ):
+            handled = await _maybe_recover_terminated_controller(
+                AsyncMock(),
+                _FIXTURE_BODY,
+                "default",
+                "test-jobset",
+                "job-1",
+                status={"workers": {"total": 1}},
+                sb=sb,
+                key="default/job-1",
+                name="job-1",
+            )
+
+        assert handled is True
+        mock_handle_completion.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_marks_failed_when_controller_terminated_without_results(
         self,
     ) -> None:
@@ -3698,15 +3813,20 @@ class TestOnCreatePreflightIntegration:
 
 class TestMonitorStaleReadLogging:
     """Verify that stale-read recovery failures surface as logged exceptions
-    instead of being silently swallowed."""
+    and that the apiserver hiccup does NOT get misread as benchmark failure."""
 
     @pytest.mark.asyncio
     async def test_stale_read_exception_is_logged(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """When the fresh CR re-read fails after JobSet NotFound, the handler
-        should log the exception (with traceback) before falling through to
-        the FAILED phase."""
+        """When the fresh CR re-read raises after JobSet NotFound, the handler
+        logs the exception (with traceback) AND defers to the next monitor tick
+        without stamping FAILED.
+
+        Falling through to FAILED on a fresh-read exception is one half of the
+        JobSet-not-found phase-stomp bug — apiserver hiccups must not
+        overwrite a (possibly already-Completed) CR.
+        """
         import logging
 
         from aiperf.operator.main import monitor_progress
@@ -3749,8 +3869,9 @@ class TestMonitorStaleReadLogging:
                 patch=kopf_patch,
             )
 
-        # Fall-through to FAILED is preserved
-        assert kopf_patch.status["phase"] == Phase.FAILED
+        # Apiserver-blip recovery: phase is NOT stamped FAILED. The next
+        # monitor tick will re-read fresh state and decide then.
+        assert "phase" not in kopf_patch.status
         # The stale-read failure is logged with traceback (logger.exception)
         assert any(
             "Stale-read recovery failed" in rec.message and rec.exc_info is not None

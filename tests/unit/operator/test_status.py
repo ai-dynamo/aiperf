@@ -833,6 +833,29 @@ class TestStatusBuilder:
         # Conditions list is empty, so should not add conditions key
         assert "conditions" not in mock_patch.status
 
+    def test_finalize_preserves_conditions_by_not_patching_unchanged_snapshot(
+        self,
+    ) -> None:
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        existing_status = {
+            "conditions": [
+                {
+                    "type": "ConfigValid",
+                    "status": "True",
+                    "reason": "Valid",
+                    "message": "OK",
+                    "lastTransitionTime": "2026-01-15T10:00:00Z",
+                }
+            ]
+        }
+
+        builder = StatusBuilder(mock_patch, existing_status)
+        builder.set_workers(ready=1, total=1)
+        builder.finalize()
+
+        assert mock_patch.status == {"workers": {"ready": 1, "total": 1}}
+
     def test_fluent_interface_chaining(self) -> None:
         """Test fluent interface allows method chaining."""
         mock_patch = MagicMock()

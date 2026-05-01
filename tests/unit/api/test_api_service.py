@@ -1126,9 +1126,12 @@ class TestResultsListEndpoint:
         """Test listing results with files in directory."""
         from unittest.mock import MagicMock
 
+        from aiperf.kubernetes.results_sidecar import write_ready_marker
+
         # Create test files
         (tmp_path / "metrics.json").write_text('{"test": 1}')
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
@@ -1158,6 +1161,9 @@ class TestResultsFileEndpoints:
         """Test returns 404 for nonexistent file."""
         from unittest.mock import MagicMock
 
+        from aiperf.kubernetes.results_sidecar import write_ready_marker
+
+        write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
         mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
@@ -1175,8 +1181,11 @@ class TestResultsFileEndpoints:
         """Test file streams content with correct headers."""
         from unittest.mock import MagicMock
 
+        from aiperf.kubernetes.results_sidecar import write_ready_marker
+
         test_file = tmp_path / "profile_export.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
@@ -1199,6 +1208,9 @@ class TestResultsFileEndpoints:
         """Test path traversal attempts are rejected."""
         from unittest.mock import MagicMock
 
+        from aiperf.kubernetes.results_sidecar import write_ready_marker
+
+        write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
         mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
@@ -1215,8 +1227,11 @@ class TestResultsFileEndpoints:
         """Test result file endpoint supports gzip compression."""
         from unittest.mock import MagicMock
 
+        from aiperf.kubernetes.results_sidecar import write_ready_marker
+
         test_file = tmp_path / "metrics.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path

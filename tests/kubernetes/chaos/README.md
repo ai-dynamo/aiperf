@@ -114,6 +114,43 @@ Each xfail ships with `strict=False` so the test converts a controlled fault int
 - **C15 — 30 s apiserver pause.** Requires redirecting the operator's apiserver traffic through toxiproxy, which needs the operator Deployment re-rendered with `KUBERNETES_SERVICE_HOST` / `KUBERNETES_SERVICE_PORT` pointed at the toxiproxy Service AND an SNI-preserving L4 route to `kubernetes.default.svc:443` (default HTTP proxy mode breaks TLS). Cross-cutting Helm change; deferred. Flips to pass when the chart adds apiserver-URL override envs.
 - **B3 — mock-server latency injection.** The toxiproxy fixture Service does not currently expose listen port `:20010` for mock-server traffic, and the test refuses to mutate the fixture inline. Flips to pass when `fixtures/toxiproxy.yaml` advertises an extra port + a helper points `AIPerfJobConfig.endpoint_url` at `toxiproxy.<ns>.svc:20010`.
 
+## Manual-run recipes for deferred API-disruption scenarios
+
+These are the explicit operator-side runbooks for the two toxiproxy-backed scenarios that were deferred from the original automation wave.
+
+### C15 — pause apiserver traffic for 30 s
+
+This scenario is still blocked on an operator deployment shape the chart does not expose yet: the operator must talk to the Kubernetes API through toxiproxy instead of the cluster-injected `kubernetes.default.svc` env.
+
+Current manual recipe:
+
+1. Deploy `fixtures/toxiproxy.yaml` and confirm the Service `toxiproxy.aiperf-chaos-toxiproxy.svc` is reachable.
+2. Re-render the operator Deployment with:
+   - `KUBERNETES_SERVICE_HOST=toxiproxy.aiperf-chaos-toxiproxy.svc`
+   - `KUBERNETES_SERVICE_PORT=20000`
+3. Configure toxiproxy proxy `apiserver` to forward `0.0.0.0:20000 -> kubernetes.default.svc:443`.
+4. Start the benchmark job.
+5. Add a `timeout` toxic for 30 s, then remove it.
+6. Assert the CR resumes normal reconciliation and reaches `Completed`.
+
+Important constraint: this needs an SNI-preserving L4 route to `kubernetes.default.svc:443`. Plain HTTP proxying is not enough because the apiserver connection is TLS.
+
+### C16 — block operator ↔ controller HTTP
+
+This one is runnable today.
+
+Current manual recipe:
+
+1. Deploy `fixtures/toxiproxy.yaml`.
+2. Redeploy the operator with:
+   - `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002/v1`
+3. Create toxiproxy proxy `controller-http` on `0.0.0.0:20002` with the upstream rewritten to the live controller pod once it has an IP.
+4. Start the benchmark job and wait until it is in profiling.
+5. Add a `timeout` toxic on the proxy so operator HTTP calls to the controller fail.
+6. Assert the CR still reaches `Completed` via the salvage path once the controller exits.
+
+Use `tests/kubernetes/chaos/test_chaos_api_disruption.py::test_c16_block_operator_controller_http_falls_back` as the exact assertion template. Any future operator↔controller HTTP fault test should reuse the shared `operator_ready_toxiproxy_routed` fixture.
+
 ## Bugs this suite has already surfaced
 
 All four bugs below were discovered in the 2026-04-23 v1 session and fixed in this branch:

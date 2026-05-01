@@ -119,6 +119,7 @@ class MessageType(CaseInsensitiveStrEnum):
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
     REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REGISTRATION = "registration"
+    RESULTS_EXPORTED = "results_exported"
     SERVICE_ERROR = "service_error"
     STATUS = "status"
     TELEMETRY_STATUS = "telemetry_status"

@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import kopf
+import orjson
 import pytest
+import zstandard
 
 from aiperf.kubernetes.constants import Annotations
 from aiperf.operator.handlers.completion import handle_completion
@@ -307,6 +309,171 @@ async def test_handle_completion_transient_fetch_failure_raises_temporary_error(
     )
     assert "conditions" not in patch_obj.status
     assert "j1" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_handle_completion_partial_results_missing_key_exports_raises_temporary_error(
+    tmp_path: Path,
+) -> None:
+    """Partial downloads without key exports must take the transient-retry path.
+
+    DGX-scale fetches can return metrics plus non-key artifacts (for example
+    inputs + partial checkpoints) while the controller is still finalizing the
+    authoritative exports. That shape used to surface with ``error=''``, which
+    bypassed ``maybe_raise_for_transient_fetch_failure`` and failed the CR
+    immediately instead of retrying on the next monitor tick.
+    """
+    patch_obj = MagicMock()
+    patch_obj.status = {}
+    sb = StatusBuilder(patch_obj, existing_status={"workers": {"total": 1}})
+
+    result = ControllerFetchResult(
+        metrics={"metrics": {"throughput": 100}},
+        downloaded=[
+            "inputs.json",
+            "gpu_telemetry_export.jsonl",
+            "checkpoints/profile_export_aiperf_partial.json",
+        ],
+        error="",
+    )
+    body = _body_with_claim(claim_age_seconds=2.0)
+
+    with (
+        patch(
+            "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
+            DIR=tmp_path,
+            RETAIN_RUNS=5,
+            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+        ),
+        patch("aiperf.operator.handlers.completion.events.results_failed"),
+        patch("aiperf.operator.handlers.completion.events.completed"),
+        patch(
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
+        ),
+        pytest.raises(kopf.TemporaryError) as exc_info,
+    ):
+        await handle_completion(
+            body=body,
+            namespace="ns",
+            jobset_name="js",
+            job_id="j1",
+            status={"workers": {"total": 1}, "startTime": "2026-04-29T00:00:00Z"},
+            sb=sb,
+            result=result,
+        )
+
+    assert "phase" not in patch_obj.status or patch_obj.status["phase"] not in (
+        Phase.FAILED,
+        Phase.COMPLETED,
+    )
+    assert "conditions" not in patch_obj.status
+    assert "j1" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_handle_completion_transient_fetch_recovers_from_on_disk_key_exports(
+    tmp_path: Path,
+) -> None:
+    """If the operator already has the final compressed key exports on disk,
+    completion must recover from them instead of stamping Failed.
+
+    DGX reruns showed a narrower race after the first fix: the controller HTTP
+    fetch path could still stall and return ``downloaded=[]`` / empty metrics,
+    but the operator's results dir already contained ``profile_export_aiperf``
+    key files. That is authoritative evidence the run is recoverable.
+    """
+    patch_obj = MagicMock()
+    patch_obj.status = {}
+    sb = StatusBuilder(patch_obj, existing_status={"workers": {"total": 1}})
+
+    epoch = str(
+        int(
+            datetime.strptime(_FIXTURE_CREATION_TS, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+    )
+    dest_dir = tmp_path / "ns" / "j1" / epoch
+    dest_dir.mkdir(parents=True)
+    payload = orjson.dumps(
+        {
+            "metrics": {
+                "request_throughput": {
+                    "avg": 123.4,
+                    "unit": "requests/s",
+                }
+            }
+        }
+    )
+    (dest_dir / "profile_export_aiperf.json.zst").write_bytes(
+        zstandard.ZstdCompressor().compress(payload)
+    )
+    (dest_dir / "profile_export_aiperf.csv.zst").write_bytes(b"metric,value\n")
+
+    result = ControllerFetchResult(
+        metrics=None,
+        downloaded=[],
+        error="Failed to fetch results: ",
+    )
+    body = {"metadata": {"creationTimestamp": _FIXTURE_CREATION_TS}}
+
+    results_failed_mock = MagicMock()
+    completed_mock = MagicMock()
+    with (
+        patch(
+            "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
+            DIR=tmp_path,
+            RETAIN_RUNS=5,
+            TRANSIENT_FETCH_RETRY_BUDGET_SEC=0.0,
+            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+        ),
+        patch(
+            "aiperf.operator.handlers.completion.events.results_failed",
+            results_failed_mock,
+        ),
+        patch(
+            "aiperf.operator.handlers.completion.events.completed",
+            completed_mock,
+        ),
+        patch("aiperf.operator.handlers.completion.events.results_stored"),
+        patch(
+            "aiperf.operator.handlers.completion.runs_index",
+            new=MagicMock(
+                upsert_run_completed=AsyncMock(),
+                upsert_run_failed=AsyncMock(),
+                set_latest=AsyncMock(),
+            ),
+        ),
+        patch(
+            "aiperf.operator.handlers.completion.k8s_client",
+        ),
+        patch(
+            "aiperf.operator.handlers.completion.client.CustomObjectsApi",
+            return_value=MagicMock(
+                delete_namespaced_custom_object=AsyncMock(return_value={})
+            ),
+        ),
+    ):
+        await handle_completion(
+            body=body,
+            namespace="ns",
+            jobset_name="js",
+            job_id="j1",
+            status={"workers": {"total": 1}, "startTime": "2026-04-29T00:00:00Z"},
+            sb=sb,
+            result=result,
+        )
+
+    assert patch_obj.status["phase"] == Phase.COMPLETED
+    assert patch_obj.status["resultsPath"] == str(dest_dir)
+    results_failed_mock.assert_not_called()
+    completed_mock.assert_called_once()
 
 
 @pytest.mark.asyncio

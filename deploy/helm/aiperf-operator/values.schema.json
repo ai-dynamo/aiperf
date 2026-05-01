@@ -35,7 +35,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "controllerHttpUrlOverride": { "type": "string" }
+        "controllerHttpUrlOverride": { "type": "string" },
+        "apiserverServiceHostOverride": { "type": "string" },
+        "apiserverServicePortOverride": { "type": "string" }
       }
     },
     "operator": {

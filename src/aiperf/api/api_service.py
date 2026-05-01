@@ -10,6 +10,7 @@ for real-time ZMQ message forwarding.
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
@@ -140,6 +141,24 @@ class FastAPIService(BaseComponentService):
             raise ValueError(
                 "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
             )
+        # Pre-bind probe: catch port conflicts BEFORE uvicorn schedules the
+        # async serve() task. Without this, bind failure surfaces inside an
+        # asyncio task done-callback after credits have already drained, and
+        # the run silently "succeeds" with no API. There is a TOCTOU race
+        # vs uvicorn's actual bind, but it's tight enough that "port already
+        # bound" failures are caught reliably for the user-explicit case.
+        explicit_port = self.run.cfg.runtime.api_port is not None
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind((self.api_host, self.api_port))
+        except OSError as e:
+            msg = f"API server cannot bind {self.api_host}:{self.api_port}: {e}"
+            if explicit_port:
+                # User-explicit --api-port; surface as fatal so the controller
+                # aborts via process-monitor → pod_failure_abort_event.
+                raise RuntimeError(msg) from e
+            self.warning(f"{msg}; continuing without API server.")
+            return
         # Pre-warm the shared HF cache before binding the port. Worker pods
         # hit `/api/tokenizer/{name}/bundle` as soon as the WGM comes up;
         # without this, they 503-retry while dataset-manager incidentally

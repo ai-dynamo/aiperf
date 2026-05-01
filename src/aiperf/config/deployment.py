@@ -26,7 +26,9 @@ class SchedulingConfig(BaseConfig):
     )
     priority_class: str | None = Field(
         default=None,
-        description="Kueue WorkloadPriorityClass name for scheduling priority",
+        description="Kueue WorkloadPriorityClass name (for queue admission ordering). "
+        "Distinct from podTemplate.priorityClassName, which is the native K8s "
+        "PriorityClass used by the default scheduler for preemption.",
     )
 
 

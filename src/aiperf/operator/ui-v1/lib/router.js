@@ -141,3 +141,15 @@ export function matchRoute(pattern, path) {
 export function buildRoute(pattern, params = {}) {
   return pattern.replace(/:([^/]+)/g, (_, key) => encodeURIComponent(params[key] ?? ''));
 }
+
+/**
+ * Build a v1 job-detail path, pinning to /runs/<epoch> whenever a run epoch is known.
+ * Accepts either {namespace,name} or analytics-style {namespace,job_id} objects.
+ */
+export function buildJobPath(job = {}) {
+  const namespace = job.namespace ?? 'default';
+  const name = job.name ?? job.job_id ?? '';
+  const epoch = job.childRunEpoch ?? job.runEpoch ?? job.run_epoch ?? job.epoch ?? null;
+  const base = `/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+  return epoch != null ? `${base}/runs/${encodeURIComponent(String(epoch))}` : base;
+}

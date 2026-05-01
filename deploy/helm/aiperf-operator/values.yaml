@@ -133,6 +133,15 @@ chaos:
   # traffic funnels through the same URL). Leave empty ("") in production.
   controllerHttpUrlOverride: ""
 
+  # chaos.apiserverServiceHostOverride / apiserverServicePortOverride rewrite
+  # the in-cluster Kubernetes service env vars consumed by kubernetes_asyncio's
+  # incluster loader. Used by chaos scenario C15 to route operator ->
+  # apiserver traffic through toxiproxy.
+  # NOT FOR PRODUCTION USE: if these are wrong, the operator loses access to
+  # the Kubernetes API entirely.
+  apiserverServiceHostOverride: ""
+  apiserverServicePortOverride: ""
+
 # resultsServer is the sidecar container that serves stored results via HTTP
 resultsServer:
   # resultsServer.port is the HTTP port for the results API

@@ -197,6 +197,10 @@ def _build_video(user: UserConfig) -> dict[str, Any]:
         audio["sample_rate"] = v.audio.sample_rate
     if _set(v.audio, "channels"):
         audio["channels"] = v.audio.channels
+    if _set(v.audio, "codec"):
+        audio["codec"] = v.audio.codec
+    if _set(v.audio, "depth"):
+        audio["depth"] = v.audio.depth
     if audio:
         out["audio"] = audio
     return out

@@ -47,6 +47,7 @@ def profile(
         service_config: Cyclopts-populated ServiceConfig DTO; defaults to ServiceConfig().
     """
     from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
     with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
         from aiperf.config.loader import build_benchmark_plan
@@ -64,7 +65,10 @@ def profile(
             config = convert_user_to_aiperf(user_config, service_config)
             plan = build_benchmark_plan(config)
 
-    with exit_on_error(title="Error Running AIPerf System"):
+    with exit_on_error(
+        title="Error Running AIPerf System",
+        quiet_for=(ConfigurationError,),
+    ):
         from aiperf.cli_runner import run_benchmark
 
         run_benchmark(plan)

@@ -144,6 +144,7 @@ export function ClusterStatsBanner() {
     nodes_partial: nPartial = 0,
     nodes_full: nFull = 0,
     kubernetes_version: k8sVersion = 'unknown',
+    cluster_name: clusterName = null,
   } = info;
 
   // JSON nulls bypass destructuring defaults; coerce to 0 / safe display
@@ -159,6 +160,7 @@ export function ClusterStatsBanner() {
   const safeNPartial = nPartial ?? 0;
   const safeNFull = nFull ?? 0;
   const safeK8sVersion = k8sVersion || 'unknown';
+  const safeClusterName = (clusterName && String(clusterName).trim()) || null;
 
   const hasGpus = safeGpus > 0;
   const tone = utilTone(safeUtil);
@@ -227,14 +229,18 @@ export function ClusterStatsBanner() {
         </div>
       `}
 
-      <div class="cluster-banner__tile" data-testid="banner-k8s" title="Kubernetes server version">
+      <div class="cluster-banner__tile" data-testid="banner-k8s" title=${safeClusterName ? `Cluster: ${safeClusterName} (Kubernetes ${safeK8sVersion})` : 'Kubernetes server version'}>
         <div class="cluster-banner__icon cluster-banner__icon--accent"><${IconK8s} /></div>
         <div class="cluster-banner__body">
-          <div class="cluster-banner__label">Kubernetes</div>
+          <div class="cluster-banner__label">${safeClusterName ? 'Cluster' : 'Kubernetes'}</div>
           <div class="cluster-banner__value">
-            <span class="cluster-banner__num cluster-banner__num--total cluster-banner__num--mono">${safeK8sVersion}</span>
+            <span class="cluster-banner__num cluster-banner__num--total cluster-banner__num--mono">${safeClusterName || safeK8sVersion}</span>
           </div>
-          <div class="cluster-banner__sub">${safeNodes} node${safeNodes === 1 ? '' : 's'} total</div>
+          <div class="cluster-banner__sub">
+            ${safeClusterName
+              ? html`<span>${safeNodes} node${safeNodes === 1 ? '' : 's'} · k8s ${safeK8sVersion}</span>`
+              : html`<span>${safeNodes} node${safeNodes === 1 ? '' : 's'} total</span>`}
+          </div>
         </div>
       </div>
     </div>

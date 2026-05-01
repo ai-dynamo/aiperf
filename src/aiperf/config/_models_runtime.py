@@ -65,8 +65,10 @@ class RuntimeConfig(BaseConfig):
         Field(
             ge=1,
             default=None,
-            description="Maximum worker processes. "
-            "null = auto-detect based on CPU cores.",
+            description="Total worker processes across the deployment (the maximum, "
+            "ramped up to from `workers_min`). null = auto-detect based on CPU cores. "
+            "Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out) and "
+            "`workers_min` (lower bound for adaptive ramp).",
         ),
     ]
 
@@ -75,8 +77,9 @@ class RuntimeConfig(BaseConfig):
         Field(
             ge=1,
             default=None,
-            description="Number of parallel record processors. "
-            "null = auto-detect based on CPU cores.",
+            description="Total parallel record processors across the deployment. "
+            "null = auto-detect based on CPU cores. Distinct from "
+            "`record_processors_per_pod` (per-Kubernetes-pod fan-out).",
         ),
     ]
 
@@ -84,9 +87,10 @@ class RuntimeConfig(BaseConfig):
         ServiceRunType,
         Field(
             default=ServiceRunType.MULTIPROCESSING,
-            description="Type of service run. "
-            "multiprocessing: local multi-process (default), "
-            "kubernetes: distributed across pods.",
+            description="Execution mode. multiprocessing: local multi-process "
+            "(default for `aiperf profile`). kubernetes: distributed across pods. "
+            "[operator-managed under AIPerfJob — the operator forces 'kubernetes' "
+            "on the controller pod; do not set this in a CR spec.]",
         ),
     ]
 
@@ -124,8 +128,9 @@ class RuntimeConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="Base URL for dataset API endpoints in Kubernetes mode. "
-            "Set by the runner to allow worker pods to download datasets.",
+            description="Base URL the operator injects into worker pods so they can "
+            "fetch datasets from the controller-pod sidecar in Kubernetes mode. "
+            "[operator-managed; do not set in a CR spec.]",
         ),
     ]
 
@@ -135,7 +140,10 @@ class RuntimeConfig(BaseConfig):
             default=None,
             ge=1,
             le=100,
-            description="Number of worker service containers per Kubernetes worker pod.",
+            description="Worker containers packed into each Kubernetes worker pod "
+            "(Kubernetes mode only). The total number of worker containers cluster-wide "
+            "is `workers` (or auto-detected); this knob controls how that total is "
+            "fanned across pods. Ignored in multiprocessing mode.",
         ),
     ]
 
@@ -145,7 +153,9 @@ class RuntimeConfig(BaseConfig):
             default=None,
             ge=1,
             le=100,
-            description="Number of record processor service containers per Kubernetes worker pod.",
+            description="Record-processor containers packed into each Kubernetes worker pod "
+            "(Kubernetes mode only). Sibling of `workers_per_pod`; controls per-pod "
+            "fan-out, not the cluster-wide total. Ignored in multiprocessing mode.",
         ),
     ]
 
@@ -154,7 +164,8 @@ class RuntimeConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Minimum number of worker processes.",
+            description="Lower bound on worker processes for the adaptive ramp. "
+            "Distinct from `workers` (the upper bound / target total).",
         ),
     ]
 
@@ -174,7 +185,10 @@ class LoggingConfig(BaseConfig):
         AIPerfLogLevel,
         Field(
             default=AIPerfLogLevel.INFO,
-            description="Global logging verbosity level. "
-            "trace: most verbose, error: least verbose.",
+            description="Global logging verbosity level (loguru-style severity ladder; "
+            "TRACE most verbose, CRITICAL least). NOTICE and SUCCESS are loguru-specific "
+            "intermediate levels (between INFO and WARNING) and have no equivalent in "
+            "the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want "
+            "stdlib-compatible severities.",
         ),
     ]

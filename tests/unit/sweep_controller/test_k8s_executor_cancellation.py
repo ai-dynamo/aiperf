@@ -328,5 +328,6 @@ async def test_wait_until_terminal_patches_child_cancel_when_signaled_mid_wait(
         "child", poll_interval=0.0, cancel_check=cancel_check
     )
     custom.patch_namespaced_custom_object.assert_awaited()
-    body = custom.patch_namespaced_custom_object.call_args.kwargs.get("body")
-    assert body == {"spec": {"cancel": True}}
+    kwargs = custom.patch_namespaced_custom_object.call_args.kwargs
+    assert kwargs.get("body") == {"spec": {"cancel": True}}
+    assert kwargs.get("_content_type") == "application/merge-patch+json"

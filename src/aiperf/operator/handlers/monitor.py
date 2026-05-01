@@ -20,7 +20,7 @@ from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import k8s_client
-from aiperf.kubernetes.constants import Containers, JobSetLabels
+from aiperf.kubernetes.constants import Annotations, Containers, JobSetLabels
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
@@ -44,6 +44,7 @@ from aiperf.operator.client_cache import (
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.completion import (
     _parse_metrics_from_files,
+    _recover_result_from_disk,
     fetch_results_with_retry,
     handle_completion,
 )
@@ -169,6 +170,7 @@ async def _delete_jobset_silently(
 async def _reconcile_missing_jobset(
     custom: CustomObjectsApi,
     *,
+    body: dict[str, Any],
     namespace: str,
     name: str,
     jobset_name: str,
@@ -187,9 +189,27 @@ async def _reconcile_missing_jobset(
         )
         return True
 
-    # Re-read the CR to catch completion handler's update
-    # (it may have set phase=Completed and deleted the JobSet
-    # between our phase read and the JobSet lookup).
+    # Completion-claim annotation is the authoritative cross-tick signal that
+    # the success branch owns the CR. ``try_claim_completion`` stamps it via
+    # JSON-patch BEFORE ``handle_completion`` runs, and only the success path
+    # in ``_maybe_delete_jobset_after_success`` deletes the JobSet — so a
+    # claimed body with a 404'd JobSet is positive evidence of completion,
+    # not failure. Without this gate, a kopf timer firing on a stale body
+    # snapshot (phase still pre-terminal because the watch event for our
+    # own patch hasn't propagated to kopf's local cache yet) would stamp
+    # ``Phase.FAILED`` over a CR that already wrote ``Phase.COMPLETED``.
+    if is_completion_claimed(body):
+        logger.debug(
+            f"JobSet {jobset_name} not found but completion-claim annotation "
+            f"is set on {namespace}/{name} - success handler owns this CR, "
+            f"skipping FAILED stamp"
+        )
+        return True
+
+    # Belt-and-suspenders: if the claim isn't on our cached body either
+    # (e.g. claim never set because monitor took a different branch),
+    # re-read the CR after a short delay to give the success handler's
+    # phase patch a chance to land.
     await asyncio.sleep(2)
 
     try:
@@ -200,18 +220,39 @@ async def _reconcile_missing_jobset(
             namespace=namespace,
             name=name,
         )
-        fresh_phase = fresh.get("status", {}).get("phase", "")
-        if fresh_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
-            logger.debug(
-                f"JobSet {jobset_name} not found but fresh phase is "
-                f"{fresh_phase} - skipping"
-            )
-            return True
     except Exception:
+        # Fresh-read failure is NOT evidence the benchmark failed; keep the
+        # CR in its current phase and let the next monitor tick retry.
+        # Falling through to ``set_phase(FAILED)`` here is the original
+        # JobSet-not-found phase-stomp bug — an apiserver hiccup must not
+        # overwrite a (possibly already-Completed) CR.
         logger.exception(
             f"Stale-read recovery failed while reconciling "
-            f"{namespace}/{name} after JobSet {jobset_name} not found"
+            f"{namespace}/{name} after JobSet {jobset_name} not found; "
+            f"deferring to next monitor tick"
         )
+        return True
+
+    fresh_phase = fresh.get("status", {}).get("phase", "")
+    if fresh_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+        logger.debug(
+            f"JobSet {jobset_name} not found but fresh phase is "
+            f"{fresh_phase} - skipping"
+        )
+        return True
+
+    # Re-check the claim annotation on the fresh body too: between the
+    # caller's body snapshot and now, ``try_claim_completion`` may have
+    # stamped the claim from a peer operator pod (HA) or from a concurrent
+    # monitor tick that observed ``progress.is_complete`` first.
+    fresh_annotations = fresh.get("metadata", {}).get("annotations") or {}
+    if fresh_annotations.get(Annotations.COMPLETION_CLAIMED):
+        logger.debug(
+            f"JobSet {jobset_name} not found and fresh CR carries "
+            f"completion-claim annotation - skipping FAILED stamp"
+        )
+        return True
+
     sb.set_phase(Phase.FAILED).set_error("JobSet not found")
     sb.finalize()
     return False
@@ -461,6 +502,7 @@ async def _poll_controller_progress(
 async def _fetch_jobset_or_reconcile(
     custom: CustomObjectsApi,
     *,
+    body: dict[str, Any],
     namespace: str,
     name: str,
     jobset_name: str,
@@ -488,6 +530,7 @@ async def _fetch_jobset_or_reconcile(
         # successful results fetch. Don't overwrite a terminal phase.
         await _reconcile_missing_jobset(
             custom,
+            body=body,
             namespace=namespace,
             name=name,
             jobset_name=jobset_name,
@@ -835,6 +878,7 @@ async def _reconcile_and_handle_jobset(
     """
     jobset = await _fetch_jobset_or_reconcile(
         custom,
+        body=body,
         namespace=namespace,
         name=name,
         jobset_name=jobset_name,
@@ -1224,6 +1268,13 @@ async def _maybe_recover_terminated_controller(
         job_id,
         body=body,
     )
+    if (body.get("metadata") or {}).get("creationTimestamp"):
+        result = _recover_result_from_disk(
+            body=body,
+            namespace=namespace,
+            job_id=job_id,
+            result=result,
+        )
     if result.downloaded:
         # Go through the durable claim — the in-process _shutdown_sent set
         # above is a fast path, but a peer operator pod (HA) has its own

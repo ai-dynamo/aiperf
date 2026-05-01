@@ -303,7 +303,7 @@ async def _wait_inference(
             )
         per_request = aiohttp.ClientTimeout(total=min(max(interval, 30.0), remaining))
         record = await client.post_request(
-            request_url, headers=headers, data=body, timeout=per_request
+            request_url, body, headers, timeout=per_request
         )
 
         status = record.status

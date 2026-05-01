@@ -1,0 +1,30 @@
+
+
+                                                            NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃                                        Metric ┃          avg ┃       min ┃          max ┃          p99 ┃          p90 ┃        p50 ┃        std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━┩
+│                          Request Latency (ms) │         1.52 │      0.38 │        15.15 │        15.14 │         0.91 │       0.67 │       3.24 │
+│ E2E Output Token Throughput (tokens/sec/user) │   818,779.82 │ 29,587.86 │ 1,550,947.62 │ 1,538,016.47 │ 1,225,887.53 │ 836,612.99 │ 317,976.82 │
+│               Output Sequence Length (tokens) │       551.20 │    440.00 │       653.00 │       649.22 │       634.30 │     562.50 │      62.84 │
+│                Input Sequence Length (tokens) │       550.00 │    550.00 │       550.00 │       550.00 │       550.00 │     550.00 │       0.00 │
+│          Output Token Throughput (tokens/sec) │ 1,022,443.06 │       N/A │          N/A │          N/A │          N/A │        N/A │        N/A │
+│             Request Throughput (requests/sec) │     1,854.93 │       N/A │          N/A │          N/A │          N/A │        N/A │        N/A │
+│                      Request Count (requests) │        64.00 │       N/A │          N/A │          N/A │          N/A │        N/A │        N/A │
+└───────────────────────────────────────────────┴──────────────┴───────────┴──────────────┴──────────────┴──────────────┴────────────┴────────────┘
+
+╭──────────────────────────────────── Token Count Discrepancy Warning ─────────────────────────────────────╮
+│  2 of 64 requests (3.1%) show a difference exceeding 10% between:                                        │
+│    • API-reported usage tokens (from 'usage' field)                                                      │
+│    • Client-computed token counts (from tokenization)                                                    │
+│                                                                                                          │
+│  Possible Causes:                                                                                        │
+│    • Different tokenization methods (API vs client)                                                      │
+│    • API special tokens or preprocessing                                                                 │
+│                                                                                                          │
+│  Investigation Steps:                                                                                    │
+│    1. Review profile_export.jsonl for per-request usage_*_diff_pct values                                │
+│    2. Verify client tokenizer matches the model's tokenizer                                              │
+│    3. Use server token counts: --use-server-token-count (disables client tokenization and diff metrics)  │
+│    4. Adjust threshold: AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD=10                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯

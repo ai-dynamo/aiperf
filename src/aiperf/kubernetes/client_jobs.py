@@ -281,6 +281,7 @@ async def cancel_aiperf_job(api: ApiClient, name: str, namespace: str) -> None:
         namespace=namespace,
         name=name,
         body={"spec": {"cancel": True}},
+        _content_type="application/merge-patch+json",
     )
 
 

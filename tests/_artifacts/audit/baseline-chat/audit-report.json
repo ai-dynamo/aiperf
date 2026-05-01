@@ -1,0 +1,167 @@
+{
+  "case_id": "baseline-chat",
+  "passed": false,
+  "findings": [
+    {
+      "bucket": "tolerance",
+      "field": "request_throughput.avg",
+      "expected": 1854.929714829192,
+      "actual": 2135.059386510034,
+      "reason": "relative diff 13.1% exceeds band 10.0% for stat 'avg'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.avg",
+      "expected": 1.516322453125,
+      "actual": 0.6898681249999999,
+      "reason": "relative diff 54.5% exceeds band 10.0% for stat 'avg'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p1",
+      "expected": 0.38290164,
+      "actual": 0.32744534000000003,
+      "reason": "relative diff 14.5% exceeds band 10.0% for stat 'p1'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p10",
+      "expected": 0.4393838,
+      "actual": 0.39265849999999997,
+      "reason": "relative diff 10.6% exceeds band 10.0% for stat 'p10'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p25",
+      "expected": 0.6281439999999999,
+      "actual": 0.46311674999999997,
+      "reason": "relative diff 26.3% exceeds band 10.0% for stat 'p25'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p50",
+      "expected": 0.6734304999999999,
+      "actual": 0.5692265,
+      "reason": "relative diff 15.5% exceeds band 10.0% for stat 'p50'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p75",
+      "expected": 0.83794675,
+      "actual": 0.67069475,
+      "reason": "relative diff 20.0% exceeds band 10.0% for stat 'p75'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p95",
+      "expected": 10.865638499999939,
+      "actual": 1.6231166499999978,
+      "reason": "relative diff 85.1% exceeds band 25.0% for stat 'p95'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.p99",
+      "expected": 15.14387014,
+      "actual": 2.612682369999998,
+      "reason": "relative diff 82.7% exceeds band 25.0% for stat 'p99'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.max",
+      "expected": 15.148168,
+      "actual": 3.092806,
+      "reason": "relative diff 79.6% exceeds band 25.0% for stat 'max'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "request_latency.std",
+      "expected": 3.2372036172079475,
+      "actual": 0.4745344630603931,
+      "reason": "relative diff 85.3% exceeds band 50.0% for stat 'std'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "output_token_throughput.avg",
+      "expected": 1022443.0554692096,
+      "actual": 1162006.071108086,
+      "reason": "relative diff 12.0% exceeds band 10.0% for stat 'avg'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "benchmark_duration.avg",
+      "expected": 0.034502655,
+      "actual": 0.029975747,
+      "reason": "relative diff 13.1% exceeds band 10.0% for stat 'avg'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.avg",
+      "expected": 818779.8208254927,
+      "actual": 974592.0170759889,
+      "reason": "relative diff 16.0% exceeds band 10.0% for stat 'avg'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.p1",
+      "expected": 29621.052783192183,
+      "actual": 192317.2137447797,
+      "reason": "relative diff 84.6% exceeds band 10.0% for stat 'p1'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.p5",
+      "expected": 89500.25004117207,
+      "actual": 274577.72211093013,
+      "reason": "relative diff 67.4% exceeds band 10.0% for stat 'p5'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.p25",
+      "expected": 671358.0832890533,
+      "actual": 774452.0922098206,
+      "reason": "relative diff 13.3% exceeds band 10.0% for stat 'p25'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.p50",
+      "expected": 836612.9927126995,
+      "actual": 1035687.2021664795,
+      "reason": "relative diff 19.2% exceeds band 10.0% for stat 'p50'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.p75",
+      "expected": 940220.0069585284,
+      "actual": 1174446.3146348496,
+      "reason": "relative diff 19.9% exceeds band 10.0% for stat 'p75'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "e2e_output_token_throughput.min",
+      "expected": 29587.858305331636,
+      "actual": 161342.15983802412,
+      "reason": "relative diff 81.7% exceeds band 25.0% for stat 'min'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "usage_completion_tokens_diff_pct.p1",
+      "expected": 0.1665640599001664,
+      "actual": 0.1881683842115497,
+      "reason": "relative diff 11.5% exceeds band 10.0% for stat 'p1'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "usage_completion_tokens_diff_pct.p5",
+      "expected": 0.6148653359329361,
+      "actual": 0.4746077215102256,
+      "reason": "relative diff 22.8% exceeds band 10.0% for stat 'p5'"
+    },
+    {
+      "bucket": "tolerance",
+      "field": "total_token_throughput.avg",
+      "expected": 2042654.398625265,
+      "actual": 2336288.733688605,
+      "reason": "relative diff 12.6% exceeds band 10.0% for stat 'avg'"
+    }
+  ]
+}

@@ -302,14 +302,27 @@ def _resolve_job_dir(
 ) -> Path:
     """Resolve a run dir under ``<base>/<ns>/<name>/``.
 
-    ``epoch=None`` -> latest run via latest.txt.
-    ``epoch="<digits>"`` -> explicit historical run.
+    Callers serving concrete result files must pass an explicit epoch so the
+    UI/API cannot silently drift to a different run via ``latest.txt``.
     """
     resolved = resolve_run_dir(base_dir, namespace, job_id, epoch=epoch)
     if resolved is None:
         target = f"{namespace}/{job_id}" + (f"/runs/{epoch}" if epoch else "")
         raise HTTPException(404, f"No results for {target}")
     return resolved
+
+
+def _require_epoch_for_results(namespace: str, job_id: str) -> None:
+    """Reject ambiguous non-epoch result lookups.
+
+    Final artifacts are run-scoped, not job-scoped. Requiring
+    ``/runs/<epoch>`` prevents callers from mixing a live job status with the
+    latest persisted run's files.
+    """
+    raise HTTPException(
+        409,
+        f"Run epoch required; use /api/v1/results/{namespace}/{job_id}/runs/<epoch>",
+    )
 
 
 def _validate_epoch(epoch: str) -> None:
@@ -411,19 +424,13 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
 
     @router.get("/results/{namespace}/{job_id}.zip")
     async def download_bundle(namespace: str, job_id: str) -> StreamingResponse:
-        """Download every result file for a job as one uncompressed zip.
-
-        Registered before ``list_job_files`` so FastAPI matches ``.zip``
-        before the bare ``/results/{ns}/{job_id}`` pattern would capture
-        it as part of the job_id.
-        """
-        job_dir = _resolve_job_dir(base_dir, namespace, job_id)
-        return _bundle_response(job_dir, f"{namespace}__{job_id}.zip")
+        """Reject non-epoch zip downloads; callers must pin a run epoch."""
+        _require_epoch_for_results(namespace, job_id)
 
     @router.get("/results/{namespace}/{job_id}", response_model=FileListResponse)
     async def list_job_files(namespace: str, job_id: str) -> FileListResponse:
-        """List files for a specific job."""
-        return await _build_file_list_response(base_dir, namespace, job_id)
+        """Reject non-epoch file listings; callers must pin a run epoch."""
+        _require_epoch_for_results(namespace, job_id)
 
     @router.get(
         "/results/{namespace}/{job_id}/runs",
@@ -466,8 +473,7 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     async def download_file(
         namespace: str, job_id: str, filename: str, request: Request
     ) -> StreamingResponse:
-        """Download a result file with content negotiation."""
-        job_dir = _resolve_job_dir(base_dir, namespace, job_id)
-        return _serve_job_file(request, job_dir, filename)
+        """Reject non-epoch file downloads; callers must pin a run epoch."""
+        _require_epoch_for_results(namespace, job_id)
 
     return router

@@ -372,6 +372,7 @@ class K8sChildJobExecutor(RunExecutor):
             plural="aiperfjobs",
             name=child_name,
             body={"spec": {"cancel": True}},
+            _content_type="application/merge-patch+json",
         )
 
     async def _collect_run_result(

@@ -1000,3 +1000,82 @@ class TestRecordExportResultsProcessorLifecycle:
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.turn_index == 0
             assert "inter_token_latency" in record.metrics
+
+
+class TestRecordExportResultsProcessorFinalize:
+    """End-of-run flush hook — closes the per-record race for sub-second runs."""
+
+    @pytest.mark.asyncio
+    async def test_finalize_flushes_buffered_records_to_disk(
+        self,
+        user_config_records_export: AIPerfConfig,
+        mock_metric_registry: Mock,
+    ):
+        """finalize() must drain the buffer to disk before returning.
+
+        Why: records-manager publishes ProcessRecordsResultMessage as soon as
+        summarize() returns, the controller then writes the readiness marker
+        and the operator's progress poll observes results_exported=True. If
+        the JSONL flush is deferred to the @on_stop _close_file hook, the
+        operator can fetch a partial profile_export.jsonl in the gap between
+        marker write and processor stop. finalize() closes the gap.
+        """
+        mock_display_dict = {"request_latency": MetricValue(value=1.0, unit="ms")}
+        processor = RecordExportResultsProcessor(
+            service_id="records-manager",
+            run=_make_run(user_config_records_export),
+        )
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                for i in range(3):
+                    msg = create_metric_records_message(
+                        x_request_id=f"record-{i}",
+                        conversation_id=f"conv-{i}",
+                        turn_index=i,
+                        request_start_ns=1_000_000_000 + i,
+                        results=[{"metric1": 100}],
+                    )
+                    await processor.process_result(msg)
+
+            await processor.finalize()
+            lines = processor.output_file.read_text().splitlines()
+            assert len(lines) == 3, (
+                "finalize() must flush every buffered record before returning"
+            )
+
+    @pytest.mark.asyncio
+    async def test_finalize_is_idempotent_with_lifecycle_stop(
+        self,
+        user_config_records_export: AIPerfConfig,
+        mock_metric_registry: Mock,
+    ):
+        """finalize() followed by lifecycle stop must not double-write or error.
+
+        records-manager calls finalize() before publishing the result message;
+        the @on_stop _close_file hook later fires when the processor's
+        lifecycle stops. The mixin guards against re-closing a closed handle,
+        but verify here so a regression in that guard is caught.
+        """
+        mock_display_dict = {"request_latency": MetricValue(value=1.0, unit="ms")}
+        processor = RecordExportResultsProcessor(
+            service_id="records-manager",
+            run=_make_run(user_config_records_export),
+        )
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                msg = create_metric_records_message(
+                    x_request_id="record-only",
+                    conversation_id="conv-only",
+                    turn_index=0,
+                    request_start_ns=1_000_000_000,
+                    results=[{"metric1": 1}],
+                )
+                await processor.process_result(msg)
+            await processor.finalize()
+        # Lifecycle exit ran @on_stop _close_file again; file must remain valid.
+        lines = processor.output_file.read_text().splitlines()
+        assert len(lines) == 1

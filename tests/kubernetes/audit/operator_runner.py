@@ -77,7 +77,14 @@ class OperatorAuditRunner:
         dest_dir: Path,
         kubeconfig: str | None,
     ) -> None:
-        """Shell out to ``aiperf kube results`` with the cluster's kubeconfig."""
+        """Shell out to ``aiperf kube results`` against the test cluster.
+
+        The audit suite already talks to Kubernetes through a ``KubectlClient``
+        pinned to an explicit kind/minikube context. Reuse those credentials
+        here; otherwise the shell-out falls back to the user's ambient
+        kubectl context (often DGX), and the lookup fails with
+        "No AIPerfJob ... found" even though the CR exists on the test cluster.
+        """
         dest_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             "aiperf",
@@ -90,9 +97,13 @@ class OperatorAuditRunner:
             str(dest_dir),
             "--all",
         ]
+        if self.deployer.kubectl.context:
+            cmd.extend(["--kube-context", self.deployer.kubectl.context])
         env = dict(os.environ)
         if kubeconfig:
             env["KUBECONFIG"] = kubeconfig
+        elif self.deployer.kubectl.kubeconfig:
+            env["KUBECONFIG"] = self.deployer.kubectl.kubeconfig
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

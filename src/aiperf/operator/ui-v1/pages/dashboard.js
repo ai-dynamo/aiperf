@@ -3,7 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { jobs, clusterInfo } from '../lib/state.js';
 import { phaseColor, modelColor, palette, colors } from '../lib/theme.js';
-import { navigate } from '../lib/router.js';
+import { buildJobPath, navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { NsPill, ModelPill } from '../components/pills.js';
@@ -42,6 +42,67 @@ function findMin(jobList, field) {
 }
 
 // --- Section 1: StatusBar ---
+//
+// Material-style KPI tiles mirroring the cluster banner layout: each
+// tile gets an outlined SVG icon, label, big number, and a sub-line of
+// chips/dots. The full bar is one card with a flex grid that wraps to
+// 2 columns on narrow screens.
+
+function StatusIcon({ kind }) {
+  // Tiny outlined SVGs tuned to 24\u00d724, 1.8 stroke \u2014 same visual idiom as
+  // the ClusterStatsBanner. ``aria-hidden`` because the surrounding tile
+  // already carries the label text for screen readers.
+  if (kind === 'running') {
+    return html`
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
+      </svg>
+    `;
+  }
+  if (kind === 'completed') {
+    return html`
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <polyline points="8,12.5 11,15.5 16,9.5" />
+      </svg>
+    `;
+  }
+  if (kind === 'failed') {
+    return html`
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M10.3 3.5 L1.5 19 a2 2 0 0 0 1.7 3 h17.6 a2 2 0 0 0 1.7 -3 L13.7 3.5 a2 2 0 0 0 -3.4 0 z" />
+        <line x1="12" y1="10" x2="12" y2="14" />
+        <circle cx="12" cy="17.2" r="0.6" fill="currentColor" stroke="none" />
+      </svg>
+    `;
+  }
+  if (kind === 'best') {
+    return html`
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 21 h8" />
+        <path d="M12 17 v4" />
+        <path d="M7 4 h10 v3 a5 5 0 0 1 -10 0 z" />
+        <path d="M17 5 h3 v2 a3 3 0 0 1 -3 3" />
+        <path d="M7 5 h-3 v2 a3 3 0 0 0 3 3" />
+        <path d="M9 13 a4 4 0 0 0 6 0" />
+      </svg>
+    `;
+  }
+  if (kind === 'cluster') {
+    return html`
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="5" rx="1.2" />
+        <rect x="3" y="10" width="18" height="5" rx="1.2" />
+        <rect x="3" y="16" width="18" height="4" rx="1.2" />
+        <circle cx="6.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
+        <circle cx="6.5" cy="12.5" r="0.8" fill="currentColor" stroke="none" />
+        <circle cx="6.5" cy="18" r="0.8" fill="currentColor" stroke="none" />
+      </svg>
+    `;
+  }
+  return null;
+}
 
 function StatusBar({ allJobs, cluster, best }) {
   const running = allJobs.filter(j => {
@@ -56,23 +117,83 @@ function StatusBar({ allJobs, cluster, best }) {
     const p = (j.phase ?? '').toLowerCase();
     return p === 'failed' || p === 'error';
   }).length;
-  const gpus = cluster?.gpus ?? '?';
-  const nodes = cluster?.nodes ?? '?';
+  const total = allJobs.length;
+  const failPct = total > 0 ? (failed / total) * 100 : 0;
+  const gpusUsed = cluster?.gpus_used ?? null;
+  const gpusTotal = cluster?.gpus ?? null;
+  const nodes = cluster?.nodes ?? null;
 
   return html`
-    <div class="status-bar">
-      <div class="status-item"><div class="status-dot${running > 0 ? ' live' : ''}"></div> <span class="status-val">${fmtInt(running)}</span> running</div>
-      <span class="status-sep">\u00b7</span>
-      <div class="status-item"><span class="status-val">${fmtInt(completed)}</span> completed</div>
-      ${failed > 0 ? html`<span class="status-sep">\u00b7</span><div class="status-item"><span class="status-val" style="color:var(--red)">${fmtInt(failed)}</span> failed</div>` : null}
-      <span class="status-sep">\u00b7</span>
-      <div class="status-item"><span class="status-val">${gpus}</span> GPUs</div>
-      <span class="status-sep">\u00b7</span>
-      <div class="status-item"><span class="status-val">${nodes}</span> nodes</div>
-      ${best.value != null ? html`
-        <span class="status-sep">\u00b7</span>
-        <div class="status-item">Best: <span class="status-val">${fmtThroughput(best.value)}</span> req/s ${best.name ? html`<span style="color:var(--muted)">(${best.name})</span>` : null}</div>
-      ` : null}
+    <div class="status-bar status-bar--tiles" data-testid="dashboard-status-bar">
+      <div class=${'status-tile' + (running > 0 ? ' status-tile--live' : '')} title="Jobs currently running, initializing, or pending">
+        <div class="status-tile__icon status-tile__icon--accent"><${StatusIcon} kind="running" /></div>
+        <div class="status-tile__body">
+          <div class="status-tile__label">Running</div>
+          <div class="status-tile__value">
+            <span class=${'status-tile__num' + (running > 0 ? ' status-tile__num--accent' : ' status-tile__num--total')}>${fmtInt(running)}</span>
+            ${running > 0 && html`<span class="status-tile__live-dot" aria-hidden="true"></span>`}
+          </div>
+          <div class="status-tile__sub">${total > 0 ? `of ${total} total` : 'no jobs yet'}</div>
+        </div>
+      </div>
+
+      <div class="status-tile" title="Completed benchmark runs">
+        <div class="status-tile__icon status-tile__icon--ok"><${StatusIcon} kind="completed" /></div>
+        <div class="status-tile__body">
+          <div class="status-tile__label">Completed</div>
+          <div class="status-tile__value">
+            <span class="status-tile__num status-tile__num--ok">${fmtInt(completed)}</span>
+          </div>
+          <div class="status-tile__sub">${total > 0 ? `${Math.round((completed / total) * 100)}% of total` : '\u2014'}</div>
+        </div>
+      </div>
+
+      <div class="status-tile" title="Jobs that ended in a failure phase">
+        <div class=${'status-tile__icon ' + (failed > 0 ? 'status-tile__icon--bad' : 'status-tile__icon--neutral')}><${StatusIcon} kind="failed" /></div>
+        <div class="status-tile__body">
+          <div class="status-tile__label">Failed</div>
+          <div class="status-tile__value">
+            <span class=${'status-tile__num' + (failed > 0 ? ' status-tile__num--bad' : ' status-tile__num--total')}>${fmtInt(failed)}</span>
+          </div>
+          <div class="status-tile__sub">
+            ${failed > 0
+              ? html`<span class="status-tile__chip status-tile__chip--bad">${failPct.toFixed(1)}% fail rate</span>`
+              : 'no failures'}
+          </div>
+        </div>
+      </div>
+
+      ${gpusTotal != null && html`
+        <div class="status-tile" title="GPUs in use across the cluster">
+          <div class="status-tile__icon status-tile__icon--neutral"><${StatusIcon} kind="cluster" /></div>
+          <div class="status-tile__body">
+            <div class="status-tile__label">Cluster</div>
+            <div class="status-tile__value">
+              <span class="status-tile__num status-tile__num--total">${fmtInt(gpusUsed ?? 0)}</span>
+              <span class="status-tile__num-sep">/</span>
+              <span class="status-tile__num status-tile__num--total">${fmtInt(gpusTotal)}</span>
+              <span class="status-tile__unit">GPUs</span>
+            </div>
+            <div class="status-tile__sub">${nodes != null ? `across ${fmtInt(nodes)} node${nodes === 1 ? '' : 's'}` : ''}</div>
+          </div>
+        </div>
+      `}
+
+      ${best?.value != null && html`
+        <div class="status-tile" title="Highest request throughput observed across all completed jobs">
+          <div class="status-tile__icon status-tile__icon--gold"><${StatusIcon} kind="best" /></div>
+          <div class="status-tile__body">
+            <div class="status-tile__label">Best Run</div>
+            <div class="status-tile__value">
+              <span class="status-tile__num status-tile__num--gold">${fmtThroughput(best.value)}</span>
+              <span class="status-tile__unit">req/s</span>
+            </div>
+            <div class="status-tile__sub" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">
+              ${best.name ?? '\u2014'}
+            </div>
+          </div>
+        </div>
+      `}
     </div>
   `;
 }
@@ -188,7 +309,10 @@ function ThroughputLatencyScatter({ completedJobs }) {
   return html`
     <div class="card" style="margin-bottom: var(--space-6)">
       <div class="scatter-header">
-        <div class="card-title" style="margin:0">Throughput vs Latency</div>
+        <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+          <div class="card-title" style="margin:0">Performance Scatter</div>
+          <div style="font-size:18px;font-weight:600;color:${palette.text};line-height:1.2">Throughput vs Latency</div>
+        </div>
         <div class="axis-toggles">
           <button class="nav-tab${axisMode === 'tps_p99' ? ' active' : ''}" onclick=${() => setAxisMode('tps_p99')}>TPS / P99</button>
           <button class="nav-tab${axisMode === 'tps_ttft' ? ' active' : ''}" onclick=${() => setAxisMode('tps_ttft')}>TPS / TTFT</button>
@@ -379,7 +503,7 @@ export function Dashboard() {
       </div>
 
       <!-- Section 4: Active Jobs -->
-      <div class="section-header">
+      <div class="section-header" style="margin-top:var(--space-6)">
         <span class="section-title">Active Jobs</span>
         <span class="text-dim" style="font-size: var(--font-size-sm)">
           ${running.length} job${running.length !== 1 ? 's' : ''}
@@ -389,7 +513,11 @@ export function Dashboard() {
       ${running.length === 0
         ? html`
           <div class="empty-state card">
-            <p class="text-dim">No active jobs. Start a benchmark with <code>aiperf kube run</code>.</p>
+            <p class="text-dim" style="margin:0">
+              ${completed.length > 0
+                ? html`No active jobs. ${completed.length} completed run${completed.length === 1 ? '' : 's'} below — start another with <code>aiperf kube run</code>.`
+                : html`No active jobs. Start a benchmark with <code>aiperf kube run</code>.`}
+            </p>
           </div>
         `
         : running.map(job => {
@@ -414,7 +542,7 @@ export function Dashboard() {
               { label: 'Reqs', value: job.totalRequests, fmt: v => fmtInt(v), unit: '', help: 'Total requests issued so far in this run' },
             ].filter(m => m.value != null);
 
-            const goToJob = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
+            const goToJob = () => navigate(buildJobPath(job));
             return html`
               <div
                 key=${job.namespace + '/' + job.name}
@@ -492,7 +620,7 @@ export function Dashboard() {
           <span class="text-dim" style="font-size:var(--font-size-sm)">${failed.length}</span>
         </div>
         ${failed.map(job => {
-          const goToFailed = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
+          const goToFailed = () => navigate(buildJobPath(job));
           return html`
             <div
               key=${job.namespace + '/' + job.name}
@@ -522,18 +650,18 @@ export function Dashboard() {
 
       <!-- Section 6: Leaderboard Preview -->
       ${top5.length > 0 ? html`
-        <div class="section-header" style="margin-top:24px">
+        <div class="section-header" style="margin-top:var(--space-6)">
           <div class="section-title">Leaderboard</div>
           <button class="nav-tab" onclick=${() => navigate('/leaderboard')} style="font-size:12px;padding:4px 10px;">View All \u2192</button>
         </div>
         <table class="compare-table">
           <thead>
             <tr>
-              <th style="width:40px">#</th>
+              <th style="width:40px;text-align:right">#</th>
               <th>Configuration</th>
               <th style="width:200px">Throughput</th>
               <th style="width:200px">Latency P99</th>
-              <th>TTFT</th>
+              <th style="text-align:right">TTFT</th>
             </tr>
           </thead>
           <tbody>
@@ -543,7 +671,7 @@ export function Dashboard() {
               const tpsPct = maxThroughput > 0 ? (tpsVal / maxThroughput) * 100 : 0;
               const latPct = maxLatency > 0 ? (latVal / maxLatency) * 100 : 0;
               const mColor = modelColor(job.model);
-              const goToLb = () => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name));
+              const goToLb = () => navigate(buildJobPath(job));
 
               return html`
                 <tr
@@ -584,7 +712,7 @@ export function Dashboard() {
                       <span class="bar-val">${fmtNumber(latVal, 0)} ms</span>
                     </div>
                   </td>
-                  <td>${job.ttftMs != null ? fmtNumber(job.ttftMs, 0) + ' ms' : '---'}</td>
+                  <td style="text-align:right;font-variant-numeric:tabular-nums">${job.ttftMs != null ? fmtNumber(job.ttftMs, 0) + ' ms' : '---'}</td>
                 </tr>
               `;
             })}

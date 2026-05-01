@@ -1,0 +1,25 @@
+Metric,avg,sum,min,max,p1,p5,p10,p25,p50,p75,p90,p95,p99,std
+E2E Output Token Throughput (tokens/sec/user),818779.82,52401908.53,29587.86,1550947.62,29621.05,89500.25,547566.82,671358.08,836612.99,940220.01,1225887.53,1425939.30,1538016.47,317976.82
+Input Sequence Length (tokens),550.00,35200.00,550.00,550.00,550.00,550.00,550.00,550.00,550.00,550.00,550.00,550.00,550.00,0.00
+Output Sequence Length (tokens),551.20,35277.00,440.00,653.00,440.00,450.35,459.90,498.50,562.50,601.00,634.30,644.55,649.22,62.84
+Output Token Count (tokens),551.20,35277.00,440.00,653.00,440.00,450.35,459.90,498.50,562.50,601.00,634.30,644.55,649.22,62.84
+Request Latency (ms),1.52,97.04,0.38,15.15,0.38,0.40,0.44,0.63,0.67,0.84,0.91,10.87,15.14,3.24
+Usage Completion Tokens (tokens),550.30,35219.00,379.00,675.00,415.54,444.05,465.10,509.50,538.00,601.25,653.00,656.70,664.29,67.33
+Usage Completion Diff % (%),3.53,225.66,0.17,17.97,0.17,0.61,0.68,1.24,2.77,5.04,6.54,8.12,13.26,3.04
+Usage Prompt Tokens (tokens),549.14,35145.00,455.00,610.00,483.35,510.60,519.00,532.75,552.50,567.00,579.70,581.85,595.51,25.56
+Usage Prompt Diff (%),3.61,231.09,0.00,17.27,0.23,0.36,0.60,1.27,3.09,5.32,6.33,7.89,13.26,2.93
+Usage Total Tokens (tokens),1099.44,70364.00,834.00,1263.00,916.53,984.20,1007.00,1050.75,1093.00,1153.25,1218.10,1230.50,1257.96,81.83
+
+Metric,Value
+Benchmark Duration (sec),0.03
+Output Token Throughput (tokens/sec),1022443.06
+Request Count,64.00
+Request Throughput (requests/sec),1854.93
+Total Input Sequence Length (tokens),35200.00
+Total Output Sequence Length (tokens),35277.00
+Total Output Tokens (tokens),35277.00
+Total Token Throughput (tokens/sec),2042654.40
+Total Usage Completion Tokens (tokens),35219.00
+Total Usage Prompt Tokens (tokens),35145.00
+Total Usage Total Tokens (tokens),70364.00
+Usage Discrepancy Count,2.00

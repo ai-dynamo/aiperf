@@ -190,3 +190,30 @@ def test_synthetic_dataset_emits_entries_when_conversation_num_set():
     )
     out = build_dataset(user)
     assert out["entries"] == 42
+
+
+def test_build_dataset_synthetic_carries_video_audio_codec_and_depth():
+    user = UserConfig.model_validate(
+        {
+            "input": {
+                "video": {
+                    "duration": 2.0,
+                    "audio": {
+                        "sample_rate": 16000,
+                        "channels": 2,
+                        "codec": "aac",
+                        "depth": 16,
+                    },
+                }
+            }
+        }
+    )
+
+    out = build_dataset(user)
+
+    assert out["video"]["audio"] == {
+        "sample_rate": 16000,
+        "channels": 2,
+        "codec": "aac",
+        "depth": 16,
+    }

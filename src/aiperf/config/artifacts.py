@@ -16,7 +16,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    PrivateAttr,
     model_validator,
 )
 
@@ -29,6 +28,7 @@ from aiperf.common.enums import (
 from aiperf.config._base import BaseConfig
 from aiperf.config.phases import _normalize_duration
 from aiperf.config.user_files import UserFile
+from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 __all__ = [
     "ArtifactsConfig",
@@ -82,7 +82,7 @@ class ArtifactsConfig(BaseConfig):
     records: Annotated[
         list[RecordsExportFormat] | Literal[False],
         Field(
-            default=False,
+            default_factory=lambda: ["jsonl"],
             description="Per-request records export formats. "
             "Options: jsonl, csv. Set to false to disable.",
         ),
@@ -139,8 +139,9 @@ class ArtifactsConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="CLI command used to run the benchmark. "
-            "Populated automatically when running via CLI.",
+            description="CLI command used to run the benchmark, recorded in artifacts "
+            "for reproducibility. [auto-populated by the CLI runner; do not set in a "
+            "CR spec — any user value is overwritten.]",
         ),
     ]
 
@@ -148,8 +149,9 @@ class ArtifactsConfig(BaseConfig):
         str,
         Field(
             default_factory=lambda: __import__("uuid").uuid4().hex,
-            description="Unique identifier for this benchmark run, "
-            "used to correlate artifacts across export formats. Auto-generated if absent.",
+            description="Unique identifier for this benchmark run, used to correlate "
+            "artifacts across export formats. [auto-generated; do not set in a CR spec "
+            "unless you have a specific reason to override the UUID.]",
         ),
     ]
 
@@ -426,10 +428,11 @@ class ServerMetricsConfig(BaseConfig):
 
 class GpuTelemetryConfig(BaseConfig):
     """
-    GPU telemetry configuration for DCGM metrics collection.
+    GPU telemetry configuration for live or replayed GPU metrics collection.
 
-    Collects GPU metrics (power, utilization, temperature, memory usage)
-    from NVIDIA DCGM exporter endpoints.
+    Collects GPU metrics through DCGM exporter endpoints by default; the
+    collector field can switch collection to local PyNVML, and mode controls
+    summary vs. realtime dashboard display.
 
     Accepts shorthand forms:
         - String URL: "http://localhost:9400/metrics"
@@ -474,8 +477,21 @@ class GpuTelemetryConfig(BaseConfig):
         ),
     ]
 
-    # Private attribute for mutable telemetry mode (used by dashboard for dynamic switching)
-    _mode: GPUTelemetryMode = PrivateAttr(default=GPUTelemetryMode.SUMMARY)
+    collector: Annotated[
+        GPUTelemetryCollectorType,
+        Field(
+            default=GPUTelemetryCollectorType.DCGM,
+            description="GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for local PyNVML collection.",
+        ),
+    ]
+
+    mode: Annotated[
+        GPUTelemetryMode,
+        Field(
+            default=GPUTelemetryMode.SUMMARY,
+            description="GPU telemetry display mode. Summary emits aggregate console output; realtime_dashboard enables live dashboard updates.",
+        ),
+    ]
 
     @model_validator(mode="before")
     @classmethod
@@ -499,13 +515,3 @@ class GpuTelemetryConfig(BaseConfig):
             data["urls"] = [url] if isinstance(url, str) else url
 
         return data
-
-    @property
-    def mode(self) -> GPUTelemetryMode:
-        """Get the GPU telemetry display mode."""
-        return self._mode
-
-    @mode.setter
-    def mode(self, value: GPUTelemetryMode) -> None:
-        """Set the GPU telemetry display mode."""
-        self._mode = value

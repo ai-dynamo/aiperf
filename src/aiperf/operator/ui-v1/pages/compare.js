@@ -1,7 +1,8 @@
 import { html } from 'htm/preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
+import { query, setQuery } from '../lib/router.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
@@ -259,6 +260,27 @@ export function Compare() {
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState(null);
 
+  // Chip-strip overflow collapse: above 6 selections we hide the tail behind
+  // a "+N more" pill so the strip doesn't wrap into a wall of chips.
+  const [chipsExpanded, setChipsExpanded] = useState(false);
+
+  // ``?cluster=<ns> · <model>`` deep-link from the job-detail "+N similar
+  // runs" chip. Ports the legacy ui's IdentityStrip → Compare flow (see
+  // src/aiperf/operator/ui/views/run.js::SimilarRunsLink). The /results
+  // endpoint now carries ``model`` directly on each entry (sourced
+  // server-side from ``job_spec.json``), so we filter ``storedJobs``
+  // without any client-side cross-reference. Comparability is count-only
+  // — we never aggregate metrics across independent benchmarks.
+  const deepLinkAppliedRef = useRef(false);
+
+  // When the deep-link lands, we hold onto the originating cluster label so
+  // the UI can show "Comparing all runs in cluster <ns> · <model>" context
+  // (matched > 0) or "no stored runs" guidance (matched === 0). Cleared the
+  // moment the user edits selection, so the URL and visible state never lie
+  // to each other.
+  const [activeClusterLabel, setActiveClusterLabel] = useState(null);
+  const [unmatchedClusterLabel, setUnmatchedClusterLabel] = useState(null);
+
   useEffect(() => {
     api
       .listResults()
@@ -272,6 +294,69 @@ export function Compare() {
       });
   }, []);
 
+  // Apply the ?cluster= deep-link once stored-jobs lands.
+  useEffect(() => {
+    if (deepLinkAppliedRef.current) return;
+    if (jobsLoading) return;
+    const cluster = query.value.cluster;
+    if (!cluster) return;
+    // Same separator the legacy ui writes: "<ns> · <model>" (spaced
+    // middle-dot). The router hands the value back already URL-decoded.
+    const sep = ' · ';
+    const idx = cluster.indexOf(sep);
+    if (idx < 0) {
+      deepLinkAppliedRef.current = true;
+      return;
+    }
+    const ns = cluster.slice(0, idx);
+    const model = cluster.slice(idx + sep.length);
+    if (!ns || !model) {
+      deepLinkAppliedRef.current = true;
+      return;
+    }
+    const matches = storedJobs
+      .filter((j) => j.namespace === ns && j.model === model)
+      .map((j) => compositeKey(j));
+    deepLinkAppliedRef.current = true;
+    if (matches.length === 0) {
+      // Tell the user their deep-link wasn't ignored — the cluster simply
+      // has no stored runs yet. Banner renders above the normal empty-state.
+      setUnmatchedClusterLabel(cluster);
+      return;
+    }
+    setActiveClusterLabel(cluster);
+    setSelectedKeys(matches);
+    if (matches.length >= 2) {
+      // Auto-trigger the compare so the user lands on a populated view
+      // instead of having to click Compare. Defer to next tick so the
+      // setSelectedKeys above flushes before runCompareWithKeys runs.
+      // Track the timeout so the effect's cleanup can cancel it if the
+      // component unmounts before the tick fires (avoids setState on
+      // unmounted component during fast nav-away/nav-back).
+      const id = setTimeout(() => runCompareWithKeys(matches), 0);
+      return () => clearTimeout(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedJobs, jobsLoading]);
+
+  // Extracted so the deep-link effect can drive the API call without
+  // depending on the local handleCompare closure (which reads state).
+  async function runCompareWithKeys(keys) {
+    if (keys.length < 2) return;
+    setComparing(true);
+    setCompareError(null);
+    setCompareData(null);
+    try {
+      const bareJobIds = keys.map((k) => splitKey(k).jobId);
+      const resp = await api.compareJobs(bareJobIds);
+      setCompareData(resp);
+    } catch (err) {
+      setCompareError(err.message);
+    } finally {
+      setComparing(false);
+    }
+  }
+
   function compositeKey(job) {
     const id = job.job_id ?? '';
     const ns = job.namespace ?? '';
@@ -283,13 +368,25 @@ export function Compare() {
     return idx < 0 ? { ns: '', jobId: key } : { ns: key.slice(0, idx), jobId: key.slice(idx + 1) };
   }
 
+  // Drop the deep-link pill + URL ?cluster= param the moment the user takes
+  // any selection action. Otherwise the pill claims "Comparing all runs in
+  // cluster X" while the actual selection has been edited — confusing, and
+  // a back/refresh would re-apply the stale cluster.
+  function clearDeepLinkContext() {
+    if (activeClusterLabel) setActiveClusterLabel(null);
+    if (unmatchedClusterLabel) setUnmatchedClusterLabel(null);
+    if (query.value.cluster) setQuery({ cluster: '' });
+  }
+
   function toggleJob(key) {
+    clearDeepLinkContext();
     setSelectedKeys((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
   }
 
   function clearSelection() {
+    clearDeepLinkContext();
     setSelectedKeys([]);
     setCompareData(null);
     setCompareError(null);
@@ -300,6 +397,7 @@ export function Compare() {
   // "0 selected" and "see Pareto" — without it, first-time users have to hunt
   // for jobs by name before they can see anything.
   function selectRecent(n) {
+    clearDeepLinkContext();
     const sorted = [...storedJobs].sort((a, b) => {
       const ta = a?.start_time ? Date.parse(a.start_time) : 0;
       const tb = b?.start_time ? Date.parse(b.start_time) : 0;
@@ -567,45 +665,124 @@ export function Compare() {
 
         <!-- Right: Results -->
         <div>
-          ${selectedKeys.length > 0 && html`
-            <div style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4)">
-              ${selectedKeys.map((key, idx) => html`
-                <span
-                  key=${key}
-                  style=${'display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); font-family: var(--font-mono);'
-                    + ' background: ' + JOB_COLORS[idx % JOB_COLORS.length] + '22;'
-                    + ' color: ' + JOB_COLORS[idx % JOB_COLORS.length] + ';'
-                    + ' border: 1px solid ' + JOB_COLORS[idx % JOB_COLORS.length] + '44;'}
-                >
-                  ${splitKey(key).jobId}
-                  ${(() => {
-                    const m = meta[key];
-                    if (!m || !m.gpu_count || m.gpu_count <= 0) return null;
-                    const fam = gpuFamily(m.gpu_name) || m.gpu_name || 'GPU';
-                    return html`
-                      <span style="font-family: var(--font-mono); opacity: 0.85; padding-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1">
-                        ${m.gpu_count}× ${fam}
-                      </span>
-                    `;
-                  })()}
+          ${activeClusterLabel && html`
+            <div
+              data-testid="compare-cluster-pill"
+              style="display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); margin-bottom: var(--space-3); border-radius: 999px; background: var(--surface0); border: 1px solid var(--mauve); color: var(--subtext1); font-size: var(--font-size-xs)"
+            >
+              <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--mauve)"></span>
+              <span>Comparing all runs in cluster <span style="font-family: var(--font-mono); color: var(--text)">${activeClusterLabel}</span></span>
+              <span
+                onclick=${clearSelection}
+                onkeydown=${(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    clearSelection();
+                  }
+                }}
+                role="button"
+                tabindex="0"
+                aria-label="Clear deep-link cluster filter"
+                title="Clear cluster filter and selection"
+                style="cursor: pointer; opacity: 0.7; padding: 0 var(--space-1); border-left: 1px solid var(--surface1); margin-left: var(--space-1); line-height: 1; outline-offset: 2px"
+              >✕</span>
+            </div>
+          `}
+
+          ${unmatchedClusterLabel && html`
+            <div
+              class="card"
+              data-testid="compare-cluster-unmatched"
+              style="border-color: var(--peach); margin-bottom: var(--space-3); padding: var(--space-3); display: flex; align-items: flex-start; gap: var(--space-3)"
+            >
+              <div style="flex: 1; font-size: var(--font-size-sm)">
+                <div style="color: var(--peach); font-weight: 600; margin-bottom: var(--space-1)">Cluster has no stored runs</div>
+                <div class="text-dim">
+                  Cluster <span style="font-family: var(--font-mono); color: var(--text)">${unmatchedClusterLabel}</span> has no stored runs yet — submit one to compare.
+                </div>
+              </div>
+              <span
+                onclick=${() => { setUnmatchedClusterLabel(null); if (query.value.cluster) setQuery({ cluster: '' }); }}
+                role="button"
+                tabindex="0"
+                aria-label="Dismiss cluster banner"
+                title="Dismiss"
+                style="cursor: pointer; opacity: 0.7; padding: 0 var(--space-1); line-height: 1; color: var(--subtext0)"
+              >✕</span>
+            </div>
+          `}
+
+          ${selectedKeys.length > 0 && (() => {
+            // Collapse threshold: keep 5 inline + "+N more" pill once we have
+            // 7+ selections. At 6 we still render every chip — going from
+            // 5 chips to "5 + (+1 more)" would be net-noisier than just
+            // showing the sixth.
+            const COLLAPSE_AT = 6;
+            const VISIBLE_WHEN_COLLAPSED = 5;
+            const collapsed = selectedKeys.length > COLLAPSE_AT && !chipsExpanded;
+            const visibleKeys = collapsed
+              ? selectedKeys.slice(0, VISIBLE_WHEN_COLLAPSED)
+              : selectedKeys;
+            const overflowCount = selectedKeys.length - visibleKeys.length;
+            return html`
+              <div style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4)" data-testid="compare-chips-overflow">
+                ${visibleKeys.map((key, idx) => html`
                   <span
-                    onclick=${() => toggleJob(key)}
+                    key=${key}
+                    style=${'display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); font-family: var(--font-mono);'
+                      + ' background: ' + JOB_COLORS[idx % JOB_COLORS.length] + '22;'
+                      + ' color: ' + JOB_COLORS[idx % JOB_COLORS.length] + ';'
+                      + ' border: 1px solid ' + JOB_COLORS[idx % JOB_COLORS.length] + '44;'}
+                  >
+                    ${splitKey(key).jobId}
+                    ${(() => {
+                      const m = meta[key];
+                      if (!m || !m.gpu_count || m.gpu_count <= 0) return null;
+                      const fam = gpuFamily(m.gpu_name) || m.gpu_name || 'GPU';
+                      return html`
+                        <span style="font-family: var(--font-mono); opacity: 0.85; padding-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1">
+                          ${m.gpu_count}× ${fam}
+                        </span>
+                      `;
+                    })()}
+                    <span
+                      onclick=${() => toggleJob(key)}
+                      onkeydown=${(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleJob(key);
+                        }
+                      }}
+                      title=${'Remove ' + splitKey(key).jobId + ' from comparison'}
+                      aria-label=${'Remove ' + splitKey(key).jobId + ' from comparison'}
+                      role="button"
+                      tabindex="0"
+                      style="cursor: pointer; opacity: 0.7; font-size: var(--font-size-sm); padding: 0 var(--space-1); margin-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1; outline-offset: 2px"
+                    >✕</span>
+                  </span>
+                `)}
+                ${(collapsed || (chipsExpanded && selectedKeys.length > COLLAPSE_AT)) && html`
+                  <span
+                    onclick=${() => setChipsExpanded((v) => !v)}
                     onkeydown=${(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        toggleJob(key);
+                        setChipsExpanded((v) => !v);
                       }
                     }}
-                    title=${'Remove ' + splitKey(key).jobId + ' from comparison'}
-                    aria-label=${'Remove ' + splitKey(key).jobId + ' from comparison'}
                     role="button"
                     tabindex="0"
-                    style="cursor: pointer; opacity: 0.7; font-size: var(--font-size-sm); padding: 0 var(--space-1); margin-left: var(--space-1); border-left: 1px solid currentColor; line-height: 1; outline-offset: 2px"
-                  >✕</span>
-                </span>
-              `)}
-            </div>
-          `}
+                    data-testid="compare-chips-toggle"
+                    aria-label=${collapsed ? 'Show ' + overflowCount + ' more selected runs' : 'Show fewer selected runs'}
+                    title=${collapsed ? 'Show ' + overflowCount + ' more' : 'Show fewer'}
+                    style="display: inline-flex; align-items: center; padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); font-family: var(--font-mono); cursor: pointer; background: var(--surface0); color: var(--subtext0); border: 1px solid var(--surface1); outline-offset: 2px"
+                  >
+                    ${collapsed ? '+' + overflowCount + ' more' : 'Show less'}
+                  </span>
+                `}
+              </div>
+            `;
+          })()}
 
           ${compareError && html`
             <div class="card" style="border-color: var(--error); color: var(--error); margin-bottom: var(--space-4)">

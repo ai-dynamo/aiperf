@@ -100,11 +100,12 @@ class ConditionManager:
           (not Python bool) to match the kubectl-visible serialized form.
     """
 
-    __slots__ = ("_conditions",)
+    __slots__ = ("_conditions", "_dirty")
 
     def __init__(self) -> None:
         """Initialize an empty condition manager."""
         self._conditions: dict[ConditionType, dict[str, Any]] = {}
+        self._dirty = False
 
     def set_condition(
         self,
@@ -137,6 +138,7 @@ class ConditionManager:
             "message": message,
             "lastTransitionTime": timestamp,
         }
+        self._dirty = True
 
     def set_true(
         self, condition_type: ConditionType, reason: str, message: str = ""
@@ -180,6 +182,11 @@ class ConditionManager:
             List of condition dicts suitable for Kubernetes status.
         """
         return list(self._conditions.values())
+
+    @property
+    def dirty(self) -> bool:
+        """Return whether this manager changed any condition this tick."""
+        return self._dirty
 
     def apply_to_patch(self, patch: kopf.Patch) -> None:
         """Apply conditions to a kopf status patch.
@@ -334,7 +341,7 @@ class StatusBuilder:
         return self._patch.status.get("phase")
 
     def finalize(self) -> None:
-        """Apply conditions to the patch. Call this last."""
+        """Apply changed conditions to the patch. Call this last."""
         conditions_list = self._conditions.to_list()
-        if conditions_list:
+        if conditions_list and self._conditions.dirty:
             self._patch.status["conditions"] = conditions_list

@@ -293,6 +293,17 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output.
 <br/>_Default: `0.0`_
 
+#### `--ready-check-mode`, `--ready-check-mode` `<str>`
+
+How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends a canned one-token inference request, and 'both' runs the models check before inference.
+<br/>_Default: `inference`_
+
+#### `--ready-check-interval`, `--ready-check-interval` `<float>`
+
+Seconds between endpoint readiness probe attempts.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
+
 #### `--api-key`, `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
@@ -1485,6 +1496,17 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output.
 <br/>_Default: `0.0`_
 
+#### `--ready-check-mode`, `--ready-check-mode` `<str>`
+
+How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends a canned one-token inference request, and 'both' runs the models check before inference.
+<br/>_Default: `inference`_
+
+#### `--ready-check-interval`, `--ready-check-interval` `<float>`
+
+Seconds between endpoint readiness probe attempts.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
+
 #### `--api-key`, `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
@@ -2542,6 +2564,17 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output.
 <br/>_Default: `0.0`_
+
+#### `--ready-check-mode`, `--ready-check-mode` `<str>`
+
+How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends a canned one-token inference request, and 'both' runs the models check before inference.
+<br/>_Default: `inference`_
+
+#### `--ready-check-interval`, `--ready-check-interval` `<float>`
+
+Seconds between endpoint readiness probe attempts.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
 
 #### `--api-key`, `--api-key` `<str>`
 
@@ -3615,6 +3648,17 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output.
 <br/>_Default: `0.0`_
+
+#### `--ready-check-mode`, `--ready-check-mode` `<str>`
+
+How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends a canned one-token inference request, and 'both' runs the models check before inference.
+<br/>_Default: `inference`_
+
+#### `--ready-check-interval`, `--ready-check-interval` `<float>`
+
+Seconds between endpoint readiness probe attempts.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
 
 #### `--api-key`, `--api-key` `<str>`
 
@@ -4699,6 +4743,17 @@ Maximum time in seconds to wait for each HTTP request to complete, including con
 
 Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output.
 <br/>_Default: `0.0`_
+
+#### `--ready-check-mode`, `--ready-check-mode` `<str>`
+
+How readiness probes the endpoint: 'models' checks /v1/models, 'inference' sends a canned one-token inference request, and 'both' runs the models check before inference.
+<br/>_Default: `inference`_
+
+#### `--ready-check-interval`, `--ready-check-interval` `<float>`
+
+Seconds between endpoint readiness probe attempts.
+<br/>_Constraints: > 0.0_
+<br/>_Default: `5.0`_
 
 #### `--api-key`, `--api-key` `<str>`
 

@@ -414,6 +414,8 @@ class OperatorDeployer:
         default_job_namespace: str = "default",
         share_process_namespace: bool = False,
         controller_http_url_override: str | None = None,
+        apiserver_service_host_override: str | None = None,
+        apiserver_service_port_override: str | None = None,
     ) -> None:
         """Initialize operator deployer.
 
@@ -433,6 +435,11 @@ class OperatorDeployer:
                 per-CR JobSet pod DNS. Used by chaos scenario C16 to front
                 operator -> controller traffic with toxiproxy. NEVER use in
                 production-shaped tests; it collapses multi-job isolation.
+            apiserver_service_host_override: Optional override for the in-cluster
+                ``KUBERNETES_SERVICE_HOST`` env var. Used by chaos scenario C15
+                to route operator -> apiserver traffic through toxiproxy.
+            apiserver_service_port_override: Optional override for the in-cluster
+                ``KUBERNETES_SERVICE_PORT`` env var paired with the host override.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -440,6 +447,8 @@ class OperatorDeployer:
         self.default_job_namespace = default_job_namespace
         self.share_process_namespace = share_process_namespace
         self.controller_http_url_override = controller_http_url_override
+        self.apiserver_service_host_override = apiserver_service_host_override
+        self.apiserver_service_port_override = apiserver_service_port_override
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -601,6 +610,14 @@ class OperatorDeployer:
         if self.controller_http_url_override:
             env_pairs.append(
                 f"AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE={self.controller_http_url_override}"
+            )
+        if self.apiserver_service_host_override:
+            env_pairs.append(
+                f"KUBERNETES_SERVICE_HOST={self.apiserver_service_host_override}"
+            )
+        if self.apiserver_service_port_override:
+            env_pairs.append(
+                f"KUBERNETES_SERVICE_PORT={self.apiserver_service_port_override}"
             )
         await self.kubectl.run(
             "set",

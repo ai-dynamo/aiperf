@@ -172,8 +172,10 @@ class AccuracyConfig(BaseConfig):
         AccuracyBenchmarkType | None,
         Field(
             default=None,
-            description="Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). "
-            "When set, enables accuracy benchmarking mode alongside performance profiling.",
+            description="Accuracy benchmark to run. When set, enables accuracy "
+            "benchmarking alongside performance profiling. AIME variants: 'aime' "
+            "is the legacy combined set (deprecated for new runs); prefer the "
+            "year-pinned 'aime24' or 'aime25' for reproducibility.",
         ),
     ]
 

@@ -73,6 +73,15 @@ point ``AIPerfJobConfig.endpoint_url`` at
 ``http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20010/v1``.
 Generic proxy slots (20000-20005) remain unreserved."""
 
+TOXIPROXY_APISERVER_PORT = 20000
+"""Reserved listen port for fronting operator -> apiserver traffic.
+
+Stable slot used by C15 so the operator can be redeployed with
+``KUBERNETES_SERVICE_HOST=toxiproxy.<ns>.svc`` and
+``KUBERNETES_SERVICE_PORT=20000``. Raw TCP passthrough is sufficient here —
+the apiserver keeps speaking TLS end-to-end through toxiproxy.
+"""
+
 TOXIPROXY_CONTROLLER_HTTP_PORT = 20002
 """Reserved listen port for fronting operator -> controller HTTP traffic.
 

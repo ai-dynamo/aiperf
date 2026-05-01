@@ -25,7 +25,15 @@ from aiperf.common.control_structs import (
 from aiperf.config.zmq import ZMQDualBindConfig
 
 if TYPE_CHECKING:
+    from aiperf.common.models import ProfileResults
     from aiperf.config import BenchmarkRun
+
+
+def profile_results_have_successes(results: ProfileResults | None) -> bool:
+    if results is None:
+        return False
+    return any(record.tag == "request_count" for record in results.records or [])
+
 
 from aiperf.common.enums import (
     CommAddress,
@@ -61,6 +69,7 @@ from aiperf.common.messages import (
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
+    ResultsExportedMessage,
     WorkerPodStateMessage,
     WorkerStatusSummaryMessage,
 )
@@ -1381,7 +1390,9 @@ class SystemController(
         if Environment.DEV.MODE:
             print_developer_mode_warning()
 
-        has_results = self._profile_results and self._profile_results.results.records
+        has_results = profile_results_have_successes(
+            self._profile_results.results if self._profile_results else None
+        )
         await self._maybe_signal_k8s_completion(keep_api_running, has_results)
 
         # Clean up global queues to prevent semaphore leaks. Bound each
@@ -1448,6 +1459,16 @@ class SystemController(
             return
         if self._profile_results and self._profile_results.results.records:
             await self._print_post_benchmark_info_and_metrics()
+            if not profile_results_have_successes(self._profile_results.results):
+                self._exit_errors.append(
+                    ExitErrorInfo(
+                        error_details=ErrorDetails(
+                            type="NO_SUCCESSFUL_REQUESTS",
+                            message="Benchmark completed with no successful requests",
+                        ),
+                        operation="profile",
+                    )
+                )
             return
         if self._was_cancelled:
             self.warning("Benchmark was cancelled before results were collected")
@@ -1530,6 +1551,11 @@ class SystemController(
         ):
             await self._shutdown_record_processors_and_wait_for_flush()
 
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            from aiperf.kubernetes.results_sidecar import write_processing_marker
+
+            write_processing_marker(self.run.cfg.artifacts.artifact_directory)
+
         self._exporter_manager = ExporterManager(
             results=self._profile_results.results,
             config=self.run.cfg,
@@ -1545,6 +1571,16 @@ class SystemController(
                 was_cancelled=self._was_cancelled,
             )
         self._results_exported = True
+        # Publish AFTER the readiness marker is on disk so the operator's
+        # JobProgress.is_complete gate can only flip True once artifacts are
+        # actually fetchable. Sub-second benchmarks otherwise let the kopf
+        # monitor claim completion before this method returns.
+        await self.publish(
+            ResultsExportedMessage(
+                service_id=self.service_id,
+                was_cancelled=self._was_cancelled,
+            )
+        )
         self.info("Results exported to disk")
 
     async def _kill(self) -> None:

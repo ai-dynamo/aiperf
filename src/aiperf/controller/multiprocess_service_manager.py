@@ -13,6 +13,7 @@ from aiperf.common.subprocess_manager import SubprocessManager
 from aiperf.common.types import ServiceTypeT
 from aiperf.controller.base_service_manager import BaseServiceManager
 from aiperf.plugin import plugins
+from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -113,11 +114,32 @@ class MultiProcessServiceManager(BaseServiceManager):
             self._subprocess_manager.remove(info)
             service_metadata = plugins.get_service_metadata(info.service_type)
 
-            if service_metadata.required:
-                self.error(
-                    f"Required service process '{info.service_id}' ({info.service_type}) "
-                    f"died with exit code {info.exitcode}"
-                )
+            # API is optional by default (best-effort observability port). If the
+            # user explicitly chose the port via --api-port / runtime.api_port,
+            # bind failure must abort the run rather than silently disable the API.
+            api_explicit = (
+                info.service_type == ServiceType.API
+                and self.run.cfg.runtime.api_port is not None
+            )
+
+            if service_metadata.required or api_explicit:
+                if api_explicit:
+                    reason = (
+                        f"API service exited with code {info.exitcode}; "
+                        f"--api-port={self.run.cfg.runtime.api_port} could not bind. "
+                        f"Pick a free port or omit --api-port to let AIPerf skip the API."
+                    )
+                    self.error(reason)
+                    # Trigger the controller's abort-event watcher so the run
+                    # halts now, not after credits have already drained.
+                    if not self.pod_failure_abort_event.is_set():
+                        self.pod_failure_abort_reason = reason
+                        self.pod_failure_abort_event.set()
+                else:
+                    self.error(
+                        f"Required service process '{info.service_id}' ({info.service_type}) "
+                        f"died with exit code {info.exitcode}"
+                    )
                 ServiceRegistry.fail_service(info.service_id, info.service_type)
             else:
                 self.warning(

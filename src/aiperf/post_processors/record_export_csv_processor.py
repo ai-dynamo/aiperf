@@ -224,3 +224,10 @@ class RecordExportCSVProcessor(BaseMetricsProcessor, BufferedCSVWriterMixin):
     async def summarize(self) -> list[MetricResult]:
         """No aggregation needed for CSV export."""
         return []
+
+    async def finalize(self) -> None:
+        """Flush the CSV writer at end-of-run.
+
+        See RecordExportResultsProcessor.finalize for the race this closes.
+        """
+        await self._csv_close_file()

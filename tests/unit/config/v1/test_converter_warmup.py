@@ -178,3 +178,17 @@ def test_build_warmup_with_prefill_concurrency_and_grace_period() -> None:
     assert out is not None
     assert out["prefill_concurrency"] == 4
     assert out["grace_period"] == 12.5
+
+
+def test_build_warmup_prefill_concurrency_falls_back_to_profiling() -> None:
+    user = UserConfig.model_validate(
+        {
+            "loadgen": {
+                "warmup_request_count": 50,
+                "prefill_concurrency": 7,
+            }
+        }
+    )
+    out = build_warmup(user)
+    assert out is not None
+    assert out["prefill_concurrency"] == 7

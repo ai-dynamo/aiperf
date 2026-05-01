@@ -46,7 +46,7 @@
             }
           ],
           "default": null,
-          "description": "Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling."
+          "description": "Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance profiling. AIME variants: 'aime' is the legacy combined set (deprecated for new runs); prefer the year-pinned 'aime24' or 'aime25' for reproducibility."
         },
         "tasks": {
           "anyOf": [
@@ -195,7 +195,6 @@
               "type": "boolean"
             }
           ],
-          "default": false,
           "description": "Per-request records export formats. Options: jsonl, csv. Set to false to disable.",
           "title": "Records"
         },
@@ -257,11 +256,11 @@
             }
           ],
           "default": null,
-          "description": "CLI command used to run the benchmark. Populated automatically when running via CLI.",
+          "description": "CLI command used to run the benchmark, recorded in artifacts for reproducibility. [auto-populated by the CLI runner; do not set in a CR spec — any user value is overwritten.]",
           "title": "Clicommand"
         },
         "benchmarkId": {
-          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. Auto-generated if absent.",
+          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]",
           "title": "Benchmarkid",
           "type": "string"
         },
@@ -1687,12 +1686,12 @@
             }
           ],
           "default": null,
-          "description": "HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection."
+          "description": "HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over the URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting overrides auto-detection."
         },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
           "default": "pooled",
-          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky_sessions: dedicated connection per session."
+          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
         },
         "useLegacyMaxTokens": {
           "default": false,
@@ -2334,6 +2333,23 @@
       "title": "FixedSchedulePhase",
       "type": "object"
     },
+    "GPUTelemetryCollectorType": {
+      "enum": [
+        "dcgm",
+        "pynvml"
+      ],
+      "title": "GPUTelemetryCollectorType",
+      "type": "string"
+    },
+    "GPUTelemetryMode": {
+      "description": "GPU telemetry display mode.",
+      "enum": [
+        "summary",
+        "realtime_dashboard"
+      ],
+      "title": "GPUTelemetryMode",
+      "type": "string"
+    },
     "GammaPhase": {
       "additionalProperties": false,
       "description": "Gamma-distributed request arrivals with configurable smoothness.",
@@ -2697,11 +2713,11 @@
     },
     "GpuTelemetryConfig": {
       "title": "GpuTelemetryConfig",
-      "description": "GPU telemetry configuration for DCGM metrics collection.\n\nCollects GPU metrics (power, utilization, temperature, memory usage)\nfrom NVIDIA DCGM exporter endpoints.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"]) Can be a URL string or full config object.",
+      "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default; the\ncollector field can switch collection to local PyNVML, and mode controls\nsummary vs. realtime dashboard display.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"]) Can be a URL string or full config object.",
       "anyOf": [
         {
           "additionalProperties": false,
-          "description": "GPU telemetry configuration for DCGM metrics collection.\n\nCollects GPU metrics (power, utilization, temperature, memory usage)\nfrom NVIDIA DCGM exporter endpoints.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"])",
+          "description": "GPU telemetry configuration for live or replayed GPU metrics collection.\n\nCollects GPU metrics through DCGM exporter endpoints by default; the\ncollector field can switch collection to local PyNVML, and mode controls\nsummary vs. realtime dashboard display.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      → GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      → GpuTelemetryConfig(urls=[\"...\"])",
           "properties": {
             "enabled": {
               "default": true,
@@ -2730,6 +2746,16 @@
               "default": null,
               "description": "Path to CSV file with pre-recorded GPU metrics. Alternative to live DCGM collection.",
               "title": "Metricsfile"
+            },
+            "collector": {
+              "$ref": "#/$defs/GPUTelemetryCollectorType",
+              "default": "dcgm",
+              "description": "GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for local PyNVML collection."
+            },
+            "mode": {
+              "$ref": "#/$defs/GPUTelemetryMode",
+              "default": "summary",
+              "description": "GPU telemetry display mode. Summary emits aggregate console output; realtime_dashboard enables live dashboard updates."
             },
             "url": {
               "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. DCGM exporter endpoint URLs. Example: http://localhost:9400/metrics",
@@ -3053,7 +3079,7 @@
         "level": {
           "$ref": "#/$defs/AIPerfLogLevel",
           "default": "INFO",
-          "description": "Global logging verbosity level. trace: most verbose, error: least verbose."
+          "description": "Global logging verbosity level (loguru-style severity ladder; TRACE most verbose, CRITICAL least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and WARNING) and have no equivalent in the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want stdlib-compatible severities."
         }
       },
       "title": "LoggingConfig",
@@ -4545,7 +4571,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum worker processes. null = auto-detect based on CPU cores.",
+          "description": "Total worker processes across the deployment (the maximum, ramped up to from `workers_min`). null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out) and `workers_min` (lower bound for adaptive ramp).",
           "title": "Workers",
           "x-jinja2-supported": true
         },
@@ -4570,14 +4596,14 @@
             }
           ],
           "default": null,
-          "description": "Number of parallel record processors. null = auto-detect based on CPU cores.",
+          "description": "Total parallel record processors across the deployment. null = auto-detect based on CPU cores. Distinct from `record_processors_per_pod` (per-Kubernetes-pod fan-out).",
           "title": "Recordprocessors",
           "x-jinja2-supported": true
         },
         "serviceRunType": {
           "$ref": "#/$defs/ServiceRunType",
           "default": "multiprocessing",
-          "description": "Type of service run. multiprocessing: local multi-process (default), kubernetes: distributed across pods."
+          "description": "Execution mode. multiprocessing: local multi-process (default for `aiperf profile`). kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces 'kubernetes' on the controller pod; do not set this in a CR spec.]"
         },
         "communication": {
           "anyOf": [
@@ -4659,7 +4685,7 @@
             }
           ],
           "default": null,
-          "description": "Base URL for dataset API endpoints in Kubernetes mode. Set by the runner to allow worker pods to download datasets.",
+          "description": "Base URL the operator injects into worker pods so they can fetch datasets from the controller-pod sidecar in Kubernetes mode. [operator-managed; do not set in a CR spec.]",
           "title": "Datasetapibaseurl"
         },
         "workersPerPod": {
@@ -4684,7 +4710,7 @@
             }
           ],
           "default": null,
-          "description": "Number of worker service containers per Kubernetes worker pod.",
+          "description": "Worker containers packed into each Kubernetes worker pod (Kubernetes mode only). The total number of worker containers cluster-wide is `workers` (or auto-detected); this knob controls how that total is fanned across pods. Ignored in multiprocessing mode.",
           "title": "Workersperpod",
           "x-jinja2-supported": true
         },
@@ -4710,7 +4736,7 @@
             }
           ],
           "default": null,
-          "description": "Number of record processor service containers per Kubernetes worker pod.",
+          "description": "Record-processor containers packed into each Kubernetes worker pod (Kubernetes mode only). Sibling of `workers_per_pod`; controls per-pod fan-out, not the cluster-wide total. Ignored in multiprocessing mode.",
           "title": "Recordprocessorsperpod",
           "x-jinja2-supported": true
         },
@@ -4735,7 +4761,7 @@
             }
           ],
           "default": null,
-          "description": "Minimum number of worker processes.",
+          "description": "Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the upper bound / target total).",
           "title": "Workersmin",
           "x-jinja2-supported": true
         }

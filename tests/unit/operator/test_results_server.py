@@ -244,6 +244,31 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
+    def test_create_app_does_not_block_on_slow_dashboard_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        import time
+
+        from aiperf.operator import results_server
+
+        started = threading.Event()
+
+        def slow_build(_base_dir: Path):
+            started.set()
+            time.sleep(0.5)
+            return None, 0
+
+        monkeypatch.setattr(results_server, "build_dashboard", slow_build)
+
+        t0 = time.monotonic()
+        app = results_server.create_app(tmp_path)
+        elapsed = time.monotonic() - t0
+
+        assert app is not None
+        assert elapsed < 0.2
+        assert started.is_set() is False
+
 
 # ============================================================
 # Job Listing
@@ -329,32 +354,27 @@ class TestListJobFiles:
     """Verify /api/v1/results/{namespace}/{job_id} endpoint."""
 
     @pytest.mark.asyncio
-    async def test_list_files_for_existing_job(
+    async def test_list_files_requires_explicit_epoch(
         self, results_dir: Path, client: httpx.AsyncClient
     ) -> None:
         _create_result_file(results_dir, "ns", "job-1", "metrics.json")
         _create_result_file(results_dir, "ns", "job-1", "data.csv", compress=True)
 
         resp = await client.get("/api/v1/results/ns/job-1")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["namespace"] == "ns"
-        assert data["job_id"] == "job-1"
-        assert len(data["files"]) == 2
-
-        names = {f["name"] for f in data["files"]}
-        assert "metrics.json" in names
-        assert "data.csv" in names
-
-        compressed = [f for f in data["files"] if f["compressed"]]
-        assert len(compressed) == 1
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == (
+            "Run epoch required; use /api/v1/results/ns/job-1/runs/<epoch>"
+        )
 
     @pytest.mark.asyncio
-    async def test_list_files_nonexistent_job_returns_404(
+    async def test_list_files_nonexistent_job_still_requires_epoch(
         self, client: httpx.AsyncClient
     ) -> None:
         resp = await client.get("/api/v1/results/ns/nonexistent")
-        assert resp.status_code == 404
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == (
+            "Run epoch required; use /api/v1/results/ns/nonexistent/runs/<epoch>"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -377,154 +397,34 @@ class TestListJobFiles:
 
 
 class TestDownloadFile:
-    """Verify /api/v1/results/{namespace}/{job_id}/{filename} endpoint."""
+    """Verify non-epoch result downloads are rejected."""
 
     @pytest.mark.asyncio
-    async def test_download_raw_file_identity(
+    async def test_download_requires_explicit_epoch_for_existing_job(
         self, results_dir: Path, client: httpx.AsyncClient
     ) -> None:
-        content = b'{"result": true}'
-        _create_result_file(results_dir, "ns", "job-1", "metrics.json", content)
-
-        resp = await client.get(
-            "/api/v1/results/ns/job-1/metrics.json",
-            headers={"Accept-Encoding": "identity"},
-        )
-        assert resp.status_code == 200
-        assert resp.content == content
-
-    @pytest.mark.asyncio
-    async def test_download_zst_file_with_zstd_encoding(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        content = b'{"result": true}'
         _create_result_file(
-            results_dir, "ns", "job-1", "metrics.json", content, compress=True
-        )
-
-        resp = await client.get(
-            "/api/v1/results/ns/job-1/metrics.json",
-            headers={"Accept-Encoding": "zstd"},
-        )
-        assert resp.status_code == 200
-        # httpx auto-decompresses zstd, so content is already the original
-        assert resp.content == content
-
-    @pytest.mark.asyncio
-    async def test_download_zst_file_with_gzip_encoding(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        content = b'{"result": true}'
-        _create_result_file(
-            results_dir, "ns", "job-1", "metrics.json", content, compress=True
-        )
-
-        resp = await client.get(
-            "/api/v1/results/ns/job-1/metrics.json",
-            headers={"Accept-Encoding": "gzip"},
-        )
-        assert resp.status_code == 200
-        # httpx auto-decompresses gzip, so content is already the original
-        assert resp.content == content
-
-    @pytest.mark.asyncio
-    async def test_download_zst_file_with_identity_encoding_decompresses(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        content = b'{"result": true}'
-        _create_result_file(
-            results_dir, "ns", "job-1", "metrics.json", content, compress=True
+            results_dir, "ns", "job-1", "metrics.json", b'{"result": true}'
         )
 
         resp = await client.get(
             "/api/v1/results/ns/job-1/metrics.json",
             headers={"Accept-Encoding": "identity"},
         )
-        assert resp.status_code == 200
-        # Should be decompressed
-        assert resp.content == content
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == (
+            "Run epoch required; use /api/v1/results/ns/job-1/runs/<epoch>"
+        )
 
     @pytest.mark.asyncio
-    async def test_download_nonexistent_file_returns_404(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        (results_dir / "ns" / "job-1").mkdir(parents=True)
-
-        resp = await client.get("/api/v1/results/ns/job-1/nonexistent.json")
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_download_nonexistent_job_returns_404(
+    async def test_download_nonexistent_job_still_requires_epoch(
         self, client: httpx.AsyncClient
     ) -> None:
         resp = await client.get("/api/v1/results/ns/nojob/file.json")
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_download_prefers_zst_over_raw(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        from aiperf.operator.results_layout import run_dir, write_latest
-
-        raw_content = b'{"raw": true}'
-        zst_content = b'{"zst": true}'
-        epoch = "1714064523"
-        job_dir = run_dir(results_dir, "ns", "job-1", epoch)
-        job_dir.mkdir(parents=True)
-        (job_dir / "data.json").write_bytes(raw_content)
-        cctx = zstandard.ZstdCompressor()
-        (job_dir / "data.json.zst").write_bytes(cctx.compress(zst_content))
-        write_latest(results_dir, "ns", "job-1", epoch)
-
-        resp = await client.get(
-            "/api/v1/results/ns/job-1/data.json",
-            headers={"Accept-Encoding": "identity"},
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == (
+            "Run epoch required; use /api/v1/results/ns/nojob/runs/<epoch>"
         )
-        assert resp.status_code == 200
-        # Should serve the zst variant (decompressed)
-        assert resp.content == zst_content
-
-    @pytest.mark.asyncio
-    async def test_download_content_disposition_header(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        _create_result_file(results_dir, "ns", "job-1", "metrics.json")
-
-        resp = await client.get(
-            "/api/v1/results/ns/job-1/metrics.json",
-            headers={"Accept-Encoding": "identity"},
-        )
-        assert "content-disposition" in resp.headers
-        assert "metrics.json" in resp.headers["content-disposition"]
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "filename",
-        [
-            param("../../../etc/passwd", id="traversal"),
-            param("..%2F..%2Fetc%2Fpasswd", id="encoded-traversal"),
-        ],
-    )  # fmt: skip
-    async def test_download_path_traversal_returns_404(
-        self, results_dir: Path, client: httpx.AsyncClient, filename: str
-    ) -> None:
-        (results_dir / "ns" / "job-1").mkdir(parents=True)
-        resp = await client.get(f"/api/v1/results/ns/job-1/{filename}")
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_download_no_accept_encoding_header(
-        self, results_dir: Path, client: httpx.AsyncClient
-    ) -> None:
-        content = b'{"data": 1}'
-        _create_result_file(
-            results_dir, "ns", "job-1", "metrics.json", content, compress=True
-        )
-
-        resp = await client.get("/api/v1/results/ns/job-1/metrics.json")
-        assert resp.status_code == 200
-        # Without accept-encoding, zst files are decompressed (identity)
-        assert resp.content == content
 
 
 # ============================================================
@@ -933,11 +833,11 @@ class TestAdversarialInputs:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_download_unicode_filename(
+    async def test_download_unicode_filename_requires_epoch(
         self, results_dir: Path, client: httpx.AsyncClient
     ) -> None:
         resp = await client.get("/api/v1/results/ns/job-1/\u00e9\u00e0\u00fc.json")
-        assert resp.status_code == 404
+        assert resp.status_code == 409
 
     @pytest.mark.asyncio
     async def test_compare_sql_injection_in_job_ids(
@@ -990,7 +890,7 @@ _EPOCH_OLD = "1714064523"
 _EPOCH_NEW = "1714150923"
 
 
-def test_list_job_files_resolves_latest_epoch(tmp_path: Path) -> None:
+def test_list_job_files_requires_explicit_epoch(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
     from aiperf.operator.results_server import create_app
@@ -1000,9 +900,12 @@ def test_list_job_files_resolves_latest_epoch(tmp_path: Path) -> None:
 
     with TestClient(create_app(results_dir=tmp_path)) as client:
         r = client.get("/api/v1/results/ns/job")
-        assert r.status_code == 200
-        names = {f["name"] for f in r.json()["files"]}
-        assert names == {"new.json"}
+        assert r.status_code == 409
+        body = r.json()
+        assert (
+            body["detail"]
+            == "Run epoch required; use /api/v1/results/ns/job/runs/<epoch>"
+        )
 
 
 def test_historical_route_pins_epoch(tmp_path: Path) -> None:

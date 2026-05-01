@@ -197,7 +197,8 @@ class TokenizerConfig(BaseConfig):
             default=None,
             exclude=True,
             description="Pre-resolved tokenizer names from alias resolution. "
-            "Set at runtime by the CLI or WorkerGroupManager after tokenizer validation. "
-            "Not serialized to JSON/YAML.",
+            "[runtime-only; populated by the CLI or WorkerGroupManager after "
+            "tokenizer validation. Excluded from JSON/YAML serialization. Do not "
+            "set in a CR spec — any user value is ignored.]",
         ),
     ]

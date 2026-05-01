@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -277,6 +278,44 @@ class TestProgressEndpoint:
         )
 
         assert aggregate.degraded_pods == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_jobset_annotations_uses_merge_patch_content_type(
+    monkeypatch,
+) -> None:
+    from contextlib import asynccontextmanager
+
+    import kubernetes_asyncio
+
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object = AsyncMock()
+    monkeypatch.setattr(
+        kubernetes_asyncio,
+        "client",
+        SimpleNamespace(CustomObjectsApi=lambda _api: custom),
+        raising=False,
+    )
+
+    @asynccontextmanager
+    async def fake_k8s_client():
+        yield MagicMock(name="ApiClient")
+
+    import aiperf.kubernetes.client as kclient
+
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+
+    from aiperf.api.routers.progress import _patch_jobset_annotations
+
+    await _patch_jobset_annotations(
+        job_id="job-1",
+        namespace="ns",
+        annotations={"k": "v"},
+    )
+
+    kwargs = custom.patch_namespaced_custom_object.call_args.kwargs
+    assert kwargs["body"] == {"metadata": {"annotations": {"k": "v"}}}
+    assert kwargs["_content_type"] == "application/merge-patch+json"
 
 
 class TestProgressEndpointControllerRPC:

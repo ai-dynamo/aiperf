@@ -5,11 +5,13 @@
 
 from pathlib import Path
 
+from aiperf.common.enums import GPUTelemetryMode
 from aiperf.config.v1 import UserConfig
 from aiperf.config.v1._converter_telemetry import (
     build_gpu_telemetry,
     build_server_metrics,
 )
+from aiperf.plugin.enums import GPUTelemetryCollectorType
 
 
 def test_gpu_telemetry_no_flag_returns_disabled():
@@ -56,3 +58,25 @@ def test_server_metrics_urls_from_list():
     out = build_server_metrics(user)
     assert out["enabled"] is True
     assert len(out["urls"]) == 1
+
+
+def test_gpu_telemetry_pynvml_token_sets_collector_private_attr():
+    user = UserConfig.model_validate({"gpu_telemetry": ["pynvml"]})
+
+    out = build_gpu_telemetry(user)
+
+    assert out["enabled"] is True
+    assert user._gpu_telemetry_collector_type == GPUTelemetryCollectorType.PYNVML
+    assert out["collector"] == GPUTelemetryCollectorType.PYNVML
+    assert out["urls"] == []
+
+
+def test_gpu_telemetry_dashboard_token_sets_mode_private_attr():
+    user = UserConfig.model_validate({"gpu_telemetry": ["dashboard", "node1:9400"]})
+
+    out = build_gpu_telemetry(user)
+
+    assert out["enabled"] is True
+    assert user._gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+    assert out["mode"] == GPUTelemetryMode.REALTIME_DASHBOARD
+    assert out["urls"] == ["http://node1:9400"]

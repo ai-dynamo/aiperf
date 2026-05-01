@@ -148,3 +148,274 @@ def test_aiperfjob_benchmark_has_strict_walked_schema():
     for shortcut in ("model", "dataset", "warmup", "profiling"):
         assert shortcut in bp, f"{shortcut} shortcut sibling missing"
         assert bp[shortcut].get("x-kubernetes-preserve-unknown-fields") is True
+
+
+def _benchmark_node_aiperfjob() -> dict:
+    from tools.generate_crd import _build_crd
+
+    schema = _build_crd({})["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+    return schema["properties"]["spec"]["properties"]["benchmark"]
+
+
+def _benchmark_node_aiperfsweep() -> dict:
+    from tools.generate_crd import build_aiperfsweep_crd
+
+    schema = build_aiperfsweep_crd()["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+    return schema["properties"]["spec"]["properties"]["template"]["properties"]["spec"][
+        "properties"
+    ]["benchmark"]
+
+
+def test_benchmark_required_excludes_shorthand_canonicals_aiperfjob():
+    """``models``/``datasets``/``phases`` must not be in benchmark.required.
+
+    The operator's before-validator hoists shorthand siblings into the
+    canonical names *after* the apiserver runs structural validation. Leaving
+    them in ``required`` would reject every shorthand-only CR (the common
+    AIPerf CLI YAML form) at apply-time.
+    """
+    benchmark = _benchmark_node_aiperfjob()
+    required = set(benchmark.get("required", []))
+    assert "endpoint" in required, "endpoint stays required (no shorthand sibling)"
+    for canonical in ("models", "datasets", "phases"):
+        assert canonical not in required, (
+            f"{canonical} must move to a CEL rule so the shorthand sibling is accepted"
+        )
+
+
+def test_benchmark_required_excludes_shorthand_canonicals_aiperfsweep():
+    """Same relaxation must apply to the inner template.spec.benchmark."""
+    benchmark = _benchmark_node_aiperfsweep()
+    required = set(benchmark.get("required", []))
+    assert "endpoint" in required
+    for canonical in ("models", "datasets", "phases"):
+        assert canonical not in required
+
+
+def test_benchmark_cel_rules_accept_shorthand_or_canonical_aiperfjob():
+    """CEL ``x-kubernetes-validations`` must enforce the OR-of-shorthand rule.
+
+    Each canonical-name slot pairs with at least one shorthand sibling; the
+    rule must say ``has(self.canonical) || has(self.shorthand[, ...])``.
+    """
+    benchmark = _benchmark_node_aiperfjob()
+    rules = {r["rule"]: r for r in benchmark.get("x-kubernetes-validations", [])}
+    assert "has(self.models) || has(self.model)" in rules
+    assert "has(self.datasets) || has(self.dataset)" in rules
+    assert "has(self.phases) || has(self.warmup) || has(self.profiling)" in rules
+
+
+def test_benchmark_cel_rules_accept_shorthand_or_canonical_aiperfsweep():
+    """Inner template benchmark also carries the relaxation rules."""
+    benchmark = _benchmark_node_aiperfsweep()
+    rules = {r["rule"]: r for r in benchmark.get("x-kubernetes-validations", [])}
+    assert "has(self.models) || has(self.model)" in rules
+    assert "has(self.datasets) || has(self.dataset)" in rules
+    assert "has(self.phases) || has(self.warmup) || has(self.profiling)" in rules
+
+
+def test_runtime_apihost_requires_apiport_cel_rule():
+    """runtime.apiHost must require runtime.apiPort at the apiserver level."""
+    benchmark = _benchmark_node_aiperfjob()
+    runtime = benchmark["properties"]["runtime"]
+    rules = {r["rule"] for r in runtime.get("x-kubernetes-validations", [])}
+    assert "!has(self.apiHost) || has(self.apiPort)" in rules
+
+
+# -----------------------------------------------------------------------------
+# Tier 1A — shorthand/canonical mutual exclusion on benchmark.
+# -----------------------------------------------------------------------------
+
+
+def _benchmark_rules_aiperfjob() -> set[str]:
+    benchmark = _benchmark_node_aiperfjob()
+    return {r["rule"] for r in benchmark.get("x-kubernetes-validations", [])}
+
+
+def _benchmark_rules_aiperfsweep() -> set[str]:
+    benchmark = _benchmark_node_aiperfsweep()
+    return {r["rule"] for r in benchmark.get("x-kubernetes-validations", [])}
+
+
+def test_benchmark_mutual_exclusion_canonical_and_shorthand():
+    """A user that sets both forms (e.g. models AND model) gets rejected."""
+    for rules in (_benchmark_rules_aiperfjob(), _benchmark_rules_aiperfsweep()):
+        assert "!(has(self.models) && has(self.model))" in rules
+        assert "!(has(self.datasets) && has(self.dataset))" in rules
+        assert (
+            "!(has(self.phases) && (has(self.warmup) || has(self.profiling)))" in rules
+        )
+        assert "!has(self.warmup) || has(self.profiling)" in rules
+
+
+# -----------------------------------------------------------------------------
+# Tier 1B — endpoint.template ↔ type=template; Tier 4O — URL validation;
+# Tier 2J — multipart/form-data only on video_generation.
+# -----------------------------------------------------------------------------
+
+
+def _endpoint_node_aiperfjob() -> dict:
+    return _benchmark_node_aiperfjob()["properties"]["endpoint"]
+
+
+def test_endpoint_template_requires_type_template():
+    endpoint = _endpoint_node_aiperfjob()
+    rules = {r["rule"] for r in endpoint.get("x-kubernetes-validations", [])}
+    assert "!has(self.type) || self.type != 'template' || has(self.template)" in rules
+    assert "!has(self.template) || (has(self.type) && self.type == 'template')" in rules
+
+
+def test_endpoint_form_data_only_on_video_generation():
+    endpoint = _endpoint_node_aiperfjob()
+    rules = {r["rule"] for r in endpoint.get("x-kubernetes-validations", [])}
+    assert any("multipart/form-data" in r and "video_generation" in r for r in rules)
+
+
+def test_endpoint_urls_must_be_valid_urls():
+    endpoint = _endpoint_node_aiperfjob()
+    rules = {r["rule"] for r in endpoint.get("x-kubernetes-validations", [])}
+    assert "self.urls.all(u, isURL(u))" in rules
+
+
+# -----------------------------------------------------------------------------
+# Tier 1C — AIPerfSweep axis-combination rules.
+# Tier 1E — convergence bounds.
+# -----------------------------------------------------------------------------
+
+
+def _aiperfsweep_spec_node() -> dict:
+    from tools.generate_crd import build_aiperfsweep_crd
+
+    return build_aiperfsweep_crd()["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
+        "properties"
+    ]["spec"]
+
+
+def test_aiperfsweep_axis_combination_rules():
+    spec = _aiperfsweep_spec_node()
+    rules = {r["rule"] for r in spec.get("x-kubernetes-validations", [])}
+    assert "has(self.sweep) || has(self.multiRun) || has(self.convergence)" in rules
+    assert "!has(self.convergence) || has(self.multiRun)" in rules
+    assert (
+        "!has(self.convergence) || !has(self.multiRun) || !has(self.multiRun.trials)"
+        in rules
+    )
+
+
+def test_convergence_min_max_runs_bound():
+    spec = _aiperfsweep_spec_node()
+    convergence = spec["properties"]["convergence"]
+    rules = {r["rule"] for r in convergence.get("x-kubernetes-validations", [])}
+    assert (
+        "!has(self.minRuns) || !has(self.maxRuns) || self.minRuns <= self.maxRuns"
+        in rules
+    )
+
+
+# -----------------------------------------------------------------------------
+# Tier 1D — forbid sweep/multiRun inside the AIPerfSweep template benchmark.
+# -----------------------------------------------------------------------------
+
+
+def test_template_benchmark_forbids_sweep_and_multirun():
+    benchmark = _benchmark_node_aiperfsweep()
+    rules = {r["rule"] for r in benchmark.get("x-kubernetes-validations", [])}
+    assert "!has(self.sweep)" in rules
+    assert "!has(self.multiRun)" in rules
+
+
+def test_aiperfjob_benchmark_does_not_forbid_sweep_or_multirun():
+    """The same rule must NOT fire on standalone AIPerfJob — sweep/multiRun
+    are valid AIPerfConfig fields when not nested under AIPerfSweep."""
+    rules = _benchmark_rules_aiperfjob()
+    assert "!has(self.sweep)" not in rules
+    assert "!has(self.multiRun)" not in rules
+
+
+# -----------------------------------------------------------------------------
+# Tier 1F — runtime.workersMin ≤ workers.
+# -----------------------------------------------------------------------------
+
+
+def test_runtime_workers_min_lte_workers():
+    runtime = _benchmark_node_aiperfjob()["properties"]["runtime"]
+    rules = {r["rule"] for r in runtime.get("x-kubernetes-validations", [])}
+    assert (
+        "!has(self.workersMin) || !has(self.workers) || self.workersMin <= self.workers"
+        in rules
+    )
+
+
+# -----------------------------------------------------------------------------
+# Tier 2 — sweep/UI/transport invariants.
+# -----------------------------------------------------------------------------
+
+
+def test_parameter_sweep_same_seed_requires_random_seed():
+    rules = _benchmark_rules_aiperfjob()
+    assert any("parameterSweepSameSeed" in r and "randomSeed" in r for r in rules)
+
+
+def test_dashboard_ui_incompatible_with_sweep():
+    rules = _benchmark_rules_aiperfjob()
+    assert any("self.sweep" in r and "dashboard" in r for r in rules)
+
+
+def test_convergence_incompatible_with_repeated_mode():
+    multirun = _benchmark_node_aiperfjob()["properties"]["multiRun"]
+    rules = {r["rule"] for r in multirun.get("x-kubernetes-validations", [])}
+    assert (
+        "!has(self.convergenceMetric) || !has(self.mode) || self.mode != 'repeated'"
+        in rules
+    )
+
+
+# -----------------------------------------------------------------------------
+# Tier 3 — immutability.
+# -----------------------------------------------------------------------------
+
+
+def test_artifacts_benchmark_id_immutable_after_first_set():
+    artifacts = _benchmark_node_aiperfjob()["properties"]["artifacts"]
+    rules = {r["rule"] for r in artifacts.get("x-kubernetes-validations", [])}
+    assert (
+        "!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId" in rules
+    )
+
+
+def test_scheduling_queue_name_immutable():
+    from tools.generate_crd import _build_crd
+
+    crd = _build_crd({})
+    spec_props = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"][
+        "spec"
+    ]["properties"]
+    scheduling = spec_props["scheduling"]
+    rules = {r["rule"] for r in scheduling.get("x-kubernetes-validations", [])}
+    assert "!has(oldSelf.queueName) || oldSelf.queueName == self.queueName" in rules
+
+
+# -----------------------------------------------------------------------------
+# Tier 4 — value-shape sanity. (Phase/dataset uniqueness, phase→dataset
+# reference integrity, and seamless-not-first stay in the operator's Pydantic
+# validators because the AIPerfConfig CRD walks `phases[]` and `datasets[]`
+# items as opaque preserve-unknown blobs — CEL can't dereference item fields
+# through that opacity.)
+# -----------------------------------------------------------------------------
+
+
+def test_array_item_internal_rules_are_intentionally_absent():
+    """Sanity check: rules that need to peek into opaque array items must NOT
+    have been emitted (the apiserver would reject the CRD at install).
+    """
+    rules = _benchmark_rules_aiperfjob()
+    for forbidden in (
+        "self.phases.all(p, self.phases.exists_one",
+        "self.datasets.all(d, self.datasets.exists_one",
+        "self.phases.all(p, !has(p.dataset)",
+        "self.phases[0].seamless",
+    ):
+        assert not any(forbidden in r for r in rules), (
+            f"rule containing '{forbidden}' would not compile against opaque "
+            f"array items; keep this enforcement in the Pydantic validator"
+        )

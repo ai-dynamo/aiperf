@@ -83,6 +83,12 @@ class ClusterResponse(AIPerfBaseModel):
         default=0, description="GPU nodes with every GPU requested."
     )
     kubernetes_version: str = Field(description="Kubernetes server version.")
+    cluster_name: str | None = Field(
+        default=None,
+        description="Optional human-readable cluster name (from "
+        "AIPERF_OPERATOR_CLUSTER_NAME). The UI banner shows this in place "
+        "of the bare Kubernetes version when set.",
+    )
 
 
 class CancelResponse(AIPerfBaseModel):

@@ -2,7 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
-import { navigate, query, setQuery } from '../lib/router.js';
+import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { NsPill, ModelPill } from '../components/pills.js';
@@ -34,6 +34,17 @@ function formatDateShort(iso) {
 function formatNum(v) {
   if (v == null) return '\u2014';
   return typeof v === 'number' ? fmtNumber(v, 3) : String(v);
+}
+
+// Tighten generic API errors into something actionable. The api lib throws
+// `API <status>: <body>` on HTTP errors; unknown errors still surface as-is.
+function describeLoadError(raw) {
+  const s = String(raw ?? '');
+  if (/API 404/.test(s)) return 'history endpoint not found \u2014 results-server may be older than this UI build';
+  if (/API 401|API 403/.test(s)) return 'no permission to read history \u2014 check RBAC for the results-server';
+  if (/API 503|API 502|API 504/.test(s)) return 'results-server unreachable \u2014 try `kubectl -n aiperf-operator get pods -l app=results-server`';
+  if (/Failed to fetch|NetworkError|ECONNREFUSED/i.test(s)) return 'network error reaching results-server \u2014 port-forward may have dropped';
+  return s;
 }
 
 export function History() {
@@ -70,7 +81,7 @@ export function History() {
         if (!cancelled) setData(resp);
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(describeLoadError(err?.message ?? err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -255,7 +266,14 @@ export function History() {
       ${!loading && filtered.length > 0 && html`
         <!-- Line chart -->
         <div class="card" style="margin-bottom: var(--space-4)">
-          <div class="card-title">${selected.metric} (${selected.stat}) over time</div>
+          <div class="card-title" style="display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap">
+            <span>${selected.metric} (${selected.stat}) over time</span>
+            ${(model || endpoint || ns) && html`
+              <span class="text-dim" style="font-size: var(--font-size-xs); font-weight: normal" data-testid="history-chart-filtered">
+                (filtered${ns ? ' · ns=' + ns : ''}${model ? ' · model=' + model : ''}${endpoint ? ' · endpoint=' + endpoint : ''})
+              </span>
+            `}
+          </div>
           <${ChartWrapper} type="line" data=${chartData} options=${chartOptions} height=${300} />
           ${isSinglePoint && html`
             <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
@@ -295,7 +313,7 @@ export function History() {
                   <tr key=${entry.job_id + entry.start_time} style="border-bottom: 1px solid var(--surface0)">
                     <td style="padding: var(--space-2) var(--space-3)">
                       <span
-                        onclick=${() => navigate('/jobs/' + encodeURIComponent(entry.namespace ?? 'default') + '/' + encodeURIComponent(entry.job_id ?? ''))}
+                        onclick=${() => navigate(buildJobPath(entry))}
                         style="color: var(--blue); cursor: pointer; font-family: var(--font-mono); font-size: var(--font-size-xs)"
                       >
                         ${entry.job_id ?? '—'}

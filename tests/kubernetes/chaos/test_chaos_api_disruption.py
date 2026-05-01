@@ -86,7 +86,7 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
     ),
 )
 async def test_c15_pause_apiserver_30s_recovers(
-    operator_ready: OperatorDeployer,
+    operator_ready_apiserver_toxiproxy_routed: OperatorDeployer,
     chaos_injector: ChaosInjector,
     toxiproxy_injector: ToxiproxyInjector,
     operator_job_namespace: str,
@@ -108,7 +108,7 @@ async def test_c15_pause_apiserver_30s_recovers(
        "kubernetes.default.svc:443")``
     2. Operator env rewritten to ``KUBERNETES_SERVICE_HOST=toxiproxy.
        aiperf-chaos-toxiproxy.svc`` + ``KUBERNETES_SERVICE_PORT=20000``
-       (via ``helpers/operator.py::OperatorDeployer.configure_env``).
+       (via ``operator_ready_apiserver_toxiproxy_routed``).
     3. ``await toxiproxy_injector.add_toxic("apiserver", "timeout",
        {"timeout": 0})`` right after CR reaches Running/profiling.
     4. ``await asyncio.sleep(30); await toxiproxy_injector.remove_toxic(
@@ -134,7 +134,7 @@ async def test_c15_pause_apiserver_30s_recovers(
             upstream="kubernetes.default.svc:443",
         )
 
-        await operator_ready.create_job(
+        await operator_ready_apiserver_toxiproxy_routed.create_job(
             config=longrun_config, name=name, namespace=operator_job_namespace
         )
         await chaos_injector.wait_for_phase(

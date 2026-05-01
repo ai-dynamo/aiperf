@@ -77,6 +77,18 @@ class JobProgress(AIPerfBaseModel):
         default_factory=ControllerAggregateWorkerStatus,
         description="Controller-authored aggregate worker status.",
     )
+    results_exported: bool = Field(
+        default=False,
+        description=(
+            "Whether the controller has written ALL artifacts to disk and (in "
+            "K8s mode) the readiness marker. Default False so older "
+            "controllers whose progress payload omits this field appear "
+            "incomplete to the operator — sub-second benchmarks otherwise let "
+            "is_requests_complete && is_records_complete flip True before "
+            "ExporterManager.export_data() returns, so the kopf monitor would "
+            "claim completion mid-export and fetch a partial artifact tree."
+        ),
+    )
     error: str | None = Field(
         default=None,
         description="Error message if job failed",
@@ -98,7 +110,24 @@ class JobProgress(AIPerfBaseModel):
 
     @property
     def is_complete(self) -> bool:
-        """Check if the profiling phase has fully completed (requests sent AND records processed)."""
+        """Check if the job is fully complete and artifacts are fetchable.
+
+        Three conditions must hold:
+
+        1. The profiling phase is present.
+        2. ``is_requests_complete`` AND ``is_records_complete`` (existing
+           contract — credits issued, records aggregated).
+        3. ``results_exported`` is True — the controller has flushed all
+           exporter artifacts and (in K8s mode) the readiness marker.
+
+        Without (3) the kopf monitor races the controller's exporter on
+        sub-second benchmarks: requests + records can complete in <1s but
+        ExporterManager.export_data() takes hundreds of ms more, and the
+        operator would otherwise claim completion mid-write and surface
+        ``Phase.Failed``.
+        """
+        if not self.results_exported:
+            return False
         profiling = self.phases.get("profiling")
         if profiling is None:
             return False

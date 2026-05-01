@@ -420,6 +420,7 @@ async def test_on_delete_patches_each_child_with_cancel_true(monkeypatch):
     for call in patch_mock.await_args_list:
         kwargs = call.kwargs
         assert kwargs["body"] == {"spec": {"cancel": True}}
+        assert kwargs["_content_type"] == "application/merge-patch+json"
         assert kwargs["plural"] == "aiperfjobs"
         patched_names.append(kwargs["name"])
     assert sorted(patched_names) == ["s-v00-t0", "s-v01-t0", "s-v02-t0"]

@@ -2,6 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { palette, phaseColor } from '../lib/theme.js';
+import { sweeps as sweepsSignal } from '../lib/state.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { Conditions } from '../components/conditions.js';
 import { JobTable } from '../components/job-table.js';
@@ -15,7 +16,7 @@ import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
-import { navigate, query, setQuery } from '../lib/router.js';
+import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
@@ -39,21 +40,21 @@ const DEFAULT_CHART_METRIC_KEY = 'output_token_throughput.avg';
 const PARETO_AXES = [
   {
     key: 'tps_p99',
-    label: 'tps × p99',
+    label: 'req/s × lat p99',
     x: { key: 'request_throughput',      stat: 'avg', label: 'Throughput',       unit: 'req/s' },
     y: { key: 'request_latency',         stat: 'p99', label: 'Latency P99',      unit: 'ms'    },
     yIsSmallerBetter: true,
   },
   {
     key: 'tps_ttft',
-    label: 'tps × ttft',
+    label: 'req/s × TTFT',
     x: { key: 'request_throughput',      stat: 'avg', label: 'Throughput',       unit: 'req/s' },
     y: { key: 'time_to_first_token',     stat: 'avg', label: 'TTFT',             unit: 'ms'    },
     yIsSmallerBetter: true,
   },
   {
     key: 'tok_p99',
-    label: 'tok × p99',
+    label: 'tok/s × lat p99',
     x: { key: 'output_token_throughput', stat: 'avg', label: 'Token Throughput', unit: 'tok/s' },
     y: { key: 'request_latency',         stat: 'p99', label: 'Latency P99',      unit: 'ms'    },
     yIsSmallerBetter: true,
@@ -79,6 +80,55 @@ function fmtKpi(value, unit) {
   if (unit === 'req/s' || unit === 'tok/s') return fmtNumber(value, 0);
   if (unit === 'ms') return fmtNumber(value, value < 1 ? 3 : 1);
   return fmtNumber(value, 3);
+}
+
+// "Similar sweeps" chip — sweep-level mirror of the job-detail
+// ``SimilarRunsLink`` (same namespace AND same model, excluding the current
+// sweep). Count-only — never aggregate metrics across independent sweeps.
+// Clicking jumps to ``/sweeps?ns=<namespace>`` filtered to the namespace,
+// where the user can pick another to compare side-by-side. No new backend
+// route required: derived purely from the existing ``sweeps`` signal.
+function SimilarSweepsLink({ namespace, model, currentName }) {
+  if (!namespace || !model) return null;
+  const all = sweepsSignal.value ?? [];
+  let n = 0;
+  for (const r of all) {
+    if (r.namespace === namespace && r.model === model && r.name !== currentName) n++;
+  }
+  if (n === 0) return null;
+
+  const onClick = (e) => {
+    e.preventDefault();
+    navigate('/sweeps?ns=' + encodeURIComponent(namespace));
+  };
+
+  return html`
+    <a
+      href=${'#/sweeps?ns=' + encodeURIComponent(namespace)}
+      onclick=${onClick}
+      data-testid="sweep-detail-similar-sweeps"
+      title=${`Browse the other ${n} sweep${n === 1 ? '' : 's'} on model "${model}" in namespace "${namespace}"`}
+      style=${'display: inline-flex; align-items: center; gap: var(--space-1);'
+        + ' padding: 2px var(--space-2);'
+        + ' border-radius: 999px;'
+        + ' font-size: var(--font-size-xs);'
+        + ' font-weight: 600;'
+        + ' background: ' + palette.accent + '14;'
+        + ' color: ' + palette.accent + ';'
+        + ' border: 1px solid ' + palette.accent + '33;'
+        + ' text-decoration: none;'
+        + ' cursor: pointer'}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
+      </svg>
+      <span>+${n} similar sweep${n === 1 ? '' : 's'}</span>
+      <span aria-hidden="true" style="opacity: 0.7; font-size: 10px">→</span>
+    </a>
+  `;
 }
 
 export function SweepDetail({ namespace, name, epoch }) {
@@ -312,7 +362,12 @@ export function SweepDetail({ namespace, name, epoch }) {
   const currentCell = status.currentCell;
   const phase = s.phase ?? 'Unknown';
   const phaseClr = phaseColor(phase);
-  const isRunning = RUNNING_PHASES.has(phase.toLowerCase());
+  const phaseLower = phase.toLowerCase();
+  const isRunning = RUNNING_PHASES.has(phaseLower);
+  const isCompleted = phaseLower === 'succeeded' || phaseLower === 'completed';
+  const isFailed = phaseLower === 'failed';
+  const isPartiallyFailed = phaseLower === 'partiallyfailed';
+  const isCancelled = phaseLower === 'cancelled';
   // Show legacy /cells panel only when the new manifest path has nothing
   // to render — avoids a confusing "No cells completed yet." card sitting
   // next to a populated VariationsTable.
@@ -331,13 +386,25 @@ export function SweepDetail({ namespace, name, epoch }) {
               </span>
               <${NsPill} ns=${s.namespace} onClick=${ns => navigate('/sweeps?ns=' + encodeURIComponent(ns))} testId="sweep-detail-ns-pill" />
               ${s.model && html`<${ModelPill} model=${s.model} testId="sweep-detail-model-pill" />`}
+              ${s.model && s.model !== '---' && html`<${SimilarSweepsLink} namespace=${s.namespace} model=${s.model} currentName=${s.name} />`}
               ${s.age_seconds != null && html`<${RelativeTime} seconds=${s.age_seconds} mode="elapsed" className="text-dim" />`}
-              ${isRunning && html`
-                <span style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}>
-                  <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
-                  Live
-                </span>
-              `}
+              ${isRunning
+                ? html`
+                  <span style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}>
+                    <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
+                    Live
+                  </span>
+                `
+                : isCompleted
+                  ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.green + ';opacity:0.7'}>Completed</span>`
+                  : isFailed
+                    ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.red + ';opacity:0.85'} title="Sweep failed before completing — see conditions for the underlying reason.">Failed</span>`
+                    : isCancelled
+                      ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.overlay1 + ';opacity:0.85'} title="Sweep was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
+                      : isPartiallyFailed
+                        ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.red + ';opacity:0.85'} title="Sweep finished but some variations failed — KPIs reflect surviving data.">Partially failed</span>`
+                        : null
+              }
               <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:var(--space-1)">
@@ -365,31 +432,64 @@ export function SweepDetail({ namespace, name, epoch }) {
 
       <!-- KPI row: progress (left) + headline performance (right) -->
       <div class="kpi-row" style="margin-bottom: var(--space-4)">
-        <${KpiCard}
-          label="Variations"
-          value=${s.total_variations}
-          color=${palette.blue}
-        />
+        ${(() => {
+          const totalVariations = s.total_variations ?? 0;
+          const completed = s.completed_runs ?? 0;
+          const failed = s.failed_runs ?? 0;
+          const denom = completed + failed;
+          const pct = totalVariations > 0
+            ? Math.min(100, Math.round((denom / totalVariations) * 100))
+            : (denom > 0 ? 100 : 0);
+          return html`
+            <${KpiCard}
+              label="Variations"
+              value=${totalVariations}
+              color=${palette.blue}
+              icon="trending-up"
+              tone="accent"
+              progress=${pct}
+              progressTone=${isRunning ? 'live' : 'accent'}
+            />
+          `;
+        })()}
         <${KpiCard}
           label="Completed"
           value=${`${s.completed_runs ?? 0}/${(s.completed_runs ?? 0) + (s.failed_runs ?? 0)}`}
           color=${palette.green}
+          icon="check"
+          tone="ok"
         />
         <${KpiCard}
           label="Failed"
           value=${s.failed_runs}
           color=${s.failed_runs > 0 ? palette.red : palette.overlay1}
+          icon="errors"
+          tone=${s.failed_runs > 0 ? 'bad' : 'neutral'}
         />
-        ${headlineKpis.map(k => html`
-          <${KpiCard}
-            key=${k.label}
-            label=${k.label}
-            value=${fmtKpi(k.value, k.unit)}
-            unit=${k.unit}
-            color=${palette.peach}
-            sub=${html`<span class="text-dim" style="font-size:var(--font-size-xs)">${k.variation}${k.cv != null ? ` · cv ${(k.cv * 100).toFixed(1)}%` : ''}</span>`}
-          />
-        `)}
+        ${headlineKpis.map((k, i) => {
+          const iconByLabel = {
+            'Peak output tok/s': 'trending-up',
+            'Peak req/s':        'speed',
+            'Best TTFT p50':     'clock',
+            'Best req lat p99':  'timer',
+          };
+          const isLeadThroughput = i === 0;
+          const tone = isLeadThroughput
+            ? (isRunning ? 'live' : 'gold')
+            : (k.unit === 'ms' ? 'ok' : 'accent');
+          return html`
+            <${KpiCard}
+              key=${k.label}
+              label=${k.label}
+              value=${fmtKpi(k.value, k.unit)}
+              unit=${k.unit}
+              color=${palette.peach}
+              icon=${iconByLabel[k.label] ?? 'trophy'}
+              tone=${tone}
+              sub=${html`<span class="text-dim" style="font-size:var(--font-size-xs)">${k.variation}${k.cv != null ? ` · cv ${(k.cv * 100).toFixed(1)}%` : ''}</span>`}
+            />
+          `;
+        })}
       </div>
 
       <!-- Per-variation curve + table (driven by the inline aggregate manifest) -->
@@ -471,7 +571,7 @@ export function SweepDetail({ namespace, name, epoch }) {
               cells=${cells?.cells ?? []}
               metric="request_throughput"
               stat="avg"
-              onCellClick=${c => c.children?.[0] && navigate(`/jobs/${encodeURIComponent(c.children[0].namespace)}/${encodeURIComponent(c.children[0].name)}`)} />
+              onCellClick=${c => c.children?.[0] && navigate(buildJobPath(c.children[0]))} />
           </div>
         </div>
       `}
@@ -490,7 +590,11 @@ export function SweepDetail({ namespace, name, epoch }) {
           `}
         </div>
         ${childRows.length === 0
-          ? html`<div class="text-dim" style="padding:var(--space-3) 0">No children persisted for this epoch yet.</div>`
+          ? phaseLower === 'pending'
+            ? html`<div class="text-dim" style="padding:var(--space-3) 0" data-testid="sweep-detail-children-pending">
+                Sweep is being initialized — children will appear here shortly.
+              </div>`
+            : html`<div class="text-dim" style="padding:var(--space-3) 0">No children persisted for this epoch yet.</div>`
           : childRowsAreArchived
             ? html`
                 <table class="job-table" data-testid="sweep-detail-archived-children">
@@ -522,7 +626,7 @@ export function SweepDetail({ namespace, name, epoch }) {
                 </table>
               `
             : html`<${JobTable} jobs=${childRows} onRowClick=${j =>
-                navigate(`/jobs/${encodeURIComponent(j.namespace)}/${encodeURIComponent(j.name)}`)} />`
+                navigate(buildJobPath(j))} />`
         }
       </div>
     </div>

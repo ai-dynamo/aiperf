@@ -59,9 +59,9 @@ def _make_config(tmp_artifact_dir: Path, **artifacts_overrides) -> AIPerfConfig:
 class TestRecordExportFormatConfig:
     """Test record export format configuration via artifacts.records."""
 
-    def test_default_records_is_disabled(self, tmp_artifact_dir: Path):
+    def test_default_records_is_jsonl(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir)
-        assert config.artifacts.records is False
+        assert config.artifacts.records == ["jsonl"]
 
     def test_single_format_csv(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["csv"])

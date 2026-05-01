@@ -12,7 +12,7 @@ BeforeValidator metadata (input-shape coercers like `parse_str_or_list`) IS
 preserved - those run during cyclopts input parsing, not as domain validators.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BeforeValidator,
@@ -175,6 +175,33 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = 0.0
+
+    ready_check_mode: Annotated[
+        Literal["models", "inference", "both"],
+        Field(
+            description=(
+                "How readiness probes the endpoint: 'models' checks /v1/models, "
+                "'inference' sends a canned one-token inference request, and "
+                "'both' runs the models check before inference."
+            ),
+        ),
+        CLIParameter(
+            name=("--ready-check-mode",),
+            group=_CLI_GROUP,
+        ),
+    ] = "inference"
+
+    ready_check_interval: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description="Seconds between endpoint readiness probe attempts.",
+        ),
+        CLIParameter(
+            name=("--ready-check-interval",),
+            group=_CLI_GROUP,
+        ),
+    ] = 5.0
 
     api_key: Annotated[
         str | None,

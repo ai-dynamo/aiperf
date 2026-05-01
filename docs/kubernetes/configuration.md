@@ -102,6 +102,14 @@ The `benchmark` section mirrors the standard AIPerf YAML config. Any field you u
 
 See the [YAML Config Reference](../tutorials/yaml-config.md) for the complete set of benchmark fields.
 
+> **Shorthand siblings.** The apiserver also accepts the singular shortcuts
+> from AIPerf CLI YAML — `model:` (string/list/object), `dataset:` (single
+> dict), and top-level `warmup:` / `profiling:` (phase dicts) — and the
+> operator hoists them into the canonical `models`/`datasets`/`phases`
+> shapes before validation. Mixing the canonical and shorthand form for the
+> same slot (e.g. both `datasets:` and `dataset:`) is rejected at admission.
+> Full rule catalog: [CRD Validation Rules](crd-validation.md).
+
 ### Load Phases (`spec.benchmark.phases`)
 
 Each phase defines a load pattern:
@@ -397,21 +405,21 @@ These variables tune the operator and individual benchmark pods. Set them on the
 
 ### Resource sizing (per-container CPU / memory)
 
-Every control-plane container, the event-bus proxy sidecar, the results sidecar, and the worker pod have a paired `_CPU` / `_MEMORY` variable. Defaults reflect the measured footprint under typical load — raise them for very large concurrency or high-token workloads.
+Every control-plane container, the event-bus proxy sidecar, the results sidecar, and the worker pod have a paired `_CPU` / `_MEMORY` variable. Defaults are low burstable requests so many tiny jobs can start concurrently; raise them for very large concurrency or high-token workloads.
 
 | Variable | Default | Applies to |
 |---|---|---|
-| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `500m` / `1Gi` | SystemController container |
-| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `500m` / `1Gi` | WorkerManager container |
-| `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | TimingManager container |
-| `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | DatasetManager container |
-| `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `1000m` / `2Gi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |
-| `AIPERF_K8S_API_CPU` / `_MEMORY` | `1000m` / `8Gi` | API container (WebSocket + HTTP) |
-| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` / `_MEMORY` | `250m` / `512Mi` | GPU telemetry container |
-| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `250m` / `512Mi` | Server-metrics container |
-| `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `250m` / `512Mi` | Results sidecar (fallback retrieval path) |
-| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` / `_MEMORY` | `2000m` / `1Gi` | Event-bus XPUB/XSUB proxy sidecar |
-| `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `4000m` / `12Gi` | Worker pod (workers + record processors + WPM) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `75m` / `128Mi` | SystemController container |
+| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | WorkerManager container |
+| `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | TimingManager container |
+| `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | DatasetManager container |
+| `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `75m` / `128Mi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |
+| `AIPERF_K8S_API_CPU` / `_MEMORY` | `75m` / `256Mi` | API container (WebSocket + HTTP) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` / `_MEMORY` | `25m` / `64Mi` | GPU telemetry container |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `25m` / `64Mi` | Server-metrics container |
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `25m` / `64Mi` | Results sidecar (fallback retrieval path) |
+| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` / `_MEMORY` | `50m` / `64Mi` | Event-bus XPUB/XSUB proxy sidecar |
+| `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `150m` / `512Mi` | Worker pod (workers + record processors + WPM) |
 
 ### Architecture toggles
 
@@ -452,6 +460,7 @@ The complete, generated reference for every `AIPERF_*` variable (including non-k
 - [Getting Started](getting-started.md) -- First benchmark walkthrough
 - [Monitoring and Troubleshooting](monitoring.md) -- Live monitoring and debugging
 - [Production Deployments](production.md) -- CI/CD, Kueue, and GitOps workflows
+- [CRD Validation Rules](crd-validation.md) -- Apiserver-side CEL invariants and shorthand acceptance
 - [Preflight Checks](preflight.md) -- What the operator validates before admitting a CR
 - [Memory Estimator](memory-estimator.md) -- How per-component memory estimates drive resource requests
 - [Direct Mode](direct-mode.md) -- Trade-offs when running `--no-operator`

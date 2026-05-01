@@ -41,7 +41,10 @@ def validate_config(
         # Strict validation (fail on warnings)
         aiperf config validate benchmark.yaml --strict
     """
-    with exit_on_error(title="Configuration Validation Error"):
+    with exit_on_error(
+        title="Configuration Validation Error",
+        show_traceback=False,
+    ):
         from aiperf.config import load_config, validate_config_file
 
         # Validate using the config module

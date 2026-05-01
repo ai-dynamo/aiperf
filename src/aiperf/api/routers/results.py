@@ -27,7 +27,12 @@ from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.defaults import OutputDefaults
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
+from aiperf.kubernetes.results_sidecar import (
+    CHECKPOINTS_DIR_NAME,
+    READY_MARKER_NAME,
+    _is_processing,
+    ready_marker_path,
+)
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
@@ -85,38 +90,83 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 
 @results_router.get("/api/results/list", response_model=ResultsListResponse)
 async def list_results(component: ResultsDep) -> ResultsListResponse:
-    """List all available result files in the artifacts directory."""
+    """List available result files in the artifacts directory.
+
+    Mirrors the readiness gate enforced by the controller's results sidecar:
+    until the ``.aiperf_results_ready.json`` marker is written, only
+    ``checkpoints/`` artifacts are listed. This prevents the operator from
+    fetching partial top-level exports during sub-second benchmarks where the
+    fetch can race the controller's export pipeline.
+    """
     results_dir = component.run.cfg.artifacts.artifact_directory
     if not await aio_os.path.exists(results_dir):
         return ResultsListResponse()
 
     def _list_files() -> list[ResultFileInfo]:
-        return sorted(
-            (
-                ResultFileInfo(name=e.name, size=e.stat().st_size)
-                for e in results_dir.iterdir()
-                if e.is_file() and e.name != READY_MARKER_NAME
-            ),
-            key=lambda f: f.name,
-        )
+        files: list[ResultFileInfo] = []
+
+        if ready_marker_path(results_dir).is_file():
+            files.extend(
+                ResultFileInfo(name=entry.name, size=entry.stat().st_size)
+                for entry in results_dir.iterdir()
+                if entry.is_file() and entry.name != READY_MARKER_NAME
+            )
+
+        cp_dir = results_dir / CHECKPOINTS_DIR_NAME
+        if cp_dir.is_dir():
+            files.extend(
+                ResultFileInfo(
+                    name=entry.relative_to(results_dir).as_posix(),
+                    size=entry.stat().st_size,
+                )
+                for entry in cp_dir.rglob("*")
+                if entry.is_file()
+            )
+
+        return sorted(files, key=lambda f: f.name)
 
     files = await asyncio.to_thread(_list_files)
-    return ResultsListResponse(files=files)
+    return ResultsListResponse(
+        files=files,
+        ready=ready_marker_path(results_dir).is_file(),
+        processing=_is_processing(results_dir),
+    )
 
 
 @results_router.get("/api/results/files/{filename:path}")
 async def get_result_file(
     component: ResultsDep, request: Request, filename: str
 ) -> StreamingResponse:
-    """Download a result file by name."""
+    """Download a result file by name.
+
+    Until the readiness marker is present, only files under ``checkpoints/``
+    are downloadable. This mirrors the sidecar's gate so the primary endpoint
+    cannot serve partial exports during the controller's sub-second export race.
+    """
     artifact_dir = component.run.cfg.artifacts.artifact_directory
     file_path = (artifact_dir / filename).resolve()
+    artifact_dir_resolved = artifact_dir.resolve()
 
-    if not file_path.is_relative_to(artifact_dir.resolve()):
+    if not file_path.is_relative_to(artifact_dir_resolved):
         raise HTTPException(status_code=400, detail="Invalid filename")
     if file_path.name == READY_MARKER_NAME:
         raise HTTPException(
             status_code=404, detail=f"Result file not found: {filename}"
+        )
+
+    is_checkpoint = file_path.relative_to(artifact_dir_resolved).parts[:1] == (
+        CHECKPOINTS_DIR_NAME,
+    )
+    if not ready_marker_path(artifact_dir).is_file() and not is_checkpoint:
+        processing_detail = (
+            " export still processing;" if _is_processing(artifact_dir) else ""
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Results not ready for {artifact_dir.name};{processing_detail} "
+                f"marker file {READY_MARKER_NAME} not present — retry after completion"
+            ),
         )
 
     if not await aio_os.path.isfile(file_path):

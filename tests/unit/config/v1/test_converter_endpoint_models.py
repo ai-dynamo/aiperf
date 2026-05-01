@@ -96,3 +96,42 @@ def test_build_models_no_strategy_when_unset():
     out = build_models(user)
     assert out["items"] == [{"name": "a"}]
     assert "strategy" not in out
+
+
+def test_build_endpoint_maps_ready_check_interval_and_mode():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {
+                "model_names": ["m"],
+                "urls": ["http://x"],
+                "ready_check_timeout": 30.0,
+                "ready_check_interval": 2.5,
+                "ready_check_mode": "both",
+            },
+        }
+    )
+
+    out = build_endpoint(user)
+
+    assert out["ready_check_timeout"] == 30.0
+    assert out["ready_check_interval"] == 2.5
+    assert out["ready_check_mode"] == "both"
+
+
+def test_build_endpoint_maps_video_request_options():
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {
+                "model_names": ["m"],
+                "urls": ["http://x"],
+                "download_video_content": True,
+                "request_content_type": "multipart/form-data",
+                "type": "video_generation",
+            },
+        }
+    )
+
+    out = build_endpoint(user)
+
+    assert out["download_video_content"] is True
+    assert str(out["request_content_type"]) == "multipart/form-data"

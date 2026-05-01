@@ -227,6 +227,14 @@ class _OperatorEnvironment(BaseSettings):
         "a freshly pulled image.",
     )
 
+    CLUSTER_NAME: str = Field(
+        default="",
+        description="Optional human-readable cluster name surfaced in the UI top banner "
+        "(e.g. 'dgx-prod', 'kind-aiperf'). When unset the banner falls back to the "
+        "Kubernetes server version. Set via AIPERF_OPERATOR_CLUSTER_NAME on the "
+        "operator deployment.",
+    )
+
     MONITOR: _MonitorSettings = Field(
         default_factory=_MonitorSettings,
         description="Monitor timer settings",

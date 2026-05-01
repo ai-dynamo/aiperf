@@ -431,9 +431,19 @@ async def upsert_run_completed(
     total_size_bytes: int = 0,
     phase: str = "Succeeded",
 ) -> None:
-    """Record the post-run state: phase, metrics, blob, file inventory."""
+    """Record the post-run state: phase, metrics, blob, file inventory.
+
+    ``metrics`` here is the full ``/api/metrics`` envelope returned by the
+    controller (top-level metadata plus a nested ``metrics`` mapping). The
+    narrow compare columns come from the nested payload, not the envelope
+    itself — flattening the envelope produces all-NULL narrow columns even
+    though the summary blob is present and valid.
+    """
     gpu_count, gpu_name = _summarize_telemetry(metrics.get("telemetry_data"))
-    narrow = _narrow_metric_columns(metrics)
+    metrics_payload = (
+        metrics.get("metrics") if isinstance(metrics.get("metrics"), dict) else metrics
+    )
+    narrow = _narrow_metric_columns(metrics_payload)
 
     cols = [
         "namespace",

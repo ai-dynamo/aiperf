@@ -2,7 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
-import { navigate } from '../lib/router.js';
+import { buildJobPath, navigate } from '../lib/router.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { LoadingPanel } from '../components/spinner.js';
@@ -41,6 +41,17 @@ function formatValue(value, unit) {
   return unit ? `${formatted} ${unit}` : String(formatted);
 }
 
+// Tighten generic API errors into something actionable. The api lib throws
+// `API <status>: <body>` on HTTP errors; unknown errors still surface as-is.
+function describeLoadError(raw) {
+  const s = String(raw ?? '');
+  if (/API 404/.test(s)) return 'leaderboard endpoint not found — results-server may be older than this UI build';
+  if (/API 401|API 403/.test(s)) return 'no permission to read leaderboard — check RBAC for the results-server';
+  if (/API 503|API 502|API 504/.test(s)) return 'results-server unreachable — try `kubectl -n aiperf-operator get pods -l app=results-server`';
+  if (/Failed to fetch|NetworkError|ECONNREFUSED/i.test(s)) return 'network error reaching results-server — port-forward may have dropped';
+  return s;
+}
+
 export function Leaderboard() {
   const [selected, setSelected] = useState({ metric: 'request_throughput', stat: 'avg' });
   const [model, setModel] = useState('');
@@ -60,7 +71,7 @@ export function Leaderboard() {
         if (!cancelled) setData(resp);
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(describeLoadError(err?.message ?? err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -247,7 +258,7 @@ export function Leaderboard() {
                   const canNavigate = !!entry.job_id;
                   const goToJob = () => {
                     if (canNavigate) {
-                      navigate('/jobs/' + encodeURIComponent(entry.namespace ?? 'default') + '/' + encodeURIComponent(entry.job_id));
+                      navigate(buildJobPath(entry));
                     }
                   };
                   const baseBg = isTop3 ? rowColor + '0a' : 'transparent';

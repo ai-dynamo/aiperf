@@ -105,8 +105,11 @@ class TestInferenceMode:
             )
 
         client.post_request.assert_awaited_once()
-        post_url = client.post_request.await_args.args[0]
-        assert post_url.endswith("/v1/chat/completions")
+        post_args = client.post_request.await_args.args
+        assert post_args[0].endswith("/v1/chat/completions")
+        assert isinstance(post_args[1], bytes)
+        assert post_args[2]["Content-Type"] == "application/json"
+        assert "data" not in client.post_request.await_args.kwargs
 
     @pytest.mark.asyncio
     async def test_4xx_counts_as_ready(self) -> None:
