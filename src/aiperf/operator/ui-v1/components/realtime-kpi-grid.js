@@ -217,14 +217,18 @@ function ReliabilityTile({ summary, slos, timeseries }) {
     // Sparkline series: prefer goodput timeseries directly; fall back to
     // good_request_count (the underlying counter — useful while goodput is
     // still NoMetricValue early in the run before benchmark_duration is set).
-    const sparkPoints = pluck(ts['goodput'], 'avg').length > 0
-      ? pluck(ts['goodput'], 'avg')
+    const goodputSeries = pluck(ts['goodput'], 'avg');
+    const sparkPoints = goodputSeries.length > 0
+      ? goodputSeries
       : pluck(ts['good_request_count'], 'avg');
-    const sparkStroke = kind === 'bad' ? 'var(--red)'
-      : kind === 'good' ? 'var(--accent)'
+    // kind is null | 'good' | 'warn'; warn means at least one request missed
+    // an SLO. Match KpiTile's failure coloring (red) and the success-rate
+    // branch below — anything other than 'good' that has data is a miss.
+    const sparkStroke = kind === 'good' ? 'var(--accent)'
+      : kind === 'warn' ? 'var(--red)'
       : 'var(--sub)';
-    const sparkFill = kind === 'bad' ? 'rgba(239,83,80,0.15)'
-      : kind === 'good' ? 'var(--accent-dim)'
+    const sparkFill = kind === 'good' ? 'var(--accent-dim)'
+      : kind === 'warn' ? 'rgba(239,83,80,0.15)'
       : 'rgba(167,167,167,0.10)';
     return html`
       <div class=${'kpi-tile' + (kind ? ' kpi-tile--slo-' + kind : '')} key="goodput">

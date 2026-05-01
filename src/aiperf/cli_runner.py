@@ -106,6 +106,8 @@ def _preflight_fd_limit() -> None:
     except ImportError:
         return  # Windows / unsupported platform; nothing to do.
 
+    from aiperf.config.loader.errors import ConfigurationError
+
     target_soft = 8192
     min_required = 256
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)

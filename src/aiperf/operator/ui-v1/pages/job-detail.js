@@ -135,8 +135,8 @@ const METRIC_GROUPS = [
     rows: [
       { key: 'input_sequence_length', label: 'Input Sequence Length', cols: FULL_PERCENTILES },
       { key: 'output_sequence_length', label: 'Output Sequence Length', cols: FULL_PERCENTILES },
-      { key: 'osl_mismatch_diff_pct', label: 'OSL Mismatch (diff %)', cols: ['avg'] },
-      { key: 'error_isl', label: 'Error ISL', cols: ['avg'] },
+      { key: 'osl_mismatch_diff_pct', label: 'OSL Mismatch (diff %)', cols: FULL_PERCENTILES },
+      { key: 'error_isl', label: 'Error ISL', cols: FULL_PERCENTILES },
     ],
   },
   {
@@ -181,8 +181,8 @@ const METRIC_GROUPS = [
     label: 'Vision',
     color: palette.green,
     rows: [
-      { key: 'num_images', label: 'Images per Request', cols: ['avg'] },
-      { key: 'image_throughput', label: 'Image Throughput', cols: ['avg'] },
+      { key: 'num_images', label: 'Images per Request', cols: FULL_PERCENTILES },
+      { key: 'image_throughput', label: 'Image Throughput', cols: FULL_PERCENTILES },
       { key: 'video_inference_time', label: 'Video Inference Time', cols: FULL_PERCENTILES },
       { key: 'video_peak_memory', label: 'Video Peak Memory', cols: FULL_PERCENTILES },
     ],
