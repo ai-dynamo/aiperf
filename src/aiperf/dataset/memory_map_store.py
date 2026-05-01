@@ -274,4 +274,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 except OSError as e:
                     self.warning(f"Error removing file {path}: {e}")
 
+        with suppress(OSError):
+            self._data_path.parent.rmdir()
+
         self.debug("Memory-mapped backing store cleanup complete")

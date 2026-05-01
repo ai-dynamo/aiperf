@@ -226,7 +226,10 @@ class TestCompressOnlyCleanup:
         assert meta.data_file_path.exists()
         assert meta.index_file_path.exists()
 
+        store_dir = meta.data_file_path.parent
+
         await store.stop()
 
         assert not meta.data_file_path.exists()
         assert not meta.index_file_path.exists()
+        assert not store_dir.exists()
