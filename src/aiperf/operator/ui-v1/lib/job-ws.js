@@ -53,7 +53,7 @@ export function openJobWs(ns, name, onUpdate) {
     onUpdate({
       summary: { ...summary },
       timeseries: { ...timeseries },
-      serverSummary,
+      serverSummary: serverSummary ? { ...serverSummary } : null,
       serverTimeseries: { ...serverTimeseries },
       connected,
     });
