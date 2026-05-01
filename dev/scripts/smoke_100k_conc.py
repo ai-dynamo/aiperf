@@ -27,20 +27,26 @@ SLEEP_S = 3
 RUN_TIMEOUT_S = 1800
 
 # Single cell.
-CONCURRENCY = 100_000
+CONCURRENCY = 500_000
 ISL = 128
 OSL = 128
 CONNECTIONS_PER_WORKER = 2500
-WORKERS_PER_POD = 10
-ENTRIES = 200
-REQUESTS = 500_000
+WORKERS_PER_POD = 20  # 200 workers / 20 = 10 pods (avoid >150 service registration cliff)
+ENTRIES = 1000
+REQUESTS = 2_000_000
 
-JOB_NAME = "smoke-rs-c100k"
+JOB_NAME = "smoke-rs-c500k"
 
 CTRL_CONTAINERS = [
-    "records-manager", "event-bus-proxy", "api", "dataset-manager",
-    "timing-manager", "control-plane", "results-sidecar",
-    "server-metrics-manager", "gpu-telemetry-manager",
+    "records-manager",
+    "event-bus-proxy",
+    "api",
+    "dataset-manager",
+    "timing-manager",
+    "control-plane",
+    "results-sidecar",
+    "server-metrics-manager",
+    "gpu-telemetry-manager",
 ]
 
 
@@ -81,14 +87,15 @@ def manifest(image: str, workers: int) -> str:
               type: concurrency
               concurrency: {CONCURRENCY}
               requests: {REQUESTS}
-            runtime: {{ ui: none, workers: {workers}, workersPerPod: {WORKERS_PER_POD}, recordProcessorsPerPod: 1 }}
+            runtime: {{ ui: none, workers: {workers}, workersPerPod: {WORKERS_PER_POD}, recordProcessorsPerPod: 4 }}
           podTemplate:
             imagePullSecrets: [nvcr-imagepullsecret]
-            nodeSelector: {{ kubernetes.io/arch: amd64, nodeGroup: customer-cpu }}
+            nodeSelector: {{ kubernetes.io/arch: amd64 }}
             tolerations:
             - {{ effect: NoSchedule, key: dedicated, operator: Equal, value: user-workload }}
             - {{ effect: NoExecute,  key: dedicated, operator: Equal, value: user-workload }}
             - {{ effect: NoSchedule, key: team, operator: Equal, value: nemo-ci }}
+            - {{ effect: NoExecute, key: components.gke.io/gke-managed-components, operator: Equal, value: "true" }}
     """).lstrip()
 
 
@@ -118,7 +125,14 @@ def top_pods(ns: str) -> list[tuple[str, str, float]]:
 
 def cr_status(name: str) -> dict:
     out = kubectl(
-        "-n", NS_BENCH, "get", "aiperfjob", name, "-o", "json", check=False,
+        "-n",
+        NS_BENCH,
+        "get",
+        "aiperfjob",
+        name,
+        "-o",
+        "json",
+        check=False,
     )
     if not out:
         return {}
@@ -136,8 +150,9 @@ class PeakSampler:
 
     def sample(self) -> None:
         for pod, container, mib in top_pods(NS_BENCH):
-            if not pod.startswith(f"aiperf-{self.job_name}-") and \
-               not pod.startswith("aiperf-mock-server-rs-"):
+            if not pod.startswith(f"aiperf-{self.job_name}-") and not pod.startswith(
+                "aiperf-mock-server-rs-"
+            ):
                 continue
             key = (pod, container)
             self.bench_peaks[key] = max(self.bench_peaks.get(key, 0.0), mib)
@@ -147,8 +162,11 @@ class PeakSampler:
 
     def summarize(self) -> dict:
         ctrl_pod = next(
-            (p for (p, _c) in self.bench_peaks
-             if p.startswith(f"aiperf-{self.job_name}-controller-")),
+            (
+                p
+                for (p, _c) in self.bench_peaks
+                if p.startswith(f"aiperf-{self.job_name}-controller-")
+            ),
             None,
         )
         ctrl_peaks = {c: 0.0 for c in CTRL_CONTAINERS}
@@ -197,19 +215,25 @@ class PeakSampler:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", required=True)
-    ap.add_argument("--snap-out",
-                    default=f"dev/results/cr-snapshots-rs/{JOB_NAME}.json")
+    ap.add_argument(
+        "--snap-out", default=f"dev/results/cr-snapshots-rs/{JOB_NAME}.json"
+    )
     args = ap.parse_args()
 
     workers = -(-CONCURRENCY // CONNECTIONS_PER_WORKER)  # 40
-    print(f"=== {JOB_NAME}: conc={CONCURRENCY}, isl={ISL}, osl={OSL}, "
-          f"conn/worker={CONNECTIONS_PER_WORKER}, workers={workers}, "
-          f"workersPerPod={WORKERS_PER_POD} -> {-(-workers // WORKERS_PER_POD)} pods ===")
+    print(
+        f"=== {JOB_NAME}: conc={CONCURRENCY}, isl={ISL}, osl={OSL}, "
+        f"conn/worker={CONNECTIONS_PER_WORKER}, workers={workers}, "
+        f"workersPerPod={WORKERS_PER_POD} -> {-(-workers // WORKERS_PER_POD)} pods ==="
+    )
 
     yaml_text = manifest(args.image, workers)
     p = subprocess.run(
         ["kubectl", "--context", CTX, "apply", "-f", "-"],
-        input=yaml_text, capture_output=True, text=True, check=False,
+        input=yaml_text,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     print(p.stdout.strip() or p.stderr.strip())
     if p.returncode != 0:
@@ -232,9 +256,11 @@ def main() -> int:
         elapsed = int(time.monotonic() - start)
 
         if phase != last_phase or progress - last_progress > 50_000:
-            print(f"  [{elapsed:4}s] phase={phase} progress={progress} "
-                  f"in-flight={in_flight} live_rps={live_rps:.1f} "
-                  f"rec_ok={rec_ok} rec_er={rec_er}")
+            print(
+                f"  [{elapsed:4}s] phase={phase} progress={progress} "
+                f"in-flight={in_flight} live_rps={live_rps:.1f} "
+                f"rec_ok={rec_ok} rec_er={rec_er}"
+            )
             last_phase = phase
             last_progress = progress
 
@@ -264,23 +290,32 @@ def main() -> int:
     summary_row = sampler.summarize()
     print()
     print(f"=== {JOB_NAME} done ===")
-    print(f"  phase={final.get('phase')} duration={duration:.1f}s "
-          f"benchmark_duration={bench_dur:.1f}s")
+    print(
+        f"  phase={final.get('phase')} duration={duration:.1f}s "
+        f"benchmark_duration={bench_dur:.1f}s"
+    )
     print(f"  progress={progress}/{REQUESTS} live_rps={live_rps:.1f}")
     print(f"  records: success={rec_ok} error={rec_er}")
-    print(f"  ctrl_records={summary_row['ctrl_records_mib']}MiB "
-          f"dataset={summary_row['ctrl_dataset_mib']}MiB "
-          f"ctrl_total={summary_row['ctrl_total_mib']}MiB")
-    print(f"  workers: {summary_row['worker_pod_count']} pods, "
-          f"sum={summary_row['workers_sum_mib']}MiB "
-          f"max-pod={summary_row['workers_max_per_pod_mib']}MiB")
-    print(f"  operator={summary_row['operator_mib']}MiB "
-          f"mock={summary_row['mock_mib']}MiB "
-          f"total-no-mock={summary_row['total_no_mock_mib']}MiB")
+    print(
+        f"  ctrl_records={summary_row['ctrl_records_mib']}MiB "
+        f"dataset={summary_row['ctrl_dataset_mib']}MiB "
+        f"ctrl_total={summary_row['ctrl_total_mib']}MiB"
+    )
+    print(
+        f"  workers: {summary_row['worker_pod_count']} pods, "
+        f"sum={summary_row['workers_sum_mib']}MiB "
+        f"max-pod={summary_row['workers_max_per_pod_mib']}MiB"
+    )
+    print(
+        f"  operator={summary_row['operator_mib']}MiB "
+        f"mock={summary_row['mock_mib']}MiB "
+        f"total-no-mock={summary_row['total_no_mock_mib']}MiB"
+    )
 
     # Save CR snapshot.
-    cr_json = kubectl("-n", NS_BENCH, "get", "aiperfjob", JOB_NAME, "-o", "json",
-                      check=False)
+    cr_json = kubectl(
+        "-n", NS_BENCH, "get", "aiperfjob", JOB_NAME, "-o", "json", check=False
+    )
     if cr_json:
         with open(args.snap_out, "w") as f:
             f.write(cr_json)

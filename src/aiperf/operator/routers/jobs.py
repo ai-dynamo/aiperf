@@ -58,12 +58,15 @@ def _pod_summary(pod: V1Pod) -> JobPodSummary:
     """Extract pod name, phase, readiness, and restart count for the UI."""
     meta = pod.metadata
     status = pod.status
+    spec = getattr(pod, "spec", None)
     container_statuses = (status.container_statuses or []) if status else []
+    spec_containers = (spec.containers or []) if spec else []
     return JobPodSummary(
         name=(meta.name if meta else "") or "",
         phase=(status.phase if status else None) or "Unknown",
         ready=any(bool(c.ready) for c in container_statuses),
         restarts=sum(int(c.restart_count or 0) for c in container_statuses),
+        containers=[c.name for c in spec_containers if getattr(c, "name", None)],
     )
 
 
@@ -513,6 +516,22 @@ async def _cancel_job_impl(
 
 MAX_EVENTS_RETURNED = 200
 
+# GKE-managed ValidatingAdmissionPolicies whose CEL expressions error out on
+# unrelated objects (e.g. accessing ``request.userInfo.username`` without a
+# ``has(...)`` guard). The resulting PolicyViolation events surface against
+# AIPerfJob pods even though the policy targets node-level kubelet/P4SA flows
+# we don't participate in. They are pure control-plane noise; drop them so
+# the events pane stays focused on workload-relevant signal.
+_NOISE_ADMISSION_POLICIES: tuple[str, ...] = ("validating-node-p4sa-audience",)
+
+
+def _is_noise_event(raw: Any) -> bool:
+    """Return True for known-noisy GKE admission-policy events to drop."""
+    if getattr(raw, "reason", None) != "PolicyViolation":
+        return False
+    msg = getattr(raw, "message", "") or ""
+    return any(p in msg for p in _NOISE_ADMISSION_POLICIES)
+
 
 def _event_to_entry(raw: Any) -> EventEntry:
     """Map a ``V1Event`` to the UI-facing :class:`EventEntry`.
@@ -591,6 +610,8 @@ async def _list_events_impl(
     raw_events: list[Any] = [*cr_events]
     for lst in pod_event_lists:
         raw_events.extend(lst)
+
+    raw_events = [e for e in raw_events if not _is_noise_event(e)]
 
     entries = [_event_to_entry(e) for e in raw_events]
     # Sort by last_timestamp desc; push None (no timestamp) to the end.

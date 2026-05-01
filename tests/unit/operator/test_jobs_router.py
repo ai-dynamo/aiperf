@@ -433,3 +433,127 @@ def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
     names = {j["name"]: j for j in body["jobs"]}
     assert "archive-only" in names
     assert names["archive-only"]["source"] == "archived"
+
+
+def _v1_event(
+    *,
+    reason: str,
+    message: str,
+    type_: str = "Warning",
+    involved_kind: str = "Pod",
+    involved_name: str = "test-bench-controller-0",
+) -> MagicMock:
+    """Build a V1Event-shaped mock with the attributes _event_to_entry reads."""
+    from datetime import datetime, timezone
+
+    ts = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+    ev = MagicMock()
+    ev.type = type_
+    ev.reason = reason
+    ev.message = message
+    ev.first_timestamp = ts
+    ev.last_timestamp = ts
+    ev.event_time = None
+    ev.count = 1
+    involved = MagicMock()
+    involved.kind = involved_kind
+    involved.name = involved_name
+    involved.namespace = "aiperf-benchmarks"
+    ev.involved_object = involved
+    src = MagicMock()
+    src.component = "kubelet"
+    src.host = "node-1"
+    ev.source = src
+    return ev
+
+
+class TestListJobEvents:
+    @pytest.mark.asyncio
+    async def test_filters_known_gke_admission_policy_noise(self):
+        """PolicyViolation events from the buggy GKE p4sa-audience policy are dropped."""
+        cr = _aiperf_job_cr()
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(return_value=cr)
+
+        noise = _v1_event(
+            reason="PolicyViolation",
+            message=(
+                "policy validating-node-p4sa-audience/validating-node-p4sa-audience "
+                "error: expression '![\"system:addon-manager\", ...]' resulted in "
+                "error: no such key: username"
+            ),
+            involved_name="test-bench-controller-0",
+        )
+        real = _v1_event(
+            reason="FailedScheduling",
+            message="0/3 nodes are available: insufficient nvidia.com/gpu",
+            involved_name="test-bench-controller-0",
+        )
+
+        mock_core = MagicMock(
+            list_namespaced_event=AsyncMock(
+                return_value=MagicMock(items=[noise, real])
+            ),
+            list_namespaced_pod=AsyncMock(return_value=MagicMock(items=[])),
+        )
+        app = _make_app(MagicMock())
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            patch(
+                "aiperf.kubernetes.client.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/api/v1/jobs/aiperf-benchmarks/test-bench/events"
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        reasons = [e["reason"] for e in body["events"]]
+        assert "PolicyViolation" not in reasons
+        assert reasons == ["FailedScheduling"]
+
+    @pytest.mark.asyncio
+    async def test_unrelated_policy_violation_is_kept(self):
+        """PolicyViolation events from non-allowlisted policies still surface."""
+        cr = _aiperf_job_cr()
+        mock_custom = MagicMock()
+        mock_custom.get_namespaced_custom_object = AsyncMock(return_value=cr)
+
+        kept = _v1_event(
+            reason="PolicyViolation",
+            message="policy some-real-workload-policy/foo violated by container image",
+        )
+        mock_core = MagicMock(
+            list_namespaced_event=AsyncMock(return_value=MagicMock(items=[kept])),
+            list_namespaced_pod=AsyncMock(return_value=MagicMock(items=[])),
+        )
+        app = _make_app(MagicMock())
+
+        with (
+            patch(
+                "aiperf.kubernetes.client.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+            patch(
+                "aiperf.kubernetes.client.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/api/v1/jobs/aiperf-benchmarks/test-bench/events"
+                )
+
+        assert resp.status_code == 200
+        assert [e["reason"] for e in resp.json()["events"]] == ["PolicyViolation"]

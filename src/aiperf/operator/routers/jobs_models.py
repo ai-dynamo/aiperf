@@ -32,6 +32,15 @@ class JobPodSummary(AIPerfBaseModel):
     phase: str = Field(description="Pod phase (Running, Pending, Succeeded, ...).")
     ready: bool = Field(description="True iff at least one container is ready.")
     restarts: int = Field(description="Sum of restart counts across containers.")
+    containers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Container names declared on the pod spec, in spec order. Drives "
+            "the per-container picker in the UI logs pane; the same names are "
+            "valid values for the ``container=`` query parameter on the logs "
+            "endpoint. Empty list when the pod has no spec (e.g. terminated)."
+        ),
+    )
 
 
 class ActiveJobListResponse(AIPerfBaseModel):

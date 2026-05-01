@@ -18,7 +18,7 @@ from pydantic import ConfigDict, Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
-from aiperf.config.deployment import PodTemplateConfig
+from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.k8s_models import K8sCamelModel
 
@@ -350,6 +350,14 @@ class AIPerfJobSpec(AIPerfBaseModel):
     pod_template: PodTemplateConfig = Field(
         default_factory=PodTemplateConfig,
         description="Pod template configuration",
+    )
+    scheduling: SchedulingConfig = Field(
+        default_factory=SchedulingConfig,
+        description="Kueue gang-scheduling configuration. Set "
+        "scheduling.queueName to a LocalQueue name to admit this job's "
+        "controller + worker pods atomically via Kueue. When unset, the "
+        "operator falls back to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME "
+        "(operator-deploy env). Safe to leave unset on clusters without Kueue.",
     )
 
     skip_endpoint_check: bool = Field(

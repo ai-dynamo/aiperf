@@ -1,7 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api } from '../lib/api.js';
-import { palette } from '../lib/theme.js';
+import { palette, modelColor } from '../lib/theme.js';
 import { query, setQuery } from '../lib/router.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
@@ -162,6 +162,160 @@ function paretoFrontier(points, xLargerBetter, yLargerBetter) {
     .sort((a, b) => a.x - b.x);
 }
 
+// "Pareto Lab" axis presets \u2014 ported from operator/ui/views/analysis.js. Each
+// preset names an (x, y) metric/stat pair and the optimization direction so
+// per-cluster frontiers know which way is "better." Same three presets as
+// the legacy ui so users muscle-memory translates between the two.
+const LAB_AXES = [
+  {
+    key: 'tps_p99',
+    label: 'Throughput \u00d7 Latency p99',
+    x: { metric: 'request_throughput', stat: 'avg', label: 'Throughput', unit: 'req/s', largerBetter: true },
+    y: { metric: 'request_latency', stat: 'p99', label: 'Latency p99', unit: 'ms', largerBetter: false },
+  },
+  {
+    key: 'tps_ttft',
+    label: 'Throughput \u00d7 TTFT',
+    x: { metric: 'request_throughput', stat: 'avg', label: 'Throughput', unit: 'req/s', largerBetter: true },
+    y: { metric: 'time_to_first_token', stat: 'avg', label: 'TTFT', unit: 'ms', largerBetter: false },
+  },
+  {
+    key: 'tok_p99',
+    label: 'Token Throughput \u00d7 Latency p99',
+    x: { metric: 'output_token_throughput', stat: 'avg', label: 'Token Throughput', unit: 'tok/s', largerBetter: true },
+    y: { metric: 'request_latency', stat: 'p99', label: 'Latency p99', unit: 'ms', largerBetter: false },
+  },
+];
+
+const clusterKeyOf = (ns, model) => `${ns || 'unknown'} \u00b7 ${model || 'unknown'}`;
+const shortModel = (m) => (m ? String(m).split('/').pop() : 'unknown');
+const MUTED_CLUSTER_COLOR = palette.overlay0;
+
+// Build (x, y) points for the lab Pareto, tagging each with its (ns, model)
+// cluster so the renderer can group + color per cluster instead of per-job.
+// Mirrors the analysis.js cluster-then-frontier shape rather than
+// buildScatterPoints' GPU-family-coloring shape.
+function buildLabPoints(entries, axis, displayKeys, splitKey, meta) {
+  const xEntry = findEntry(entries, axis.x.metric, axis.x.stat);
+  const yEntry = findEntry(entries, axis.y.metric, axis.y.stat);
+  if (!xEntry || !yEntry) return [];
+  const points = [];
+  for (const key of displayKeys) {
+    const xv = xEntry.values?.[key];
+    const yv = yEntry.values?.[key];
+    if (xv == null || yv == null) continue;
+    const { ns, jobId } = splitKey(key);
+    const model = meta[key]?.model || 'unknown';
+    points.push({
+      x: Number(xv),
+      y: Number(yv),
+      key,
+      jobName: jobId,
+      ns: ns || 'unknown',
+      model,
+      clusterKey: clusterKeyOf(ns, model),
+    });
+  }
+  return points;
+}
+
+// Build chart.js datasets for the clustered Pareto: one scatter dataset per
+// active cluster (model-colored), plus a per-cluster dashed frontier line
+// when the cluster has \u22652 points. Singletons render in a muted color so
+// they're visible but visually de-emphasized.
+function buildLabDatasets(points, axis, activeClusters) {
+  const groups = {};
+  for (const p of points) {
+    if (activeClusters && !activeClusters.has(p.clusterKey)) continue;
+    (groups[p.clusterKey] ??= { ns: p.ns, model: p.model, points: [] }).points.push(p);
+  }
+  const datasets = [];
+  for (const [ck, grp] of Object.entries(groups)) {
+    const isSingleton = grp.points.length < 2;
+    const color = isSingleton ? MUTED_CLUSTER_COLOR : modelColor(grp.model);
+    datasets.push({
+      label: ck,
+      data: grp.points,
+      backgroundColor: color,
+      borderColor: color,
+      borderWidth: 1.4,
+      pointRadius: 7,
+      pointHoverRadius: 11,
+      showLine: false,
+      order: 1,
+    });
+    if (!isSingleton) {
+      const frontier = paretoFrontier(grp.points, axis.x.largerBetter, axis.y.largerBetter);
+      if (frontier.length >= 2) {
+        datasets.push({
+          label: `${ck} \u00b7 frontier`,
+          data: frontier.map((p) => ({ x: p.x, y: p.y, jobName: p.jobName, clusterKey: ck })),
+          borderColor: color,
+          backgroundColor: color,
+          borderWidth: 1.6,
+          borderDash: [4, 4],
+          showLine: true,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false,
+          order: 2,
+          legend: false,
+        });
+      }
+    }
+  }
+  return datasets;
+}
+
+function buildLabOptions(axis) {
+  return {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: palette.mantle,
+        titleColor: palette.text,
+        bodyColor: palette.text,
+        borderColor: palette.surface0,
+        borderWidth: 1,
+        callbacks: {
+          label: (ctx) => {
+            const p = ctx.raw;
+            const xs = `${axis.x.label}: ${fmtNumber(p.x, 2)}${axis.x.unit ? ' ' + axis.x.unit : ''}`;
+            const ys = `${axis.y.label}: ${fmtNumber(p.y, 2)}${axis.y.unit ? ' ' + axis.y.unit : ''}`;
+            const ck = p.clusterKey || ctx.dataset.label || '';
+            const head = p.jobName ? `${ck} \u00b7 ${p.jobName}` : ck;
+            return head ? `${head} \u2014 ${xs}, ${ys}` : `${xs}, ${ys}`;
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: axis.x.unit ? `${axis.x.label} (${axis.x.unit})` : axis.x.label,
+          color: palette.overlay1,
+          font: { size: 11 },
+        },
+        grid: { color: palette.surface0 + '40' },
+        ticks: { color: palette.overlay0, font: { size: 10 } },
+      },
+      y: {
+        type: 'linear',
+        title: {
+          display: true,
+          text: axis.y.unit ? `${axis.y.label} (${axis.y.unit})` : axis.y.label,
+          color: palette.overlay1,
+          font: { size: 11 },
+        },
+        grid: { color: palette.surface0 + '40' },
+        ticks: { color: palette.overlay0, font: { size: 11 } },
+      },
+    },
+  };
+}
+
 // Build a chart.js scatter config from a point set + frontier line.
 function buildScatterChart(points, frontier, x, y) {
   const datasets = [
@@ -263,6 +417,13 @@ export function Compare() {
   // Chip-strip overflow collapse: above 6 selections we hide the tail behind
   // a "+N more" pill so the strip doesn't wrap into a wall of chips.
   const [chipsExpanded, setChipsExpanded] = useState(false);
+
+  // Pareto Lab state — ported from operator/ui/views/analysis.js. The axis
+  // preset is the active (x, y) metric pair; ``labActiveClusters = null``
+  // means "show all clusters" (default), and a populated Set means the
+  // user has toggled chip-bar visibility for individual clusters.
+  const [labAxisKey, setLabAxisKey] = useState('tps_p99');
+  const [labActiveClusters, setLabActiveClusters] = useState(null);
 
   // ``?cluster=<ns> · <model>`` deep-link from the job-detail "+N similar
   // runs" chip. Ports the legacy ui's IdentityStrip → Compare flow (see
@@ -539,6 +700,31 @@ export function Compare() {
     const c = Number(meta[k]?.gpu_count) || 0;
     return c <= 0;
   }).length;
+
+  // Pareto Lab: cluster-grouped (ns × model) scatter with per-cluster
+  // dashed frontiers, axis-preset switcher, and chip-bar visibility
+  // toggles. Mirrors the operator/ui ``views/analysis.js`` Pareto.
+  const labAxis = LAB_AXES.find((a) => a.key === labAxisKey) || LAB_AXES[0];
+  const labPoints = buildLabPoints(entries, labAxis, displayKeys, splitKey, meta);
+  const labClusterGroups = (() => {
+    const g = {};
+    for (const p of labPoints) {
+      (g[p.clusterKey] ??= { ns: p.ns, model: p.model, points: [] }).points.push(p);
+    }
+    return g;
+  })();
+  const labAllClusterKeys = Object.keys(labClusterGroups);
+  const labActiveSet = labActiveClusters ?? new Set(labAllClusterKeys);
+  const labDatasets = buildLabDatasets(labPoints, labAxis, labActiveSet);
+  const labOptions = buildLabOptions(labAxis);
+  const toggleLabCluster = (ck) => {
+    setLabActiveClusters((prev) => {
+      const base = prev ?? new Set(labAllClusterKeys);
+      const next = new Set(base);
+      if (next.has(ck)) next.delete(ck); else next.add(ck);
+      return next;
+    });
+  };
 
   const chartOptions = {
     plugins: {
@@ -934,6 +1120,71 @@ export function Compare() {
                     ${runsMissingGpuTelemetry > 0
                       ? html` (${runsMissingGpuTelemetry} have no DCGM data — verify <code style="font-family: var(--font-mono)">dcgm-exporter</code> sidecar is enabled and the controller pod's GPU telemetry config exposes it)`
                       : ''}
+                  </div>
+                `}
+              </div>
+            `}
+
+            <!-- Pareto Lab — clustered (ns × model) frontiers with axis switcher.
+                 Ported from operator/ui/views/analysis.js. -->
+            ${labAllClusterKeys.length > 0 && html`
+              <div class="card" style="margin-top: var(--space-4)" data-testid="compare-pareto-lab">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3)">
+                  <div class="card-title" style="margin: 0">Pareto Lab · ${labAxis.label}</div>
+                  <div style="display: inline-flex; gap: var(--space-1); flex-wrap: wrap" data-testid="compare-pareto-lab-axes">
+                    ${LAB_AXES.map((a) => {
+                      const isActive = a.key === labAxisKey;
+                      return html`
+                        <button
+                          key=${a.key}
+                          onclick=${() => setLabAxisKey(a.key)}
+                          title=${a.label}
+                          style=${'padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: var(--font-mono); cursor: pointer; border: 1px solid;'
+                            + (isActive
+                              ? ' background: ' + palette.mauve + '22; color: ' + palette.mauve + '; border-color: ' + palette.mauve + '88;'
+                              : ' background: transparent; color: ' + palette.subtext0 + '; border-color: ' + palette.surface1 + ';')}
+                        >
+                          ${a.key}
+                        </button>
+                      `;
+                    })}
+                  </div>
+                </div>
+                ${labAllClusterKeys.length > 1 && html`
+                  <div style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3)" data-testid="compare-pareto-lab-clusters">
+                    ${labAllClusterKeys.map((ck) => {
+                      const grp = labClusterGroups[ck];
+                      const isSingleton = grp.points.length < 2;
+                      const on = labActiveSet.has(ck);
+                      const dot = isSingleton ? MUTED_CLUSTER_COLOR : modelColor(grp.model);
+                      return html`
+                        <button
+                          key=${ck}
+                          onclick=${() => toggleLabCluster(ck)}
+                          title=${ck + (isSingleton ? ' (singleton)' : '')}
+                          style=${'display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); cursor: pointer; border: 1px solid;'
+                            + (on
+                              ? ' background: ' + dot + '22; color: ' + palette.text + '; border-color: ' + dot + '88;'
+                              : ' background: transparent; color: ' + palette.overlay0 + '; border-color: ' + palette.surface1 + ';')}
+                        >
+                          <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + dot + (on ? '' : '; opacity: 0.5')}></span>
+                          <span style="font-family: var(--font-mono)">${grp.ns} · ${shortModel(grp.model)}</span>
+                          <span style="opacity: 0.6">· ${grp.points.length}${isSingleton ? ' · singleton' : ''}</span>
+                        </button>
+                      `;
+                    })}
+                  </div>
+                `}
+                ${labDatasets.length === 0
+                  ? html`
+                    <div class="text-dim" style="padding: var(--space-4); text-align: center; font-size: var(--font-size-sm)">
+                      No clusters visible. Toggle the chips above to bring runs back into the chart.
+                    </div>
+                  `
+                  : html`<${ChartWrapper} type="scatter" data=${{ datasets: labDatasets }} options=${labOptions} height=${360} />`}
+                ${labPoints.length < displayKeys.length && html`
+                  <div class="text-dim" style="margin-top: var(--space-2); font-size: var(--font-size-xs)">
+                    ${displayKeys.length - labPoints.length} run(s) omitted — missing ${labAxis.x.metric} or ${labAxis.y.metric} for the selected stats.
                   </div>
                 `}
               </div>

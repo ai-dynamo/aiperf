@@ -498,10 +498,10 @@ export function SweepDetail({ namespace, name, epoch }) {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-3)">
             <div class="card-title" style="margin:0">Variation curve</div>
             <select
+              class="ui-select"
               value=${chartMetricKey}
               onchange=${e => setQuery({ metric: e.target.value === DEFAULT_CHART_METRIC_KEY ? undefined : e.target.value })}
               data-testid="variations-chart-metric"
-              style=${`padding:var(--space-1) var(--space-2);background:${palette.mantle};border:1px solid ${palette.surface0};border-radius:var(--radius-sm);color:${palette.text};font-size:var(--font-size-sm)`}
             >
               ${HEADLINE_METRICS.map(m => html`
                 <option key=${m.key + '.' + m.stat} value=${m.key + '.' + m.stat}>

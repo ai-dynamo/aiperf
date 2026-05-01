@@ -280,9 +280,9 @@ export function Jobs() {
         `}
         ${models.length > 1 && html`
           <select
+            class="ui-select"
             value=${modelFilter}
             onchange=${e => setQuery({ model: e.target.value })}
-            style=${'padding: var(--space-2) var(--space-3); background: ' + palette.mantle + '; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.text + '; font-size: var(--font-size-sm)'}
           >
             <option value="">All Models</option>
             ${models.map(m => html`<option key=${m} value=${m}>${m}</option>`)}
@@ -290,9 +290,9 @@ export function Jobs() {
         `}
         ${endpoints.length > 1 && html`
           <select
+            class="ui-select"
             value=${endpointFilter}
             onchange=${e => setQuery({ endpoint: e.target.value })}
-            style=${'padding: var(--space-2) var(--space-3); background: ' + palette.mantle + '; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.text + '; font-size: var(--font-size-sm)'}
           >
             <option value="">All Endpoints</option>
             ${endpoints.map(e => html`<option key=${e} value=${e}>${e}</option>`)}

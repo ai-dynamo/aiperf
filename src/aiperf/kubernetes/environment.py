@@ -292,6 +292,25 @@ class _JobSetSettings(BaseSettings):
         "results sidecar to serve the full document. Default 600 KB leaves headroom "
         "for status fields and apiserver framing under the 1 MiB ceiling.",
     )
+    KUEUE_DEFAULT_QUEUE_NAME: str = Field(
+        default="",
+        description="Operator-side default for Kueue gang-scheduling. When the "
+        "AIPerfJob CR's spec.scheduling.queue_name is unset, the JobSet manifest "
+        "falls back to this value. When non-empty, the JobSet gets the "
+        "kueue.x-k8s.io/queue-name label, which Kueue's JobSet integration uses "
+        "to admit the workload as a unit (gang-scheduling: controller + all "
+        "worker pods admitted atomically, or none). Safe to leave unset on "
+        "clusters without Kueue — the label is then never added. Set to e.g. "
+        "'aiperf-lq' on clusters where Kueue is installed and a LocalQueue "
+        "of that name exists in the benchmark namespace.",
+    )
+    KUEUE_DEFAULT_PRIORITY_CLASS: str = Field(
+        default="",
+        description="Operator-side default for Kueue WorkloadPriorityClass. "
+        "Companion to KUEUE_DEFAULT_QUEUE_NAME. When unset, the JobSet gets "
+        "no kueue.x-k8s.io/priority-class label and Kueue's default fairness "
+        "applies.",
+    )
 
 
 class _PortForwardSettings(BaseSettings):
