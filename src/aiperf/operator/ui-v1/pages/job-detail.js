@@ -1,9 +1,11 @@
 import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
+import { openJobWs } from '../lib/job-ws.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
+import { RealtimeKpiGrid } from '../components/realtime-kpi-grid.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { PhaseBar } from '../components/phase-bar.js';
 import { RecordProcessing } from '../components/record-processing.js';
@@ -57,16 +59,6 @@ function extractSummary(data) {
   // data is the full API response: {job: {...}, status: {...}, pods: [...]}
   const status = data?.status ?? {};
   return status.liveSummary ?? status.summary ?? null;
-}
-
-function fmtMs(val) {
-  if (val == null) return null;
-  return fmtNumber(val, 0);
-}
-
-function fmtRps(val) {
-  if (val == null) return null;
-  return fmtThroughput(val);
 }
 
 function fmtNum(val, decimals = 1) {
@@ -1534,8 +1526,12 @@ export function JobDetail({ namespace, name, epoch }) {
   const [filesLoaded, setFilesLoaded] = useState(false);
   const [polling, setPolling] = useState(true);
   const [serverMetrics, setServerMetrics] = useState(null);
+  const [serverMetricsLoaded, setServerMetricsLoaded] = useState(false);
+  const [serverMetricsError, setServerMetricsError] = useState(null);
   const [fileViewer, setFileViewer] = useState(null); // { filename, url }
   const [jsonlRecords, setJsonlRecords] = useState(null);
+  const [jsonlLoaded, setJsonlLoaded] = useState(false);
+  const [jsonlError, setJsonlError] = useState(null);
   // Progress for the JSONL parse so users see a count tick up instead of a
   // multi-second blank skeleton on 50k+ row exports.
   const [jsonlProgress, setJsonlProgress] = useState(null);
@@ -1552,7 +1548,7 @@ export function JobDetail({ namespace, name, epoch }) {
 
   const resultsBase = epoch
     ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}`
-    : `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+    : null;
 
   // Close file viewer on Escape
   useEffect(() => {
@@ -1572,14 +1568,37 @@ export function JobDetail({ namespace, name, epoch }) {
   }, [namespace, name]);
 
   function pickEpoch(next) {
-    if (next === undefined) navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
-    else navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(next)}`);
+    const latest = epochs.find(e => e.isLatest)?.epoch;
+    const target = next ?? latest;
+    if (target === undefined) navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+    else navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(target)}`);
   }
 
   // Rolling throughput chart data - kept in a ref so we don't trigger re-renders for
   // each append; we rebuild the data object for ChartWrapper on each render.
   const throughputPoints = useRef({ labels: [], values: [] });
   const [chartData, setChartData] = useState(null);
+
+  // Live realtime feed proxied through the operator into the controller pod's
+  // ``/ws``. Empty until ``isRunning`` opens the socket below.
+  const [liveData, setLiveData] = useState({
+    summary: {}, timeseries: {}, connected: false,
+  });
+
+  // Open the per-job WebSocket only while the run is active and we're on the
+  // live (non-epoch) view. The proxy refuses non-running CRs anyway, but
+  // gating here saves a connect/4404/reconnect loop.
+  const livePhaseLower = (job?.job?.phase ?? job?.status?.phase ?? '').toLowerCase();
+  const wsActive = epoch === undefined && livePhaseLower === 'running';
+  useEffect(() => {
+    if (!wsActive) {
+      // Clear stale live state so a finished job doesn't keep painting old samples.
+      setLiveData({ summary: {}, timeseries: {}, connected: false });
+      return;
+    }
+    const handle = openJobWs(namespace, name, (snap) => setLiveData(snap));
+    return () => handle.close();
+  }, [namespace, name, wsActive]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -1591,6 +1610,14 @@ export function JobDetail({ namespace, name, epoch }) {
     // show the previous job's file list under the new header.
     setFiles([]);
     setFilesLoaded(false);
+    setServerMetrics(null);
+    setServerMetricsLoaded(false);
+    setServerMetricsError(null);
+    setJsonlRecords(null);
+    setJsonlLoaded(false);
+    setJsonlError(null);
+    setJsonlProgress(null);
+    setJobConfig(null);
 
     poll(
       async () => {
@@ -1645,58 +1672,91 @@ export function JobDetail({ namespace, name, epoch }) {
       .then(d => { if (d) setJobConfig(d); })
       .catch(() => {});
 
-    // Fetch available result files directly
-    fetch(resultsBase, { signal: ac.signal })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (!d) {
+    // Final artifacts are run-scoped. Do not hit the non-epoch results
+    // endpoint; wait until the route is pinned to /runs/<epoch>.
+    if (!resultsBase) {
+      setFilesLoaded(true);
+      setServerMetricsLoaded(true);
+      setJsonlLoaded(true);
+    } else {
+      fetch(resultsBase, { signal: ac.signal })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) {
+            setFilesLoaded(true);
+            setServerMetricsLoaded(true);
+            setJsonlLoaded(true);
+            return;
+          }
+          const fileList = d?.files ?? [];
+          setFiles(fileList);
           setFilesLoaded(true);
-          return;
-        }
-        const fileList = d?.files ?? [];
-        setFiles(fileList);
-        setFilesLoaded(true);
-        if (fileList.some(f => f.name === 'server_metrics_export.json')) {
-          fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })
-            .then(r => r.ok ? r.json() : null)
-            .then(sm => { if (sm) setServerMetrics(sm); })
-            .catch(() => {});
-        }
-        if (fileList.some(f => f.name === 'profile_export.jsonl')) {
-          fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })
-            .then(r => r.ok ? r.text() : null)
-            .then(async text => {
-              if (!text || ac.signal.aborted) return;
-              const lines = text.split('\n');
-              // Chunk the parse so the main thread can paint between batches.
-              // 50k records parse in well under a second total; 2k per yield
-              // keeps each frame under ~16ms even on slow hardware.
-              const CHUNK = 2000;
-              const recs = [];
-              setJsonlProgress({ done: 0, total: lines.length });
-              for (let i = 0; i < lines.length; i += CHUNK) {
+          if (fileList.some(f => f.name === 'server_metrics_export.json')) {
+            fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })
+              .then(r => r.ok ? r.json() : null)
+              .then(sm => {
                 if (ac.signal.aborted) return;
-                const end = Math.min(i + CHUNK, lines.length);
-                for (let j = i; j < end; j++) {
-                  const line = lines[j];
-                  if (!line || line.trim() === '') continue;
-                  try { recs.push(JSON.parse(line)); } catch { /* skip bad line */ }
+                setServerMetrics(sm);
+                setServerMetricsLoaded(true);
+                setServerMetricsError(sm ? null : 'Server metrics artifact could not be read.');
+              })
+              .catch(err => {
+                if (ac.signal.aborted) return;
+                setServerMetrics(null);
+                setServerMetricsLoaded(true);
+                setServerMetricsError(err?.message ?? 'Server metrics artifact could not be read.');
+              });
+          } else {
+            setServerMetricsLoaded(true);
+          }
+          if (fileList.some(f => f.name === 'profile_export.jsonl')) {
+            fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })
+              .then(r => r.ok ? r.text() : null)
+              .then(async text => {
+                if (!text || ac.signal.aborted) return;
+                const lines = text.split('\n');
+                // Chunk the parse so the main thread can paint between batches.
+                // 50k records parse in well under a second total; 2k per yield
+                // keeps each frame under ~16ms even on slow hardware.
+                const CHUNK = 2000;
+                const recs = [];
+                setJsonlProgress({ done: 0, total: lines.length });
+                for (let i = 0; i < lines.length; i += CHUNK) {
+                  if (ac.signal.aborted) return;
+                  const end = Math.min(i + CHUNK, lines.length);
+                  for (let j = i; j < end; j++) {
+                    const line = lines[j];
+                    if (!line || line.trim() === '') continue;
+                    try { recs.push(JSON.parse(line)); } catch { /* skip bad line */ }
+                  }
+                  setJsonlProgress({ done: end, total: lines.length });
+                  // Yield to the event loop so the UI can repaint.
+                  await new Promise(r => setTimeout(r, 0));
                 }
-                setJsonlProgress({ done: end, total: lines.length });
-                // Yield to the event loop so the UI can repaint.
-                await new Promise(r => setTimeout(r, 0));
-              }
-              if (ac.signal.aborted) return;
-              setJsonlProgress(null);
-              if (recs.length > 0) setJsonlRecords(recs);
-            })
-            .catch(() => { setJsonlProgress(null); });
-        }
-      })
-      .catch(() => { setFilesLoaded(true); });
+                if (ac.signal.aborted) return;
+                setJsonlProgress(null);
+                setJsonlRecords(recs.length > 0 ? recs : null);
+                setJsonlLoaded(true);
+              })
+              .catch(err => {
+                if (ac.signal.aborted) return;
+                setJsonlProgress(null);
+                setJsonlLoaded(true);
+                setJsonlError(err?.message ?? 'Per-request records could not be read.');
+              });
+          } else {
+            setJsonlLoaded(true);
+          }
+        })
+        .catch(() => {
+          setFilesLoaded(true);
+          setServerMetricsLoaded(true);
+          setJsonlLoaded(true);
+        });
+    }
 
     return () => ac.abort();
-  }, [namespace, name, epoch]);
+  }, [namespace, name, epoch, resultsBase]);
 
   function humanSize(bytes) {
     return fmtBytes(bytes);
@@ -1774,6 +1834,7 @@ export function JobDetail({ namespace, name, epoch }) {
   // job.job has flat camelCase fields, job.status has raw CR status
   const info = job?.job ?? {};
   const status = job?.status ?? {};
+  const resolvedEpoch = epoch ?? (status.runEpoch != null ? String(status.runEpoch) : null);
 
   const phase = info.phase ?? status.phase ?? 'Unknown';
   const phaseClr = phaseColor(phase);
@@ -1789,21 +1850,31 @@ export function JobDetail({ namespace, name, epoch }) {
   // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
   const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
 
+  useEffect(() => {
+    if (epoch !== undefined || resolvedEpoch == null) return;
+    navigate(`/jobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}`);
+  }, [epoch, resolvedEpoch, namespace, name]);
+
   // status.summary (completed) and status.liveSummary (running) carry the same
   // curated nested ``{tag: {avg, p50, p99, ...}}`` projection of the AIPerf
   // metrics dict. status.results.metrics and status.liveMetrics.metrics are the
   // unfiltered superset; they fall in as fallbacks when summary is empty.
-  const summary =
+  //
+  // When the per-job WS is connected, ``liveData.summary`` overlays the REST
+  // snapshot per-tag — its ``current``/``avg``/``p99`` fields move at the
+  // controller's emit rate (~1Hz) instead of the page poll cadence.
+  const restSummary =
     status.results?.metrics ??
     status.liveMetrics?.metrics ??
     status.summary ??
     status.liveSummary ??
     {};
+  const summary = (liveData.connected && Object.keys(liveData.summary).length > 0)
+    ? { ...restSummary, ...liveData.summary }
+    : restSummary;
   const throughput = summary.request_throughput?.avg ?? info.throughputRps ?? null;
   const ttftAvg = summary.time_to_first_token?.avg ?? null;
   const latP99 = summary.request_latency?.p99 ?? info.latencyP99Ms ?? null;
-  const errorRate = summary.error_rate ?? null;
-  const errorCount = errorRate != null ? fmtNumber(errorRate * 100, 1) + '%' : null;
 
   // Convenience alias: results = summary so percentile-aware components work
   // unchanged whether the job is running (liveMetrics) or completed (results).
@@ -1811,6 +1882,13 @@ export function JobDetail({ namespace, name, epoch }) {
   const outputTokenThroughput = summary.output_token_throughput?.avg ?? null;
 
   const conditions = status.conditions ?? [];
+  // User-declared SLO thresholds from the AIPerfJob CR (same dict the
+  // SLACompliance card consumes). Drives chip + border color on the
+  // dynamic KPI grid; absent SLOs leave tiles uncolored.
+  const slos =
+    jobConfig?.spec?.benchmark?.slos
+    ?? jobConfig?.spec?.slos
+    ?? null;
   // Convert phases dict {name: {requestsCompleted, requestsTotal, ...}} to array.
   // ``p`` may be null briefly during a phase transition, so ``?.`` the inner
   // reads. Operator emits camelCase per CRD convention; no snake fallback.
@@ -2035,50 +2113,13 @@ export function JobDetail({ namespace, name, epoch }) {
           >${isRunning ? 'LIVE' : 'FINAL'}</span>
         `}
       </div>
-      <div class="kpi-row" style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
-        <${KpiCard}
-          label="Throughput"
-          icon="speed"
-          tone=${isRunning ? 'live' : 'accent'}
-          value=${fmtRps(throughput) ?? '---'}
-          unit=${throughput != null ? 'req/s' : ''}
-          title="Requests per second (avg). Higher is better."
-        />
-        <${KpiCard}
-          label="Token Throughput"
-          icon="trending-up"
-          tone="accent"
-          value=${outputTokenThroughput != null ? fmtNum(outputTokenThroughput, 0) : '---'}
-          unit=${outputTokenThroughput != null ? 'tok/s' : ''}
-          title="Output tokens generated per second across all in-flight requests (avg). Higher is better."
-        />
-        <${KpiCard}
-          label="TTFT avg"
-          icon="clock"
-          tone="ok"
-          value=${fmtMs(ttftAvg) ?? '---'}
-          unit=${ttftAvg != null ? 'ms' : ''}
-          title="Time To First Token: latency from request send to the first streamed token (avg). Lower is better."
-        />
-        <${KpiCard}
-          label="Latency P99"
-          icon="timer"
-          tone="warn"
-          value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
-          unit=${latP99 != null ? 'ms' : ''}
-          title="End-to-end request latency at the 99th percentile — 99% of requests completed at or below this value. Lower is better."
-        />
-        <${KpiCard}
-          label="Errors"
-          icon="errors"
-          tone=${errorCount ? 'bad' : 'neutral'}
-          value=${errorCount ?? '---'}
-          progress=${errorRate != null ? errorRate * 100 : null}
-          progressTone="bad"
-          title="Percentage of requests that failed (HTTP error, timeout, or invalid response)."
-        />
-        <!-- Feature 5: Token Efficiency -->
-        ${isCompleted && results && html`<${TokenEfficiencyCard} results=${results} info=${info} />`}
+      <div style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
+        <${RealtimeKpiGrid} summary=${summary} slos=${slos} timeseries=${liveData.timeseries} />
+        ${isCompleted && results && html`
+          <div style="margin-top: var(--space-4)">
+            <${TokenEfficiencyCard} results=${results} info=${info} />
+          </div>
+        `}
       </div>
 
       <!-- Two-column split -->
@@ -2148,15 +2189,21 @@ export function JobDetail({ namespace, name, epoch }) {
       ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
 
       <!-- Server Metrics (completed only, when available) -->
-      ${isCompleted && serverMetrics
+      ${isTerminal && serverMetrics
         ? html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`
-        : (isCompleted && files.some(f => f.name === 'server_metrics_export.json') && html`
+        : (isTerminal && files.some(f => f.name === 'server_metrics_export.json') && !serverMetricsLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">Loading server metrics…</span>
           </div>
         `)
       }
+      ${isTerminal && serverMetricsError && html`
+        <div class="card" style=${'margin-top: var(--space-4); border-color: ' + colors.error + '44; color: ' + colors.error}>
+          <div class="card-title">Server Metrics</div>
+          <span style="font-size: var(--font-size-sm)">${serverMetricsError}</span>
+        </div>
+      `}
 
       <!-- Job Configuration (always shown if available) -->
       ${jobConfig
@@ -2175,7 +2222,7 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Per-Record Analysis from profile_export.jsonl -->
       ${isCompleted && jsonlRecords
         ? html`<${PerRecordAnalysis} records=${jsonlRecords} />`
-        : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && html`
+        : (isCompleted && files.some(f => f.name === 'profile_export.jsonl') && !jsonlLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
             <${Spinner} size="sm" />
             <span class="text-dim" style="font-size: var(--font-size-sm)">
@@ -2186,6 +2233,12 @@ export function JobDetail({ namespace, name, epoch }) {
           </div>
         `)
       }
+      ${isCompleted && jsonlError && html`
+        <div class="card" style=${'margin-top: var(--space-4); border-color: ' + colors.error + '44; color: ' + colors.error}>
+          <div class="card-title">Per-Record Analysis</div>
+          <span style="font-size: var(--font-size-sm)">${jsonlError}</span>
+        </div>
+      `}
 
       <!-- Feature 3: Concurrency vs Throughput (completed only) -->
       ${isCompleted && html`<${ConcurrencyThroughputChart} status=${status} />`}
@@ -2242,18 +2295,22 @@ export function JobDetail({ namespace, name, epoch }) {
             </span>
             <div style="display: flex; flex-direction: column; gap: 2px">
               <div style=${'font-weight: 600; color: ' + palette.text}>
-                ${isCompleted
-                  ? 'No result files persisted for this run.'
-                  : isRunning
-                    ? 'No result files yet.'
-                    : 'No result files available.'}
+                ${resolvedEpoch == null
+                  ? 'Waiting for a run epoch before showing result files.'
+                  : isCompleted
+                    ? 'No result files persisted for this run.'
+                    : isRunning
+                      ? 'No result files yet.'
+                      : 'No result files available.'}
               </div>
               <div class="text-dim" style="font-size: var(--font-size-xs)">
-                ${isCompleted
-                  ? 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.'
-                  : isRunning
-                    ? 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.'
-                    : 'Artifacts will appear here after the run starts producing output.'}
+                ${resolvedEpoch == null
+                  ? 'This page now requires a pinned run epoch before it will fetch final artifacts, so the status and results cannot drift to different runs.'
+                  : isCompleted
+                    ? 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.'
+                    : isRunning
+                      ? 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.'
+                      : 'Artifacts will appear here after the run starts producing output.'}
               </div>
             </div>
           </div>
