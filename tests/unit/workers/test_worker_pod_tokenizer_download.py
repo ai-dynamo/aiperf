@@ -127,3 +127,55 @@ async def test_url_encoded_org_slash_model(stub_server, tmp_path: Path) -> None:
     # Slug uses URL-quoted form so the on-disk dir is unambiguous.
     assert out.name == "meta-llama%2FLlama-3.1-8B"
     assert (out / "tokenizer.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_extract_crash_then_retry_succeeds(
+    stub_server, tmp_path: Path, monkeypatch
+) -> None:
+    """A crash during extraction must not leave a partial bundle dir."""
+    from aiperf.workers import worker_pod_tokenizer_download as wptd
+
+    base_url, state = stub_server
+    state["bundle"] = _make_bundle({"tokenizer.json": b'{"v":1}', "vocab.json": b"{}"})
+
+    real_extract = wptd._extract_bundle
+    calls = {"n": 0}
+
+    def crashing_extract(compressed: bytes, dest: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Simulate a partial extract: write one file, then raise.
+            (dest / "tokenizer.json").write_bytes(b'{"v":1}')
+            raise RuntimeError("simulated extract crash")
+        real_extract(compressed, dest)
+
+    monkeypatch.setattr(wptd, "_extract_bundle", crashing_extract)
+
+    # First attempt crashes mid-extract; the helper raises.
+    with pytest.raises(RuntimeError, match="simulated"):
+        await wptd.download_tokenizer(
+            api_base_url=base_url,
+            name="gpt2",
+            dest_root=tmp_path,
+            max_retries=1,
+            logger=logging.getLogger("test"),
+        )
+
+    # No half-state left at the final dest.
+    final = tmp_path / wptd.slug_for_tokenizer("gpt2")
+    assert not final.exists() or not any(final.iterdir()), (
+        f"extract crash left partial files at {final}"
+    )
+
+    # Second attempt (real extractor) succeeds.
+    out = await wptd.download_tokenizer(
+        api_base_url=base_url,
+        name="gpt2",
+        dest_root=tmp_path,
+        max_retries=2,
+        logger=logging.getLogger("test"),
+    )
+    assert (out / "tokenizer.json").read_bytes() == b'{"v":1}'
+    assert (out / "vocab.json").exists()
+    assert (out / ".ready").exists()

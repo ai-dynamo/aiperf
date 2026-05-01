@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
+import shutil
 import sys
 import tarfile
 from pathlib import Path
@@ -42,6 +44,12 @@ async def download_tokenizer(
 ) -> Path:
     """Download and extract one tokenizer bundle. Returns the snapshot dir.
 
+    Extraction is crash-atomic: the tar is unpacked into ``{slug}.tmp/``,
+    a ``.ready`` sentinel is written inside, then the directory is renamed
+    to ``{slug}/`` via ``os.replace``. A crash mid-extraction leaves the
+    tmp dir behind (cleaned up on next retry) but no half-populated final
+    dir; readers always see a fully-extracted bundle or nothing.
+
     Raises:
         RuntimeError: 404 from server, or retries exhausted.
     """
@@ -50,16 +58,13 @@ async def download_tokenizer(
     logger.info(f"download_tokenizer: starting for '{name}' from {url}")
     slug = slug_for_tokenizer(name)
     dest = dest_root / slug
-    dest.mkdir(parents=True, exist_ok=True)
-
-    # Per-bundle lock: first arrival downloads, others wait then read.
-    lock_path = dest_root / f"{slug}.lock"
+    dest_root.mkdir(parents=True, exist_ok=True)
     sentinel = dest / ".ready"
     if sentinel.exists():
         logger.info(f"download_tokenizer: '{name}' already extracted at {dest}")
         return dest
 
-    # Cooperative async lock; cross-container coordination uses fcntl below.
+    lock_path = dest_root / f"{slug}.lock"
     logger.info(f"download_tokenizer: acquiring bundle lock at {lock_path}")
     async with _bundle_lock(lock_path):
         logger.info(f"download_tokenizer: lock acquired for '{name}'")
@@ -95,10 +100,23 @@ async def download_tokenizer(
                         compressed = await resp.read()
                     logger.info(
                         f"download_tokenizer: '{name}' fetched "
-                        f"({len(compressed)} bytes), extracting to {dest}"
+                        f"({len(compressed)} bytes), extracting atomically"
                     )
-                    _extract_bundle(compressed, dest)
-                    sentinel.write_text("ok")
+                    tmp_dest = dest_root / f"{slug}.tmp"
+                    if tmp_dest.exists():
+                        shutil.rmtree(tmp_dest)
+                    tmp_dest.mkdir(parents=True)
+                    try:
+                        _extract_bundle(compressed, tmp_dest)
+                        (tmp_dest / ".ready").write_text("ok")
+                    except BaseException:
+                        # Clean up the partial tmp dir; final dest is untouched.
+                        shutil.rmtree(tmp_dest, ignore_errors=True)
+                        raise
+                    # Atomic swap; survives crashes on either side of the rename.
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    os.replace(tmp_dest, dest)
                     logger.info(f"download_tokenizer: '{name}' ready at {dest}")
                     return dest
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
