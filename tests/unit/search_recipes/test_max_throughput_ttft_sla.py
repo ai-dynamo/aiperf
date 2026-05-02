@@ -8,6 +8,8 @@ import pytest
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config.v1 import UserConfig
 from aiperf.config.v1._endpoint import EndpointConfig
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 from aiperf.search_recipes import SearchRecipeContext
 from aiperf.search_recipes.builtins import MaxThroughputUnderTTFTSLA
 
@@ -68,3 +70,8 @@ def test_recipe_expand_accepts_streaming_endpoint():
 def test_recipe_name_and_description_are_classvars():
     assert MaxThroughputUnderTTFTSLA.name == "max-throughput-ttft-sla"
     assert "TTFT" in MaxThroughputUnderTTFTSLA.description
+
+
+def test_recipe_resolves_through_plugin_registry():
+    resolved = plugins.get_class(PluginType.SEARCH_RECIPE, "max-throughput-ttft-sla")
+    assert resolved is MaxThroughputUnderTTFTSLA

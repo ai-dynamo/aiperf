@@ -63,6 +63,8 @@ class MaxThroughputUnderTTFTSLA(SearchRecipe):
         endpoint = ctx.user_config.endpoint
         # TTFT is a streaming-only metric; refusing non-streaming configs up front
         # avoids a confusing "unknown metric time_to_first_token" error mid-BO.
+        # `is False` (not `not endpoint.streaming`) so an unset (None) streaming flag
+        # falls through — only an explicit --no-streaming hard-rejects.
         if endpoint is not None and endpoint.streaming is False:
             raise ValueError(
                 f"recipe {self.name!r} requires --streaming (TTFT is a streaming-only "

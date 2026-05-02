@@ -1082,7 +1082,8 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
-Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
 
 ### Accuracy
 
@@ -2323,7 +2324,8 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
-Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
 
 ### Accuracy
 
@@ -3430,7 +3432,8 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
-Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
 
 ### Accuracy
 
@@ -4552,7 +4555,8 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
-Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
 
 ### Accuracy
 
@@ -5685,7 +5689,8 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
-Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
 
 ### Accuracy
 

@@ -726,9 +726,11 @@ class LoadGeneratorConfig(BaseConfig):
         float | None,
         Field(
             default=None,
+            gt=0,
             description=(
                 "Time-to-first-token SLA threshold in milliseconds. Required by "
-                "TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise."
+                "TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. "
+                "Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter."
             ),
         ),
         CLIParameter(

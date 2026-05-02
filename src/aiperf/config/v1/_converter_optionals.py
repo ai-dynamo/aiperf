@@ -218,16 +218,7 @@ def _build_adaptive_search(lg: Any) -> dict[str, Any] | None:
     when the flag combination is invalid (search-space without companions, or
     other --search-* flags without --search-space).
     """
-    search_fields = (
-        "search_space",
-        "search_metric",
-        "search_stat",
-        "search_direction",
-        "search_max_iterations",
-        "search_initial_points",
-        "search_random_seed",
-    )
-    search_set = {f for f in search_fields if f in lg.model_fields_set}
+    search_set = {f for f in _RECIPE_OVERRIDABLE_FIELDS if f in lg.model_fields_set}
     if "search_space" not in search_set:
         if search_set:
             raise TypeError(
