@@ -528,3 +528,48 @@ class TestBenchmarkPlanSweepAttachments:
         )
         assert plan.failure_policy is None
         assert plan.convergence_config is None
+
+
+# ============================================================
+# BenchmarkPlan.adaptive_search field + is_adaptive_search property
+# (Task 6 of 2026-05-01-bayesian-outer-loop plan)
+# ============================================================
+
+
+class TestBenchmarkPlanAdaptiveSearch:
+    """Verify the adaptive_search field and is_adaptive_search property."""
+
+    def test_benchmark_plan_adaptive_search_default_none(self) -> None:
+        config = _make_benchmark_config()
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[SweepVariation(index=0, label="base", values={})],
+        )
+        assert plan.adaptive_search is None
+        assert plan.is_adaptive_search is False
+
+    def test_benchmark_plan_adaptive_search_set(self) -> None:
+        from aiperf.config.adaptive_search import (
+            AdaptiveSearchConfig,
+            SearchSpaceDimension,
+        )
+        from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+
+        config = _make_benchmark_config()
+        cfg = AdaptiveSearchConfig(
+            algorithm="bayes",
+            search_space=[SearchSpaceDimension(path="x", lo=1, hi=10, kind="int")],
+            objective_metric="m",
+            objective_stat="avg",
+            objective_direction=OptimizationDirection.MAXIMIZE,
+            max_iterations=20,
+        )
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[SweepVariation(index=0, label="base", values={})],
+            adaptive_search=cfg,
+        )
+        assert plan.adaptive_search is cfg
+        assert plan.is_adaptive_search is True
+        # is_sweep stays grid-only (length-1 variations).
+        assert plan.is_sweep is False

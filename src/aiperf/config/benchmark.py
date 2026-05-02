@@ -149,6 +149,16 @@ class BenchmarkPlan(BaseModel):
             "Dispatched in MultiRunOrchestrator.execute."
         ),
     )
+    adaptive_search: Any = Field(
+        default=None,
+        description=(
+            "Adaptive outer-loop configuration (e.g. Bayesian Optimization). "
+            "Typed AdaptiveSearchConfig but expressed as Any to avoid a circular "
+            "import between aiperf.config and aiperf.orchestrator. None for "
+            "non-adaptive plans. When set, MultiRunOrchestrator.execute "
+            "dispatches to execute_adaptive_search instead of grid-mode paths."
+        ),
+    )
 
     @property
     def use_adaptive(self) -> bool:
@@ -168,6 +178,18 @@ class BenchmarkPlan(BaseModel):
         sweep-in-flight without re-counting plan.configs at every callsite.
         """
         return len(self.configs) > 1
+
+    @property
+    def is_adaptive_search(self) -> bool:
+        """True when an adaptive outer loop (BO) is configured.
+
+        Distinct from is_sweep (which checks for a multi-variation grid).
+        Sweep-aware code paths continue to branch on is_sweep without change;
+        outer-loop dispatch is handled separately in
+        MultiRunOrchestrator.execute. Both can be False (single-point run).
+        Both being True is forbidden by build_benchmark_plan.
+        """
+        return self.adaptive_search is not None
 
 
 class ResolvedConfig(BaseModel):
