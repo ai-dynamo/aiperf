@@ -90,6 +90,13 @@ spec:
                     enum: &id001
                     - independent
                     - repeated
+                  adaptiveSearch:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    description: Adaptive outer-loop configuration (Bayesian Optimization). When set, the controller pod drives
+                      the sweep adaptively instead of grid-expanding. Mutually exclusive with the top-level `sweep` block
+                      (the controller hard-fails on both). Typed as Any to mirror the in-process side and avoid a circular
+                      import on aiperf.config.adaptive_search; the field_validator below coerces dicts to AdaptiveSearchConfig.
                 x-kubernetes-validations:
                 - rule: oldSelf == self
                   message: spec.multiRun is immutable after creation

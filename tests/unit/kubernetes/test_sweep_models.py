@@ -417,3 +417,75 @@ def test_aiperf_job_template_spec_is_typed_aiperf_job_spec(valid_template_spec):
 
     assert isinstance(template.spec, AIPerfJobSpec)
     assert template.spec.skip_endpoint_check is False
+
+
+# =============================================================================
+# Cluster-side adaptive search (Bayesian Optimization under AIPerfSweep).
+# =============================================================================
+
+
+def test_multi_run_accepts_adaptive_search():
+    """``MultiRunConfig.adaptive_search`` accepts a dict and coerces to a
+    typed ``AdaptiveSearchConfig`` so the controller pod can pass it through
+    to ``BayesianSearchPlanner`` without re-parsing.
+
+    Mirror of the in-process side at
+    ``src/aiperf/config/_models_benchmark.py``: typed as ``Any`` to dodge a
+    circular import on ``aiperf.config.adaptive_search``, with a
+    ``field_validator(mode="before")`` doing the dict -> Pydantic coercion.
+    """
+    from aiperf.config.adaptive_search import AdaptiveSearchConfig
+
+    cfg = MultiRunConfig.model_validate(
+        {
+            "trials": 3,
+            "adaptive_search": {
+                "algorithm": "bayes",
+                "search_space": [
+                    {
+                        "path": "phases.profiling.concurrency",
+                        "lo": 1,
+                        "hi": 1000,
+                        "kind": "int",
+                    }
+                ],
+                "objective_metric": "output_token_throughput",
+                "objective_stat": "avg",
+                "objective_direction": "maximize",
+                "max_iterations": 10,
+            },
+        }
+    )
+    assert isinstance(cfg.adaptive_search, AdaptiveSearchConfig)
+    assert cfg.adaptive_search.max_iterations == 10
+    assert cfg.adaptive_search.objective_metric == "output_token_throughput"
+
+
+def test_multi_run_adaptive_search_default_is_none():
+    """When omitted, ``adaptive_search`` defaults to None — backwards-
+    compatible for every existing AIPerfSweep CR that doesn't opt in."""
+    cfg = MultiRunConfig.model_validate({"trials": 3})
+    assert cfg.adaptive_search is None
+
+
+def test_multi_run_adaptive_search_passthrough_typed_instance():
+    """When already a typed ``AdaptiveSearchConfig``, the validator is a no-op."""
+    from aiperf.config.adaptive_search import AdaptiveSearchConfig
+
+    typed = AdaptiveSearchConfig.model_validate(
+        {
+            "search_space": [
+                {
+                    "path": "phases.profiling.concurrency",
+                    "lo": 1,
+                    "hi": 32,
+                    "kind": "int",
+                }
+            ],
+            "objective_metric": "output_token_throughput",
+            "objective_direction": "maximize",
+            "max_iterations": 10,
+        }
+    )
+    cfg = MultiRunConfig(trials=2, adaptive_search=typed)
+    assert cfg.adaptive_search is typed

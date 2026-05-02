@@ -10,9 +10,9 @@ docs/superpowers/specs/2026-04-25-k8s-sweeps-design.md.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common.enums import SweepMode
 from aiperf.config._base import BaseConfig
@@ -83,6 +83,38 @@ class MultiRunConfig(BaseConfig):
             "(`convergence`) is incompatible with 'repeated'."
         ),
     )
+
+    adaptive_search: Annotated[
+        Any,
+        Field(
+            default=None,
+            description=(
+                "Adaptive outer-loop configuration (Bayesian Optimization). "
+                "When set, the controller pod drives the sweep adaptively "
+                "instead of grid-expanding. Mutually exclusive with the "
+                "top-level `sweep` block (the controller hard-fails on both). "
+                "Typed as Any to mirror the in-process side and avoid a "
+                "circular import on aiperf.config.adaptive_search; the "
+                "field_validator below coerces dicts to AdaptiveSearchConfig."
+            ),
+        ),
+    ] = None
+
+    @field_validator("adaptive_search", mode="before")
+    @classmethod
+    def _coerce_adaptive_search(cls, value: Any) -> Any:
+        # Lazy-import AdaptiveSearchConfig at validation time -- declaring it
+        # as a top-level type would create a cycle with aiperf.orchestrator
+        # via OptimizationDirection.
+        if value is None:
+            return None
+        from aiperf.config.adaptive_search import AdaptiveSearchConfig
+
+        if isinstance(value, AdaptiveSearchConfig):
+            return value
+        if isinstance(value, dict):
+            return AdaptiveSearchConfig.model_validate(value)
+        return value
 
 
 class ConvergenceConfig(BaseConfig):
