@@ -4,7 +4,6 @@ import { route, matchRoute } from './lib/router.js';
 import { globalError } from './lib/state.js';
 import { TopNav } from './components/top-nav.js';
 import { Breadcrumb } from './components/breadcrumb.js';
-import { ClusterStatsBanner } from './components/cluster-stats-banner.js';
 import { CommandPalette } from './components/command-palette.js';
 import { LogStrip } from './components/log-strip.js';
 import { Dashboard } from './pages/dashboard.js';
@@ -77,7 +76,6 @@ function App() {
   return html`
     <div class="app">
       <${TopNav} onSearchClick=${() => setShowPalette(true)} />
-      <${ClusterStatsBanner} />
       <${Breadcrumb} />
       <div class="alpha-banner" role="status" data-testid="alpha-banner">
         <span class="alpha-banner-tag">ALPHA</span>

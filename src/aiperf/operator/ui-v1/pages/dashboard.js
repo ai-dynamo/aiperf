@@ -6,6 +6,7 @@ import { phaseColor, modelColor, palette, colors } from '../lib/theme.js';
 import { buildJobPath, navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { ClusterStatsBanner } from '../components/cluster-stats-banner.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel } from '../components/spinner.js';
@@ -304,6 +305,7 @@ export function Dashboard() {
   if (firstJobsLoad) {
     return html`
       <div class="dashboard" data-testid="page-dashboard">
+        <${ClusterStatsBanner} />
         <div class="card">
           <${LoadingPanel} label="Loading dashboard…" testid="dashboard-loading" />
         </div>
@@ -314,6 +316,7 @@ export function Dashboard() {
   if (jobsError) {
     return html`
       <div class="dashboard" data-testid="page-dashboard">
+        <${ClusterStatsBanner} />
         <div class="card" style="border-color: var(--error); color: var(--error)" data-testid="dashboard-jobs-error">
           <div style="font-weight:600;margin-bottom:4px">Failed to load jobs</div>
           <div style="font-size:var(--font-size-sm);margin-bottom:8px">${jobsError}</div>
@@ -329,6 +332,7 @@ export function Dashboard() {
 
   return html`
     <div class="dashboard" data-testid="page-dashboard">
+      <${ClusterStatsBanner} />
       ${clusterError && html`<div class="cluster-warning-banner" title="The /cluster endpoint failed. GPU/node counts and topology may not reflect the live cluster.">Cluster endpoint unavailable — GPU/node counts may be stale. Check operator logs with <code>aiperf kube logs operator</code>.</div>`}
 
       ${noJobsAtAll ? html`
