@@ -14,12 +14,12 @@ See ``aiperf.search_recipes.builtins`` for the first concrete implementation
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.config._base import BaseConfig
-from aiperf.config.adaptive_search import AdaptiveSearchConfig
+from aiperf.config.adaptive_search import AdaptiveSearchConfig, SLAFilter
 
 __all__ = [
     "PostProcessSpec",
@@ -28,37 +28,6 @@ __all__ = [
     "SearchRecipeContext",
     "SearchRecipeOutput",
 ]
-
-
-class SLAFilter(BaseConfig):
-    """SLA constraint applied to BO scoring or grid filtering.
-
-    A trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.
-    Phase 1 declares the type only; Phase 2 wires it into
-    ``BayesianSearchPlanner`` for lexicographic feasibility scoring.
-
-    Example: enforce p95 TTFT under 200 ms via
-    ``SLAFilter(metric_tag="time_to_first_token", stat="p95", op="lt", threshold=200.0)``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    metric_tag: str = Field(
-        description=(
-            "Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key in "
-            "RunResult.summary_metrics produced by the run."
-        ),
-    )
-    stat: Literal["avg", "p50", "p90", "p95", "p99"] = Field(
-        default="p95",
-        description="Statistic on the metric to compare against the threshold.",
-    )
-    op: Literal["lt", "le", "gt", "ge"] = Field(
-        description="Comparison operator. Filter passes when stat(metric) op threshold is true.",
-    )
-    threshold: float = Field(
-        description="Numeric threshold the metric statistic is compared against.",
-    )
 
 
 class PostProcessSpec(BaseConfig):

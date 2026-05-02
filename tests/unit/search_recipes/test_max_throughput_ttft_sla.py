@@ -75,3 +75,26 @@ def test_recipe_name_and_description_are_classvars():
 def test_recipe_resolves_through_plugin_registry():
     resolved = plugins.get_class(PluginType.SEARCH_RECIPE, "max-throughput-ttft-sla")
     assert resolved is MaxThroughputUnderTTFTSLA
+
+
+def test_recipe_through_converter_populates_sla_filters_and_recipe_name():
+    """Phase 2 integration: post-expansion AdaptiveSearchConfig carries the recipe contract."""
+    from aiperf.config.adaptive_search import AdaptiveSearchConfig
+    from aiperf.config.v1 import UserConfig
+    from aiperf.config.v1._converter_optionals import build_multi_run
+    from aiperf.config.v1._loadgen import LoadGeneratorConfig
+
+    user = UserConfig(
+        loadgen=LoadGeneratorConfig(
+            search_recipe="max-throughput-ttft-sla", ttft_sla_ms=200.0
+        )
+    )
+    out = build_multi_run(user)
+    assert out is not None
+    cfg = AdaptiveSearchConfig.model_validate(out["adaptive_search"])
+    assert cfg.recipe_name == "max-throughput-ttft-sla"
+    assert len(cfg.sla_filters) == 1
+    sla = cfg.sla_filters[0]
+    assert sla.metric_tag == "time_to_first_token"
+    assert sla.op == "lt"
+    assert sla.threshold == 200.0

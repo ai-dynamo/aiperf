@@ -33,6 +33,14 @@ class SearchIteration:
     variation_values: dict[str, Any]
     objective_value: float | None = None
     results: list[Any] = field(default_factory=list)
+    feasible: bool = True
+    """Whether the iteration's RunResults satisfied all configured SLA filters.
+
+    Used by best-result selection to enforce feasibility-first ranking. Defaults
+    to True so iterations from configs with no SLA filters degenerate to plain
+    ranking unchanged. Computed by ``BayesianSearchPlanner.tell``: an iteration
+    is feasible iff at least one trial's metrics passed every filter.
+    """
 
 
 class SearchPlanner(ABC):

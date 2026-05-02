@@ -19,7 +19,11 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.adaptive_search import AdaptiveSearchConfig, SearchSpaceDimension
+from aiperf.config.adaptive_search import (
+    AdaptiveSearchConfig,
+    SearchSpaceDimension,
+    SLAFilter,
+)
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation, _set_nested_value
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
@@ -65,6 +69,15 @@ class BayesianSearchPlanner(SearchPlanner):
         # by SearchPlanner.convergence_reason(). Set to None until is_converged
         # actually fires.
         self._convergence_reason: str | None = None
+        # Largest |loss| seen so far. Used to scale the SLA-violation soft
+        # penalty so it dominates typical objective values without poisoning
+        # GP variance with infinities. Bootstrapped at 1.0 so the penalty has
+        # a finite floor before any iteration completes.
+        self._max_seen_loss: float = 1.0
+        # Constraint metrics for which we've already logged the
+        # "unmeasurable, treating as infeasible" warning. Throttles to one
+        # message per (planner instance, metric tag) pair.
+        self._warned_unmeasurable_metrics: set[str] = set()
 
         dims = []
         for d in cfg.search_space:
@@ -108,57 +121,26 @@ class BayesianSearchPlanner(SearchPlanner):
         if self._pending_x is None:
             raise RuntimeError("tell() called without matching ask()")
 
+        feasible = self._iteration_feasibility(results)
+        # Compute the soft-penalty term ONCE per iteration from the averaged
+        # constraint-metric values; tell skopt the penalty-augmented loss but
+        # record the raw objective in SearchIteration for honest reporting.
+        penalty, has_unmeasurable = self._compute_constraint_penalty(results)
+
         if not per_trial_objectives:
-            # Iteration produced no usable objective (every trial failed, or the
-            # configured metric/stat was missing). Skopt cannot accept None and
-            # the optimizer must remain consistent with the ask/tell pairing,
-            # so we synthesize a deliberately-bad loss in skopt's space.
-            tell_value = self._failed_iteration_loss()
-            logger.warning(
-                "Search iteration %d at %s produced no usable objective; "
-                "telling skopt fallback loss=%s and continuing.",
-                self._iter,
-                variation.values,
-                tell_value,
-            )
-            self._opt.tell(self._pending_x, float(tell_value))
-            objective_for_history: float | None = None
+            objective_for_history = self._tell_failed_iteration(variation, penalty)
         else:
-            # Per-trial observations let skopt's GP estimate the noise term
-            # (sigma_n^2) properly. Pre-averaging the trials before telling
-            # discards the within-point variance the GP could have used —
-            # see Letham et al. 2017, "Constrained Bayesian Optimization with
-            # Noisy Experiments" (arXiv:1706.07094). When we have N>=2 trials
-            # we feed N copies of the same x with the N losses; skopt's
-            # Optimizer.tell accepts repeated x's and the GP fits accordingly.
-            losses = [self._objective_to_loss(o) for o in per_trial_objectives]
-            if len(losses) == 1:
-                self._opt.tell(self._pending_x, float(losses[0]))
-            else:
-                xs = [list(self._pending_x) for _ in losses]
-                self._opt.tell(xs, [float(loss) for loss in losses])
-            # History stores the arithmetic mean for plateau detection and
-            # user-facing summaries; the GP itself sees per-trial values.
-            objective_for_history = sum(per_trial_objectives) / len(
-                per_trial_objectives
+            objective_for_history = self._tell_successful_iteration(
+                per_trial_objectives, penalty
             )
 
         self._pending_x = None
+        self._update_improvement_tracking(objective_for_history)
 
-        # Track improvement-over-best for the patience-based stop. Mirrors
-        # skopt's HollowIterationsStopper and Hyperopt's no_progress_loss:
-        # consecutive iterations without improvement-over-best trigger
-        # convergence. Computed in skopt's loss space so the comparison is
-        # direction-agnostic.
-        if objective_for_history is not None:
-            iter_loss = self._objective_to_loss(objective_for_history)
-            if self._best_loss is None or iter_loss < self._best_loss:
-                self._best_loss = iter_loss
-                self._iters_since_improvement = 0
-            else:
-                self._iters_since_improvement += 1
-        else:
-            self._iters_since_improvement += 1
+        # Iteration is infeasible whenever any constraint metric is
+        # unmeasurable (treated as infeasible per the spec) or the per-trial
+        # feasibility check returned False.
+        iteration_feasible = feasible and not has_unmeasurable
 
         self._history.append(
             SearchIteration(
@@ -166,9 +148,78 @@ class BayesianSearchPlanner(SearchPlanner):
                 variation_values=dict(variation.values),
                 objective_value=objective_for_history,
                 results=list(results),
+                feasible=iteration_feasible,
             )
         )
         self._iter += 1
+
+    def _tell_failed_iteration(
+        self, variation: SweepVariation, penalty: float
+    ) -> float | None:
+        """Tell skopt a synthetic worse-than-worst loss + penalty for failures.
+
+        Iteration produced no usable objective (every trial failed, or the
+        configured metric/stat was missing). Skopt cannot accept None and the
+        optimizer must remain consistent with the ask/tell pairing, so we
+        synthesize a deliberately-bad loss in skopt's space.
+        """
+        tell_value = self._failed_iteration_loss() + penalty
+        logger.warning(
+            "Search iteration %d at %s produced no usable objective; "
+            "telling skopt fallback loss=%s (penalty=%s) and continuing.",
+            self._iter,
+            variation.values,
+            tell_value,
+            penalty,
+        )
+        self._opt.tell(self._pending_x, float(tell_value))
+        return None
+
+    def _tell_successful_iteration(
+        self, per_trial_objectives: list[float], penalty: float
+    ) -> float:
+        """Tell skopt per-trial losses + penalty; return arithmetic mean for history.
+
+        Per-trial observations let skopt's GP estimate the noise term
+        (sigma_n^2) properly via repeated observations at the same x — see
+        Letham et al. 2017, "Constrained Bayesian Optimization with Noisy
+        Experiments" (arXiv:1706.07094). Pre-averaging discards the
+        within-point variance the GP could have used. History stores the
+        arithmetic mean for plateau detection and user-facing summaries.
+        """
+        losses = [self._objective_to_loss(o) + penalty for o in per_trial_objectives]
+        if len(losses) == 1:
+            self._opt.tell(self._pending_x, float(losses[0]))
+        else:
+            xs = [list(self._pending_x) for _ in losses]
+            self._opt.tell(xs, [float(loss) for loss in losses])
+        # Bookkeeping for the penalty scale: track |loss| of the largest *raw*
+        # (unpenalized) objective seen so a future penalty stays dominant over
+        # typical successes without exploding to infinity.
+        for raw_obj in per_trial_objectives:
+            self._max_seen_loss = max(
+                self._max_seen_loss, abs(self._objective_to_loss(raw_obj))
+            )
+        return sum(per_trial_objectives) / len(per_trial_objectives)
+
+    def _update_improvement_tracking(self, objective_for_history: float | None) -> None:
+        """Update the patience-based stop counter from this iteration's objective.
+
+        Mirrors skopt's HollowIterationsStopper and Hyperopt's no_progress_loss:
+        consecutive iterations without improvement-over-best trigger
+        convergence. Computed in skopt's loss space so the comparison is
+        direction-agnostic. A failed iteration (objective_for_history=None) is
+        treated as no-improvement.
+        """
+        if objective_for_history is None:
+            self._iters_since_improvement += 1
+            return
+        iter_loss = self._objective_to_loss(objective_for_history)
+        if self._best_loss is None or iter_loss < self._best_loss:
+            self._best_loss = iter_loss
+            self._iters_since_improvement = 0
+        else:
+            self._iters_since_improvement += 1
 
     def is_converged(self) -> bool:
         if self._iter >= self._cfg.max_iterations:
@@ -292,6 +343,117 @@ class BayesianSearchPlanner(SearchPlanner):
         margin = max(abs(worst_loss) * 0.1, 1.0)
         return worst_loss + margin
 
+    def _trial_satisfies(self, run: RunResult, sla: SLAFilter) -> bool:
+        """Return True iff ``run`` satisfies the single SLA filter ``sla``.
+
+        Missing metric or missing stat is treated as infeasible: it is safer to
+        flag an unmeasurable point than to silently call it feasible. The
+        unmeasurable case is logged once per (planner instance, metric tag) by
+        the caller (``_compute_constraint_penalty``).
+        """
+        metric = run.summary_metrics.get(sla.metric_tag)
+        if metric is None:
+            return False
+        value = getattr(metric, sla.stat, None)
+        if value is None:
+            return False
+        if sla.op == "lt":
+            return value < sla.threshold
+        if sla.op == "le":
+            return value <= sla.threshold
+        if sla.op == "gt":
+            return value > sla.threshold
+        return value >= sla.threshold
+
+    def _iteration_feasibility(self, results: list[RunResult]) -> bool:
+        """True iff at least one trial in this iteration satisfied every SLA filter.
+
+        Mirrors per-trial averaging — if any trial passed all filters, the
+        configuration is reproducibly feasible (we report feasible-best on this
+        same averaging). When ``self._cfg.sla_filters`` is empty the iteration
+        is unconditionally feasible.
+        """
+        if not self._cfg.sla_filters:
+            return True
+        for run in results:
+            if not run.success:
+                continue
+            if all(self._trial_satisfies(run, f) for f in self._cfg.sla_filters):
+                return True
+        return False
+
+    def _averaged_metric_value(
+        self, results: list[RunResult], metric_tag: str, stat: str
+    ) -> float | None:
+        """Return the mean of stat(metric_tag) across successful trials, or None.
+
+        None means no successful trial had a measurable value for the
+        (metric_tag, stat) pair. The caller treats None as unmeasurable and
+        applies a fixed-magnitude penalty to steer the GP away from this region.
+        """
+        values: list[float] = []
+        for run in results:
+            if not run.success:
+                continue
+            metric = run.summary_metrics.get(metric_tag)
+            if metric is None:
+                continue
+            value = getattr(metric, stat, None)
+            if value is None:
+                continue
+            values.append(float(value))
+        if not values:
+            return None
+        return sum(values) / len(values)
+
+    def _compute_constraint_penalty(
+        self, results: list[RunResult]
+    ) -> tuple[float, bool]:
+        """Soft-penalty term to add to skopt's loss for SLA violations.
+
+        Per-iteration, computed from averaged constraint-metric values across
+        successful trials. For each filter, the contribution is
+        ``W * (max(0, signed_violation) / |threshold|)``; an unmeasurable
+        constraint contributes a fixed ``W`` (treated as a 1.0× normalized
+        violation) and is logged once per metric tag.
+
+        ``W = 100 * max(self._max_seen_loss, 1.0)`` keeps the penalty
+        dominant over typical objective values without poisoning the GP
+        kernel with infinities.
+
+        Returns ``(penalty, has_unmeasurable)`` where ``has_unmeasurable`` is
+        True if at least one filter could not be measured — this flag forces
+        the iteration's ``feasible`` flag to False even if other filters
+        coincidentally passed.
+        """
+        if not self._cfg.sla_filters:
+            return 0.0, False
+
+        weight = 100.0 * max(self._max_seen_loss, 1.0)
+        penalty = 0.0
+        has_unmeasurable = False
+        for sla in self._cfg.sla_filters:
+            value = self._averaged_metric_value(results, sla.metric_tag, sla.stat)
+            if value is None:
+                has_unmeasurable = True
+                penalty += weight
+                if sla.metric_tag not in self._warned_unmeasurable_metrics:
+                    self._warned_unmeasurable_metrics.add(sla.metric_tag)
+                    logger.warning(
+                        "SLA filter on %r (stat=%s) is unmeasurable for this "
+                        "iteration; treating as infeasible and applying a "
+                        "fixed-magnitude penalty (=%s) to the BO loss. Subsequent "
+                        "iterations with the same missing tag will not re-log.",
+                        sla.metric_tag,
+                        sla.stat,
+                        weight,
+                    )
+                continue
+            violation = max(0.0, _signed_violation(value, sla))
+            denom = abs(sla.threshold) if sla.threshold != 0 else 1.0
+            penalty += weight * (violation / denom)
+        return penalty, has_unmeasurable
+
 
 # Plateau-detection numerical guard. Coefficient of variation has no meaning
 # when |mean| collapses to zero; this floor lets us refuse to claim convergence
@@ -311,3 +473,21 @@ def _coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> Any:
     if dim.kind == "int":
         return int(value)
     return float(value)
+
+
+def _signed_violation(value: float, sla: SLAFilter) -> float:
+    """Signed magnitude of how much ``value`` violates ``sla``.
+
+    Positive = violation (constraint not satisfied), negative = slack
+    (constraint satisfied with room). The caller clamps to ``max(0, .)`` so
+    only violations contribute to the penalty term. Sign convention:
+
+    - ``lt`` / ``le``: violation = value - threshold (positive when over the cap)
+    - ``gt`` / ``ge``: violation = threshold - value (positive when under the floor)
+
+    Defined at module scope (not on the planner) because it is purely a
+    function of value+filter; no planner state is read.
+    """
+    if sla.op in ("lt", "le"):
+        return value - sla.threshold
+    return sla.threshold - value

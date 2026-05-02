@@ -48,3 +48,22 @@ def test_recipe_returns_none_when_unset():
     out = build_multi_run(user)
     assert out == {"num_runs": 2}
     assert "adaptive_search" not in out
+
+
+def test_recipe_populates_sla_filters_and_recipe_name_in_adaptive_search():
+    """End-to-end: recipe expansion writes sla_filters + recipe_name through to v2."""
+    user = _user_with_loadgen(
+        search_recipe="max-throughput-ttft-sla", ttft_sla_ms=200.0
+    )
+    out = build_multi_run(user)
+    assert out is not None
+    ol = out["adaptive_search"]
+    assert ol["recipe_name"] == "max-throughput-ttft-sla"
+    assert ol["sla_filters"] == [
+        {
+            "metric_tag": "time_to_first_token",
+            "stat": "p95",
+            "op": "lt",
+            "threshold": 200.0,
+        }
+    ]

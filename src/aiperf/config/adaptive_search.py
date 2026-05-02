@@ -16,7 +16,44 @@ from pydantic import ConfigDict, Field, model_validator
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config._base import BaseConfig
 
-__all__ = ["AdaptiveSearchConfig", "SearchSpaceDimension"]
+__all__ = ["AdaptiveSearchConfig", "SLAFilter", "SearchSpaceDimension"]
+
+
+class SLAFilter(BaseConfig):
+    """SLA constraint applied to BO scoring or grid filtering.
+
+    A trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.
+    Phase 2 wires this into ``BayesianSearchPlanner`` for soft-penalty BO
+    scoring and into ``write_search_history`` for lexicographic
+    feasibility-first best-result selection.
+
+    Lives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because
+    ``AdaptiveSearchConfig`` carries a ``list[SLAFilter]`` field; the inverse
+    location would force a circular import. Re-exported from
+    ``aiperf.search_recipes._base`` for ergonomic recipe authoring.
+
+    Example: enforce p95 TTFT under 200 ms via
+    ``SLAFilter(metric_tag="time_to_first_token", stat="p95", op="lt", threshold=200.0)``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric_tag: str = Field(
+        description=(
+            "Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key in "
+            "RunResult.summary_metrics produced by the run."
+        ),
+    )
+    stat: Literal["avg", "p50", "p90", "p95", "p99"] = Field(
+        default="p95",
+        description="Statistic on the metric to compare against the threshold.",
+    )
+    op: Literal["lt", "le", "gt", "ge"] = Field(
+        description="Comparison operator. Filter passes when stat(metric) op threshold is true.",
+    )
+    threshold: float = Field(
+        description="Numeric threshold the metric statistic is compared against.",
+    )
 
 
 class SearchSpaceDimension(BaseConfig):
@@ -109,6 +146,22 @@ class AdaptiveSearchConfig(BaseConfig):
     random_seed: int | None = Field(
         default=None,
         description="If set, passed as `random_state` to skopt.Optimizer for reproducibility.",
+    )
+    sla_filters: list[SLAFilter] = Field(
+        default_factory=list,
+        description=(
+            "SLA constraints applied to BO scoring (soft penalty in skopt's loss "
+            "space) and to best-result selection (lexicographic feasibility-first "
+            "filtering). Empty list means unconstrained — pure single-objective BO."
+        ),
+    )
+    recipe_name: str | None = Field(
+        default=None,
+        description=(
+            "Name of the search recipe that produced this config, when expanded "
+            "via --search-recipe. Surfaced in search_history.json for post-run "
+            "audit. None when AdaptiveSearchConfig was built from explicit --search-* flags."
+        ),
     )
 
     @model_validator(mode="after")
