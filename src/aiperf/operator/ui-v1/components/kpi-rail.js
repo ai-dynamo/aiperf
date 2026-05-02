@@ -188,44 +188,57 @@ export function KpiRail({ summary, slos, timeseries, mode = 'live', stale = fals
   const sloDict = slos ?? {};
   const ctx = { summary: sum, timeseries: ts, pods, phases, serverSummary, serverTimeseries };
 
+  const renderTile = (cfg) => {
+    let value;
+    let series;
+    let fullCtx = null;
+    if (cfg.resolverKey) {
+      const r = RESOLVERS[cfg.resolverKey](ctx);
+      value = r.value;
+      series = r.series ?? [];
+      fullCtx = r._full ?? null;
+    } else {
+      value = readPath(sum, cfg.summaryKey);
+      series = cfg.seriesKey ? pluck(ts[cfg.seriesKey], cfg.seriesStat ?? 'avg') : [];
+    }
+    const { delta, direction } = computeDelta(series);
+    const sloThreshold = cfg.sloKey ? sloDict[cfg.sloKey] ?? null : null;
+    const tone = cfg.toneRule === 'pod_health'
+      ? computePodHealthTone(fullCtx?.ready, fullCtx?.total)
+      : computeTone(cfg.toneRule, value, sloThreshold, cfg.sloKey, sum);
+    const summaryEntry = { _full_summary: sum, ...(fullCtx ?? {}) };
+    const formatted = formatValue(value, cfg.fmt, summaryEntry);
+    return html`
+      <${KpiTile}
+        tileId=${cfg.id}
+        label=${cfg.label}
+        value=${formatted}
+        unit=${cfg.unit}
+        delta=${delta}
+        deltaWindow=${delta ? '30s' : null}
+        deltaDirection=${direction}
+        sparkSeries=${series}
+        tone=${tone}
+        stale=${stale}
+        meta=${mode === 'completed' ? 'final' : (mode === 'archived' ? 'archived' : 'live')}
+        key=${cfg.id} />
+    `;
+  };
+
+  // Hero (3) + secondary (rest). Spec: 3 large up-top, secondary in a 4-col
+  // grid below. The 18-tile lineup stays — Wave 2 keeps every datapoint, only
+  // the visual hierarchy changes so the three top-level KPIs anchor the page.
+  const hero = TILE_CONFIG.slice(0, 3);
+  const secondary = TILE_CONFIG.slice(3);
+
   return html`
-    <div class="kpi-rail-grid" data-testid="kpi-rail">
-      ${TILE_CONFIG.map((cfg) => {
-        let value;
-        let series;
-        let fullCtx = null;
-        if (cfg.resolverKey) {
-          const r = RESOLVERS[cfg.resolverKey](ctx);
-          value = r.value;
-          series = r.series ?? [];
-          fullCtx = r._full ?? null;
-        } else {
-          value = readPath(sum, cfg.summaryKey);
-          series = cfg.seriesKey ? pluck(ts[cfg.seriesKey], cfg.seriesStat ?? 'avg') : [];
-        }
-        const { delta, direction } = computeDelta(series);
-        const sloThreshold = cfg.sloKey ? sloDict[cfg.sloKey] ?? null : null;
-        const tone = cfg.toneRule === 'pod_health'
-          ? computePodHealthTone(fullCtx?.ready, fullCtx?.total)
-          : computeTone(cfg.toneRule, value, sloThreshold, cfg.sloKey, sum);
-        const summaryEntry = { _full_summary: sum, ...(fullCtx ?? {}) };
-        const formatted = formatValue(value, cfg.fmt, summaryEntry);
-        return html`
-          <${KpiTile}
-            tileId=${cfg.id}
-            label=${cfg.label}
-            value=${formatted}
-            unit=${cfg.unit}
-            delta=${delta}
-            deltaWindow=${delta ? '30s' : null}
-            deltaDirection=${direction}
-            sparkSeries=${series}
-            tone=${tone}
-            stale=${stale}
-            meta=${mode === 'completed' ? 'final' : (mode === 'archived' ? 'archived' : 'live')}
-            key=${cfg.id} />
-        `;
-      })}
+    <div data-testid="kpi-rail">
+      <div class="kpi-rail__hero" data-testid="kpi-rail-hero">
+        ${hero.map(renderTile)}
+      </div>
+      <div class="kpi-rail__secondary kpi-rail-grid" data-testid="kpi-rail-secondary">
+        ${secondary.map(renderTile)}
+      </div>
     </div>
   `;
 }

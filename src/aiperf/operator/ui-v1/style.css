@@ -3084,3 +3084,69 @@ select, input {
   color: rgba(255, 255, 255, 0.5);
   margin-bottom: 3px;
 }
+
+/* ============================================================
+ * Wave 2 — job-detail restyle
+ * ============================================================ */
+
+/* Hero (3) + Secondary (4) KPI rail wrap. Hero tiles get the large
+ * sparkline + gradient bar treatment via metric-card--hero; secondary
+ * tiles re-use the existing dense 6-col KpiTile rail underneath. */
+.kpi-rail__hero {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.kpi-rail__secondary {
+  /* Sits on top of .kpi-rail-grid so the existing dense layout still
+   * applies; hero is the only new presentation we own here. */
+}
+@media (max-width: 900px) {
+  .kpi-rail__hero { grid-template-columns: 1fr; }
+}
+
+/* Hero KpiCard size variant. The icon column scales up, the value font
+ * grows, the sparkline takes the full card width. */
+.metric-card--hero .metric-icon {
+  width: 32px;
+  height: 32px;
+}
+.metric-card--hero .metric-val {
+  font-size: 30px;
+}
+.metric-card--secondary .metric-icon,
+.metric-icon--sm {
+  width: 24px;
+  height: 24px;
+}
+.metric-card--secondary .metric-val {
+  font-size: 20px;
+}
+
+/* Gradient progress bar (replaces solid fill). Reuses the existing
+ * metric-bar shape; only the fill is restyled. */
+.metric-bar--gradient .metric-bar__fill--accent,
+.metric-bar--gradient .metric-bar__fill--ok {
+  background: linear-gradient(90deg, var(--accent-strong) 0%, var(--accent) 100%);
+}
+.metric-bar--gradient .metric-bar__fill--bad {
+  background: linear-gradient(90deg, var(--cat-errors) 0%, var(--cat-latency) 100%);
+}
+.metric-bar--gradient .metric-bar__fill--warn {
+  background: linear-gradient(90deg, var(--warn) 0%, var(--cat-latency) 100%);
+}
+.metric-bar--gradient .metric-bar__fill--neutral {
+  background: linear-gradient(90deg, var(--muted) 0%, var(--sub) 100%);
+}
+
+/* Trend badge — small ▲/▼ pct chip rendered inline with the value. */
+.metric-trend {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  margin-left: 6px;
+  letter-spacing: 0.02em;
+}
+.metric-trend--good { color: var(--accent); }
+.metric-trend--bad  { color: var(--cat-latency); }

@@ -116,6 +116,11 @@ function MetricIcon({ name }) {
  *   - Tints the icon chip and (when ``color`` is unset) the value number.
  * @param {number} [props.progress] - 0–100; renders a thin progress bar.
  * @param {string} [props.progressTone] - Override tone for the bar.
+ * @param {('hero'|'secondary')} [props.size] - Hero (default) renders the
+ *   220×36 sparkline with end-dot and the larger value font; secondary
+ *   shrinks to 150×22 sparkline, smaller icon and value, no end-dot.
+ * @param {{delta: number, direction: ('up'|'down'), good: boolean}} [props.trend]
+ *   - Optional small trend badge shown next to the value.
  */
 export function KpiCard({
   label,
@@ -129,12 +134,18 @@ export function KpiCard({
   progress,
   progressTone,
   sparkline,
+  size,
+  trend,
 }) {
   const valueStyle = color ? `color: ${color}` : '';
+  const sizeMod = size === 'secondary' ? ' metric-card--secondary' : ' metric-card--hero';
   const valueClass = 'metric-val' + (!color && tone ? ` metric-val--${tone}` : '');
-  const cardClass = 'metric-card' + (icon || tone ? ' metric-card--rich' : '');
+  const cardClass = 'metric-card' + (icon || tone ? ' metric-card--rich' : '') + (icon ? sizeMod : '');
   const iconToneClass = tone ? ` metric-icon--${tone}` : ' metric-icon--neutral';
+  const iconSizeClass = size === 'secondary' ? ' metric-icon--sm' : '';
   const barTone = progressTone ?? tone ?? 'neutral';
+  const sparkW = size === 'secondary' ? 150 : 220;
+  const sparkH = size === 'secondary' ? 22 : 36;
 
   // Legacy layout when caller doesn't opt in to the rich treatment.
   if (!icon) {
@@ -146,6 +157,7 @@ export function KpiCard({
             ${value ?? '—'}
           </span>
           ${unit && html`<span class="metric-unit">${unit}</span>`}
+          ${trend && html`<${TrendBadge} trend=${trend} />`}
         </div>
         ${sub && html`<div class="metric-sub">${sub}</div>`}
         ${progress != null && html`
@@ -161,7 +173,7 @@ export function KpiCard({
   return html`
     <div class=${cardClass} data-testid=${'kpi-' + slugifyLabel(label)} title=${title}>
       <div class="metric-card__row">
-        <div class=${'metric-icon' + iconToneClass}><${MetricIcon} name=${icon} /></div>
+        <div class=${'metric-icon' + iconToneClass + iconSizeClass}><${MetricIcon} name=${icon} /></div>
         <div class="metric-card__body">
           <span class="metric-label">${label}</span>
           <div class="metric-val-row">
@@ -169,6 +181,7 @@ export function KpiCard({
               ${value ?? '—'}
             </span>
             ${unit && html`<span class="metric-unit">${unit}</span>`}
+            ${trend && html`<${TrendBadge} trend=${trend} />`}
           </div>
           ${sub && html`<div class="metric-sub">${sub}</div>`}
         </div>
@@ -179,14 +192,27 @@ export function KpiCard({
                       points=${sparkline.points}
                       stroke=${sparkline.stroke ?? sc.stroke}
                       fill=${sparkline.fill ?? sc.fill}
-                      width=${140} height=${26} />`;
+                      width=${sparkW} height=${sparkH} />`;
       })()}
       ${progress != null && html`
-        <div class="metric-bar" aria-hidden="true">
+        <div class="metric-bar metric-bar--gradient" aria-hidden="true">
           <div class=${'metric-bar__fill metric-bar__fill--' + barTone}
                style=${'width: ' + Math.min(100, Math.max(0, Number(progress))) + '%'}></div>
         </div>
       `}
     </div>
   `;
+}
+
+// Inline trend badge — tiny ``▲ 12%`` / ``▼ 4%`` glyph next to the value.
+// ``good`` colors with --accent (green = positive direction for this
+// metric); !good with --cat-latency (peach/orange — direction is bad
+// for this metric).
+function TrendBadge({ trend }) {
+  if (!trend || trend.delta == null) return null;
+  const arrow = trend.direction === 'up' ? '▲' : '▼';
+  const cls = 'metric-trend' + (trend.good ? ' metric-trend--good' : ' metric-trend--bad');
+  const pct = Math.abs(Number(trend.delta));
+  if (!isFinite(pct)) return null;
+  return html`<span class=${cls}>${arrow} ${pct.toFixed(pct >= 10 ? 0 : 1)}%</span>`;
 }
