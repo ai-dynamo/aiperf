@@ -18,6 +18,28 @@ from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
 __all__ = ["build_plan_from_sweep"]
 
 
+def _reject_adaptive_search_in_sweep_cr(spec: AIPerfSweepSpec) -> None:
+    """Forward-compat guard: AIPerfSweep does not support adaptive outer loops in v1.
+
+    The CRD has no `adaptive_search` field, so this guard is dormant today; it
+    exists so a future CRD extension that adds the field doesn't accidentally
+    ship a code path that tries to grid-expand an adaptive sweep.
+    """
+    if (
+        getattr(spec, "multi_run", None) is not None
+        and getattr(spec.multi_run, "adaptive_search", None) is not None
+    ):
+        import kopf
+
+        raise kopf.PermanentError(
+            "AIPerfSweep does not support adaptive outer loops (BO). The cluster "
+            "sweep controller requires a deterministic variation set; adaptive "
+            "variation choice is incompatible with the operator's cardinality "
+            "contract. Use a grid sweep block instead, or run BO in-process via "
+            "`aiperf profile --search-space ...`."
+        )
+
+
 def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
     """Construct a BenchmarkPlan from an AIPerfSweep CR.
 
@@ -33,6 +55,8 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
     """
     spec_dict = sweep_cr["spec"]
     spec = AIPerfSweepSpec.model_validate(spec_dict)
+
+    _reject_adaptive_search_in_sweep_cr(spec)
 
     base_benchmark = spec.template.spec.benchmark.model_dump(
         by_alias=True, exclude_none=True, exclude_defaults=True

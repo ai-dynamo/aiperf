@@ -119,11 +119,7 @@ def _preflight_fd_limit() -> None:
         )
     if soft >= target_soft or soft == resource.RLIM_INFINITY:
         return
-    new_soft = (
-        target_soft
-        if hard == resource.RLIM_INFINITY
-        else min(target_soft, hard)
-    )
+    new_soft = target_soft if hard == resource.RLIM_INFINITY else min(target_soft, hard)
     if new_soft <= soft:
         return
     with contextlib.suppress(ValueError, OSError):
@@ -449,16 +445,29 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
 
 def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
-    """Block in-process sweep when running inside an operator-managed pod.
+    """Block in-process sweep / adaptive outer loop when running inside an operator-managed pod.
 
-    The k8s operator drives sweeps cluster-wide via the AIPerfSweep CR, which
-    spawns one AIPerfJob (and thus one controller pod) per variation — each
-    pod sees a single-config plan. If a user submits an AIPerfJob with a
-    list-shaped magic-list directly (e.g. inline ``--concurrency 10,20,30``),
-    the controller pod would try to sweep in-process and break the operator's
-    cardinality contract. Hard-fail with a pointer to the CR path.
+    The k8s operator drives sweeps cluster-wide via the AIPerfSweep CR (one
+    AIPerfJob per variation, controller pod sees a single-config plan). It
+    does NOT support adaptive outer loops in v1: variation k>0 is unknown
+    until variation k-1 has been scored, breaking the operator's deterministic
+    cardinality contract (status.totalVariations is set at CR creation).
+    Both grid sweeps and outer loops are hard-rejected here.
     """
-    if os.environ.get("AIPERF_OPERATOR_MANAGED") == "1" and plan.is_sweep:
+    if os.environ.get("AIPERF_OPERATOR_MANAGED") != "1":
+        return
+    if plan.is_adaptive_search:
+        ol = plan.adaptive_search
+        raise SystemExit(
+            f"Adaptive outer loop ({ol.algorithm}, "
+            f"max_iterations={ol.max_iterations}, search-space={[d.path for d in ol.search_space]}) "
+            f"is not supported in operator-managed runs (AIPERF_OPERATOR_MANAGED=1). "
+            f"Cluster sweeps use the AIPerfSweep CRD with a deterministic variation set; "
+            f"adaptive outer loops need adaptive variation choice. Run in-process "
+            f"(without the operator) or use a grid AIPerfSweep instead. "
+            f"See docs/sweeping/bayesian-optimization.md."
+        )
+    if plan.is_sweep:
         swept_params = sorted(
             {
                 k
