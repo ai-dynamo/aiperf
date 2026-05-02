@@ -1565,6 +1565,12 @@ export function JobDetail({ namespace, name, epoch }) {
   // card can show a real message instead of a permanent loader.
   const [filesLoaded, setFilesLoaded] = useState(false);
   const [polling, setPolling] = useState(true);
+  // Flips true when the live poll throws and has not yet recovered. Kept
+  // distinct from ``error`` (which only renders the full-page block on
+  // first-load failure) so an outage that hits an already-loaded page
+  // can downgrade the green "Live" pulse to an amber "Stale" badge
+  // without nuking the rest of the rendered state.
+  const [liveStale, setLiveStale] = useState(false);
   const [serverMetrics, setServerMetrics] = useState(null);
   const [serverMetricsLoaded, setServerMetricsLoaded] = useState(false);
   const [serverMetricsError, setServerMetricsError] = useState(null);
@@ -1668,12 +1674,38 @@ export function JobDetail({ namespace, name, epoch }) {
 
     poll(
       async () => {
-        const data = await api.getJob(namespace, name, epoch);
+        let data;
+        try {
+          data = await api.getJob(namespace, name, epoch);
+        } catch (e) {
+          // Transport/5xx — keep prior ``job`` rendered, but flip the
+          // header indicator to "Stale" so the user knows the live
+          // numbers are frozen. Re-throw so poll()'s shared health gate
+          // can raise the app-level banner once enough ticks fail.
+          setLiveStale(true);
+          throw e;
+        }
         setJob(data);
         setError(null);
+        setLiveStale(false);
 
+        // Terminal-state detection. Two signals, ORed:
+        //   1) Recognized terminal phase string. Includes ``archived``
+        //      because ``job_union._archived_from_summary`` stamps that
+        //      literal phase whenever the response is built from the PVC
+        //      summary (no live CR — i.e. the job has finished and the CR
+        //      has been removed, or a non-latest epoch was requested).
+        //   2) Non-null ``completionTime`` on the job summary. The
+        //      operator only writes this once the run is over, so it's a
+        //      reliable backstop for any future phase string we haven't
+        //      enumerated here yet.
         const phase = (data?.job?.phase ?? data?.status?.phase ?? '').toLowerCase();
-        const done = phase === 'completed' || phase === 'succeeded' || phase === 'failed' || phase === 'error' || phase === 'cancelled' || phase === 'canceled' || phase === 'partiallyfailed';
+        const terminalPhases = new Set([
+          'completed', 'succeeded', 'failed', 'error',
+          'cancelled', 'canceled', 'partiallyfailed', 'archived',
+        ]);
+        const completionTime = data?.job?.completionTime ?? data?.status?.completionTime ?? null;
+        const done = terminalPhases.has(phase) || completionTime != null;
         if (done) setPolling(false);
 
         // Append to throughput chart
@@ -1863,13 +1895,34 @@ export function JobDetail({ namespace, name, epoch }) {
   const endpointUrl = info.endpoint ?? null;
   const startTime = info.startTime ?? status.startTime;
   const isRunning = phase.toLowerCase() === 'running';
-  const isCompleted = phase.toLowerCase() === 'completed' || phase.toLowerCase() === 'succeeded';
+  // ``archived`` covers responses sourced purely from the PVC summary
+  // (CR has been deleted, or a non-latest epoch was requested) — see
+  // ``job_union._archived_from_summary``. We treat it as a successful
+  // completion so the Final KPIs, SLA, server-metrics, and per-record
+  // panels render the same way as a live ``Completed`` CR; the alternative
+  // hides perfectly good results behind a phase string the page never
+  // generated itself.
+  const isCompleted = phase.toLowerCase() === 'completed'
+    || phase.toLowerCase() === 'succeeded'
+    || phase.toLowerCase() === 'archived';
   const phaseLower = phase.toLowerCase();
   const isCancelled = phaseLower === 'cancelled' || phaseLower === 'canceled';
   const isPartiallyFailed = phaseLower === 'partiallyfailed';
   // Terminal phases that still surface "Final" KPIs and stop the live polling loop —
   // includes cancelled/partial so the page doesn't get stuck pretending to poll forever.
   const isTerminal = isCompleted || isCancelled || isPartiallyFailed || phaseLower === 'failed' || phaseLower === 'error';
+  // Strip-mode signal passed to KPI / phase / pods strips. ``archived``
+  // wins over ``completed`` so kpi-rail tiles label values "archived"
+  // instead of "final" when the response is summary-only — distinguishes
+  // "live CR finished, results just landed" from "no CR exists, results
+  // are persisted history".
+  const stripMode = phaseLower === 'archived'
+    ? 'archived'
+    : isCompleted
+      ? 'completed'
+      : !viewingCurrentRun
+        ? 'archived'
+        : 'live';
   const liveServerMetricsBase = viewingCurrentRun ? status.serverMetrics : null;
   const liveServerMetrics = (liveData.connected && liveData.serverSummary)
     ? liveData.serverSummary
@@ -2086,16 +2139,32 @@ export function JobDetail({ namespace, name, epoch }) {
               ${model && html`<${ModelPill} model=${model} onClick=${m => navigate('/jobs?model=' + encodeURIComponent(m))} testId="job-detail-model-pill" />`}
               ${model && model !== '---' && html`<${SimilarRunsLink} namespace=${namespace} model=${model} currentName=${name} />`}
               ${startTime && html`<${RelativeTime} ts=${startTime} mode="elapsed" className="text-dim" />`}
-              <!-- Live / Completed indicator -->
+              <!-- Live / Stale / Completed indicator -->
               ${polling
-                ? html`
-                  <span style="display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ${palette.green}">
-                    <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.green + '; animation: pulse 1.5s ease-in-out infinite'} />
-                    Live
-                  </span>
-                `
+                ? liveStale
+                  ? html`
+                    <span
+                      title="Live updates paused — operator API is not responding. Retrying in the background; numbers shown are from the last successful poll."
+                      data-testid="job-detail-live-stale"
+                      style=${'display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ' + palette.amber}
+                    >
+                      <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.amber} />
+                      Stale
+                    </span>
+                  `
+                  : html`
+                    <span
+                      data-testid="job-detail-live"
+                      style="display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ${palette.green}"
+                    >
+                      <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.green + '; animation: pulse 1.5s ease-in-out infinite'} />
+                      Live
+                    </span>
+                  `
                 : isCompleted
-                  ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
+                  ? phaseLower === 'archived'
+                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run finished and the live CR has been archived — values shown come from the persisted summary.">Archived</span>`
+                    : html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
                   : isCancelled
                     ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
                     : isPartiallyFailed
@@ -2230,7 +2299,7 @@ export function JobDetail({ namespace, name, epoch }) {
           phases=${phaseStripData}
           serverSummary=${liveServerMetrics}
           serverTimeseries=${liveData.serverTimeseries}
-          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          mode=${stripMode}
           stale=${liveData.connected === false} />
         ${isCompleted && results && html`
           <div style="margin-top: var(--space-4)">
@@ -2278,7 +2347,7 @@ export function JobDetail({ namespace, name, epoch }) {
       <!-- Live two-column: charts + diagnostics -->
       <div class="live-2col" style="margin-bottom: var(--space-4)">
         <${LiveChartsPanel}
-          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          mode=${stripMode}
           throughputChartData=${chartData}
           throughputChartOptions=${throughputChartOptions}
           histogramChartData=${latencyHistogram}
@@ -2289,7 +2358,7 @@ export function JobDetail({ namespace, name, epoch }) {
           name=${name}
           conditions=${conditions}
           pods=${pods}
-          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          mode=${stripMode}
           archived=${!viewingCurrentRun}
           eventCount=${null}
           logSeverityCounts=${null}

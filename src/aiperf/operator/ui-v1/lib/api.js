@@ -1,4 +1,17 @@
+import { setError } from './state.js';
+
 const BASE = '/api/v1';
+
+// Number of consecutive `poll()` failures before we surface the
+// app-level "Operator API unreachable" banner. Two ticks dampens
+// transient blips (one bad request, one operator-pod restart) while
+// still flagging a real outage within ~6-10s for typical poll cadences.
+const POLL_FAIL_THRESHOLD = 2;
+
+// Count of `poll()` instances currently reporting unhealthy. The banner
+// stays up while ≥1 poller is failing; clears once every poller has had
+// a clean tick. Module-scope so all poll() instances share the gate.
+let _unhealthyPollers = 0;
 
 /**
  * Low-level fetch wrapper. Throws on non-2xx.
@@ -266,6 +279,16 @@ async function getJobLogs(ns, name, opts) {
  * Polling helper. Calls fn() immediately, then every intervalMs.
  * Stops when the AbortSignal is aborted.
  *
+ * Tracks consecutive failures per poll instance: after
+ * ``POLL_FAIL_THRESHOLD`` failures in a row, raises the app-level
+ * "Operator API unreachable" banner via ``setError``. The banner
+ * clears once every active poll instance has had at least one
+ * successful tick (so a single recovering endpoint doesn't hide a
+ * separate one that's still 5xx-ing).
+ *
+ * Per-page error UX (richer messages, first-load blocks) still works
+ * because pages can wrap fn() with their own try/catch + state.
+ *
  * @param {() => Promise<void>} fn - Async function to call on each tick
  * @param {number} intervalMs - Polling interval in milliseconds
  * @param {AbortSignal} abortSignal - Stop polling when this fires
@@ -275,13 +298,34 @@ export function poll(fn, intervalMs, abortSignal) {
   if (abortSignal.aborted) return;
 
   let handle = null;
+  let consecutiveFailures = 0;
+  let countedAsUnhealthy = false;
+
+  function markHealthy() {
+    consecutiveFailures = 0;
+    if (countedAsUnhealthy) {
+      countedAsUnhealthy = false;
+      _unhealthyPollers = Math.max(0, _unhealthyPollers - 1);
+      if (_unhealthyPollers === 0) setError(null);
+    }
+  }
+
+  function markFailure() {
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= POLL_FAIL_THRESHOLD && !countedAsUnhealthy) {
+      countedAsUnhealthy = true;
+      _unhealthyPollers += 1;
+      setError('Operator API unreachable — live data is paused. Retrying…');
+    }
+  }
 
   async function tick() {
     if (abortSignal.aborted) return;
     try {
       await fn();
+      markHealthy();
     } catch (_err) {
-      // Caller should handle errors inside fn; we don't crash the poll loop
+      markFailure();
     }
     if (!abortSignal.aborted) {
       handle = setTimeout(tick, intervalMs);
@@ -290,6 +334,13 @@ export function poll(fn, intervalMs, abortSignal) {
 
   abortSignal.addEventListener('abort', () => {
     if (handle !== null) clearTimeout(handle);
+    // Releasing the unhealthy slot on unmount keeps the banner accurate
+    // when a page navigates away mid-outage.
+    if (countedAsUnhealthy) {
+      countedAsUnhealthy = false;
+      _unhealthyPollers = Math.max(0, _unhealthyPollers - 1);
+      if (_unhealthyPollers === 0) setError(null);
+    }
   }, { once: true });
 
   tick();

@@ -18,7 +18,11 @@ import { LoadingPanel } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 
-const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed']);
+// ``archived`` is included so polling stops for sweeps whose live CR
+// has been deleted but whose aggregate.json is still served from the
+// PVC (see ``sweep_union.py`` lines 152/291). Without it the page
+// would tick the API forever for a sweep that's already gone.
+const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'partiallyfailed', 'archived']);
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
 
 const HEADLINE_METRICS = [
@@ -153,18 +157,37 @@ export function SweepDetail({ namespace, name, epoch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlAxis]);
   const [error, setError] = useState(null);
+  // Mirrors job-detail's ``liveStale``: flips true when a poll throws
+  // after the first successful detail load. Lets the header indicator
+  // downgrade Live → Stale without nuking the rest of the page on a
+  // transient operator restart or port-forward blip.
+  const [liveStale, setLiveStale] = useState(false);
 
   useEffect(() => {
     const ac = new AbortController();
     let stopped = false;
+    let firstLoadDone = false;
     async function tick() {
       try {
         const d = await api.getSweep(namespace, name, epoch);
-        if (!stopped) setDetail(d);
+        if (stopped) return;
+        setDetail(d);
+        setError(null);
+        setLiveStale(false);
+        firstLoadDone = true;
         const phase = (d?.sweep?.phase ?? '').toLowerCase();
         if (TERMINAL.has(phase)) ac.abort();
       } catch (e) {
-        if (!stopped) setError(String(e));
+        if (stopped) return;
+        if (!firstLoadDone) {
+          // Only the first-load failure replaces the page — once we have
+          // detail rendered, downgrade subsequent transport errors to a
+          // header Stale indicator so users keep their context.
+          setError(String(e));
+        } else {
+          setLiveStale(true);
+        }
+        throw e;
       }
     }
     poll(tick, 5000, ac.signal);
@@ -364,7 +387,16 @@ export function SweepDetail({ namespace, name, epoch }) {
   const phaseClr = phaseColor(phase);
   const phaseLower = phase.toLowerCase();
   const isRunning = RUNNING_PHASES.has(phaseLower);
-  const isCompleted = phaseLower === 'succeeded' || phaseLower === 'completed';
+  // ``archived`` covers responses sourced purely from the PVC aggregate
+  // (CR has been deleted, or a non-latest epoch was requested) — see
+  // ``sweep_union._record_from_archived_doc``. Treat as a successful
+  // completion so headline KPI tones, progress bars, and any
+  // ``isCompleted``-gated UI render the same way as a live ``Succeeded``
+  // CR; the alternative hides a finished sweep behind a phase string the
+  // page never generated itself.
+  const isCompleted = phaseLower === 'succeeded'
+    || phaseLower === 'completed'
+    || phaseLower === 'archived';
   const isFailed = phaseLower === 'failed';
   const isPartiallyFailed = phaseLower === 'partiallyfailed';
   const isCancelled = phaseLower === 'cancelled';
@@ -389,14 +421,33 @@ export function SweepDetail({ namespace, name, epoch }) {
               ${s.model && s.model !== '---' && html`<${SimilarSweepsLink} namespace=${s.namespace} model=${s.model} currentName=${s.name} />`}
               ${s.age_seconds != null && html`<${RelativeTime} seconds=${s.age_seconds} mode="elapsed" className="text-dim" />`}
               ${isRunning
-                ? html`
-                  <span style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}>
-                    <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
-                    Live
-                  </span>
-                `
+                ? liveStale
+                  ? html`
+                    <span
+                      title="Live updates paused — operator API is not responding. Retrying in the background; numbers shown are from the last successful poll."
+                      data-testid="sweep-detail-live-stale"
+                      style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.amber}`}
+                    >
+                      <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.amber}`}></span>
+                      Stale
+                    </span>
+                  `
+                  : html`
+                    <span
+                      data-testid="sweep-detail-live"
+                      style=${`display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-xs);color:${palette.green}`}
+                    >
+                      <span style=${`display:inline-block;width:8px;height:8px;border-radius:50%;background:${palette.green};animation:pulse 1.5s ease-in-out infinite`}></span>
+                      Live
+                    </span>
+                  `
                 : isCompleted
-                  ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.green + ';opacity:0.7'}>Completed</span>`
+                  ? phaseLower === 'archived'
+                    ? html`<span
+                        title="Sweep finished and the live CR has been archived — values shown come from the persisted aggregate."
+                        style=${'font-size:var(--font-size-xs);color:' + palette.subtext0 + ';opacity:0.85'}
+                      >Archived</span>`
+                    : html`<span style=${'font-size:var(--font-size-xs);color:' + palette.green + ';opacity:0.7'}>Completed</span>`
                   : isFailed
                     ? html`<span style=${'font-size:var(--font-size-xs);color:' + palette.red + ';opacity:0.85'} title="Sweep failed before completing — see conditions for the underlying reason.">Failed</span>`
                     : isCancelled
