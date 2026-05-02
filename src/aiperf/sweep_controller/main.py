@@ -404,11 +404,28 @@ async def main() -> int:
         )
 
         orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
+        search_planner = None
+        if plan.is_adaptive_search:
+            from aiperf.orchestrator.search_planner.bayesian import (
+                BayesianSearchPlanner,
+            )
+
+            search_planner = BayesianSearchPlanner(
+                plan.configs[0], plan.adaptive_search
+            )
+            logger.info(
+                f"Cluster-side adaptive search active: "
+                f"max_iterations={plan.adaptive_search.max_iterations}, "
+                f"objective={plan.adaptive_search.objective_metric}:"
+                f"{plan.adaptive_search.objective_stat}:"
+                f"{plan.adaptive_search.objective_direction}"
+            )
         try:
             all_results = await orchestrator.execute(
                 plan,
                 executor,
                 cancel_check=lambda: cancel_flag["requested"],
+                search_planner=search_planner,
             )
         finally:
             cancel_task.cancel()

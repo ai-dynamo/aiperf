@@ -71,6 +71,11 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
             spec.multi_run.disable_warmup_after_first
         )
         plan_kwargs["parameter_sweep_mode"] = spec.multi_run.mode
+        # Propagate Bayesian-Optimization config so the controller pod can
+        # instantiate a BayesianSearchPlanner and dispatch the adaptive
+        # outer loop (mirrors the in-process build_benchmark_plan flow).
+        if spec.multi_run.adaptive_search is not None:
+            plan_kwargs["adaptive_search"] = spec.multi_run.adaptive_search
     if spec.convergence is not None:
         plan_kwargs["convergence_metric"] = spec.convergence.metric
         plan_kwargs["convergence_threshold"] = spec.convergence.threshold
