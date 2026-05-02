@@ -68,14 +68,16 @@ def build_accuracy(user: UserConfig) -> dict[str, Any] | None:
 def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
     """Build the multi-run section dict from explicitly-set v1 loadgen fields.
 
-    The v1 ``LoadGeneratorConfig`` carries multi-run knobs flat alongside the
-    rest of load-generator config (matching origin/main). Returns ``None``
-    when ``user.loadgen`` is unset or no multi-run fields were explicitly set.
+    When --search-* flags are present, builds a typed AdaptiveSearchConfig and
+    emits its model_dump() as `out["adaptive_search"]`. MultiRunConfig has
+    `extra="forbid"` so the typed field is the only legal carrier.
+
+    Hard-fails if --search-space is set without the required companion flags
+    (--search-metric, --search-direction, --search-max-iterations).
     """
     lg = user.loadgen
     if lg is None or not lg.model_fields_set:
         return None
-    # field-on-loadgen -> output-key
     mapping = {
         "num_profile_runs": "num_runs",
         "profile_run_cooldown_seconds": "cooldown_seconds",
@@ -94,4 +96,61 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
     for field, key in mapping.items():
         if field in lg.model_fields_set:
             out[key] = getattr(lg, field)
+    adaptive_search = _build_adaptive_search(lg)
+    if adaptive_search is not None:
+        out["adaptive_search"] = adaptive_search
     return out or None
+
+
+def _build_adaptive_search(lg: Any) -> dict[str, Any] | None:
+    """Parse --search-* flags into a model-dumped AdaptiveSearchConfig dict.
+
+    Returns ``None`` when no --search-* flags were set. Raises ``TypeError``
+    when the flag combination is invalid (search-space without companions, or
+    other --search-* flags without --search-space).
+    """
+    search_fields = (
+        "search_space",
+        "search_metric",
+        "search_stat",
+        "search_direction",
+        "search_max_iterations",
+        "search_initial_points",
+        "search_random_seed",
+    )
+    search_set = {f for f in search_fields if f in lg.model_fields_set}
+    if "search_space" not in search_set:
+        if search_set:
+            raise TypeError(
+                f"--search-* flags {sorted(search_set)} require --search-space."
+            )
+        return None
+    for required, flag in (
+        ("search_metric", "--search-metric"),
+        ("search_direction", "--search-direction"),
+        ("search_max_iterations", "--search-max-iterations"),
+    ):
+        if required not in search_set:
+            raise TypeError(
+                f"--search-space requires {flag} (companion flag missing). "
+                "See docs/sweeping/bayesian-optimization.md for examples."
+            )
+    # Done here (not later in build_benchmark_plan) so MultiRunConfig
+    # validation catches structural errors early at the v1->v2 boundary.
+    from aiperf.config.adaptive_search import AdaptiveSearchConfig
+    from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+    from aiperf.orchestrator.search_planner.parsing import parse_search_space
+
+    ol_kwargs: dict[str, Any] = dict(
+        algorithm="bayes",
+        search_space=parse_search_space(lg.search_space),
+        objective_metric=lg.search_metric,
+        objective_stat=lg.search_stat or "avg",
+        objective_direction=OptimizationDirection(lg.search_direction),
+        max_iterations=lg.search_max_iterations,
+    )
+    if "search_initial_points" in search_set and lg.search_initial_points is not None:
+        ol_kwargs["n_initial_points"] = lg.search_initial_points
+    if "search_random_seed" in search_set and lg.search_random_seed is not None:
+        ol_kwargs["random_seed"] = lg.search_random_seed
+    return AdaptiveSearchConfig(**ol_kwargs).model_dump(mode="json")

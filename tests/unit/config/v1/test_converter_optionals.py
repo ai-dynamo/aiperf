@@ -3,12 +3,19 @@
 
 """Tests for v1 converter optional-section builders."""
 
+import pytest
+
 from aiperf.config.v1 import UserConfig
 from aiperf.config.v1._converter_optionals import (
     build_accuracy,
     build_multi_run,
     build_tokenizer,
 )
+from aiperf.config.v1._loadgen import LoadGeneratorConfig
+
+
+def _user_with_loadgen(**fields) -> UserConfig:
+    return UserConfig(loadgen=LoadGeneratorConfig(**fields))
 
 
 def test_build_tokenizer_returns_none_when_unset():
@@ -92,3 +99,96 @@ def test_build_multi_run_includes_convergence_fields():
     assert out is not None
     assert out["convergence_metric"] == "request_latency"
     assert out["convergence_threshold"] == 0.05
+
+
+def test_build_multi_run_emits_typed_adaptive_search_when_set():
+    user = _user_with_loadgen(
+        search_space=["phases.profiling.concurrency:1,1000:int"],
+        search_metric="output_token_throughput",
+        search_direction="maximize",
+        search_max_iterations=20,
+    )
+    out = build_multi_run(user)
+    assert out is not None
+    assert "adaptive_search" in out
+    ol = out["adaptive_search"]
+    # model_dump'd AdaptiveSearchConfig - typed shape with parsed search_space.
+    assert ol["algorithm"] == "bayes"
+    assert ol["max_iterations"] == 20
+    assert ol["objective_metric"] == "output_token_throughput"
+    assert ol["objective_stat"] == "avg"  # default when --search-stat omitted
+    assert ol["objective_direction"] == "maximize"
+    assert ol["search_space"] == [
+        {
+            "path": "phases.profiling.concurrency",
+            "lo": 1.0,
+            "hi": 1000.0,
+            "kind": "int",
+        },
+    ]
+
+
+def test_build_multi_run_propagates_explicit_stat():
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_metric="ttft",
+        search_stat="p99",
+        search_direction="minimize",
+        search_max_iterations=10,
+    )
+    out = build_multi_run(user)
+    assert out["adaptive_search"]["objective_stat"] == "p99"
+    assert out["adaptive_search"]["objective_direction"] == "minimize"
+
+
+def test_build_multi_run_no_adaptive_search_when_unset():
+    user = _user_with_loadgen(num_profile_runs=3)
+    out = build_multi_run(user)
+    assert out == {"num_runs": 3}
+    assert "adaptive_search" not in out
+
+
+def test_build_multi_run_rejects_search_space_without_metric():
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_direction="maximize",
+        search_max_iterations=20,
+    )
+    with pytest.raises(TypeError, match="--search-space requires --search-metric"):
+        build_multi_run(user)
+
+
+def test_build_multi_run_rejects_search_space_without_direction():
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_metric="m",
+        search_max_iterations=20,
+    )
+    with pytest.raises(TypeError, match="--search-space requires --search-direction"):
+        build_multi_run(user)
+
+
+def test_build_multi_run_rejects_search_space_without_max_iterations():
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_metric="m",
+        search_direction="maximize",
+    )
+    with pytest.raises(
+        TypeError, match="--search-space requires --search-max-iterations"
+    ):
+        build_multi_run(user)
+
+
+def test_build_multi_run_propagates_initial_points_and_seed():
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_metric="m",
+        search_direction="maximize",
+        search_max_iterations=20,
+        search_initial_points=3,
+        search_random_seed=42,
+    )
+    out = build_multi_run(user)
+    assert out["adaptive_search"]["n_initial_points"] == 3
+    assert out["adaptive_search"]["random_seed"] == 42
