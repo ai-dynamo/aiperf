@@ -29,6 +29,17 @@ class RetentionConfigResponse(BaseModel):
     )
 
 
+class FeaturesResponse(BaseModel):
+    """Boot-time feature flags the SPA needs to gate top-nav entries."""
+
+    dashboard_enabled: bool = Field(
+        description="Whether the Plotly Dash sidecar is wired up. When true, "
+        "the SPA shows the 'Plots ↗' top-nav link pointing at /dashboard/. "
+        "Reflects AIPERF_DASHBOARD_PROXY_ENABLED on the results-server "
+        "container, which Helm sets only when dashboard.enabled=true."
+    )
+
+
 def create_config_router() -> APIRouter:
     """Create the ``/api/v1/config/*`` router exposing operator settings.
 
@@ -45,6 +56,12 @@ def create_config_router() -> APIRouter:
         return RetentionConfigResponse(
             retain_runs=OperatorEnvironment.RESULTS.RETAIN_RUNS,
             retain_days=OperatorEnvironment.RESULTS.RETAIN_DAYS,
+        )
+
+    @router.get("/features", response_model=FeaturesResponse)
+    async def get_features() -> FeaturesResponse:
+        return FeaturesResponse(
+            dashboard_enabled=OperatorEnvironment.DASHBOARD.PROXY_ENABLED,
         )
 
     return router
