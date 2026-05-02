@@ -12,16 +12,17 @@ import { PhaseStrip } from '../components/phase-strip.js';
 import { RecordsStrip } from '../components/records-strip.js';
 import { PodsStrip } from '../components/pods-strip.js';
 import { LiveChartsPanel } from '../components/live-charts-panel.js';
-import { DiagnosticsPanel } from '../components/diagnostics-panel.js';
+import { DiagnosticsDrawer } from '../components/diagnostics-drawer.js';
 import { LatencyTimelineChart } from '../components/latency-timeline-chart.js';
 import { RunPicker } from '../components/run-picker.js';
 import { NsPill, ModelPill } from '../components/pills.js';
-import { RelativeTime } from '../components/time.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { jobs as jobsSignal } from '../lib/state.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
 import { RelaunchButton } from '../components/relaunch-button.js';
+import { IdentityBar } from '../components/identity-bar.js';
+import { RailCard, RailKv, RailAction } from '../components/job-detail-rail.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -1589,6 +1590,15 @@ export function JobDetail({ namespace, name, epoch }) {
   // let users double-click to fire two cancels.
   const [cancelState, setCancelState] = useState('idle');
   const [cancelError, setCancelError] = useState(null);
+  // Diagnostics drawer is opened from the rail's actions card or by a
+  // ``?diag=...`` URL param (deep-link from log strips, condition rows,
+  // etc.). When closed, the entire DiagnosticsDrawer (and the wrapped
+  // DiagnosticsPanel) is unmounted to keep the live event-stream
+  // websocket from running off-screen.
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URL(window.location.href).searchParams.get('diag') != null;
+  });
 
   const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 
@@ -2124,129 +2134,208 @@ export function JobDetail({ namespace, name, epoch }) {
     return TYPES[ext] ?? { label: (ext || 'FILE').toUpperCase().slice(0, 6), color: palette.overlay1 };
   }
 
+  // Live / Stale / Completed status indicator rendered in the identity bar's
+  // actions row. Pulled out so the IdentityBar prop tree stays readable.
+  const liveIndicator = polling
+    ? liveStale
+      ? html`
+        <span
+          title="Live updates paused — operator API is not responding. Retrying in the background; numbers shown are from the last successful poll."
+          data-testid="job-detail-live-stale"
+          style=${'display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ' + palette.amber}
+        >
+          <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.amber} />
+          Stale
+        </span>
+      `
+      : html`
+        <span
+          data-testid="job-detail-live"
+          style="display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ${palette.green}"
+        >
+          <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.green + '; animation: pulse 1.5s ease-in-out infinite'} />
+          Live
+        </span>
+      `
+    : isCompleted
+      ? phaseLower === 'archived'
+        ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run finished and the live CR has been archived — values shown come from the persisted summary.">Archived</span>`
+        : html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
+      : isCancelled
+        ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
+        : isPartiallyFailed
+          ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
+          : null;
+
+  const cancelControls = isRunning ? html`
+    ${cancelState === 'idle' && html`
+      <button
+        class="btn btn--danger"
+        onclick=${() => setCancelState('confirm')}
+        style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
+        data-testid="job-detail-cancel"
+        title="Stop the running benchmark. The AIPerfJob CR is kept; controller pod is terminated."
+      >
+        Cancel
+      </button>
+    `}
+    ${cancelState === 'confirm' && html`
+      <span style=${'display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); background: ' + colors.error + '11; border: 1px solid ' + colors.error + '44; border-radius: var(--radius-md); font-size: var(--font-size-xs)'}>
+        <span style=${'color: ' + colors.error}>Stop run?</span>
+        <button
+          onclick=${handleCancel}
+          style=${'background: ' + colors.error + '; color: white; border: none; padding: 2px var(--space-2); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-xs)'}
+          data-testid="job-detail-cancel-confirm"
+        >Yes</button>
+        <button
+          onclick=${() => { setCancelState('idle'); setCancelError(null); }}
+          style=${'background: transparent; color: ' + palette.subtext0 + '; border: 1px solid ' + palette.overlay0 + '44; padding: 2px var(--space-2); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-xs)'}
+        >No</button>
+      </span>
+    `}
+    ${cancelState === 'pending' && html`
+      <button
+        disabled
+        style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: not-allowed; font-size: var(--font-size-xs); display: inline-flex; align-items: center; gap: var(--space-1); opacity: 0.7'}
+        data-testid="job-detail-cancel"
+      >
+        <${Spinner} size=${10} />
+        Cancelling…
+      </button>
+    `}
+    ${cancelError && html`
+      <span style=${'font-size: var(--font-size-xs); color: ' + colors.error}>Cancel failed: ${cancelError}</span>
+    `}
+  ` : null;
+
+  const identityActions = html`
+    <${NsPill} ns=${namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId="job-detail-ns-pill" />
+    ${model && html`<${ModelPill} model=${model} onClick=${m => navigate('/jobs?model=' + encodeURIComponent(m))} testId="job-detail-model-pill" />`}
+    ${model && model !== '---' && html`<${SimilarRunsLink} namespace=${namespace} model=${model} currentName=${name} />`}
+    ${liveIndicator}
+    <${RunPicker} namespace=${namespace} name=${name} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
+    ${cancelControls}
+    ${isTerminal && jobConfig?.spec && html`<${RelaunchButton} namespace=${namespace} name=${name} config=${jobConfig} />`}
+  `;
+
+  const sweepLineBeforeKv = info.sweepName ? html`
+    <p class="text-dim" data-testid="job-detail-sweep-link" style="margin: var(--space-1) 0 0 0; font-size: var(--font-size-xs)">
+      Part of sweep
+      <a href=${`#/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
+         onclick=${e => { e.preventDefault(); navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`); }}>
+        ${info.sweepName}
+      </a>
+      ${info.variationLabel && html` — variation ${info.variationLabel}`}
+    </p>
+  ` : null;
+
+  // Pre-formatted elapsed text for the identity-bar KV strip. Mirrors the
+  // existing RelativeTime "elapsed" mode but as a static string so it
+  // sits cleanly inside the KV value slot.
+  const elapsedText = startTime ? (() => {
+    try {
+      const ms = Date.now() - new Date(startTime).getTime();
+      return formatDuration(ms);
+    } catch { return null; }
+  })() : null;
+
+  const runLabel = epoch != null ? String(epoch) : (resolvedEpoch != null ? String(resolvedEpoch) : 'live');
+
+  // Rail: Phase / Pods / Records / SLA / Config / Sweep / Actions cards.
+  // Built once per render; cards self-gate on data presence.
+  const railContent = html`
+    ${phaseStripData.length > 0 && html`
+      <${RailCard} title="Phase" testId="job-detail-rail-phase">
+        <${PhaseStrip} phases=${phaseStripData} current=${currentPhaseName} etaText=${etaText} />
+      <//>
+    `}
+    ${viewingCurrentRun
+      ? html`
+        <${RailCard} title="Pods" testId="job-detail-rail-pods">
+          <div data-testid="job-detail-pods">
+            <${PodsStrip} pods=${pods} onExpand=${() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set('diag', 'pods');
+              window.history.replaceState(null, '', url.toString());
+              setDiagnosticsOpen(true);
+            }} />
+          </div>
+        <//>
+      `
+      : html`
+        <${RailCard} title="Pods" testId="job-detail-rail-pods">
+          <div data-testid="job-detail-archived-note" class="text-dim" style="font-style: italic; font-size: var(--font-size-xs)">
+            Pods and events are not retained for archived epochs.
+          </div>
+        <//>
+      `
+    }
+    ${recordTotal > 0 && html`
+      <${RailCard} title="Records" testId="job-detail-rail-records">
+        <${RecordsStrip}
+          processed=${recordProcessed}
+          total=${recordTotal}
+          ratePerSec=${recordRate}
+          etaSeconds=${recordEta} />
+      <//>
+    `}
+    ${isCompleted && html`
+      <${RailCard} title="SLA Compliance" testId="job-detail-rail-sla">
+        <${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />
+      <//>
+    `}
+    ${info.sweepName && html`
+      <${RailCard} title="Sweep" testId="job-detail-rail-sweep">
+        <${RailKv} k="name" v=${info.sweepName} />
+        ${info.variationLabel && html`<${RailKv} k="variation" v=${info.variationLabel} />`}
+        <a href=${`#/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
+           onclick=${e => { e.preventDefault(); navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`); }}
+           class="rail-action">
+          <span class="rail-action__gly">↗</span>
+          <span>open sweep view</span>
+        </a>
+      <//>
+    `}
+    <${RailCard} title="Actions" testId="job-detail-rail-actions">
+      <div class="rail-actions">
+        ${epoch != null && html`
+          <${RailAction}
+            icon="⤓"
+            label=${'Download artifacts' + (totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : '')}
+            href=${api.resultBundleUrl(namespace, name, epoch)}
+            testId="job-detail-rail-download" />
+        `}
+        ${model && model !== '---' && html`
+          <${RailAction}
+            icon="⊞"
+            label="Compare to similar runs"
+            onClick=${() => navigate('/compare?cluster=' + encodeURIComponent(`${namespace} · ${model}`))} />
+        `}
+        <${RailAction}
+          icon="ⓘ"
+          label="Open diagnostics"
+          onClick=${() => setDiagnosticsOpen(true)}
+          testId="job-detail-rail-open-diagnostics" />
+      </div>
+    <//>
+  `;
+
   return html`
     <div class="job-detail" data-testid="page-job-detail">
-      <!-- Header -->
-      <div class="card" style="margin-bottom: var(--space-4)">
-        <div style="display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3)">
-          <div>
-            <div style="display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap">
-              <h2 style="margin: 0; font-size: var(--font-size-lg)">${name}</h2>
-              <span class="phase-badge" style=${'background: ' + phaseClr + '22; color: ' + phaseClr + '; border-color: ' + phaseClr + '44'}>
-                ${phase}
-              </span>
-              <${NsPill} ns=${namespace} onClick=${ns => navigate('/jobs?ns=' + encodeURIComponent(ns))} testId="job-detail-ns-pill" />
-              ${model && html`<${ModelPill} model=${model} onClick=${m => navigate('/jobs?model=' + encodeURIComponent(m))} testId="job-detail-model-pill" />`}
-              ${model && model !== '---' && html`<${SimilarRunsLink} namespace=${namespace} model=${model} currentName=${name} />`}
-              ${startTime && html`<${RelativeTime} ts=${startTime} mode="elapsed" className="text-dim" />`}
-              <!-- Live / Stale / Completed indicator -->
-              ${polling
-                ? liveStale
-                  ? html`
-                    <span
-                      title="Live updates paused — operator API is not responding. Retrying in the background; numbers shown are from the last successful poll."
-                      data-testid="job-detail-live-stale"
-                      style=${'display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ' + palette.amber}
-                    >
-                      <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.amber} />
-                      Stale
-                    </span>
-                  `
-                  : html`
-                    <span
-                      data-testid="job-detail-live"
-                      style="display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: ${palette.green}"
-                    >
-                      <span style=${'display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + palette.green + '; animation: pulse 1.5s ease-in-out infinite'} />
-                      Live
-                    </span>
-                  `
-                : isCompleted
-                  ? phaseLower === 'archived'
-                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run finished and the live CR has been archived — values shown come from the persisted summary.">Archived</span>`
-                    : html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.green + '; opacity: 0.7'}>Completed</span>`
-                  : isCancelled
-                    ? html`<span style=${'font-size: var(--font-size-xs); color: ' + palette.subtext0 + '; opacity: 0.85'} title="Run was cancelled before completion — KPIs reflect partial data.">Cancelled</span>`
-                    : isPartiallyFailed
-                      ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
-                      : null
-              }
-              <${RunPicker} namespace=${namespace} name=${name} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
-            </div>
-            ${endpointUrl && html`
-              <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1); max-width: 100%; overflow: hidden">
-                <span
-                  title=${endpointUrl}
-                  style=${'color: ' + palette.blue + '; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom'}
-                >${endpointUrl}</span>
-              </div>
-            `}
-            ${info.sweepName && html`
-              <p class="text-dim" data-testid="job-detail-sweep-link" style="margin: var(--space-1) 0 0 0; font-size: var(--font-size-sm)">
-                Part of sweep
-                <a href=${`#/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`}
-                   onclick=${e => { e.preventDefault(); navigate(`/sweeps/${encodeURIComponent(namespace)}/${encodeURIComponent(info.sweepName)}`); }}>
-                  ${info.sweepName}
-                </a>
-                ${info.variationLabel && html` — variation ${info.variationLabel}`}
-              </p>
-            `}
-          </div>
-          ${isRunning && html`
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
-              ${cancelState === 'idle' && html`
-                <button
-                  class="btn btn--danger"
-                  onclick=${() => setCancelState('confirm')}
-                  style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-                  data-testid="job-detail-cancel"
-                  title="Stop the running benchmark. The AIPerfJob CR is kept; controller pod is terminated."
-                >
-                  Cancel run
-                </button>
-              `}
-              ${cancelState === 'confirm' && html`
-                <div style=${'display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: ' + colors.error + '11; border: 1px solid ' + colors.error + '44; border-radius: var(--radius-md)'}>
-                  <span style=${'font-size: var(--font-size-sm); color: ' + colors.error}>
-                    Stop benchmark for <strong>${name}</strong>? The CR is kept (use "kubectl delete" to remove it).
-                  </span>
-                  <button
-                    onclick=${handleCancel}
-                    style=${'background: ' + colors.error + '; color: white; border: none; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
-                    data-testid="job-detail-cancel-confirm"
-                  >
-                    Yes, cancel
-                  </button>
-                  <button
-                    onclick=${() => { setCancelState('idle'); setCancelError(null); }}
-                    style=${'background: transparent; color: ' + palette.subtext0 + '; border: 1px solid ' + palette.overlay0 + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
-                  >
-                    Keep running
-                  </button>
-                </div>
-              `}
-              ${cancelState === 'pending' && html`
-                <button
-                  disabled
-                  style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: not-allowed; font-size: var(--font-size-sm); display: inline-flex; align-items: center; gap: var(--space-2); opacity: 0.7'}
-                  data-testid="job-detail-cancel"
-                >
-                  <${Spinner} size=${12} />
-                  Cancelling…
-                </button>
-              `}
-              ${cancelError && html`
-                <span style=${'font-size: var(--font-size-xs); color: ' + colors.error}>Cancel failed: ${cancelError}</span>
-              `}
-            </div>
-          `}
-          ${isTerminal && jobConfig?.spec && html`
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
-              <${RelaunchButton} namespace=${namespace} name=${name} config=${jobConfig} />
-            </div>
-          `}
-        </div>
-      </div>
+      <${IdentityBar}
+        name=${name}
+        namespace=${namespace}
+        phase=${phase}
+        model=${model}
+        runLabel=${runLabel}
+        elapsed=${elapsedText}
+        endpointUrl=${endpointUrl}
+        info=${info}
+        actions=${identityActions}
+        beforeKv=${sweepLineBeforeKv} />
+
+      <div class="job-detail__body">
+        <main class="job-detail__main">
 
       <!-- Error banner -->
       ${jobError && html`
@@ -2308,44 +2397,11 @@ export function JobDetail({ namespace, name, epoch }) {
         `}
       </div>
 
-      <!-- Canonical strips: phase, records, pods -->
-      ${phaseStripData.length > 0 && html`
-        <div style="margin-bottom: var(--space-2)">
-          <${PhaseStrip} phases=${phaseStripData} current=${currentPhaseName} etaText=${etaText} />
-        </div>
-      `}
-      ${recordTotal > 0 && html`
-        <div style="margin-bottom: var(--space-2)">
-          <${RecordsStrip}
-            processed=${recordProcessed}
-            total=${recordTotal}
-            ratePerSec=${recordRate}
-            etaSeconds=${recordEta} />
-        </div>
-      `}
-      ${viewingCurrentRun
-        ? html`
-          <div style="margin-bottom: var(--space-4)" data-testid="job-detail-pods">
-            <${PodsStrip} pods=${pods} onExpand=${() => {
-              const url = new URL(window.location.href);
-              url.searchParams.set('diag', 'pods');
-              window.history.replaceState(null, '', url.toString());
-              // Force a re-render by dispatching popstate; DiagnosticsPanel reads ?diag=...
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }} />
-          </div>
-        `
-        : html`
-          <div class="card" data-testid="job-detail-archived-note" style="margin-bottom: var(--space-4)">
-            <div class="text-dim" style="font-style: italic; font-size: var(--font-size-sm)">
-              Pods and events are not retained for archived epochs.
-            </div>
-          </div>
-        `
-      }
+      <!-- Canonical strips relocated to the right rail. -->
 
-      <!-- Live two-column: charts + diagnostics -->
-      <div class="live-2col" style="margin-bottom: var(--space-4)">
+      <!-- Live charts (running only). The diagnostics panel moved into a
+           slide-in drawer; previously co-rendered here in a 2-col grid. -->
+      <div style="margin-bottom: var(--space-4)">
         <${LiveChartsPanel}
           mode=${stripMode}
           throughputChartData=${chartData}
@@ -2353,27 +2409,10 @@ export function JobDetail({ namespace, name, epoch }) {
           histogramChartData=${latencyHistogram}
           histogramChartOptions=${histogramOptions}
           windowLabel=${isCompleted ? 'whole run' : 'last 60s · auto'} />
-        <${DiagnosticsPanel}
-          ns=${namespace}
-          name=${name}
-          conditions=${conditions}
-          pods=${pods}
-          mode=${stripMode}
-          archived=${!viewingCurrentRun}
-          eventCount=${null}
-          logSeverityCounts=${null}
-          conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
-          podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
       </div>
 
-      <!-- SLA Compliance (completed only, only when SLOs declared on the CR) -->
-      ${isCompleted && html`
-        <div style="margin-top: var(--space-4)">
-          <${Panel} title="SLA Compliance" collapsible defaultOpen=${isCompleted} testId="panel-sla-compliance">
-            <${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />
-          <//>
-        </div>
-      `}
+      <!-- SLA Compliance has moved into the right rail; the in-main panel
+           is intentionally dropped to avoid duplication. -->
 
       <!-- Server Metrics -->
       ${displayedServerMetrics
@@ -2630,6 +2669,24 @@ export function JobDetail({ namespace, name, epoch }) {
           </div>
         `}
       </div>
+        </main>
+        <aside class="job-detail__rail" data-testid="job-detail-rail" aria-label="Run context">
+          ${railContent}
+        </aside>
+      </div>
+      <${DiagnosticsDrawer}
+        open=${diagnosticsOpen}
+        onClose=${() => setDiagnosticsOpen(false)}
+        ns=${namespace}
+        name=${name}
+        conditions=${conditions}
+        pods=${pods}
+        mode=${stripMode}
+        archived=${!viewingCurrentRun}
+        eventCount=${null}
+        logSeverityCounts=${null}
+        conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
+        podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
     </div>
     ${fileViewer && html`
       <${FileViewerModal}

@@ -111,8 +111,6 @@
   --rosewater: #ab47bc;
   --bg-alt: #161616;
   --bg-elevated: #313131;
-  --bg-raised: #222222;
-  --border-subtle: #14141e;
   --accent-alt: #3b82f6;
   --success: #10b981;
   --warning: #f59e0b;
@@ -3150,3 +3148,195 @@ select, input {
 }
 .metric-trend--good { color: var(--accent); }
 .metric-trend--bad  { color: var(--cat-latency); }
+
+/* ============================================================
+ * Wave 2 — split-pane layout, identity bar, rail, drawer chrome
+ * ============================================================ */
+
+.job-detail__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .job-detail__body { grid-template-columns: 1fr; }
+  .job-detail__rail { border-left: none; border-top: 1px solid var(--border); }
+}
+
+.job-detail__main {
+  padding: var(--space-4);
+  display: flex; flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.job-detail__rail {
+  padding: var(--space-4);
+  border-left: 1px solid var(--border);
+  background: var(--bg-raised);
+  position: sticky;
+  top: var(--top-bar-height, 48px);
+  align-self: start;
+  max-height: calc(100vh - var(--top-bar-height, 48px));
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Identity bar — sticky title strip above the body grid. */
+.job-detail__id {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: var(--top-bar-height, 48px);
+  z-index: 5;
+}
+.job-detail__id-row1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.job-detail__id-name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.job-detail__id-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.job-detail__id-kv {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+.job-detail__id-endpoint {
+  color: var(--cat-throughput);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  margin-top: var(--space-1);
+  word-break: break-all;
+}
+
+/* KV pairs — promote inline-styled output of components/kv.js to class
+ * rules. The component still ships inline styles as a defensive
+ * fallback; these rules win when applied. */
+.kv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+.kv__k {
+  color: var(--dim);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.kv__v {
+  font-family: var(--font-mono);
+  color: var(--sub);
+}
+.kv--accent .kv__v {
+  color: var(--accent);
+  font-weight: 600;
+}
+.kv-sep { color: var(--hairline); }
+
+/* Right-rail card chrome. */
+.rail-card { padding: var(--space-3); }
+.rail-card .panel-title { font-size: var(--font-size-sm); }
+.rail-kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-xs);
+}
+.rail-kv__k { color: var(--muted); }
+.rail-kv__v { font-family: var(--font-mono); color: var(--sub); }
+.rail-kv__v--ok   { color: var(--accent); }
+.rail-kv__v--warn { color: var(--warn); }
+.rail-kv__v--bad  { color: var(--cat-errors); }
+
+.rail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.rail-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--sub);
+  text-decoration: none;
+  text-align: left;
+  font-family: inherit;
+}
+.rail-action:hover { background: var(--bg-raised); color: var(--text); }
+.rail-action__gly {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  width: 16px;
+  text-align: center;
+}
+.rail-action--danger .rail-action__gly { color: var(--cat-errors); }
+
+/* DiagnosticsDrawer chrome — replaces the inline styles in
+ * components/diagnostics-drawer.js (which still ship as defensive
+ * fallback). */
+.diagnostics-drawer__backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 100;
+}
+.diagnostics-drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 420px;
+  max-width: 100vw;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+.diagnostics-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.diagnostics-drawer__title { font-weight: 600; font-size: var(--font-size-base); }
+.diagnostics-drawer__close {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+}
+.diagnostics-drawer__close:hover { color: var(--text); }
+.diagnostics-drawer__body { flex: 1; overflow-y: auto; }
+@media (max-width: 600px) {
+  .diagnostics-drawer { width: 100vw; }
+}
