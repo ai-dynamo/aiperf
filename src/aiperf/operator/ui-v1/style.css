@@ -1582,64 +1582,6 @@ select, input {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   Phase Bar
-────────────────────────────────────────────────────────────── */
-.phase-bar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.phase-bar--empty {
-  color: var(--muted);
-  font-size: var(--font-size-sm);
-  font-style: italic;
-}
-
-.phase-bar-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.phase-bar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.phase-bar-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text);
-}
-
-.phase-bar-fraction {
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
-.phase-bar-track {
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.phase-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width var(--transition-slow);
-}
-
-.phase-bar-item--done .phase-bar-fill { background: var(--green); }
-.phase-bar-item--done .phase-bar-name { color: var(--green); }
-.phase-bar-item--active .phase-bar-fill { background: var(--blue); }
-.phase-bar-item--active .phase-bar-name { color: var(--blue); }
-.phase-bar-item--pending .phase-bar-fill { background: var(--dim); }
-
-/* ──────────────────────────────────────────────────────────────
    Record Processing panel — backed by PhaseProgress.records*
 ────────────────────────────────────────────────────────────── */
 .record-summary {

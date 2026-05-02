@@ -28,10 +28,10 @@ export const TILE_CONFIG = [
   // ---- Throughput row ----
   { id: 'tok_s',       label: 'tok/s',      unit: 'tok/s',  summaryKey: 'output_token_throughput.avg', seriesKey: 'output_token_throughput', sloKey: 'output_token_throughput', toneRule: 'higher_is_better', fmt: 'thousands' },
   { id: 'req_s',       label: 'req/s',      unit: 'req/s',  summaryKey: 'request_throughput.avg',       seriesKey: 'request_throughput',       sloKey: 'request_throughput',       toneRule: 'higher_is_better', fmt: 'number2' },
-  { id: 'concurrency', label: 'conc',       unit: '',       summaryKey: 'concurrency.avg',              seriesKey: 'concurrency',              sloKey: null,                       toneRule: 'neutral',          fmt: 'thousands' },
+  { id: 'concurrency', label: 'conc',       unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'concurrency_from_phases', sloKey: null,                       toneRule: 'neutral',          fmt: 'thousands' },
   { id: 'err_pct',     label: 'err %',      unit: '%',      summaryKey: 'error_rate.avg',               seriesKey: 'error_rate',               sloKey: 'error_rate',               toneRule: 'lower_is_better',  fmt: 'percent2' },
   { id: 'goodput',     label: 'good req/s', unit: 'req/s',  summaryKey: 'goodput.avg',                  seriesKey: 'goodput',                  sloKey: null,                       toneRule: 'higher_is_better', fmt: 'number2' },
-  { id: 'in_flight',   label: 'in-flight',  unit: '',       summaryKey: 'in_flight_requests.avg',       seriesKey: 'in_flight_requests',       sloKey: null,                       toneRule: 'neutral',          fmt: 'thousands' },
+  { id: 'in_flight',   label: 'in-flight',  unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'in_flight_from_summary',  sloKey: null,                       toneRule: 'neutral',          fmt: 'thousands' },
 
   // ---- Latency row ----
   { id: 'ttft_p50',    label: 'ttft p50',   unit: 'ms',     summaryKey: 'time_to_first_token.p50',      seriesKey: 'time_to_first_token',      seriesStat: 'p50', sloKey: 'time_to_first_token', toneRule: 'lower_is_better', fmt: 'number0' },
@@ -44,10 +44,10 @@ export const TILE_CONFIG = [
   // ---- Workload + system row ----
   { id: 'isl_avg',     label: 'isl avg',    unit: 'tok',    summaryKey: 'input_sequence_length.avg',    seriesKey: null,                       sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
   { id: 'osl_avg',     label: 'osl avg',    unit: 'tok',    summaryKey: 'output_sequence_length.avg',   seriesKey: null,                       sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
-  { id: 'pods',        label: 'pods',       unit: '',       summaryKey: 'pods_ready.avg',               seriesKey: 'pods_ready',               sloKey: null,                       toneRule: 'pod_health',       fmt: 'pod_ratio' },
-  { id: 'gpu_util',    label: 'gpu util',   unit: '%',      summaryKey: 'server_metrics.gpu_util.avg',  seriesKey: 'gpu_util',                 sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
-  { id: 'kv_cache',    label: 'kv cache',   unit: '%',      summaryKey: 'server_metrics.kv_cache.avg',  seriesKey: 'kv_cache',                 sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
-  { id: 'records',     label: 'records',    unit: '',       summaryKey: 'records_processed.avg',        seriesKey: 'records_processed',        sloKey: null,                       toneRule: 'records_progress', fmt: 'records_ratio' },
+  { id: 'pods',        label: 'pods',       unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'pods_ratio',          sloKey: null,                       toneRule: 'pod_health',       fmt: 'pod_ratio' },
+  { id: 'gpu_util',    label: 'gpu util',   unit: '%',      summaryKey: null,                           seriesKey: null,                       resolverKey: 'gpu_util_server',     sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
+  { id: 'kv_cache',    label: 'kv cache',   unit: '%',      summaryKey: null,                           seriesKey: null,                       resolverKey: 'kv_cache_server',     sloKey: null,                       toneRule: 'neutral',          fmt: 'number0' },
+  { id: 'records',     label: 'records',    unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'records_progress',    sloKey: null,                       toneRule: 'records_progress', fmt: 'records_ratio' },
 ];
 
 const LARGER_IS_BETTER_SET = new Set(['output_token_throughput', 'request_throughput', 'goodput', 'pods_ready']);
@@ -73,6 +73,53 @@ function pluck(seriesArr, statKey) {
   return out;
 }
 
+// Resolvers for tiles whose data lives outside the flat ``summary`` dict (phases,
+// pod CR list, server-metrics summary/timeseries). Each returns
+// `{ value, series, _full? }` — _full carries extra context (ready/total,
+// processed/total) consumed by the formatter.
+const RESOLVERS = {
+  concurrency_from_phases: ({ phases }) => {
+    const list = Array.isArray(phases) ? phases : [];
+    const active = list.find((p) => p?.status === 'active');
+    if (active && active.targetConcurrency != null) return { value: active.targetConcurrency, series: [] };
+    const last = list[list.length - 1];
+    if (last && last.targetConcurrency != null) return { value: last.targetConcurrency, series: [] };
+    return { value: null, series: [] };
+  },
+  in_flight_from_summary: ({ summary }) => {
+    const v = readPath(summary, 'request_count.current') ?? readPath(summary, 'in_flight_requests.avg');
+    return { value: v, series: [] };
+  },
+  pods_ratio: ({ pods }) => {
+    if (!Array.isArray(pods)) return { value: null, series: [], _full: { ready: null, total: null } };
+    const ready = pods.filter((p) => {
+      const ph = (p?.phase ?? p?.status?.phase ?? '').toLowerCase();
+      return ph === 'running';
+    }).length;
+    return { value: ready, series: [], _full: { ready, total: pods.length } };
+  },
+  gpu_util_server: ({ serverSummary, serverTimeseries }) => {
+    const v = readPath(serverSummary, 'gpu_util.avg') ?? readPath(serverSummary, 'gpu_util_avg');
+    const series = pluck(serverTimeseries?.['gpu_util'], 'avg');
+    return { value: v, series };
+  },
+  kv_cache_server: ({ serverSummary, serverTimeseries }) => {
+    const v = readPath(serverSummary, 'kv_cache.avg') ?? readPath(serverSummary, 'kv_cache_avg');
+    const series = pluck(serverTimeseries?.['kv_cache'], 'avg');
+    return { value: v, series };
+  },
+  records_progress: ({ phases }) => {
+    const list = Array.isArray(phases) ? phases : [];
+    let processed = 0;
+    let total = 0;
+    for (const p of list) {
+      processed += p?.recordsSuccess ?? 0;
+      total += p?.requestsTotal ?? 0;
+    }
+    return { value: processed > 0 ? processed : null, series: [], _full: { processed, total } };
+  },
+};
+
 function formatValue(value, fmt, summaryEntry) {
   if (value == null || (typeof value === 'number' && !isFinite(value))) return '—';
   switch (fmt) {
@@ -82,12 +129,13 @@ function formatValue(value, fmt, summaryEntry) {
     case 'number2': return fmtNumber(value, 2);
     case 'percent2': return fmtPercent(value, 2);
     case 'pod_ratio': {
-      const total = readPath(summaryEntry?.['_full_summary'], 'pods_total.avg');
+      const total = summaryEntry?.total ?? readPath(summaryEntry?._full_summary, 'pods_total.avg');
       return total != null ? `${fmtInt(value)}/${fmtInt(total)}` : fmtInt(value);
     }
     case 'records_ratio': {
-      const total = readPath(summaryEntry?.['_full_summary'], 'records_total.avg');
-      return total != null ? `${fmtInt(value)}/${fmtInt(total)}` : fmtInt(value);
+      const proc = summaryEntry?.processed ?? value;
+      const total = summaryEntry?.total ?? readPath(summaryEntry?._full_summary, 'records_total.avg');
+      return total != null ? `${fmtInt(proc)}/${fmtInt(total)}` : fmtInt(proc);
     }
     default: return fmtNumber(value);
   }
@@ -124,20 +172,42 @@ function computeTone(rule, value, sloThreshold, sloKey, fullSummary) {
   return ok ? 'good' : 'bad';
 }
 
-export function KpiRail({ summary, slos, timeseries, mode = 'live', stale = false }) {
+function computePodHealthTone(ready, total) {
+  if (total == null || ready == null || total === 0) return 'neutral';
+  const ratio = ready / total;
+  if (ratio >= 0.99) return 'good';
+  if (ratio >= 0.9) return 'warn';
+  return 'bad';
+}
+
+export function KpiRail({ summary, slos, timeseries, mode = 'live', stale = false,
+                         pods, phases, serverSummary, serverTimeseries }) {
   const sum = summary ?? {};
   const ts = timeseries ?? {};
   const sloDict = slos ?? {};
+  const ctx = { summary: sum, timeseries: ts, pods, phases, serverSummary, serverTimeseries };
 
   return html`
     <div class="kpi-rail-grid" data-testid="kpi-rail">
       ${TILE_CONFIG.map((cfg) => {
-        const value = readPath(sum, cfg.summaryKey);
-        const series = cfg.seriesKey ? pluck(ts[cfg.seriesKey], cfg.seriesStat ?? 'avg') : [];
+        let value;
+        let series;
+        let fullCtx = null;
+        if (cfg.resolverKey) {
+          const r = RESOLVERS[cfg.resolverKey](ctx);
+          value = r.value;
+          series = r.series ?? [];
+          fullCtx = r._full ?? null;
+        } else {
+          value = readPath(sum, cfg.summaryKey);
+          series = cfg.seriesKey ? pluck(ts[cfg.seriesKey], cfg.seriesStat ?? 'avg') : [];
+        }
         const { delta, direction } = computeDelta(series);
         const sloThreshold = cfg.sloKey ? sloDict[cfg.sloKey] ?? null : null;
-        const tone = computeTone(cfg.toneRule, value, sloThreshold, cfg.sloKey, sum);
-        const summaryEntry = { _full_summary: sum };
+        const tone = cfg.toneRule === 'pod_health'
+          ? computePodHealthTone(fullCtx?.ready, fullCtx?.total)
+          : computeTone(cfg.toneRule, value, sloThreshold, cfg.sloKey, sum);
+        const summaryEntry = { _full_summary: sum, ...(fullCtx ?? {}) };
         const formatted = formatValue(value, cfg.fmt, summaryEntry);
         return html`
           <${KpiTile}

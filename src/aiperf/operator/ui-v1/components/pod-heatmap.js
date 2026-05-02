@@ -21,7 +21,7 @@ function classifyPod(p) {
   if (phase === 'running') return 'running';
   if (phase === 'pending') return 'pending';
   if (phase === 'succeeded') return 'succeeded';
-  if (phase === 'failed' || reason.includes('crashloop') || reason === 'erorr') return 'failed';
+  if (phase === 'failed' || reason.includes('crashloop') || reason === 'error') return 'failed';
   return 'unknown';
 }
 

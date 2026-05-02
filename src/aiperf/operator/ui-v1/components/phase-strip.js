@@ -22,12 +22,20 @@ const PHASE_COLORS = {
 export function PhaseStrip({ phases, current, etaText }) {
   const list = Array.isArray(phases) ? phases : [];
   const total = list.length || 1;
-  const meta = list
-    .map((p) => p.name === current ? `**${p.name}**` : p.name)
-    .join(' · ');
+  // Build the meta as a Preact fragment so the current phase renders as <strong>
+  // without ever round-tripping through innerHTML / markdown literals.
+  const metaParts = [];
+  list.forEach((p, i) => {
+    if (i > 0) metaParts.push(' · ');
+    if (p.name === current) {
+      metaParts.push(html`<strong style="color:#d8ff90">${p.name}</strong>`);
+    } else {
+      metaParts.push(p.name);
+    }
+  });
+  if (etaText) metaParts.push(html` · ${etaText}`);
   return html`
-    <${Strip} label="phase" testId="strip-phase"
-              meta=${etaText ? html`<span dangerouslySetInnerHTML=${{__html: meta.replace(/\*\*(.*?)\*\*/, '<strong style="color:#d8ff90">$1</strong>')}}></span>` : meta}>
+    <${Strip} label="phase" testId="strip-phase" meta=${metaParts}>
       ${list.map((p, i) => {
         const left = (i / total) * 100;
         const width = 100 / total;

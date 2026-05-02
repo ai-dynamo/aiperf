@@ -1924,6 +1924,9 @@ export function JobDetail({ namespace, name, epoch }) {
     name: phaseName,
     completed: p?.requestsCompleted ?? 0,
     total: p?.requestsTotal ?? 0,
+    targetConcurrency: p?.targetConcurrency ?? p?.concurrency ?? null,
+    recordsSuccess: p?.recordsSuccess ?? 0,
+    requestsTotal: p?.requestsTotal ?? 0,
   }));
   // PhaseStrip needs {name, status, progress}. Derive from completed/total.
   const phaseStripData = phasesArray.map((ph) => {
@@ -1934,6 +1937,9 @@ export function JobDetail({ namespace, name, epoch }) {
       name: ph.name,
       status: done ? 'completed' : active ? 'active' : 'pending',
       progress,
+      targetConcurrency: ph.targetConcurrency,
+      recordsSuccess: ph.recordsSuccess,
+      requestsTotal: ph.requestsTotal,
     };
   });
   const currentPhaseName = (phaseStripData.find((p) => p.status === 'active') || {}).name
@@ -2220,6 +2226,10 @@ export function JobDetail({ namespace, name, epoch }) {
           summary=${summary}
           slos=${slos}
           timeseries=${liveData.timeseries}
+          pods=${pods}
+          phases=${phaseStripData}
+          serverSummary=${liveServerMetrics}
+          serverTimeseries=${liveData.serverTimeseries}
           mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
           stale=${liveData.connected === false} />
         ${isCompleted && results && html`

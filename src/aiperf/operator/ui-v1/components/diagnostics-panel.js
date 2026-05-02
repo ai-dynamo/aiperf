@@ -14,7 +14,7 @@
  */
 
 import { html } from 'htm/preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useMemo } from 'preact/hooks';
 import { Panel } from './panel.js';
 import { EventsTab } from './diagnostics-events-tab.js';
 import { LogsTab } from './diagnostics-logs-tab.js';
@@ -39,7 +39,7 @@ export function DiagnosticsPanel({
   ns, name, conditions, pods, mode, archived,
   eventCount, logSeverityCounts, conditionWarnCount, podCrashCount,
 }) {
-  const availableTabs = archived ? ['events', 'conditions'] : ALL_TABS;
+  const availableTabs = useMemo(() => archived ? ['events', 'conditions'] : ALL_TABS, [archived]);
   const defaultTab = (mode === 'live' && !archived) ? 'events' : 'conditions';
   const [active, setActive] = useState(() => readTabFromUrl() ?? defaultTab);
 

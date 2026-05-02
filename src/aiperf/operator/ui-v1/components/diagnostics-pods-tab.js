@@ -91,6 +91,12 @@ export function PodsTab({ pods }) {
     <th
       class=${(extraClass ?? '') + ' pods-table-sortable' + (sortCol === col ? ' pods-table-sorted' : '')}
       onclick=${() => onHeaderClick(col)}
+      onkeydown=${(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onHeaderClick(col);
+        }
+      }}
       role="button"
       tabindex="0"
       aria-sort=${sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}

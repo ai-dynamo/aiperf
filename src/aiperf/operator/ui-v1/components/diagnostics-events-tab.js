@@ -100,6 +100,29 @@ export function EventsTab({ ns, name, active }) {
     </div>
   `;
 
+  // Pre-compute the sorted+filtered list before the early returns so the
+  // auto-scroll useEffect below can sit above any conditional ``return`` and
+  // still have stable hook ordering across renders.
+  const okEvents = state.kind === 'ok' ? (state.events ?? []) : [];
+  const sortedEvents = [...okEvents].sort((a, b) => {
+    const ta = new Date(a.last_timestamp ?? a.first_timestamp ?? 0).getTime();
+    const tb = new Date(b.last_timestamp ?? b.first_timestamp ?? 0).getTime();
+    return (isFinite(ta) ? ta : 0) - (isFinite(tb) ? tb : 0);
+  });
+  const shown = filter === 'warn' ? sortedEvents.filter(e => e.type === 'Warning') : sortedEvents;
+
+  // Auto-scroll the list to the bottom whenever the visible event count
+  // grows AND the user hasn't scrolled up to read older entries. We snap on
+  // shown.length / refreshed because each poll either appends or replaces;
+  // either way the bottom anchor is what the user wants to see. Hoisted above
+  // the early returns so the hook call order stays stable across states.
+  useEffect(() => {
+    if (state.kind !== 'ok') return;
+    const el = listRef.current;
+    if (!el || !stickyRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [state.kind, shown.length, refreshed]);
+
   if (state.kind === 'loading') {
     return html`<div class="diag-tab-body run-events" data-testid="run-events">${headerRow('loading…', null)}</div>`;
   }
@@ -123,15 +146,6 @@ export function EventsTab({ ns, name, active }) {
   }
 
   const events = state.events ?? [];
-  // Display oldest → newest (ascending by event timestamp). The API order is
-  // not guaranteed; sort by last_timestamp / first_timestamp / count fallback
-  // so the freshest line always sits at the bottom of the pane.
-  const sortedEvents = [...events].sort((a, b) => {
-    const ta = new Date(a.last_timestamp ?? a.first_timestamp ?? 0).getTime();
-    const tb = new Date(b.last_timestamp ?? b.first_timestamp ?? 0).getTime();
-    return (isFinite(ta) ? ta : 0) - (isFinite(tb) ? tb : 0);
-  });
-  const shown = filter === 'warn' ? sortedEvents.filter(e => e.type === 'Warning') : sortedEvents;
   const metaText = `${events.length} total${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
   const filterControls = html`
     <span style="display:inline-flex; gap:4px">
@@ -147,16 +161,6 @@ export function EventsTab({ ns, name, active }) {
       >Warn</button>
     </span>
   `;
-
-  // Auto-scroll the list to the bottom whenever the visible event count
-  // grows AND the user hasn't scrolled up to read older entries. We snap on
-  // shown.length / refreshed because each poll either appends or replaces;
-  // either way the bottom anchor is what the user wants to see.
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el || !stickyRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [shown.length, refreshed]);
 
   function onScroll(e) {
     const el = e.currentTarget;
