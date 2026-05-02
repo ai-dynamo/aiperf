@@ -8,6 +8,15 @@
 
 import { runHref } from '../lib/run-selector.js';
 
+function _buildOrdinal(epochs) {
+  const ascending = [...(epochs || [])].sort(
+    (a, b) => (a?.mtimeEpoch ?? 0) - (b?.mtimeEpoch ?? 0)
+  );
+  const ordinalByEpoch = new Map();
+  ascending.forEach((e, i) => ordinalByEpoch.set(String(e.epoch), i + 1));
+  return { ascending, ordinalByEpoch };
+}
+
 export function formatRelativeTime(unixSeconds, now) {
   if (unixSeconds == null) return '';
   const delta = Math.max(0, now - unixSeconds);
@@ -26,12 +35,7 @@ export function formatRelativeTime(unixSeconds, now) {
  * shape without needing a DOM.
  */
 export function buildPickerRows({ namespace, name, epochs, current }) {
-  const ascending = [...(epochs || [])].sort(
-    (a, b) => (a?.mtimeEpoch ?? 0) - (b?.mtimeEpoch ?? 0)
-  );
-  // Ordinal: oldest = Run 1, newest = Run M.
-  const ordinalByEpoch = new Map();
-  ascending.forEach((e, i) => ordinalByEpoch.set(String(e.epoch), i + 1));
+  const { ascending, ordinalByEpoch } = _buildOrdinal(epochs);
 
   const desc = [...ascending].reverse();
   return desc.map(e => {
@@ -61,11 +65,7 @@ export function buildPickerRows({ namespace, name, epochs, current }) {
 export function buildButtonLabel({ epochs, current, now }) {
   if (!epochs || epochs.length === 0) return null;
 
-  const ascending = [...epochs].sort(
-    (a, b) => (a?.mtimeEpoch ?? 0) - (b?.mtimeEpoch ?? 0)
-  );
-  const ordinalByEpoch = new Map();
-  ascending.forEach((e, i) => ordinalByEpoch.set(String(e.epoch), i + 1));
+  const { ascending, ordinalByEpoch } = _buildOrdinal(epochs);
 
   const latest = ascending[ascending.length - 1];
   const latestEpoch = latest ? String(latest.epoch) : null;
@@ -89,7 +89,7 @@ export function buildButtonLabel({ epochs, current, now }) {
       status: 'unknown',
       isLatest: false,
       notLatest: true,
-      inert: false,
+      inert: epochs.length === 1,
     };
   }
   const ord = ordinalByEpoch.get(String(found.epoch));

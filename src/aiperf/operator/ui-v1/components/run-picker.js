@@ -46,7 +46,6 @@ export function RunPicker({ namespace, name, epochs, current, onPick }) {
         const r = rows[focusIdx];
         if (r) { onPick(r.isLatest ? undefined : r.epoch); setOpen(false); }
       }
-      if (e.key === 'Tab') setOpen(false);
     }
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
@@ -55,6 +54,15 @@ export function RunPicker({ namespace, name, epochs, current, onPick }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [open, rows, focusIdx, onPick]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Programmatically move focus to the highlighted row so arrow-key
+    // navigation updates the visible focus ring, not just internal state.
+    const items = wrapRef.current?.querySelectorAll('[role="option"]');
+    const target = items && items[focusIdx];
+    if (target && typeof target.focus === 'function') target.focus();
+  }, [open, focusIdx]);
 
   const closeAndPick = useCallback((epoch) => {
     onPick(epoch);
@@ -67,7 +75,7 @@ export function RunPicker({ namespace, name, epochs, current, onPick }) {
     const c = STATUS_COLORS[status] || STATUS_COLORS.unknown;
     const base = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${c.dot};vertical-align:middle;`;
     if (c.pulse) {
-      return base + `box-shadow:0 0 0 2px ${c.glow};animation:pulse 1.4s ease-in-out infinite;`;
+      return base + `animation:run-picker-pulse 1.4s ease-in-out infinite;`;
     }
     return base;
   };
@@ -82,7 +90,14 @@ export function RunPicker({ namespace, name, epochs, current, onPick }) {
         aria-haspopup=${label.inert ? 'false' : 'listbox'}
         aria-expanded=${open ? 'true' : 'false'}
         aria-disabled=${label.inert ? 'true' : 'false'}
-        onclick=${() => { if (!label.inert) setOpen(o => !o); }}
+        onclick=${() => {
+          if (label.inert) return;
+          if (!open) {
+            const sel = rows.findIndex(r => r.selected);
+            setFocusIdx(sel >= 0 ? sel : 0);
+          }
+          setOpen(o => !o);
+        }}
         title="Pick which run to view"
         style=${'display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
           + 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);'
