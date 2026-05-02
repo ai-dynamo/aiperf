@@ -61,6 +61,10 @@ class BayesianSearchPlanner(SearchPlanner):
         # skopt's HollowIterationsStopper and Hyperopt's no_progress_loss.
         self._best_loss: float | None = None
         self._iters_since_improvement: int = 0
+        # Which signal caused the most recent True from is_converged(); read
+        # by SearchPlanner.convergence_reason(). Set to None until is_converged
+        # actually fires.
+        self._convergence_reason: str | None = None
 
         dims = []
         for d in cfg.search_space:
@@ -168,6 +172,7 @@ class BayesianSearchPlanner(SearchPlanner):
 
     def is_converged(self) -> bool:
         if self._iter >= self._cfg.max_iterations:
+            self._convergence_reason = "max_iterations"
             return True
         # Improvement-over-best patience stop. If no successful iteration has
         # ever improved on the running best for `improvement_patience`
@@ -176,6 +181,7 @@ class BayesianSearchPlanner(SearchPlanner):
         # "we've stopped finding better points" as a stronger termination
         # signal than "values stopped fluctuating" alone.
         if self._iters_since_improvement >= self._cfg.improvement_patience:
+            self._convergence_reason = "improvement_patience"
             return True
         window = self._cfg.plateau_window
         if len(self._history) < window:
@@ -201,7 +207,19 @@ class BayesianSearchPlanner(SearchPlanner):
             return False
         sample_variance = sum((v - mean) ** 2 for v in recent_objs) / (n - 1)
         cv = math.sqrt(sample_variance) / abs(mean)
-        return cv < self._cfg.plateau_threshold
+        if cv < self._cfg.plateau_threshold:
+            self._convergence_reason = "plateau_cv"
+            return True
+        return False
+
+    def convergence_reason(self) -> str | None:
+        """The signal that caused the most recent True from is_converged().
+
+        One of ``"max_iterations"``, ``"improvement_patience"``,
+        ``"plateau_cv"``, or ``None`` if is_converged has never returned True.
+        Stable across calls until the next is_converged() check.
+        """
+        return self._convergence_reason
 
     def history(self) -> list[SearchIteration]:
         return list(self._history)

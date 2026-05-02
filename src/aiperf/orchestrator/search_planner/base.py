@@ -64,3 +64,15 @@ class SearchPlanner(ABC):
     @abstractmethod
     def history(self) -> list[SearchIteration]:
         """All iterations recorded so far, in submission order."""
+
+    def convergence_reason(self) -> str | None:
+        """Which signal caused the most recent True from is_converged().
+
+        Returns one of: ``"max_iterations"``, ``"improvement_patience"``,
+        ``"plateau_cv"``, or ``None`` (not converged, or implementation does
+        not track reasons). Surfaced by the orchestrator on loop exit and
+        recorded in ``search_history.json`` so users can audit why a run
+        terminated where it did. Default returns None; concrete subclasses
+        SHOULD override if they support multiple termination signals.
+        """
+        return None

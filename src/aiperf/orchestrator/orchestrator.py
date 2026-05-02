@@ -265,7 +265,18 @@ class MultiRunOrchestrator:
 
             proposal = planner.ask()
             if proposal is None:
-                logger.info("Adaptive outer loop converged or max_iterations exhausted")
+                reason = planner.convergence_reason() or "unknown"
+                logger.info(
+                    "Adaptive outer loop terminated after %d iterations (reason=%s)",
+                    planner._iter,
+                    reason,
+                )
+                write_search_history(
+                    self.base_dir,
+                    planner.history(),
+                    plan.adaptive_search,
+                    convergence_reason=reason,
+                )
                 return all_results
             cfg, variation = proposal
             strategy = build_strategy(plan, logger)

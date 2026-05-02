@@ -426,3 +426,83 @@ def test_improvement_patience_handles_failed_iterations():
         planner.tell(v, [RunResult(label="x", success=False)])
 
     assert planner.is_converged()
+
+
+# ----------------------------------------------------------------------------
+# Convergence-reason tracking — surfaced in logs and search_history.json.
+# ----------------------------------------------------------------------------
+
+
+def test_convergence_reason_max_iterations():
+    cfg = _cfg(max_iterations=2, n_initial_points=1, plateau_window=10)
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    assert planner.convergence_reason() is None
+    for _ in range(2):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=1.0)])
+    assert planner.is_converged()
+    assert planner.convergence_reason() == "max_iterations"
+
+
+def test_convergence_reason_improvement_patience():
+    cfg = _cfg(
+        max_iterations=20,
+        n_initial_points=1,
+        improvement_patience=2,
+        plateau_window=20,  # disable CV plateau
+        plateau_threshold=1e-9,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    _, v = planner.ask()
+    planner.tell(v, [_make_result(v, throughput=100.0)])
+    for _ in range(2):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=50.0)])
+    assert planner.is_converged()
+    assert planner.convergence_reason() == "improvement_patience"
+
+
+def test_convergence_reason_plateau_cv():
+    # Patience set high so it can't trigger first; CV should fire.
+    cfg = _cfg(
+        max_iterations=20,
+        n_initial_points=1,
+        improvement_patience=99,
+        plateau_window=3,
+        plateau_threshold=0.05,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    for _ in range(3):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=100.0)])
+    assert planner.is_converged()
+    assert planner.convergence_reason() == "plateau_cv"
+
+
+def test_convergence_reason_none_until_fired():
+    cfg = _cfg(max_iterations=20, n_initial_points=1, improvement_patience=10)
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    for i in range(3):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=100.0 + i)])  # always improving
+    assert not planner.is_converged()
+    assert planner.convergence_reason() is None
+
+
+def test_convergence_reason_in_search_history_json(tmp_path):
+    """End-to-end: convergence_reason propagates through write_search_history."""
+    import orjson
+
+    from aiperf.exporters.search_history import write_search_history
+
+    cfg = _cfg(max_iterations=3, n_initial_points=1, improvement_patience=10)
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    for _ in range(3):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=10.0)])
+    assert planner.is_converged()
+    reason = planner.convergence_reason()
+
+    write_search_history(tmp_path, planner.history(), cfg, convergence_reason=reason)
+    payload = orjson.loads((tmp_path / "search_history.json").read_bytes())
+    assert payload["convergence_reason"] == "max_iterations"

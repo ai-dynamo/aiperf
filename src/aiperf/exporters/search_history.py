@@ -25,6 +25,8 @@ def write_search_history(
     base_dir: Path,
     history: list[SearchIteration],
     cfg: AdaptiveSearchConfig,
+    *,
+    convergence_reason: str | None = None,
 ) -> None:
     """Write search_history.json under base_dir.
 
@@ -35,8 +37,19 @@ def write_search_history(
             {"iteration_idx": int, "variation_values": {...}, "objective_value": float | None}
           ],
           "best": {"iteration_idx": int, "objective_value": float, "variation_values": {...}}
-                  | null when no objectives recorded
+                  | null when no objectives recorded,
+          "convergence_reason": str | null  // why is_converged() fired, or null
         }
+
+    Args:
+        base_dir: artifact dir; file lands at ``base_dir/search_history.json``.
+        history: planner.history() snapshot. Mid-loop calls leave this open;
+            terminal calls (after planner.ask() returned None) record the
+            final trajectory.
+        cfg: AdaptiveSearchConfig from the plan.
+        convergence_reason: One of ``"max_iterations"``,
+            ``"improvement_patience"``, ``"plateau_cv"``, or None when the
+            history is being written mid-loop. Surfaced for post-run audit.
     """
     from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 
@@ -76,6 +89,7 @@ def write_search_history(
         },
         "iterations": iterations_payload,
         "best": best_payload,
+        "convergence_reason": convergence_reason,
     }
     out = base_dir / "search_history.json"
     out.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
