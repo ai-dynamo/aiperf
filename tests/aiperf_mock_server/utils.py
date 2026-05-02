@@ -19,6 +19,7 @@ from aiperf_mock_server.config import server_config
 if TYPE_CHECKING:
     from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.metrics_utils import (
+    get_inflight_count,
     record_itl,
     record_streamed_token,
     record_ttft,
@@ -66,9 +67,25 @@ def with_error_injection(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class LatencySimulator:
-    """Simulates API latency with TTFT and ITL."""
+    """Simulates API latency with TTFT and ITL.
+
+    Latency formula (all coefficients default to 0.0 -> constant TTFT/ITL):
+        ttft_ms = cfg.ttft
+                  + cfg.ttft_per_isl_token_ms * isl
+                  + cfg.ttft_concurrency_quad_ms * active_inflight ** 2
+        itl_ms  = cfg.itl
+                  + cfg.itl_per_osl_token_ms * osl
+                  + cfg.itl_concurrency_lin_ms * active_inflight
+
+    `active_inflight` is sampled lazily on first wait so the per-request
+    `record_llm_inflight_start` bump is reflected.
+    """
 
     __slots__ = (
+        "_cfg",
+        "_isl",
+        "_osl",
+        "_latencies_ready",
         "ttft_sec",
         "itl_sec",
         "start_time",
@@ -86,10 +103,18 @@ class LatencySimulator:
         model: str,
         start_time: float,
         config: "MockServerConfig | None" = None,
+        isl: int = 0,
+        osl: int = 0,
     ) -> None:
-        cfg = config or server_config
-        self.ttft_sec = cfg.ttft * 0.001
-        self.itl_sec = cfg.itl * 0.001
+        self._cfg = config or server_config
+        self._isl = isl
+        self._osl = osl
+        self._latencies_ready = False
+        # Filled in on first wait via _ensure_latencies(); pre-populated with
+        # the static base so callers that skip the wait path (tests) still get
+        # a sensible value.
+        self.ttft_sec = self._cfg.ttft * 0.001
+        self.itl_sec = self._cfg.itl * 0.001
         self.start_time = start_time
         self.token_index = 0
         self.last_token_time: float | None = None
@@ -97,6 +122,26 @@ class LatencySimulator:
         self.model = model
         self.measured_ttft: float = 0.0
         self.measured_decode: float = 0.0
+
+    def _ensure_latencies(self) -> None:
+        """Sample active concurrency once and freeze ttft_sec/itl_sec."""
+        if self._latencies_ready:
+            return
+        cfg = self._cfg
+        active = get_inflight_count()
+        ttft_ms = (
+            cfg.ttft
+            + cfg.ttft_per_isl_token_ms * self._isl
+            + cfg.ttft_concurrency_quad_ms * (active * active)
+        )
+        itl_ms = (
+            cfg.itl
+            + cfg.itl_per_osl_token_ms * self._osl
+            + cfg.itl_concurrency_lin_ms * active
+        )
+        self.ttft_sec = ttft_ms * 0.001
+        self.itl_sec = itl_ms * 0.001
+        self._latencies_ready = True
 
     async def wait_for_next_token(self) -> None:
         """Wait for TTFT (first token) or ITL (subsequent tokens)."""
@@ -116,6 +161,7 @@ class LatencySimulator:
 
     async def _wait_for_token_at_index(self, token_index: int) -> None:
         """Wait until the specified token index should be emitted."""
+        self._ensure_latencies()
         target_time = self.start_time + self.ttft_sec + (self.itl_sec * token_index)
         remaining = target_time - perf_counter()
         if remaining > 0:
@@ -124,6 +170,7 @@ class LatencySimulator:
     async def wait_for_tokens(self, num_tokens: int) -> None:
         """Wait for entire completion (TTFT + ITL * num_tokens)."""
         # Wait for TTFT first (prefill phase)
+        self._ensure_latencies()
         ttft_target = self.start_time + self.ttft_sec
         ttft_remaining = ttft_target - perf_counter()
         if ttft_remaining > 0:
@@ -207,7 +254,14 @@ def make_ctx(
         model=model,
         tokenized=tokenized,
         usage=tokenized.create_usage(),
-        latency_sim=LatencySimulator(endpoint, model, start_time, config),
+        latency_sim=LatencySimulator(
+            endpoint,
+            model,
+            start_time,
+            config,
+            isl=tokenized.prompt_token_count,
+            osl=len(tokenized.tokens),
+        ),
     )
 
 

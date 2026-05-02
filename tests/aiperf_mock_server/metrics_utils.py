@@ -125,6 +125,12 @@ def record_request_end(endpoint: str) -> None:
 _inflight_count = 0
 _total_kv_blocks = 1024  # Simulated total KV cache blocks
 
+
+def get_inflight_count() -> int:
+    """Return current LLM-request inflight count (live module read)."""
+    return _inflight_count
+
+
 # Token throughput tracking for DCGM load
 # Uses batched flushing to handle high throughput (500k+ tokens/sec)
 _token_buckets: deque[tuple[float, int]] = deque()  # (timestamp, count) buckets

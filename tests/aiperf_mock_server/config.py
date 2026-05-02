@@ -94,6 +94,58 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--itl"),
     ] = 5.0
 
+    ttft_per_isl_token_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Per-ISL-token TTFT scaling (ms). Models prefill cost: "
+                "ttft_ms = ttft + ttft_per_isl_token_ms * prompt_token_count. "
+                "Set e.g. 0.05 to make TTFT scale ~50ms per 1k input tokens."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--ttft-per-isl-token-ms"),
+    ] = 0.0
+
+    ttft_concurrency_quad_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Concurrency-quadratic TTFT penalty (ms). Models queueing: "
+                "ttft_ms += ttft_concurrency_quad_ms * active_inflight^2. "
+                "Set e.g. 0.001 to push TTFT past ~250ms above ~500 concurrent."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--ttft-concurrency-quad-ms"),
+    ] = 0.0
+
+    itl_per_osl_token_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Per-OSL-token ITL scaling (ms). Captured once per request at "
+                "TTFT-time (active OSL = max_tokens budget). itl_ms = itl + "
+                "itl_per_osl_token_ms * osl_tokens."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--itl-per-osl-token-ms"),
+    ] = 0.0
+
+    itl_concurrency_lin_ms: Annotated[
+        float,
+        Field(
+            description=(
+                "Concurrency-linear ITL penalty (ms). itl_ms += "
+                "itl_concurrency_lin_ms * active_inflight. Set e.g. 0.05 to add "
+                "~25ms of ITL at concurrency=500."
+            ),
+            ge=0.0,
+        ),
+        Parameter(name="--itl-concurrency-lin-ms"),
+    ] = 0.0
+
     # Embedding latency: base + per_input * num_inputs
     embedding_base_latency: Annotated[
         float,
