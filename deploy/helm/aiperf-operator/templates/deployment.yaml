@@ -36,6 +36,35 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 30
+      {{- if .Values.developer.uiOverride.enabled }}
+      # Developer UI-override seed: copy the bundled ``ui-v1`` static
+      # bundle into a writable emptyDir so devs can ``kubectl cp`` UI
+      # changes into the running pod without rebuilding the image.
+      # See ``Makefile`` target ``ui-sync`` and
+      # ``docs/kubernetes/ui-dev-iteration.md``.
+      initContainers:
+      - name: ui-v1-seed
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - python
+        - -c
+        - |
+          import shutil, aiperf.operator
+          from pathlib import Path
+          src = Path(aiperf.operator.__file__).parent / "ui-v1"
+          shutil.copytree(src, "/override", dirs_exist_ok=True)
+          print(f"seeded ui-v1 from {src} into /override")
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        volumeMounts:
+        - name: ui-v1-override
+          mountPath: /override
+      {{- end }}
       containers:
       - name: operator
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -154,6 +183,10 @@ spec:
           value: {{ if .Values.dashboard.enabled }}{{ .Values.dashboard.port | quote }}{{ else }}"0"{{ end }}
         - name: AIPERF_DASHBOARD_PROXY_ENABLED
           value: {{ if .Values.dashboard.enabled }}"1"{{ else }}"0"{{ end }}
+        {{- if .Values.developer.uiOverride.enabled }}
+        - name: AIPERF_DEV_UI_V1_OVERRIDE_DIR
+          value: {{ .Values.developer.uiOverride.mountPath | quote }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz
@@ -184,6 +217,10 @@ spec:
         - name: results
           mountPath: {{ .Values.storage.mountPath | quote }}
           readOnly: true
+        {{- if .Values.developer.uiOverride.enabled }}
+        - name: ui-v1-override
+          mountPath: {{ .Values.developer.uiOverride.mountPath | quote }}
+        {{- end }}
       {{- if .Values.dashboard.enabled }}
       - name: dashboard
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -253,6 +290,10 @@ spec:
           {{- with .Values.storage.emptyDirSizeLimit }}
           sizeLimit: {{ . | quote }}
           {{- end }}
+      {{- end }}
+      {{- if .Values.developer.uiOverride.enabled }}
+      - name: ui-v1-override
+        emptyDir: {}
       {{- end }}
       {{- with .Values.operator.nodeSelector }}
       nodeSelector:

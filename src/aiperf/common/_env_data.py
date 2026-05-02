@@ -136,6 +136,20 @@ class _DeveloperSettings(BaseSettings):
         default=None,
         description="List of services to enable TRACE logging for (comma-separated or multiple flags)",
     )
+    UI_V1_OVERRIDE_DIR: str | None = Field(
+        default=None,
+        description=(
+            "Filesystem path the operator results-server reads the ``ui-v1/`` "
+            "static bundle from. Unset (default) → bundled package path "
+            "``aiperf.operator.ui-v1``. Set this to a writable directory "
+            "(e.g. an emptyDir mount) to enable in-cluster UI iteration via "
+            "``kubectl cp`` without rebuilding the image. Helm value "
+            "``developer.uiOverride.enabled`` wires the volume + initContainer "
+            "that seeds the override dir from the bundled UI on pod boot. "
+            "See ``Makefile`` target ``ui-sync`` and "
+            "``docs/kubernetes/ui-dev-iteration.md``."
+        ),
+    )
 
 
 class _GPUSettings(BaseSettings):

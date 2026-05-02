@@ -185,6 +185,8 @@ navigation:
     path: kubernetes/results-api.md
   - page: Web Dashboard
     path: kubernetes/dashboard-ui.md
+  - page: UI Dev Iteration (in-cluster overlay)
+    path: kubernetes/ui-dev-iteration.md
   - page: Controller Pod Sidecars
     path: kubernetes/sidecars.md
   - page: Memory Estimator

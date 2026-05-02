@@ -90,6 +90,21 @@
       },
       "required": ["enabled", "port"]
     },
+    "developer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uiOverride": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mountPath": { "type": "string" }
+          },
+          "required": ["enabled"]
+        }
+      }
+    },
     "rbac": {
       "type": "object",
       "additionalProperties": false,

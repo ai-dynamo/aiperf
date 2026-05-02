@@ -43,7 +43,7 @@
 		kube-deploy-lora kube-remove-lora \
 		kube-run kube-run-detach kube-dry-run \
 		kube-run-local kube-run-local-detach kube-dry-run-local \
-		helm-lint helm-template helm-package \
+		helm-lint helm-template helm-package ui-sync \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -505,6 +505,17 @@ helm-template: #? smoke-check Helm chart rendering (no cluster required).
 helm-package: #? package the aiperf-operator Helm chart into dist/.
 	mkdir -p dist/
 	helm package deploy/helm/aiperf-operator -d dist/
+
+ui-sync: #? overlay src/aiperf/operator/ui-v1/ into the running operator pod (requires developer.uiOverride.enabled). Set NS=<namespace> RELEASE=<release> to override defaults.
+	@NS="$${NS:-aiperf-system}"; \
+	POD=$$(kubectl -n $$NS get pod -l app.kubernetes.io/name=aiperf-operator,app.kubernetes.io/component=operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POD" ]; then echo "no operator pod in namespace $$NS (set NS=<namespace> to override)" >&2; exit 1; fi; \
+	DEST="$${DEST:-/var/aiperf/ui-v1-override}"; \
+	echo "syncing src/aiperf/operator/ui-v1/ -> $$NS/$$POD:$$DEST/ (results-server)"; \
+	tar -C src/aiperf/operator/ui-v1 -cf - . | \
+		kubectl -n $$NS exec -i $$POD -c results-server -- \
+			python -c "import sys, tarfile; tarfile.open(fileobj=sys.stdin.buffer, mode='r|').extractall('$$DEST')" && \
+	echo "done — hard-refresh your browser (Ctrl-Shift-R / Cmd-Shift-R)"
 
 .PHONY: install-e2e-browsers test-e2e
 
