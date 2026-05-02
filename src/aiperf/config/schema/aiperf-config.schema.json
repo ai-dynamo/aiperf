@@ -3382,6 +3382,17 @@
           "default": null,
           "description": "Adaptive outer-loop configuration (Bayesian Optimization). Typed AdaptiveSearchConfig but expressed as Any to avoid a circular import between aiperf.config and aiperf.orchestrator (adaptive_search.py imports OptimizationDirection). The field_validator below coerces dicts to AdaptiveSearchConfig at validation time. Set by the v1 converter when --search-* flags are present. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead of grid-mode paths.",
           "title": "Adaptivesearch"
+        },
+        "postProcess": {
+          "default": null,
+          "description": "Optional PostProcessSpec emitted by a grid Search Recipe. Threads through to BenchmarkPlan and is consumed by aggregate_sweep_and_export to produce a derived artifact (e.g. a TTFT-vs-ISL curve fit). Typed Any to avoid a circular import with aiperf.search_recipes; the field_validator below coerces dicts to PostProcessSpec at validation time.",
+          "title": "Postprocess"
+        },
+        "slaFilters": {
+          "description": "SLA filters threaded from a grid Search Recipe into SweepAnalyzer.compute. BO recipes carry SLA filters on AdaptiveSearchConfig.sla_filters instead; this field is the grid carrier. Typed list[Any] to avoid a circular import with aiperf.config.adaptive_search; the field_validator below coerces dict items to SLAFilter.",
+          "items": {},
+          "title": "Slafilters",
+          "type": "array"
         }
       },
       "title": "MultiRunConfig",

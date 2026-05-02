@@ -65,28 +65,58 @@ def build_accuracy(user: UserConfig) -> dict[str, Any] | None:
     return out or None
 
 
-def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
+def expand_search_recipe(user: UserConfig) -> dict[str, Any] | None:
+    """Expand --search-recipe (if set) into a converter-shaped dict.
+
+    Public entry point used by ``convert_user_to_aiperf`` (which lifts
+    ``sweep_variables`` to the top-level ``sweep`` block) and by
+    :func:`build_multi_run` (which routes ``adaptive_search`` /
+    ``post_process`` / ``sla_filters`` into ``MultiRunConfig``).
+
+    Returns ``None`` when no recipe is set; otherwise see
+    :func:`_maybe_expand_search_recipe` for the dict shape.
+    """
+    lg = user.loadgen
+    if lg is None or not lg.model_fields_set:
+        return None
+    return _maybe_expand_search_recipe(user, lg, set(lg.model_fields_set))
+
+
+def build_multi_run(
+    user: UserConfig,
+    *,
+    recipe_output: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Build the multi-run section dict from explicitly-set v1 loadgen fields.
 
     When --search-* flags are present, builds a typed AdaptiveSearchConfig and
     emits its model_dump() as `out["adaptive_search"]`. MultiRunConfig has
     `extra="forbid"` so the typed field is the only legal carrier.
 
-    When --search-recipe is set, the named recipe expands directly into a
-    populated ``AdaptiveSearchConfig`` (carrying ``sla_filters`` and
-    ``recipe_name`` set to the recipe's name) which is emitted at
-    ``out["adaptive_search"]``. The recipe path bypasses
-    ``_build_adaptive_search`` so SLA filters and recipe metadata flow through
-    intact; explicit --search-* flags continue to use the by-hand path.
+    When --search-recipe is set, the named recipe expands directly into
+    either:
+
+    - a populated ``AdaptiveSearchConfig`` (carrying ``sla_filters`` and
+      ``recipe_name``) emitted at ``out["adaptive_search"]`` (BO recipes); or
+    - a ``sweep_variables`` dict (grid recipes) -- handled by
+      :func:`expand_search_recipe` and lifted by the top-level converter,
+      with ``post_process`` and ``sla_filters`` threaded through
+      ``out["post_process"]`` / ``out["sla_filters"]`` for
+      ``aggregate_sweep_and_export`` to consume.
 
     Hard-fails if --search-space is set without the required companion flags
     (--search-metric, --search-direction, --search-max-iterations).
+
+    ``recipe_output`` is the cached output of :func:`expand_search_recipe`;
+    callers compute it once at the top of ``convert_user_to_aiperf`` so the
+    recipe's ``expand()`` doesn't run twice. ``None`` means "no recipe";
+    callers that don't pre-compute pass ``None`` and we recompute lazily.
     """
     lg = user.loadgen
     if lg is None or not lg.model_fields_set:
         return None
-    user_set = set(lg.model_fields_set)
-    recipe_adaptive_search = _maybe_expand_search_recipe(user, lg, user_set)
+    if recipe_output is None:
+        recipe_output = expand_search_recipe(user)
     mapping = {
         "num_profile_runs": "num_runs",
         "profile_run_cooldown_seconds": "cooldown_seconds",
@@ -105,28 +135,52 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
     for field, key in mapping.items():
         if field in lg.model_fields_set:
             out[key] = getattr(lg, field)
-    if recipe_adaptive_search is not None:
-        adaptive_search: dict[str, Any] | None = recipe_adaptive_search
-    else:
-        adaptive_search = _build_adaptive_search(lg)
+    adaptive_search = _resolve_adaptive_search(lg, recipe_output)
     if adaptive_search is not None:
         out["adaptive_search"] = adaptive_search
-        # --search-* and --convergence-metric (trial-level adaptive early-stop)
-        # are conceptually orthogonal but their interaction wasn't designed:
-        # the BO orchestrator path silently ignores convergence_metric. Reject
-        # explicitly so users don't think trial-level convergence is doing
-        # anything during a BO run. Documented in docs/sweeping/bayesian-optimization.md.
-        if (
-            "convergence_metric" in lg.model_fields_set
-            and lg.convergence_metric is not None
-        ):
-            raise TypeError(
-                "--search-* (Bayesian Optimization) is mutually exclusive with "
-                "--convergence-metric (trial-level adaptive early-stop). The two "
-                "operate at different levels (outer-loop vs. inner-trial) and "
-                "their composition is undefined. Drop one of them."
-            )
+        _reject_search_plus_convergence(lg)
+    if recipe_output is not None and recipe_output.get("post_process") is not None:
+        out["post_process"] = recipe_output["post_process"]
+    if recipe_output is not None and recipe_output.get("sla_filters"):
+        out["sla_filters"] = recipe_output["sla_filters"]
     return out or None
+
+
+def _resolve_adaptive_search(
+    lg: Any, recipe_output: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Pick the adaptive_search source: recipe (BO) or explicit --search-* flags.
+
+    Grid recipes have ``recipe_output["adaptive_search"] is None`` -- the
+    function returns ``None`` so build_multi_run skips the adaptive_search
+    branch entirely (sweep variables flow through a different field).
+    """
+    if recipe_output is not None and recipe_output.get("adaptive_search") is not None:
+        return recipe_output["adaptive_search"]
+    if recipe_output is not None:
+        return None
+    return _build_adaptive_search(lg)
+
+
+def _reject_search_plus_convergence(lg: Any) -> None:
+    """Hard-fail when both --search-* (BO) and --convergence-metric are set.
+
+    --search-* and --convergence-metric (trial-level adaptive early-stop) are
+    conceptually orthogonal but their interaction wasn't designed: the BO
+    orchestrator path silently ignores convergence_metric. Reject explicitly
+    so users don't think trial-level convergence is doing anything during a
+    BO run. Documented in docs/sweeping/bayesian-optimization.md.
+    """
+    if (
+        "convergence_metric" in lg.model_fields_set
+        and lg.convergence_metric is not None
+    ):
+        raise TypeError(
+            "--search-* (Bayesian Optimization) is mutually exclusive with "
+            "--convergence-metric (trial-level adaptive early-stop). The two "
+            "operate at different levels (outer-loop vs. inner-trial) and "
+            "their composition is undefined. Drop one of them."
+        )
 
 
 _RECIPE_OVERRIDABLE_FIELDS: tuple[str, ...] = (
@@ -143,16 +197,25 @@ _RECIPE_OVERRIDABLE_FIELDS: tuple[str, ...] = (
 def _maybe_expand_search_recipe(
     user: UserConfig, lg: Any, user_set: set[str]
 ) -> dict[str, Any] | None:
-    """Expand --search-recipe into a populated AdaptiveSearchConfig dict.
+    """Expand --search-recipe into a converter-shaped dict.
 
-    Returns the recipe's expanded ``AdaptiveSearchConfig.model_dump()`` (with
-    ``sla_filters`` and ``recipe_name`` populated), or ``None`` when no recipe
-    is set. The caller writes the dict to ``out["adaptive_search"]`` directly,
-    bypassing ``_build_adaptive_search`` so SLA filters and recipe metadata
-    survive end-to-end.
+    Returns a dict with one or more of these keys:
 
-    Rejects explicit --search-* + --search-recipe combinations; the snapshot in
-    ``user_set`` is the user-set field list captured BEFORE this function runs.
+    - ``adaptive_search`` (BO recipes): the recipe's expanded
+      ``AdaptiveSearchConfig.model_dump()`` with ``sla_filters`` /
+      ``recipe_name`` baked in. Lives at ``MultiRunConfig.adaptive_search``.
+    - ``sweep_variables`` (grid recipes): a path -> list-of-values map ready
+      to be merged into the top-level ``sweep.variables`` block by the
+      caller (``convert_user_to_aiperf``).
+    - ``post_process`` (grid recipes with derived artifacts): a
+      ``PostProcessSpec.model_dump()`` for ``MultiRunConfig.post_process``.
+    - ``sla_filters`` (any recipe): list of ``SLAFilter.model_dump()`` for
+      ``MultiRunConfig.sla_filters`` (grid path) or already baked into
+      ``adaptive_search.sla_filters`` (BO path).
+
+    Returns ``None`` when no recipe is set. Rejects explicit --search-* +
+    --search-recipe combinations; the snapshot in ``user_set`` is the
+    user-set field list captured BEFORE this function runs.
     """
     if "search_recipe" not in user_set or lg.search_recipe is None:
         return None
@@ -166,9 +229,17 @@ def _maybe_expand_search_recipe(
             "or drop --search-recipe and configure --search-* by hand."
         )
 
-    # Local imports keep the v1 layer free of unconditional plugin-system
-    # imports at module load (matches the late-import pattern used by
-    # _build_adaptive_search for OptimizationDirection / parse_search_space).
+    output = _invoke_recipe(user, lg, user_set)
+    return _recipe_output_to_dict(output, lg.search_recipe)
+
+
+def _invoke_recipe(user: UserConfig, lg: Any, user_set: set[str]) -> Any:
+    """Look up the recipe by name and invoke ``expand()`` against a built ctx.
+
+    Local imports keep the v1 layer free of unconditional plugin-system
+    imports at module load (matches the late-import pattern used by
+    _build_adaptive_search for OptimizationDirection / parse_search_space).
+    """
     from aiperf.plugin.enums import PluginType
     from aiperf.plugin.plugins import get_class
     from aiperf.search_recipes._base import SearchRecipeContext
@@ -177,31 +248,46 @@ def _maybe_expand_search_recipe(
     if "ttft_sla_ms" in user_set and lg.ttft_sla_ms is not None:
         sla_targets["ttft_sla_ms"] = float(lg.ttft_sla_ms)
 
+    sweep_overrides: dict[str, Any] = {}
+    for key in ("degradation_threshold", "isl_min", "isl_max"):
+        if key in user_set and getattr(lg, key) is not None:
+            sweep_overrides[key] = getattr(lg, key)
+
     recipe_cls = get_class(PluginType.SEARCH_RECIPE, lg.search_recipe)
     recipe = recipe_cls()
-    ctx = SearchRecipeContext(user_config=user, sla_targets=sla_targets)
-    output = recipe.expand(ctx)
-
-    if output.adaptive_search is None:
-        # Phase 1 only ships a BO recipe; grid recipes land in Phase 3 and will
-        # write into a different downstream path (sweep.variables) here.
-        raise TypeError(
-            f"--search-recipe {lg.search_recipe!r} produced a sweep_variables "
-            "output, which the v1->v2 converter does not yet support. Phase 3 "
-            "wires grid recipes through to the sweep.variables block."
-        )
-
-    # Re-emit the AdaptiveSearchConfig with sla_filters + recipe_name baked in.
-    # The recipe is allowed to omit these (they default empty); we always set
-    # them on the returned config so the planner and search_history.json see
-    # the recipe's contract regardless of recipe-author hygiene.
-    expanded = output.adaptive_search.model_copy(
-        update={
-            "sla_filters": list(output.sla_filters),
-            "recipe_name": lg.search_recipe,
-        }
+    ctx = SearchRecipeContext(
+        user_config=user,
+        sla_targets=sla_targets,
+        sweep_overrides=sweep_overrides,
     )
-    return expanded.model_dump(mode="json")
+    return recipe.expand(ctx)
+
+
+def _recipe_output_to_dict(output: Any, recipe_name: str) -> dict[str, Any]:
+    """Project a ``SearchRecipeOutput`` to the converter-shaped dict.
+
+    Splits BO (adaptive_search-only) vs grid (sweep_variables + post_process +
+    sla_filters) cases. The recipe is allowed to omit ``sla_filters`` /
+    ``recipe_name`` on the BO branch (they default empty); we always set them
+    on the returned config so the planner and search_history.json see the
+    recipe's contract regardless of recipe-author hygiene.
+    """
+    out: dict[str, Any] = {}
+    if output.adaptive_search is not None:
+        expanded = output.adaptive_search.model_copy(
+            update={
+                "sla_filters": list(output.sla_filters),
+                "recipe_name": recipe_name,
+            }
+        )
+        out["adaptive_search"] = expanded.model_dump(mode="json")
+    elif output.sweep_variables is not None:
+        out["sweep_variables"] = dict(output.sweep_variables)
+        if output.sla_filters:
+            out["sla_filters"] = [f.model_dump(mode="json") for f in output.sla_filters]
+        if output.post_process is not None:
+            out["post_process"] = output.post_process.model_dump(mode="json")
+    return out
 
 
 def _build_adaptive_search(lg: Any) -> dict[str, Any] | None:

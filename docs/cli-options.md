@@ -1085,6 +1085,21 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
+#### `--degradation-threshold`, `--degradation-threshold` `<float>`
+
+Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
+<br/>_Constraints: > 0, &lt; 1_
+
+#### `--isl-min`, `--isl-min` `<int>`
+
+Minimum input-sequence-length for the prefill-ttft-curve recipe (default 256 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
+#### `--isl-max`, `--isl-max` `<int>`
+
+Maximum input-sequence-length for the prefill-ttft-curve recipe (default 32768 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -1270,7 +1285,7 @@ Explore and validate AIPerf plugins
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -2326,6 +2341,21 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
+
+#### `--degradation-threshold`, `--degradation-threshold` `<float>`
+
+Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
+<br/>_Constraints: > 0, &lt; 1_
+
+#### `--isl-min`, `--isl-min` `<int>`
+
+Minimum input-sequence-length for the prefill-ttft-curve recipe (default 256 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
+#### `--isl-max`, `--isl-max` `<int>`
+
+Maximum input-sequence-length for the prefill-ttft-curve recipe (default 32768 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
 
 ### Accuracy
 
@@ -3434,6 +3464,21 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
+
+#### `--degradation-threshold`, `--degradation-threshold` `<float>`
+
+Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
+<br/>_Constraints: > 0, &lt; 1_
+
+#### `--isl-min`, `--isl-min` `<int>`
+
+Minimum input-sequence-length for the prefill-ttft-curve recipe (default 256 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
+#### `--isl-max`, `--isl-max` `<int>`
+
+Maximum input-sequence-length for the prefill-ttft-curve recipe (default 32768 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
 
 ### Accuracy
 
@@ -4557,6 +4602,21 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
+
+#### `--degradation-threshold`, `--degradation-threshold` `<float>`
+
+Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
+<br/>_Constraints: > 0, &lt; 1_
+
+#### `--isl-min`, `--isl-min` `<int>`
+
+Minimum input-sequence-length for the prefill-ttft-curve recipe (default 256 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
+#### `--isl-max`, `--isl-max` `<int>`
+
+Maximum input-sequence-length for the prefill-ttft-curve recipe (default 32768 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
 
 ### Accuracy
 
@@ -5691,6 +5751,21 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
+
+#### `--degradation-threshold`, `--degradation-threshold` `<float>`
+
+Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
+<br/>_Constraints: > 0, &lt; 1_
+
+#### `--isl-min`, `--isl-min` `<int>`
+
+Minimum input-sequence-length for the prefill-ttft-curve recipe (default 256 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
+
+#### `--isl-max`, `--isl-max` `<int>`
+
+Maximum input-sequence-length for the prefill-ttft-curve recipe (default 32768 when omitted). The recipe sweeps ISL on a log scale from --isl-min to --isl-max. Recipe-only flag.
+<br/>_Constraints: ≥ 1_
 
 ### Accuracy
 

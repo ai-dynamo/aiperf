@@ -192,6 +192,68 @@ class MultiRunConfig(BaseConfig):
             return AdaptiveSearchConfig.model_validate(value)
         return value
 
+    post_process: Annotated[
+        Any,
+        Field(
+            default=None,
+            description=(
+                "Optional PostProcessSpec emitted by a grid Search Recipe. Threads "
+                "through to BenchmarkPlan and is consumed by aggregate_sweep_and_export "
+                "to produce a derived artifact (e.g. a TTFT-vs-ISL curve fit). "
+                "Typed Any to avoid a circular import with aiperf.search_recipes; "
+                "the field_validator below coerces dicts to PostProcessSpec at "
+                "validation time."
+            ),
+        ),
+    ] = None
+
+    @field_validator("post_process", mode="before")
+    @classmethod
+    def _coerce_post_process(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        from aiperf.search_recipes._base import PostProcessSpec
+
+        if isinstance(value, PostProcessSpec):
+            return value
+        if isinstance(value, dict):
+            return PostProcessSpec.model_validate(value)
+        return value
+
+    sla_filters: Annotated[
+        list[Any],
+        Field(
+            default_factory=list,
+            description=(
+                "SLA filters threaded from a grid Search Recipe into "
+                "SweepAnalyzer.compute. BO recipes carry SLA filters on "
+                "AdaptiveSearchConfig.sla_filters instead; this field is the grid "
+                "carrier. Typed list[Any] to avoid a circular import with "
+                "aiperf.config.adaptive_search; the field_validator below coerces "
+                "dict items to SLAFilter."
+            ),
+        ),
+    ]
+
+    @field_validator("sla_filters", mode="before")
+    @classmethod
+    def _coerce_sla_filters(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        from aiperf.config.adaptive_search import SLAFilter
+
+        if not isinstance(value, list):
+            return value
+        coerced: list[Any] = []
+        for item in value:
+            if isinstance(item, SLAFilter):
+                coerced.append(item)
+            elif isinstance(item, dict):
+                coerced.append(SLAFilter.model_validate(item))
+            else:
+                coerced.append(item)
+        return coerced
+
 
 class AccuracyConfig(BaseConfig):
     """Configuration for accuracy benchmarking mode.

@@ -159,6 +159,25 @@ class BenchmarkPlan(BaseModel):
             "dispatches to execute_adaptive_search instead of grid-mode paths."
         ),
     )
+    post_process: Any = Field(
+        default=None,
+        description=(
+            "Optional PostProcessSpec emitted by a grid Search Recipe. Carried "
+            "through from MultiRunConfig.post_process; consumed by "
+            "aggregate_sweep_and_export to write a derived artifact under "
+            "sweep_aggregate/. Typed Any to avoid a circular import with "
+            "aiperf.search_recipes."
+        ),
+    )
+    sla_filters: list[Any] = Field(
+        default_factory=list,
+        description=(
+            "SLA filters threaded from a grid Search Recipe into "
+            "SweepAnalyzer.compute. BO recipes carry SLA filters on "
+            "AdaptiveSearchConfig.sla_filters instead. Typed list[Any] to avoid a "
+            "circular import with aiperf.config.adaptive_search."
+        ),
+    )
 
     @property
     def use_adaptive(self) -> bool:

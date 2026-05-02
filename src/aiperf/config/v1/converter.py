@@ -26,6 +26,7 @@ from aiperf.config.v1._converter_optionals import (
     build_accuracy,
     build_multi_run,
     build_tokenizer,
+    expand_search_recipe,
 )
 from aiperf.config.v1._converter_profiling import build_profiling
 from aiperf.config.v1._converter_runtime import build_artifacts, build_logging_runtime
@@ -51,12 +52,17 @@ def _init_random_seed(user: UserConfig) -> None:
         rng.init(seed)
 
 
-def _assemble_optional(nested: dict[str, Any], user: UserConfig) -> None:
+def _assemble_optional(
+    nested: dict[str, Any],
+    user: UserConfig,
+    *,
+    recipe_output: dict[str, Any] | None,
+) -> None:
     if tok := build_tokenizer(user):
         nested["tokenizer"] = tok
     if acc := build_accuracy(user):
         nested["accuracy"] = acc
-    if mr := build_multi_run(user):
+    if mr := build_multi_run(user, recipe_output=recipe_output):
         nested["multi_run"] = mr
     inp = user.input
     if inp is not None:
@@ -64,6 +70,64 @@ def _assemble_optional(nested: dict[str, Any], user: UserConfig) -> None:
             nested["random_seed"] = inp.random_seed
         if inp.goodput:
             nested["slos"] = dict(inp.goodput)
+
+
+def _apply_recipe_sweep_variables(
+    nested: dict[str, Any],
+    recipe_output: dict[str, Any] | None,
+    user: UserConfig,
+) -> None:
+    """Lift a grid-recipe's ``sweep_variables`` onto the top-level ``sweep`` block.
+
+    Mutually exclusive with magic-list flags: a recipe owns sweep variables on
+    the grid path, so the user passing ``--concurrency 10,20,30`` alongside a
+    grid ``--search-recipe`` is ambiguous (which list wins?). We defer the
+    decision to the user by hard-failing here with a clear message. The
+    detection runs against the v1 ``UserConfig`` (not the assembled phase
+    dicts) so the rejection fires before ``_promote_magic_lists_to_sweep_block``
+    silently merges them.
+    """
+    if recipe_output is None:
+        return
+    sweep_variables = recipe_output.get("sweep_variables")
+    if not sweep_variables:
+        return
+
+    _reject_recipe_plus_magic_lists(user)
+
+    existing = nested.get("sweep")
+    if isinstance(existing, dict):
+        existing.setdefault("type", "grid")
+        existing.setdefault("variables", {})
+        existing["variables"].update(sweep_variables)
+    else:
+        nested["sweep"] = {"type": "grid", "variables": dict(sweep_variables)}
+
+
+def _reject_recipe_plus_magic_lists(user: UserConfig) -> None:
+    """Raise when a v1 phase field carries a magic-list alongside a grid recipe.
+
+    Walks the v1 sub-models (loadgen / input) for any user-set field whose name
+    is in ``MAGIC_LIST_FIELDS`` and whose value is a list. Magic-list fields can
+    live on multiple v1 nests (e.g. ``loadgen.concurrency``,
+    ``input.synthetic_input_tokens.mean``) so a generic walk is the simplest
+    way to catch all of them.
+    """
+    offenders: list[str] = []
+    for sub_name in ("loadgen", "input"):
+        sub = getattr(user, sub_name, None)
+        if sub is None:
+            continue
+        for name in sub.model_fields_set:
+            if name in MAGIC_LIST_FIELDS and isinstance(getattr(sub, name), list):
+                offenders.append(f"{sub_name}.{name}")
+    if offenders:
+        raise TypeError(
+            f"--search-recipe (grid path) is mutually exclusive with "
+            f"magic-list flags {sorted(offenders)} -- the recipe owns the "
+            "sweep variables. Drop the list-shaped flag, or drop --search-recipe "
+            "and configure the sweep by hand."
+        )
 
 
 def _promote_magic_lists_to_sweep_block(nested: dict[str, Any]) -> None:
@@ -126,6 +190,11 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
     """
     from aiperf.config.config import AIPerfConfig
 
+    # Expanding the recipe up-front lets _assemble_optional and
+    # _apply_recipe_sweep_variables share one ``recipe.expand()`` call instead
+    # of running it twice.
+    recipe_output = expand_search_recipe(user)
+
     endpoint = build_endpoint(user)
     models = build_models(user)
     prof = build_profiling(user)
@@ -157,7 +226,8 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
     if runtime_dict:
         nested["runtime"] = runtime_dict
 
-    _assemble_optional(nested, user)
+    _assemble_optional(nested, user, recipe_output=recipe_output)
+    _apply_recipe_sweep_variables(nested, recipe_output, user)
     _promote_magic_lists_to_sweep_block(nested)
 
     return AIPerfConfig(**nested)

@@ -1757,3 +1757,39 @@ search_recipe:
     metadata:
       algorithm: bayes
       sweep_path: phases.profiling.concurrency
+  concurrency-ramp:
+    class: aiperf.search_recipes.builtins:ConcurrencyRamp
+    description: |
+      Ramp concurrency log-spaced over [1, 1000] and detect the first concurrency
+      where p99 request_latency degrades past baseline * (1 + --degradation-threshold).
+    metadata:
+      algorithm: grid
+      sweep_path: phases.profiling.concurrency
+  prefill-ttft-curve:
+    class: aiperf.search_recipes.builtins:PrefillTTFTCurve
+    description: |
+      Sweep ISL log-spaced at concurrency=1; fit TTFT vs ISL with a linear
+      regression (quadratic fallback when r^2 < 0.85).
+    metadata:
+      algorithm: grid
+      sweep_path: phases.profiling.synthetic_input_tokens.mean
+
+# =============================================================================
+# Search Recipe Post-Process Handlers
+# =============================================================================
+# Handlers run after SweepAnalyzer.compute() in aggregate_sweep_and_export and
+# emit derived artifacts (curves, knee points) into sweep_aggregate/. Selected
+# indirectly via a recipe's PostProcessSpec.
+# =============================================================================
+search_recipe_post_process:
+  degradation_knee_detect:
+    class: aiperf.search_recipes.post_process:DegradationKneeDetect
+    description: |
+      Find the first swept value where the chosen metric exceeds
+      baseline * (1 + threshold_pct). Used by the concurrency-ramp recipe.
+  ttft_curve_fit:
+    class: aiperf.search_recipes.post_process:TTFTCurveFit
+    description: |
+      Fit TTFT vs ISL with linear regression; refit quadratic when r^2 is
+      below the configured floor (default 0.85). Used by the
+      prefill-ttft-curve recipe.

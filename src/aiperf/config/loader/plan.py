@@ -28,6 +28,8 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     adaptive_search = (
         config.multi_run.adaptive_search
     )  # already typed AdaptiveSearchConfig | None
+    post_process = config.multi_run.post_process  # PostProcessSpec | None
+    sla_filters = list(config.multi_run.sla_filters)
 
     config_dict = config.model_dump(mode="json", exclude_none=True, exclude_unset=True)
     sweep_dict = config_dict.pop("sweep", None)
@@ -35,6 +37,8 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     multi_run.pop(
         "adaptive_search", None
     )  # propagated separately as `adaptive_search` kwarg
+    multi_run.pop("post_process", None)  # propagated separately
+    multi_run.pop("sla_filters", None)  # propagated separately
 
     if sweep_dict is not None and adaptive_search is not None:
         raise ValueError(
@@ -65,6 +69,8 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
         parameter_sweep_same_seed=multi_run.get("parameter_sweep_same_seed", False),
         parameter_sweep_mode=multi_run.get("mode", "repeated"),
         adaptive_search=adaptive_search,
+        post_process=post_process,
+        sla_filters=sla_filters,
     )
     for key in (
         "convergence_metric",

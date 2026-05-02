@@ -369,6 +369,7 @@ class SweepAnalyzer:
     def compute(
         per_combination_stats: dict[ParameterCombination, dict],
         sweep_parameters: list[dict[str, Any]],
+        sla_filters: list[Any] | None = None,
     ) -> dict[str, Any]:
         """Compute sweep-level aggregate statistics.
 
@@ -377,10 +378,22 @@ class SweepAnalyzer:
         :meth:`_compute_best_configurations`, and :meth:`_compute_pareto`;
         the helpers exist so each stays under the 80-line ergonomics cap.
 
+        When ``sla_filters`` is non-empty, ``best_configurations`` is filtered
+        to feasible configurations first (falling back to the full set when
+        zero are feasible — the user still sees something), and
+        ``pareto_optimal`` is filtered to feasible-only with NO fallback (a
+        Pareto frontier of infeasible points isn't meaningful). The applied
+        constraints land on ``metadata.sla_constraints`` for downstream
+        renderers.
+
         Args:
             per_combination_stats: Statistics for each parameter combination.
             sweep_parameters: List of parameter definitions, each with
                 ``name`` (str) and ``values`` (list of allowed values).
+            sla_filters: Optional list of ``SLAFilter`` objects (or dicts with
+                ``metric_tag`` / ``stat`` / ``op`` / ``threshold``) to filter
+                ``best_configurations`` and ``pareto_optimal`` against. Empty
+                list / ``None`` disables filtering.
 
         Returns:
             Dict with keys ``metadata``, ``per_combination_metrics``,
@@ -402,13 +415,34 @@ class SweepAnalyzer:
             >>> result["metadata"]["num_combinations"]
             2
         """
+        metadata = SweepAnalyzer._build_metadata(sweep_parameters)
+        per_combination = SweepAnalyzer._build_per_combination_block(
+            per_combination_stats
+        )
+
+        feasible_stats: dict[ParameterCombination, dict] | None = None
+        if sla_filters:
+            from aiperf.orchestrator.aggregation.sweep_sla_filter import (
+                filter_feasible,
+                sla_filter_to_dict,
+            )
+
+            feasible_stats = filter_feasible(per_combination_stats, sla_filters)
+            metadata["sla_constraints"] = {
+                "active_filters": [sla_filter_to_dict(f) for f in sla_filters],
+                "feasible_count": len(feasible_stats),
+                "infeasible_count": len(per_combination_stats) - len(feasible_stats),
+            }
+
+        best_source = feasible_stats if feasible_stats else per_combination_stats
+        best = SweepAnalyzer._compute_best_configurations(best_source)
+        pareto = SweepAnalyzer._compute_pareto(
+            feasible_stats if sla_filters else per_combination_stats
+        )
+
         return {
-            "metadata": SweepAnalyzer._build_metadata(sweep_parameters),
-            "per_combination_metrics": SweepAnalyzer._build_per_combination_block(
-                per_combination_stats
-            ),
-            "best_configurations": SweepAnalyzer._compute_best_configurations(
-                per_combination_stats
-            ),
-            "pareto_optimal": SweepAnalyzer._compute_pareto(per_combination_stats),
+            "metadata": metadata,
+            "per_combination_metrics": per_combination,
+            "best_configurations": best,
+            "pareto_optimal": pareto,
         }

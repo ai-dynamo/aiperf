@@ -332,3 +332,13 @@ search_recipe:
     AdaptiveSearchConfig (Bayesian Optimization) or sweep.variables (grid) at the
     v1->v2 converter boundary. Selected via `--search-recipe <name>` on the CLI.
     One-to-one mapping per benchmark run.
+
+search_recipe_post_process:
+  protocol: aiperf.search_recipes.post_process:PostProcessHandler
+  enum: SearchRecipePostProcessType
+  description: |
+    Post-process handlers run after `SweepAnalyzer.compute()` in
+    `aggregate_sweep_and_export` and emit derived artifacts (curves, knee
+    points) into `sweep_aggregate/`. Handlers are stateless and one instance
+    is reused per recipe. Selected indirectly via a recipe's PostProcessSpec.
+    One-to-one mapping per recipe-emitted PostProcessSpec.

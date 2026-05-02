@@ -738,3 +738,57 @@ class LoadGeneratorConfig(BaseConfig):
             group=Groups.MULTI_RUN,
         ),
     ] = None
+
+    degradation_threshold: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            lt=1,
+            description=(
+                "Relative latency degradation threshold for the concurrency-ramp "
+                "recipe (e.g. 0.20 = 20%). The recipe's post-process handler "
+                "reports the first concurrency where p99 latency exceeds "
+                "baseline * (1 + threshold). Recipe-only flag; ignored unless "
+                "--search-recipe concurrency-ramp is set."
+            ),
+        ),
+        CLIParameter(
+            name=("--degradation-threshold",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    isl_min: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Minimum input-sequence-length for the prefill-ttft-curve recipe "
+                "(default 256 when omitted). The recipe sweeps ISL on a log scale "
+                "from --isl-min to --isl-max. Recipe-only flag."
+            ),
+        ),
+        CLIParameter(
+            name=("--isl-min",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    isl_max: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum input-sequence-length for the prefill-ttft-curve recipe "
+                "(default 32768 when omitted). The recipe sweeps ISL on a log scale "
+                "from --isl-min to --isl-max. Recipe-only flag."
+            ),
+        ),
+        CLIParameter(
+            name=("--isl-max",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None

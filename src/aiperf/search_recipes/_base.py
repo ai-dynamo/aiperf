@@ -58,9 +58,29 @@ class PostProcessSpec(BaseConfig):
     )
     output_filename: str = Field(
         description=(
-            "Filename (relative to the artifact dir) to write the handler's output to."
+            "Filename (relative to ``sweep_aggregate/`` under the artifact dir) "
+            "to write the handler's output to. Must end in ``.json`` and contain "
+            "no path separators -- the hook joins it with ``sweep_aggregate/`` "
+            "and refuses to escape that directory."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_output_filename(self) -> PostProcessSpec:
+        # Reject path separators outright so a recipe can't write to ``..`` or
+        # an absolute path; the hook joins this filename with ``sweep_aggregate/``
+        # and we want filename-only there.
+        if "/" in self.output_filename or "\\" in self.output_filename:
+            raise ValueError(
+                f"PostProcessSpec.output_filename must be filename-only "
+                f"(no path separators), got {self.output_filename!r}."
+            )
+        if not self.output_filename.endswith(".json"):
+            raise ValueError(
+                f"PostProcessSpec.output_filename must end in '.json' "
+                f"(handlers emit JSON artifacts), got {self.output_filename!r}."
+            )
+        return self
 
 
 class SearchRecipeContext(BaseConfig):

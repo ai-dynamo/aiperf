@@ -421,9 +421,10 @@ async def aggregate_sweep_and_export(
     1. Group ``results`` by ``variation_values``.
     2. For each group: aggregate trials (multi-trial) or read summary
        directly (single-trial).
-    3. Run :meth:`SweepAnalyzer.compute` over the grouped stats.
+    3. Run :meth:`SweepAnalyzer.compute` over the grouped stats (with SLA
+       filters when ``plan.sla_filters`` is non-empty).
     4. Write ``profile_export_aiperf_sweep.json`` and ``.csv`` via the
-       sweep exporters.
+       sweep exporters; run the recipe's post-process hook when set.
 
     Returns the directory written to, or ``None`` if there were no
     results to aggregate (graceful no-op).
@@ -435,10 +436,9 @@ async def aggregate_sweep_and_export(
     """
     import asyncio
 
-    from aiperf.exporters.aggregate import (
-        AggregateExporterConfig,
-        AggregateSweepCsvExporter,
-        AggregateSweepJsonExporter,
+    from aiperf._cli_runner_post_process import (
+        export_sweep_aggregate,
+        run_post_process_hook,
     )
     from aiperf.orchestrator.aggregation.sweep import SweepAnalyzer
 
@@ -456,24 +456,26 @@ async def aggregate_sweep_and_export(
         )
         return None
 
-    sweep_dict = SweepAnalyzer.compute(per_combination_stats, sweep_parameters)
+    sweep_dict = SweepAnalyzer.compute(
+        per_combination_stats,
+        sweep_parameters,
+        sla_filters=list(plan.sla_filters) if plan.sla_filters else None,
+    )
 
     aggregate_dir = base_dir / "sweep_aggregate"
     await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
 
     aggregate_result = _build_sweep_aggregate_result(results, sweep_dict)
-    exporter_config = AggregateExporterConfig(
-        result=aggregate_result, output_dir=aggregate_dir
-    )
-    json_exporter = AggregateSweepJsonExporter(exporter_config)
-    csv_exporter = AggregateSweepCsvExporter(exporter_config)
-
-    json_path, csv_path = await asyncio.gather(
-        json_exporter.export(), csv_exporter.export()
-    )
-    logger.info(f"Sweep aggregate JSON written to: {json_path}")
-    logger.info(f"Sweep aggregate CSV written to: {csv_path}")
-
+    await export_sweep_aggregate(aggregate_result, aggregate_dir, logger)
     _log_sweep_summary(aggregate_result, logger)
+
+    if plan.post_process is not None:
+        await asyncio.to_thread(
+            run_post_process_hook,
+            plan.post_process,
+            sweep_dict,
+            aggregate_dir,
+            logger,
+        )
 
     return aggregate_dir
