@@ -5,7 +5,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -89,6 +89,23 @@ class Image(Media):
     """Media that contains image data."""
 
     media_type: ClassVar[MediaTypeT] = MediaType.IMAGE
+
+    uuids: list[str] = Field(
+        default_factory=list,
+        description="Optional cache UUIDs aligned 1:1 with `contents`. "
+        "When non-empty, length must match `contents`. "
+        "vLLM-extension only: opaque IDs that let the server reuse a cached "
+        "processed multimodal embedding across requests.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_uuid_alignment(self) -> "Image":
+        if self.uuids and len(self.uuids) != len(self.contents):
+            raise ValueError(
+                f"Image.uuids length ({len(self.uuids)}) must match "
+                f"contents length ({len(self.contents)}) when set."
+            )
+        return self
 
 
 class Audio(Media):
@@ -201,6 +218,7 @@ class Turn(AIPerfBaseModel):
                 Image(
                     name=img.name,
                     contents=[f"image_{i}" for i in range(len(img.contents))],
+                    uuids=list(img.uuids),
                 )
                 for img in self.images
             ],

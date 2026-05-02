@@ -131,6 +131,11 @@ class EndpointInfo(AIPerfBaseModel):
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
         "When False, only aggregate metrics are tracked (counts, totals, first/last timestamps).",
     )
+    uuid_and_strip: bool = Field(
+        default=EndpointDefaults.UUID_AND_STRIP,
+        description="Drive vLLM's UUID-keyed multimodal cache (vLLM extension). "
+        "See `--uuid-and-strip`.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -168,6 +173,7 @@ class EndpointInfo(AIPerfBaseModel):
             download_video_content=user_config.endpoint.download_video_content,
             request_content_type=user_config.endpoint.request_content_type,
             collect_trace_chunks=user_config.output.export_http_trace,
+            uuid_and_strip=user_config.endpoint.uuid_and_strip,
         )
 
 

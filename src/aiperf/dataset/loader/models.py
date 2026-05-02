@@ -34,6 +34,15 @@ class SingleTurn(AIPerfBaseModel):
         None,
         description="List of image strings or Image objects format",
     )
+    image_uuids: list[str] | None = Field(
+        None,
+        description="Optional cache UUIDs aligned 1:1 with string-form `images`. "
+        "Only supported when `images` is `list[str]`; for `Image` objects, "
+        "set `Image.uuids` directly instead. The singular `image` field is "
+        "not supported — use `images: ['x.png']` + `image_uuids: ['u1']`. "
+        "vLLM-extension only: opaque IDs that let the server reuse cached "
+        "multimodal embeddings across requests. See `--uuid-and-strip`.",
+    )
     audio: str | None = Field(None, description="Simple audio string content")
     audios: list[str] | list[Audio] | None = Field(
         None,
@@ -80,6 +89,26 @@ class SingleTurn(AIPerfBaseModel):
             raise ValueError("video and videos cannot be set together")
         if self.timestamp and self.delay:
             raise ValueError("timestamp and delay cannot be set together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_image_uuids_alignment(self) -> "SingleTurn":
+        """Ensure image_uuids is well-formed: rejects when images is list[Image]
+        (use Image.uuids directly) or when lengths mismatch."""
+        if self.image_uuids is None:
+            return self
+        if self.images is None:
+            raise ValueError("image_uuids requires images to be set")
+        if any(isinstance(img, Image) for img in self.images):
+            raise ValueError(
+                "image_uuids cannot be set when images is provided as Image "
+                "objects; use Image.uuids on each Image instead."
+            )
+        if len(self.image_uuids) != len(self.images):
+            raise ValueError(
+                f"image_uuids length ({len(self.image_uuids)}) must match "
+                f"images length ({len(self.images)})"
+            )
         return self
 
     @model_validator(mode="after")

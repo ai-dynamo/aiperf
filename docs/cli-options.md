@@ -194,6 +194,11 @@ Transport protocol to use for API requests. If not specified, auto-detected from
 Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads. The OpenAI API now prefers 'max_completion_tokens', but some older APIs or implementations may require 'max_tokens'.
 <br/>_Flag (no value required)_
 
+#### `--uuid-and-strip`
+
+Drive vLLM's UUID-keyed multimodal cache (`--mm-processor-cache-gb`). When set, image parts that carry a UUID (from `Image.uuids` / JSONL `image_uuids`) are emitted with a `uuid` field; on the second-and-later occurrence of a UUID within a session the `image_url.url` is shipped as an empty string so vLLM serves the cached embedding. Image parts without a UUID are emitted as-is. vLLM-only extension; other servers may reject the `uuid` field. Size `--mm-processor-cache-gb` >= working set, otherwise vLLM 400s on UUID miss.
+<br/>_Flag (no value required)_
+
 #### `--use-server-token-count`
 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.

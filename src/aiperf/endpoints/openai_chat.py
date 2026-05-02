@@ -24,7 +24,12 @@ class ChatEndpoint(BaseEndpoint):
     """OpenAI Chat Completions endpoint.
 
     Supports multi-modal inputs (text, images, audio, video) and both
-    streaming and non-streaming responses.
+    streaming and non-streaming responses. Stateless — UUID-and-strip
+    dedup is applied at dataset load time
+    (see ``SingleTurnDatasetLoader._dedup_repeated_images_inplace``):
+    repeats within a conversation arrive with empty ``image.contents[i]``
+    but their ``image.uuids[i]`` set. The endpoint just translates the
+    pre-deduped data into wire format.
     """
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
@@ -46,7 +51,10 @@ class ChatEndpoint(BaseEndpoint):
             messages = turns[-1].raw_messages
         else:
             messages = self._create_messages(
-                turns, request_info.system_message, request_info.user_context_message
+                turns,
+                request_info.system_message,
+                request_info.user_context_message,
+                uuid_and_strip=model_endpoint.endpoint.uuid_and_strip,
             )
 
         payload = {
@@ -90,17 +98,10 @@ class ChatEndpoint(BaseEndpoint):
         turns: list[Turn],
         system_message: str | None,
         user_context_message: str | None,
+        *,
+        uuid_and_strip: bool = False,
     ) -> list[dict[str, Any]]:
-        """Create messages from turns for OpenAI Chat Completions.
-
-        Args:
-            turns: List of turns in the request
-            system_message: Optional shared system message to prepend
-            user_context_message: Optional per-conversation user context to prepend
-
-        Returns:
-            List of formatted message dicts for OpenAI Chat Completions API
-        """
+        """Create messages from turns for OpenAI Chat Completions."""
         messages = []
 
         # Prepend system_message and user_context_message if present
@@ -124,11 +125,17 @@ class ChatEndpoint(BaseEndpoint):
             message = {
                 "role": turn.role or _DEFAULT_ROLE,
             }
-            self._set_message_content(message, turn)
+            self._set_message_content(message, turn, uuid_and_strip=uuid_and_strip)
             messages.append(message)
         return messages
 
-    def _set_message_content(self, message: dict[str, Any], turn: Turn) -> None:
+    def _set_message_content(
+        self,
+        message: dict[str, Any],
+        turn: Turn,
+        *,
+        uuid_and_strip: bool,
+    ) -> None:
         """Create message content from turn for OpenAI Chat Completions."""
         if (
             len(turn.texts) == 1
@@ -151,13 +158,7 @@ class ChatEndpoint(BaseEndpoint):
                     continue
                 message_content.append({"type": "text", "text": content})
 
-        for image in turn.images:
-            for content in image.contents:
-                if not content:
-                    continue
-                message_content.append(
-                    {"type": "image_url", "image_url": {"url": content}}
-                )
+        self._append_image_parts(message_content, turn, uuid_and_strip=uuid_and_strip)
 
         for audio in turn.audios:
             for content in audio.contents:
@@ -186,6 +187,41 @@ class ChatEndpoint(BaseEndpoint):
                 )
 
         message["content"] = message_content
+
+    def _append_image_parts(
+        self,
+        message_content: list[dict[str, Any]],
+        turn: Turn,
+        *,
+        uuid_and_strip: bool,
+    ) -> None:
+        """Append image content parts.
+
+        Default path (uuid_and_strip off, or image has no UUIDs):
+        emit ``{"image_url": {"url": content}}`` and skip empty content.
+
+        With uuid_and_strip on AND the image carries UUIDs: emit
+        ``{"image_url": {"url": content}, "uuid": u}``. Non-empty content
+        ships bytes (first occurrence post-dedup); empty content signals
+        cache-served (load-time dedup stripped a repeat).
+        """
+        for image in turn.images:
+            if uuid_and_strip and image.uuids:
+                for content, uuid in zip(image.contents, image.uuids, strict=True):
+                    message_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": content},
+                            "uuid": uuid,
+                        }
+                    )
+            else:
+                for content in image.contents:
+                    if not content:
+                        continue
+                    message_content.append(
+                        {"type": "image_url", "image_url": {"url": content}}
+                    )
 
     def parse_response(
         self, response: InferenceServerResponse

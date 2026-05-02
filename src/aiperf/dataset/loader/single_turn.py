@@ -7,7 +7,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aiperf.common.enums import ConversationContextMode, MediaType
+from aiperf.common.enums import (
+    ConversationContextMode,
+    MediaType,
+)
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
@@ -119,12 +122,19 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ) -> list[Conversation]:
         """Convert single turn data to conversation objects.
 
+        When `endpoint.uuid_and_strip` is set, repeated images within a
+        conversation are deduped at load time — second-and-later occurrences
+        of each UUID keep the UUID but drop the image bytes. The wire-format
+        strip logic in the chat endpoint then routes them to the cache-served
+        path.
+
         Args:
             data: A dictionary mapping session_id to list of SingleTurn objects.
 
         Returns:
             A list of conversations.
         """
+        uuid_and_strip = self.user_config.endpoint.uuid_and_strip
         conversations = []
         for session_id, single_turns in data.items():
             conversation = Conversation(
@@ -149,5 +159,31 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         max_tokens=single_turn.output_length,
                     )
                 )
+            if uuid_and_strip:
+                self._dedup_repeated_images_inplace(conversation)
             conversations.append(conversation)
         return conversations
+
+    @staticmethod
+    def _dedup_repeated_images_inplace(conversation: Conversation) -> None:
+        """Drop image bytes for repeated UUIDs within one conversation.
+
+        First occurrence of each UUID keeps its content; subsequent occurrences
+        get an empty string. The chat endpoint's `uuid-and-strip` wire logic
+        recognizes empty content + known UUID and ships the cache-hit form
+        (`{"url": "", "uuid": "<u>"}`). Image.uuids length is validated equal
+        to contents length at model-construction time, so direct indexing is
+        safe.
+        """
+        seen: set[str] = set()
+        for turn in conversation.turns:
+            for image in turn.images:
+                if not image.uuids:
+                    continue
+                for i, uuid in enumerate(image.uuids):
+                    if not uuid:
+                        continue
+                    if uuid in seen:
+                        image.contents[i] = ""
+                    else:
+                        seen.add(uuid)

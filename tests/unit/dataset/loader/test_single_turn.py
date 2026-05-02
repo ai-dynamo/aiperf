@@ -923,3 +923,189 @@ class TestSingleTurnSessionId:
 
         assert len(conversations) == 1
         assert conversations[0].context_mode is None
+
+
+class TestSingleTurnImageUUIDs:
+    """Tests for the parallel `image_uuids` array (vLLM cached-inputs)."""
+
+    def test_parallel_image_uuids_propagate_to_image_model(
+        self, create_jsonl_file, default_user_config
+    ):
+        content = [
+            json.dumps(
+                {
+                    "images": [
+                        "https://example.com/a.png",
+                        "https://example.com/b.png",
+                    ],
+                    "image_uuids": ["uuid-a", "uuid-b"],
+                    "text": "describe",
+                }
+            )
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents == [
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ]
+        assert turn.images[0].uuids == ["uuid-a", "uuid-b"]
+
+    def test_image_uuids_length_mismatch_rejected(self):
+        with pytest.raises(ValueError, match="image_uuids length"):
+            SingleTurn(
+                images=[
+                    "https://example.com/a.png",
+                    "https://example.com/b.png",
+                ],
+                image_uuids=["only-one"],
+            )
+
+    def test_image_uuids_without_images_rejected(self):
+        with pytest.raises(ValueError, match="requires images"):
+            SingleTurn(text="describe", image_uuids=["uuid-a"])
+
+    def test_image_uuids_with_image_objects_rejected(self):
+        """When `images` is `list[Image]`, set `Image.uuids` directly."""
+        with pytest.raises(
+            ValueError, match="cannot be set when images is provided as Image"
+        ):
+            SingleTurn(
+                images=[Image(name="img", contents=["https://example.com/a.png"])],
+                image_uuids=["uuid-a"],
+            )
+
+    def test_image_model_rejects_uuid_contents_length_mismatch(self):
+        """Image's @model_validator catches mismatch on direct construction."""
+        with pytest.raises(
+            ValueError, match=r"Image\.uuids length .* must match contents length"
+        ):
+            Image(
+                name="img",
+                contents=["a.png", "b.png"],
+                uuids=["only-one"],
+            )
+
+    def test_load_time_dedup_in_strip_mode(
+        self, create_jsonl_file, default_user_config
+    ):
+        """When `uuid_and_strip` is set, `convert_to_conversations` drops bytes
+        for second-and-later occurrences of each UUID within one conversation.
+        """
+        default_user_config.endpoint.uuid_and_strip = True
+        content = [
+            json.dumps(
+                {
+                    "session_id": "s1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "t0",
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "s1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "t1",
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "s1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "t2",
+                }
+            ),
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turns = conversations[0].turns
+        assert len(turns) == 3
+        assert turns[0].images[0].contents == ["https://example.com/a.png"]
+        assert turns[1].images[0].contents == [""]
+        assert turns[2].images[0].contents == [""]
+        # UUIDs are preserved on every turn — the strip wire path needs them.
+        assert turns[0].images[0].uuids == ["uuid-a"]
+        assert turns[1].images[0].uuids == ["uuid-a"]
+        assert turns[2].images[0].uuids == ["uuid-a"]
+
+    def test_load_time_dedup_off_in_off_mode(
+        self, create_jsonl_file, default_user_config
+    ):
+        """Default `uuid_and_strip=False` does not dedupe."""
+        content = [
+            json.dumps(
+                {
+                    "session_id": "s1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "t0",
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "s1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "t1",
+                }
+            ),
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turns = conversations[0].turns
+        assert turns[0].images[0].contents == ["https://example.com/a.png"]
+        assert turns[1].images[0].contents == ["https://example.com/a.png"]
+
+    def test_session_grouping_preserves_distinct_uuids_per_turn(
+        self, create_jsonl_file, default_user_config
+    ):
+        """Two rows in the same session, each with one image + one UUID."""
+        content = [
+            json.dumps(
+                {
+                    "session_id": "sess-1",
+                    "images": ["https://example.com/a.png"],
+                    "image_uuids": ["uuid-a"],
+                    "text": "first",
+                }
+            ),
+            json.dumps(
+                {
+                    "session_id": "sess-1",
+                    "images": ["https://example.com/b.png"],
+                    "image_uuids": ["uuid-b"],
+                    "text": "second",
+                }
+            ),
+        ]
+        filename = create_jsonl_file(content)
+        loader = SingleTurnDatasetLoader(
+            filename=filename, user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+        assert conversations[0].turns[0].images[0].uuids == ["uuid-a"]
+        assert conversations[0].turns[1].images[0].uuids == ["uuid-b"]

@@ -74,7 +74,8 @@ class MediaConversionMixin:
         if values is None or not isinstance(values, Iterable):
             return []
 
-        # If already correct media objects, return as is
+        # If already correct media objects, return as is. Per-Image `uuids`
+        # (when supplied via the embedded-object form) ride along on the model.
         if all(isinstance(v, media_class) for v in values):
             return values
 
@@ -85,6 +86,12 @@ class MediaConversionMixin:
                 for v in values
             ]
 
+        # Image-only: thread parallel `image_uuids` (validated 1:1 with `images`
+        # on the SingleTurn model) into the constructed Image.
+        if field == MediaType.IMAGE and getattr(data, "image_uuids", None):
+            return [
+                media_class(name=name, contents=values, uuids=list(data.image_uuids))
+            ]
         return [media_class(name=name, contents=values)]
 
     def _is_url(self, content: str) -> bool:
