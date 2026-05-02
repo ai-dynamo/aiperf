@@ -5,14 +5,14 @@ import { openJobWs } from '../lib/job-ws.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
-import { RealtimeKpiGrid } from '../components/realtime-kpi-grid.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
-import { PhaseBar } from '../components/phase-bar.js';
-import { RecordProcessing } from '../components/record-processing.js';
-import { Conditions } from '../components/conditions.js';
-import { PodsBar } from '../components/pods-bar.js';
-import { LogsPane } from '../components/logs-pane.js';
-import { EventsPane } from '../components/events-pane.js';
+import { Panel } from '../components/panel.js';
+import { KpiRail } from '../components/kpi-rail.js';
+import { PhaseStrip } from '../components/phase-strip.js';
+import { RecordsStrip } from '../components/records-strip.js';
+import { PodsStrip } from '../components/pods-strip.js';
+import { LiveChartsPanel } from '../components/live-charts-panel.js';
+import { DiagnosticsPanel } from '../components/diagnostics-panel.js';
 import { LatencyTimelineChart } from '../components/latency-timeline-chart.js';
 import { RunPicker } from '../components/run-picker.js';
 import { NsPill, ModelPill } from '../components/pills.js';
@@ -1925,6 +1925,50 @@ export function JobDetail({ namespace, name, epoch }) {
     completed: p?.requestsCompleted ?? 0,
     total: p?.requestsTotal ?? 0,
   }));
+  // PhaseStrip needs {name, status, progress}. Derive from completed/total.
+  const phaseStripData = phasesArray.map((ph) => {
+    const done = ph.total > 0 && ph.completed >= ph.total;
+    const active = !done && ph.completed > 0;
+    const progress = ph.total > 0 ? Math.min(1, ph.completed / ph.total) : 0;
+    return {
+      name: ph.name,
+      status: done ? 'completed' : active ? 'active' : 'pending',
+      progress,
+    };
+  });
+  const currentPhaseName = (phaseStripData.find((p) => p.status === 'active') || {}).name
+    ?? info.currentPhase
+    ?? status.phase
+    ?? null;
+  const etaText = null;
+
+  // Records-pipeline aggregates (formerly inside RecordProcessing). RecordsStrip
+  // wants flat numbers; sum success+error across phases for processed/total,
+  // sum recordsPerSecond across active phases for rate, take the longest
+  // active recordsEtaSeconds for the headline ETA.
+  let recordProcessed = 0;
+  let recordTotal = 0;
+  let recordRate = 0;
+  let recordEta = null;
+  for (const [, p] of Object.entries(rawPhases)) {
+    if (p == null || typeof p !== 'object') continue;
+    const rs = p.recordsSuccess ?? 0;
+    const re = p.recordsError ?? 0;
+    recordProcessed += rs + re;
+    // Total target = requestsTotal (records pipeline trails requests 1:1).
+    recordTotal += p.requestsTotal ?? 0;
+    const sendingComplete = p.sendingComplete ?? false;
+    const recPct = p.recordsProgressPercent ?? 0;
+    const isActive = !sendingComplete || recPct < 100;
+    if (isActive) {
+      recordRate += p.recordsPerSecond ?? p.records_per_second ?? 0;
+      const eta = p.recordsEtaSeconds ?? p.records_eta_seconds ?? null;
+      if (eta != null && (recordEta == null || eta > recordEta)) {
+        recordEta = eta;
+      }
+    }
+  }
+  if (recordRate === 0) recordRate = null;
   const pods = job?.pods ?? [];
   const jobError = info.error ?? status.error ?? null;
 
@@ -2129,13 +2173,6 @@ export function JobDetail({ namespace, name, epoch }) {
         </div>
       </div>
 
-      <!-- Conditions -->
-      ${conditions.length > 0 && html`
-        <div style="margin-bottom: var(--space-4)">
-          <${Conditions} conditions=${conditions} />
-        </div>
-      `}
-
       <!-- Error banner -->
       ${jobError && html`
         <div class="card" style="border-color: ${colors.error}44; color: ${colors.error}; margin-bottom: var(--space-4)" title=${jobError}>
@@ -2161,7 +2198,7 @@ export function JobDetail({ namespace, name, epoch }) {
         </div>
       `}
 
-      <!-- KPI row -->
+      <!-- KPI rail -->
       <!-- "Live" / "Final" tag clarifies whether the KPI numbers are still moving (running)
            or are the run's final values (completed). -->
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2)">
@@ -2178,8 +2215,13 @@ export function JobDetail({ namespace, name, epoch }) {
           >${isRunning ? 'LIVE' : 'FINAL'}</span>
         `}
       </div>
-      <div style="margin-bottom: var(--space-6)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
-        <${RealtimeKpiGrid} summary=${summary} slos=${slos} timeseries=${liveData.timeseries} />
+      <div style="margin-bottom: var(--space-4)" title=${isRunning ? 'Live values — still updating' : (isCompleted ? 'Final values for this run' : '')}>
+        <${KpiRail}
+          summary=${summary}
+          slos=${slos}
+          timeseries=${liveData.timeseries}
+          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          stale=${liveData.connected === false} />
         ${isCompleted && results && html`
           <div style="margin-top: var(--space-4)">
             <${TokenEfficiencyCard} results=${results} info=${info} />
@@ -2187,80 +2229,85 @@ export function JobDetail({ namespace, name, epoch }) {
         `}
       </div>
 
-      <!-- Two-column split -->
-      <div class="detail-split">
-        <!-- Left: Phase progress + pods -->
-        <div>
-          ${phasesArray.length > 0 && html`
-            <div class="card" style="margin-bottom: var(--space-4)">
-              <div class="card-title">Phases</div>
-              <!-- Sweep children with warmup + 5+ stages overflow on narrow viewports;
-                   horizontal scroll keeps the layout intact instead of wrapping items
-                   into broken rows. -->
-              <div style="overflow-x: auto; max-width: 100%">
-                <${PhaseBar} phases=${phasesArray} />
-              </div>
-            </div>
-          `}
-
-          ${Object.keys(rawPhases).length > 0 && html`
-            <div style="margin-bottom: var(--space-4)">
-              <${RecordProcessing} phases=${rawPhases} />
-            </div>
-          `}
-
-          ${viewingCurrentRun
-            ? (pods.length > 0 && html`
-              <div class="card" data-testid="job-detail-pods">
-                <div class="card-title">Pods</div>
-                <${PodsBar} pods=${pods} />
-              </div>
-            `)
-            : html`
-              <div class="card" data-testid="job-detail-archived-note">
-                <div class="text-dim" style="font-style: italic; font-size: var(--font-size-sm)">
-                  Pods and events are not retained for archived epochs.
-                </div>
-              </div>
-            `
-          }
+      <!-- Canonical strips: phase, records, pods -->
+      ${phaseStripData.length > 0 && html`
+        <div style="margin-bottom: var(--space-2)">
+          <${PhaseStrip} phases=${phaseStripData} current=${currentPhaseName} etaText=${etaText} />
         </div>
-
-        <!-- Right: Charts -->
-        <div>
-          ${chartData && html`
-            <div class="card" style="margin-bottom: var(--space-4)">
-              <div class="card-title">Live Throughput</div>
-              <${ChartWrapper} type="line" data=${chartData} options=${throughputChartOptions} height=${200} />
-            </div>
-          `}
-
-          ${isCompleted && latencyHistogram && html`
-            <div class="card">
-              <div class="card-title">Latency Distribution</div>
-              <${ChartWrapper} type="bar" data=${latencyHistogram} options=${histogramOptions} height=${200} />
-            </div>
-          `}
+      `}
+      ${recordTotal > 0 && html`
+        <div style="margin-bottom: var(--space-2)">
+          <${RecordsStrip}
+            processed=${recordProcessed}
+            total=${recordTotal}
+            ratePerSec=${recordRate}
+            etaSeconds=${recordEta} />
         </div>
+      `}
+      ${viewingCurrentRun
+        ? html`
+          <div style="margin-bottom: var(--space-4)" data-testid="job-detail-pods">
+            <${PodsStrip} pods=${pods} onExpand=${() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set('diag', 'pods');
+              window.history.replaceState(null, '', url.toString());
+              // Force a re-render by dispatching popstate; DiagnosticsPanel reads ?diag=...
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }} />
+          </div>
+        `
+        : html`
+          <div class="card" data-testid="job-detail-archived-note" style="margin-bottom: var(--space-4)">
+            <div class="text-dim" style="font-style: italic; font-size: var(--font-size-sm)">
+              Pods and events are not retained for archived epochs.
+            </div>
+          </div>
+        `
+      }
+
+      <!-- Live two-column: charts + diagnostics -->
+      <div class="live-2col" style="margin-bottom: var(--space-4)">
+        <${LiveChartsPanel}
+          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          throughputChartData=${chartData}
+          throughputChartOptions=${throughputChartOptions}
+          histogramChartData=${latencyHistogram}
+          histogramChartOptions=${histogramOptions}
+          windowLabel=${isCompleted ? 'whole run' : 'last 60s · auto'} />
+        <${DiagnosticsPanel}
+          ns=${namespace}
+          name=${name}
+          conditions=${conditions}
+          pods=${pods}
+          mode=${isCompleted ? 'completed' : (!viewingCurrentRun ? 'archived' : 'live')}
+          archived=${!viewingCurrentRun}
+          eventCount=${null}
+          logSeverityCounts=${null}
+          conditionWarnCount=${(conditions || []).filter(c => c.status !== 'True').length}
+          podCrashCount=${(pods || []).filter(p => /crashloop/i.test(p.reason || '')).length} />
       </div>
 
-      <!-- Events + Logs (full width, below the two-column split) -->
-      ${viewingCurrentRun && html`
-        <div style="margin-top: var(--space-4); display: grid; gap: var(--space-4)">
-          <${EventsPane} ns=${namespace} name=${name} />
-          <${LogsPane} ns=${namespace} name=${name} pods=${pods} />
+      <!-- SLA Compliance (completed only, only when SLOs declared on the CR) -->
+      ${isCompleted && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="SLA Compliance" collapsible defaultOpen=${isCompleted} testId="panel-sla-compliance">
+            <${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />
+          <//>
         </div>
       `}
 
-      <!-- Feature 6: SLA Compliance (completed only, only when SLOs declared on the CR) -->
-      ${isCompleted && html`<${SLACompliance} results=${results} summary=${summary} config=${jobConfig} />`}
-
       <!-- Server Metrics -->
       ${displayedServerMetrics
-        ? html`<${ServerMetricsSection}
-                 serverMetrics=${displayedServerMetrics}
-                 source=${serverMetricsSource}
-                 sparklines=${viewingCurrentRun ? liveData.serverTimeseries : null} />`
+        ? html`
+          <div style="margin-top: var(--space-4)">
+            <${Panel} title="Server Metrics" collapsible defaultOpen=${isCompleted} testId="panel-server-metrics">
+              <${ServerMetricsSection}
+                serverMetrics=${displayedServerMetrics}
+                source=${serverMetricsSource}
+                sparklines=${viewingCurrentRun ? liveData.serverTimeseries : null} />
+            <//>
+          </div>
+        `
         : (isTerminal && files.some(f => f.name === 'server_metrics_export.json') && !serverMetricsLoaded && html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 120px">
             <${Spinner} size="sm" />
@@ -2277,7 +2324,13 @@ export function JobDetail({ namespace, name, epoch }) {
 
       <!-- Job Configuration (always shown if available) -->
       ${jobConfig
-        ? html`<${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />`
+        ? html`
+          <div style="margin-top: var(--space-4)">
+            <${Panel} title="Job Configuration" collapsible defaultOpen=${isCompleted} testId="panel-job-config">
+              <${JobConfigSection} config=${jobConfig} namespace=${namespace} name=${name} />
+            <//>
+          </div>
+        `
         : html`
           <div class="card" style="margin-top: var(--space-4); display: flex; align-items: center; gap: var(--space-2); min-height: 160px">
             <${Spinner} size="sm" />
@@ -2286,8 +2339,14 @@ export function JobDetail({ namespace, name, epoch }) {
         `
       }
 
-      <!-- Feature 8: Run Metadata (completed only) -->
-      ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}
+      <!-- Run Metadata (completed only) -->
+      ${isCompleted && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="Run Metadata" collapsible defaultOpen=${isCompleted} testId="panel-run-metadata">
+            <${RunMetadata} status=${status} results=${results} info=${info} />
+          <//>
+        </div>
+      `}
 
       <!-- Per-Record Analysis: never auto-fetched (large runs OOM the browser).
            Show a static card with a download link when the file is present. -->
@@ -2295,23 +2354,36 @@ export function JobDetail({ namespace, name, epoch }) {
         const f = files.find(x => x.name === 'profile_export.jsonl');
         if (!f) return null;
         return html`
-          <div class="card" style="margin-top: var(--space-4)">
-            <div class="card-title">Per-Request Records</div>
-            <div style="font-size: var(--font-size-sm); color: var(--text-dim); margin-bottom: var(--space-2)">
-              ${humanSize(f.size_bytes)} compressed. Not loaded in-browser — download to analyze offline.
-            </div>
-            <button class="btn btn-secondary" onclick=${() => downloadFile('profile_export.jsonl')}>
-              Download profile_export.jsonl
-            </button>
+          <div style="margin-top: var(--space-4)">
+            <${Panel} title="Per-Record Analysis" collapsible defaultOpen=${isCompleted} testId="panel-per-record">
+              <div style="font-size: var(--font-size-sm); color: var(--text-dim); margin-bottom: var(--space-2)">
+                ${humanSize(f.size_bytes)} compressed. Not loaded in-browser — download to analyze offline.
+              </div>
+              <button class="btn btn-secondary" onclick=${() => downloadFile('profile_export.jsonl')}>
+                Download profile_export.jsonl
+              </button>
+            <//>
           </div>
         `;
       })()}
 
-      <!-- Feature 3: Concurrency vs Throughput (completed only) -->
-      ${isCompleted && html`<${ConcurrencyThroughputChart} status=${status} />`}
+      <!-- Concurrency vs Throughput (completed only) -->
+      ${isCompleted && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="Concurrency vs Throughput" collapsible defaultOpen=${isCompleted} testId="panel-concurrency-throughput">
+            <${ConcurrencyThroughputChart} status=${status} />
+          <//>
+        </div>
+      `}
 
-      <!-- Latency percentile chart (completed only) -->
-      ${isCompleted && results && html`<${LatencyPercentileChart} results=${results} />`}
+      <!-- Latency Percentiles (completed only) -->
+      ${isCompleted && results && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="Latency Percentiles" collapsible defaultOpen=${isCompleted} testId="panel-latency-percentiles">
+            <${LatencyPercentileChart} results=${results} />
+          <//>
+        </div>
+      `}
 
       <!-- Latency Timeline (completed only; needs a pinned epoch — the
            non-epoch results endpoint refuses run-scoped artifacts).
@@ -2322,27 +2394,42 @@ export function JobDetail({ namespace, name, epoch }) {
         const LATENCY_CHART_MAX_BYTES = 10 * 1024 * 1024;  // 10 MB compressed
         if (f && f.size_bytes > LATENCY_CHART_MAX_BYTES) {
           return html`
-            <div class="card" style="margin-top: var(--space-4)">
-              <div class="card-title">Latency Timeline</div>
-              <span class="text-dim" style="font-size: var(--font-size-sm)">
-                Skipped — profile_export.jsonl is ${humanSize(f.size_bytes)} compressed
-                (chart loads up to ${humanSize(LATENCY_CHART_MAX_BYTES)}).
-              </span>
+            <div style="margin-top: var(--space-4)">
+              <${Panel} title="Latency Timeline" collapsible defaultOpen=${isCompleted} testId="panel-latency-timeline">
+                <span class="text-dim" style="font-size: var(--font-size-sm)">
+                  Skipped — profile_export.jsonl is ${humanSize(f.size_bytes)} compressed
+                  (chart loads up to ${humanSize(LATENCY_CHART_MAX_BYTES)}).
+                </span>
+              <//>
             </div>
           `;
         }
         return html`
           <div style="margin-top: var(--space-4)">
-            <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
+            <${Panel} title="Latency Timeline" collapsible defaultOpen=${isCompleted} testId="panel-latency-timeline">
+              <${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />
+            <//>
           </div>
         `;
       })()}
 
-      <!-- Feature 4: ISL Distribution (completed only) -->
-      ${isCompleted && results && html`<${ISLDistributionChart} results=${results} />`}
+      <!-- ISL Distribution (completed only) -->
+      ${isCompleted && results && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="ISL Distribution" collapsible defaultOpen=${isCompleted} testId="panel-isl-distribution">
+            <${ISLDistributionChart} results=${results} />
+          <//>
+        </div>
+      `}
 
-      <!-- Full metrics breakdown (completed only) -->
-      ${isCompleted && results && html`<${MetricsTable} results=${results} />`}
+      <!-- Full Metrics Breakdown (completed only) -->
+      ${isCompleted && results && html`
+        <div style="margin-top: var(--space-4)">
+          <${Panel} title="Full Metrics Breakdown" collapsible defaultOpen=${isCompleted} testId="panel-metrics-table">
+            <${MetricsTable} results=${results} />
+          <//>
+        </div>
+      `}
 
       <!-- Artifacts — always rendered so the section's existence and
            location are predictable; falls back to a contextual empty/
