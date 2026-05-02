@@ -306,8 +306,17 @@ def synthesize_status_from_summary(
     if conditions is None:
         conditions = [{"type": phase, "status": "True"}]
 
-    # Request count for the phases bar: prefer explicit, else fall back to 0.
-    request_count = int(summary.get("request_count") or 0)
+    # Request count for the phases bar. ``profile_export_aiperf.json``
+    # carries ``request_count`` as a metric dict ``{unit, avg}`` (the
+    # canonical MetricsSummary shape); older / hand-rolled summaries
+    # may carry it as a bare int. Accept both.
+    rc = summary.get("request_count")
+    if isinstance(rc, dict):
+        rc = rc.get("avg") or rc.get("count") or 0
+    try:
+        request_count = int(rc or 0)
+    except (TypeError, ValueError):
+        request_count = 0
 
     return {
         "jobId": name,
