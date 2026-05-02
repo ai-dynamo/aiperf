@@ -3340,3 +3340,28 @@ select, input {
 @media (max-width: 600px) {
   .diagnostics-drawer { width: 100vw; }
 }
+
+/* Metrics-table group header — sticks to the top of the metrics card
+ * scroll region so the categorical hue stays visible while the percentile
+ * table scrolls. The chip is the dot before the label. */
+.metrics-table__group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.metrics-table__group-head__chip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}

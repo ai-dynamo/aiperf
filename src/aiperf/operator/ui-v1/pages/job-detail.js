@@ -98,7 +98,7 @@ const FULL_PERCENTILES = ['avg', 'std', 'p1', 'p10', 'p50', 'p90', 'p95', 'p99',
 const METRIC_GROUPS = [
   {
     label: 'Throughput',
-    color: palette.blue,
+    color: 'var(--cat-throughput)',
     rows: [
       { key: 'request_throughput', label: 'Request Throughput', cols: ['avg'] },
       { key: 'output_token_throughput', label: 'Output Token Throughput', cols: ['avg'] },
@@ -111,7 +111,7 @@ const METRIC_GROUPS = [
   },
   {
     label: 'Latency',
-    color: palette.peach,
+    color: 'var(--cat-latency)',
     rows: [
       { key: 'request_latency', label: 'Request Latency', cols: FULL_PERCENTILES },
       { key: 'time_to_first_token', label: 'Time to First Token', cols: FULL_PERCENTILES },
@@ -124,7 +124,7 @@ const METRIC_GROUPS = [
   },
   {
     label: 'Tokens',
-    color: palette.mauve,
+    color: 'var(--cat-tokens)',
     rows: [
       { key: 'input_sequence_length', label: 'Input Sequence Length', cols: FULL_PERCENTILES },
       { key: 'output_sequence_length', label: 'Output Sequence Length', cols: FULL_PERCENTILES },
@@ -145,7 +145,7 @@ const METRIC_GROUPS = [
   },
   {
     label: 'Counts & Totals',
-    color: palette.amber,
+    color: 'var(--cat-tokens)',
     rows: [
       { key: 'request_count', label: 'Request Count', cols: ['avg'] },
       { key: 'good_request_count', label: 'Good Request Count', cols: ['avg'] },
@@ -163,7 +163,7 @@ const METRIC_GROUPS = [
   },
   {
     label: 'HTTP',
-    color: palette.pink,
+    color: 'var(--cat-errors)',
     rows: [
       { key: 'http_req_duration', label: 'HTTP Request Duration', cols: FULL_PERCENTILES },
       { key: 'http_req_total', label: 'HTTP Request Total', cols: FULL_PERCENTILES },
@@ -183,7 +183,7 @@ const METRIC_GROUPS = [
   },
   {
     label: 'Vision',
-    color: palette.green,
+    color: 'var(--accent)',
     rows: [
       { key: 'num_images', label: 'Images per Request', cols: FULL_PERCENTILES },
       { key: 'image_throughput', label: 'Image Throughput', cols: FULL_PERCENTILES },
@@ -256,7 +256,7 @@ function MetricsTable({ results }) {
 
   const otherRows = buildOtherMetricsRows(results);
   const allGroups = otherRows.length > 0
-    ? [...METRIC_GROUPS, { label: 'Other Metrics', color: palette.overlay1, rows: otherRows }]
+    ? [...METRIC_GROUPS, { label: 'Other Metrics', color: 'var(--muted)', rows: otherRows }]
     : METRIC_GROUPS;
 
   return html`
@@ -269,15 +269,17 @@ function MetricsTable({ results }) {
         return html`
           <div key=${group.label} style="margin-bottom: var(--space-3)">
             <div
+              class="metrics-table__group-head"
               onclick=${() => toggleGroup(group.label)}
-              style=${'display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: ' + group.color + '18; border-radius: var(--radius-sm); cursor: pointer; user-select: none; border-left: 3px solid ' + group.color}
+              style=${'cursor: pointer; user-select: none; border-left: 3px solid ' + group.color + '; color: ' + group.color}
             >
-              <span style=${'color: ' + group.color + '; font-weight: 600; font-size: var(--font-size-sm)'}>${group.label}</span>
+              <span class="metrics-table__group-head__chip" style=${'background: ' + group.color}></span>
+              <span style="font-weight: 600">${group.label}</span>
               <span class="text-dim" style="font-size: var(--font-size-xs); margin-left: auto">${isOpen ? '\u25B2' : '\u25BC'}</span>
             </div>
             ${isOpen && html`
               <div style="overflow-x: auto">
-                <table style="width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-top: var(--space-1)">
+                <table style=${'width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); margin-top: var(--space-1); border-left: 2px solid ' + group.color + '40'}>
                   <thead>
                     <tr>
                       <th style=${'text-align: left; padding: var(--space-2) var(--space-3); color: ' + palette.overlay1 + '; font-weight: 500; font-size: var(--font-size-xs); border-bottom: 1px solid ' + palette.surface0}>Metric</th>
