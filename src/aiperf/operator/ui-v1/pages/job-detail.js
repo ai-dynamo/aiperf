@@ -23,6 +23,7 @@ import { ServerMetricsSection } from '../components/server-metrics/index.js';
 import { RelaunchButton } from '../components/relaunch-button.js';
 import { IdentityBar } from '../components/identity-bar.js';
 import { RailCard, RailKv, RailAction } from '../components/job-detail-rail.js';
+import { ArtifactsCard } from '../components/artifacts-card.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -2555,122 +2556,18 @@ export function JobDetail({ namespace, name, epoch }) {
            location are predictable; falls back to a contextual empty/
            loading message instead of disappearing while the job is
            still producing files. -->
-      <div class="card" style="margin-top: var(--space-4)" data-testid="artifacts-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2)">
-          <div class="card-title" style="margin: 0">Result Files</div>
-          ${files.length > 0 && html`
-            <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
-              ${hasExportFile && html`
-                <button
-                  onclick=${exportJson}
-                  style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-                >
-                  Export JSON
-                </button>
-              `}
-              <a
-                class="btn"
-                href=${api.resultBundleUrl(namespace, name, epoch)}
-                download
-                data-testid="artifacts-bundle"
-                style=${'background: ' + palette.green + '22; color: ' + palette.green + '; border: 1px solid ' + palette.green + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); text-decoration: none'}
-                title=${'Download all ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' as a single .zip'}
-              >
-                Download .zip${totalArtifactBytes > 0 ? ` (${fmtBytes(totalArtifactBytes)})` : ''}
-              </a>
-              <button
-                onclick=${downloadAll}
-                style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
-                title="Trigger one download per file (browser saves them individually)"
-              >
-                Download All
-              </button>
-            </div>
-          `}
-        </div>
-
-        ${!filesLoaded && html`
-          <${LoadingPanel} label="Looking up result files…" inline=${true} testid="artifacts-loading" />
-        `}
-
-        ${filesLoaded && files.length === 0 && html`
-          <div data-testid="artifacts-empty" style=${'padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); border: 1px dashed ' + palette.surface0 + '; color: ' + palette.subtext0 + '; font-size: var(--font-size-sm); display: flex; align-items: center; gap: var(--space-3)'}>
-            <span style=${'flex-shrink: 0; color: ' + palette.overlay0}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14 3 H7 a2 2 0 0 0 -2 2 v14 a2 2 0 0 0 2 2 h10 a2 2 0 0 0 2 -2 V8 z" />
-                <polyline points="14,3 14,8 19,8" />
-                <line x1="9" y1="13" x2="15" y2="13" />
-                <line x1="9" y1="17" x2="13" y2="17" />
-              </svg>
-            </span>
-            <div style="display: flex; flex-direction: column; gap: 2px">
-              <div style=${'font-weight: 600; color: ' + palette.text}>
-                ${resolvedEpoch == null
-                  ? 'Waiting for a run epoch before showing result files.'
-                  : isCompleted
-                    ? 'No result files persisted for this run.'
-                    : isRunning
-                      ? 'No result files yet.'
-                      : 'No result files available.'}
-              </div>
-              <div class="text-dim" style="font-size: var(--font-size-xs)">
-                ${resolvedEpoch == null
-                  ? 'This page now requires a pinned run epoch before it will fetch final artifacts, so the status and results cannot drift to different runs.'
-                  : isCompleted
-                    ? 'The job completed but no artifacts were uploaded — check the operator logs or the controller pod for this run.'
-                    : isRunning
-                      ? 'Files (profile_export_aiperf.json, profile_export.jsonl, server_metrics_export.json, ...) appear here once the run finishes and uploads them to the results PVC.'
-                      : 'Artifacts will appear here after the run starts producing output.'}
-              </div>
-            </div>
-          </div>
-        `}
-
-        ${filesLoaded && files.length > 0 && html`
-          <div style="display: flex; flex-direction: column; gap: var(--space-1)">
-            ${files.map(f => {
-              const ext = f.name.split('.').pop().toLowerCase();
-              const previewable = PREVIEWABLE.has(ext);
-              const chip = fileTypeChip(f.name);
-              const action = () => openFile(f.name);
-              return html`
-                <div
-                  key=${f.name}
-                  onclick=${action}
-                  onkeydown=${e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      action();
-                    }
-                  }}
-                  role="button"
-                  tabindex="0"
-                  aria-label=${(previewable ? 'Preview ' : 'Download ') + f.name}
-                  title=${previewable ? 'Click to preview' : 'Click to download'}
-                  style=${'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); background: ' + palette.base + '; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; border: 1px solid ' + palette.surface0 + '60; outline: none'}
-                  onmouseenter=${e => { e.currentTarget.style.background = palette.surface0; }}
-                  onmouseleave=${e => { e.currentTarget.style.background = palette.base; }}
-                  onfocus=${e => { e.currentTarget.style.background = palette.surface0; e.currentTarget.style.borderColor = palette.blue + '88'; }}
-                  onblur=${e => { e.currentTarget.style.background = palette.base; e.currentTarget.style.borderColor = palette.surface0 + '60'; }}
-                >
-                  <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 0">
-                    <span
-                      class="file-type-chip"
-                      style=${'background: ' + chip.color + '22; color: ' + chip.color + '; border: 1px solid ' + chip.color + '55'}
-                      title=${'File type: ' + chip.label.toLowerCase()}
-                    >${chip.label}</span>
-                    <span style=${'font-size: var(--font-size-sm); color: ' + fileColor(f.name) + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap'}>${f.name}</span>
-                  </div>
-                  <div style="display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0">
-                    <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; font-style: italic'}>${previewable ? 'preview' : 'download'}</span>
-                    <span class="text-dim" style="font-size: var(--font-size-xs)">${humanSize(f.size_bytes)}</span>
-                  </div>
-                </div>
-              `;
-            })}
-          </div>
-        `}
-      </div>
+      <${ArtifactsCard}
+        files=${files}
+        filesLoaded=${filesLoaded}
+        namespace=${namespace}
+        name=${name}
+        epoch=${epoch}
+        resolvedEpoch=${resolvedEpoch}
+        isCompleted=${isCompleted}
+        isRunning=${isRunning}
+        openFile=${openFile}
+        api=${api}
+        fmtBytes=${fmtBytes} />
         </main>
         <aside class="job-detail__rail" data-testid="job-detail-rail" aria-label="Run context">
           ${railContent}

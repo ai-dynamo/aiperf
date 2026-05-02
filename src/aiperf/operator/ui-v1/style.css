@@ -3365,3 +3365,163 @@ select, input {
   height: 8px;
   border-radius: 2px;
 }
+
+/* ============================================================
+ * Wave 2 — Artifacts card
+ * ============================================================ */
+
+.artifacts-card {
+  background: var(--card-grad);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--card-shadow);
+}
+.artifacts-card__head {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.artifacts-card__title { font-size: var(--font-size-base); font-weight: 500; margin: 0; }
+.artifacts-card__sub {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.artifacts-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.artifacts-card__empty {
+  padding: var(--space-5) var(--space-4);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* Btn primary/secondary used by the artifacts head and reusable
+ * elsewhere in the page. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+}
+.btn--primary {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border: 1px solid var(--accent-strong);
+  font-weight: 600;
+}
+.btn--primary:hover { background: var(--accent); }
+.btn--secondary {
+  background: var(--bg-card);
+  color: var(--sub);
+  border: 1px solid var(--border);
+}
+.btn--secondary:hover { background: var(--bg-raised); color: var(--text); }
+
+.artifacts-card__filter-strip {
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+}
+.artifacts-card__filter-label {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 6px;
+  font-weight: 500;
+}
+.format-chip {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #0a0a0a;
+  cursor: pointer;
+  opacity: 0.55;
+  border: none;
+}
+.format-chip:hover { opacity: 1; }
+.format-chip.active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.10);
+}
+.format-chip--all { background: var(--bg-raised); color: var(--text); }
+[data-theme="light"] .format-chip { color: #ffffff; }
+[data-theme="light"] .format-chip.active { box-shadow: 0 0 0 2px rgba(20, 20, 30, 0.08); }
+[data-theme="light"] .format-chip--all { background: var(--bg-raised); color: var(--text-strong); }
+
+.artifacts-card__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+.artifacts-card__table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+.artifacts-card__table .fmt-cell { width: 70px; }
+.artifacts-card__table .fname { font-family: var(--font-mono); color: var(--text); }
+.artifacts-card__table .fname .path-prefix { color: var(--faint); }
+.artifacts-card__table .fsize {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  text-align: right;
+  width: 80px;
+}
+.artifacts-card__table .fact { text-align: right; width: 130px; }
+.artifacts-card__table .act-link {
+  color: var(--cat-throughput);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  cursor: pointer;
+}
+.artifacts-card__table .act-link + .act-link::before {
+  content: '·';
+  color: var(--hairline);
+  padding: 0 5px;
+}
+.artifacts-card__table--zebra tr:nth-child(odd)  { background: var(--bg-card); }
+.artifacts-card__table--zebra tr:nth-child(even) { background: var(--bg); }
+.artifacts-card__table--zebra tr:hover { background: var(--accent-tint); }
+.artifacts-card__foot {
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+}
+.artifacts-card__foot .show-all {
+  color: var(--cat-throughput);
+  font-size: var(--font-size-xs);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.artifacts-card__foot .totals {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
