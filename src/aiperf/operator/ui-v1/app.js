@@ -13,13 +13,13 @@ import { Leaderboard } from './pages/leaderboard.js';
 import { Compare } from './pages/compare.js';
 import { CompareEpochs } from './pages/compare-epochs.js';
 import { History } from './pages/history.js';
-import { Archive } from './pages/archive.js';
 import { Sweeps } from './pages/sweeps.js';
 import { SweepDetail } from './pages/sweep-detail.js';
 import { Launch } from './pages/launch.js';
 
 function App() {
   const [showPalette, setShowPalette] = useState(false);
+  const [features, setFeatures] = useState({ dashboard_enabled: false });
   const currentRoute = route.value;
   const error = globalError.value;
 
@@ -33,6 +33,15 @@ function App() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/v1/config/features')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((f) => { if (!cancelled && f) setFeatures(f); })
+      .catch(() => { /* features stay default — no Plots link */ });
+    return () => { cancelled = true; };
   }, []);
 
   // Route matching
@@ -65,8 +74,6 @@ function App() {
     page = html`<${Compare} />`;
   } else if (currentRoute === '/history') {
     page = html`<${History} />`;
-  } else if (currentRoute === '/archive') {
-    page = html`<${Archive} />`;
   } else if (currentRoute === '/launch') {
     page = html`<${Launch} />`;
   } else {
@@ -75,7 +82,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopNav} onSearchClick=${() => setShowPalette(true)} />
+      <${TopNav} onSearchClick=${() => setShowPalette(true)} features=${features} />
       <${Breadcrumb} />
       <div class="alpha-banner" role="status" data-testid="alpha-banner">
         <span class="alpha-banner-tag">ALPHA</span>

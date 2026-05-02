@@ -1,24 +1,39 @@
 import { html } from 'htm/preact';
 import { route, navigate } from '../lib/router.js';
 
-const NAV_GROUPS = [
-  {
-    items: [
-      { path: '/', label: 'Dashboard' },
-      { path: '/jobs', label: 'Jobs' },
-      { path: '/sweeps', label: 'Sweeps' },
-      { path: '/launch', label: 'Launch' },
-    ],
-  },
-  {
-    items: [
-      { path: '/leaderboard', label: 'Leaderboard' },
-      { path: '/compare', label: 'Compare' },
-      { path: '/history', label: 'History' },
-      { path: '/archive', label: 'Archive' },
-    ],
-  },
-];
+const PRIMARY_GROUP = {
+  items: [
+    { path: '/', label: 'Dashboard' },
+    { path: '/jobs', label: 'Jobs' },
+    { path: '/sweeps', label: 'Sweeps' },
+    { path: '/launch', label: 'Launch' },
+  ],
+};
+
+const ANALYTICS_GROUP = {
+  items: [
+    { path: '/leaderboard', label: 'Leaderboard' },
+    { path: '/compare', label: 'Compare' },
+    { path: '/history', label: 'History' },
+  ],
+};
+
+function buildNavGroups(features) {
+  const groups = [PRIMARY_GROUP, ANALYTICS_GROUP];
+  if (features && features.dashboard_enabled) {
+    groups.push({
+      items: [
+        {
+          path: '/dashboard/',
+          label: 'Plots ↗',
+          external: true,
+          testId: 'nav-link-plots',
+        },
+      ],
+    });
+  }
+  return groups;
+}
 
 function isActive(itemPath, currentRoute) {
   if (itemPath === '/') return currentRoute === '/' || currentRoute === '';
@@ -27,15 +42,16 @@ function isActive(itemPath, currentRoute) {
 
 function routeSlug(path) {
   if (path === '/' || path === '') return 'dashboard';
-  return path.replace(/^\//, '').replace(/\//g, '-');
+  return path.replace(/^\//, '').replace(/\/$/, '').replace(/\//g, '-');
 }
 
 /**
  * Top navigation bar with logo, grouped tabs, and search trigger.
- * @param {{ onSearchClick: () => void }} props
+ * @param {{ onSearchClick: () => void, features?: { dashboard_enabled: boolean } }} props
  */
-export function TopNav({ onSearchClick }) {
+export function TopNav({ onSearchClick, features }) {
   const currentRoute = route.value;
+  const navGroups = buildNavGroups(features);
 
   return html`
     <header class="topbar" data-testid="top-nav">
@@ -49,15 +65,26 @@ export function TopNav({ onSearchClick }) {
           AIPerf Operator
         </div>
         <nav class="nav" aria-label="Main navigation">
-          ${NAV_GROUPS.map((group, gi) => html`
+          ${navGroups.map((group, gi) => html`
             ${gi > 0 && html`<span class="nav-sep" />`}
-            ${group.items.map((item) => html`
+            ${group.items.map((item) => item.external ? html`
+              <a
+                key=${item.path}
+                href=${item.path}
+                target="_blank"
+                rel="noopener"
+                class="nav-tab"
+                data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}
+              >
+                ${item.label}
+              </a>
+            ` : html`
               <button
                 key=${item.path}
                 class=${'nav-tab' + (isActive(item.path, currentRoute) ? ' active' : '')}
                 onclick=${() => navigate(item.path)}
                 aria-current=${isActive(item.path, currentRoute) ? 'page' : undefined}
-                data-testid=${'nav-link-' + routeSlug(item.path)}
+                data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}
               >
                 ${item.label}
               </button>
