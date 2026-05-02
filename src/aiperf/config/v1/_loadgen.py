@@ -14,7 +14,7 @@ See aiperf.config.v1.__init__ for the hard rules around adding new fields.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 from cyclopts import Group, Parameter
 from pydantic import BeforeValidator, Field
@@ -593,3 +593,114 @@ class LoadGeneratorConfig(BaseConfig):
             group=Groups.MULTI_RUN,
         ),
     ] = SweepMode.REPEATED
+
+    search_space: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Adaptive-search space dimensions. Repeatable. Each value is "
+                "'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. "
+                "Mutually exclusive with magic-list flags (--concurrency 10,20,30) and "
+                "with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-space",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_metric: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Metric tag to optimize, e.g. 'output_token_throughput'. Required "
+                "when --search-space is set. Must match a key in "
+                "RunResult.summary_metrics produced by the run (NOT the flattened "
+                "'_avg' / '_p99' aggregator-suffixed key)."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-metric",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_stat: Annotated[
+        Literal["avg", "p50", "p90", "p95", "p99"] | None,
+        Field(
+            default=None,
+            description=(
+                "Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to "
+                "'avg' when omitted (set by the v1->v2 converter)."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-stat",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_direction: Annotated[
+        Literal["maximize", "minimize"] | None,
+        Field(
+            default=None,
+            description=(
+                "Optimization direction. Required when --search-space is set."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-direction",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_max_iterations: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=2,
+            le=200,
+            description=(
+                "Maximum number of search iterations. Each iteration runs "
+                "--num-profile-runs benchmarks. Required when --search-space is set."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-max-iterations",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_initial_points: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Random Sobol points before fitting the GP. Defaults to 5 "
+                "when omitted. Must be < --search-max-iterations."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-initial-points",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_random_seed: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Random seed for reproducible search trajectories. When unset, "
+                "skopt uses non-deterministic randomness."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-random-seed",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None

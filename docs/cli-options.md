@@ -1046,6 +1046,36 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 <br/>_Choices: [`independent`, `repeated`]_
 <br/>_Default: `repeated`_
 
+#### `--search-space`, `--search-space` `<list>`
+
+Adaptive-search space dimensions. Repeatable. Each value is 'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. Mutually exclusive with magic-list flags (--concurrency 10,20,30) and with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md.
+
+#### `--search-metric`, `--search-metric` `<str>`
+
+Metric tag to optimize, e.g. 'output_token_throughput'. Required when --search-space is set. Must match a key in RunResult.summary_metrics produced by the run (NOT the flattened '_avg' / '_p99' aggregator-suffixed key).
+
+#### `--search-stat`, `--search-stat` `<str>`
+
+Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to 'avg' when omitted (set by the v1->v2 converter).
+
+#### `--search-direction`, `--search-direction` `<str>`
+
+Optimization direction. Required when --search-space is set.
+
+#### `--search-max-iterations`, `--search-max-iterations` `<int>`
+
+Maximum number of search iterations. Each iteration runs --num-profile-runs benchmarks. Required when --search-space is set.
+<br/>_Constraints: ≥ 2, ≤ 200_
+
+#### `--search-initial-points`, `--search-initial-points` `<int>`
+
+Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &lt; --search-max-iterations.
+<br/>_Constraints: ≥ 1_
+
+#### `--search-random-seed`, `--search-random-seed` `<int>`
+
+Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -2249,6 +2279,36 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 <br/>_Choices: [`independent`, `repeated`]_
 <br/>_Default: `repeated`_
 
+#### `--search-space`, `--search-space` `<list>`
+
+Adaptive-search space dimensions. Repeatable. Each value is 'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. Mutually exclusive with magic-list flags (--concurrency 10,20,30) and with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md.
+
+#### `--search-metric`, `--search-metric` `<str>`
+
+Metric tag to optimize, e.g. 'output_token_throughput'. Required when --search-space is set. Must match a key in RunResult.summary_metrics produced by the run (NOT the flattened '_avg' / '_p99' aggregator-suffixed key).
+
+#### `--search-stat`, `--search-stat` `<str>`
+
+Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to 'avg' when omitted (set by the v1->v2 converter).
+
+#### `--search-direction`, `--search-direction` `<str>`
+
+Optimization direction. Required when --search-space is set.
+
+#### `--search-max-iterations`, `--search-max-iterations` `<int>`
+
+Maximum number of search iterations. Each iteration runs --num-profile-runs benchmarks. Required when --search-space is set.
+<br/>_Constraints: ≥ 2, ≤ 200_
+
+#### `--search-initial-points`, `--search-initial-points` `<int>`
+
+Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &lt; --search-max-iterations.
+<br/>_Constraints: ≥ 1_
+
+#### `--search-random-seed`, `--search-random-seed` `<int>`
+
+Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -3317,6 +3377,36 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
 <br/>_Default: `repeated`_
+
+#### `--search-space`, `--search-space` `<list>`
+
+Adaptive-search space dimensions. Repeatable. Each value is 'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. Mutually exclusive with magic-list flags (--concurrency 10,20,30) and with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md.
+
+#### `--search-metric`, `--search-metric` `<str>`
+
+Metric tag to optimize, e.g. 'output_token_throughput'. Required when --search-space is set. Must match a key in RunResult.summary_metrics produced by the run (NOT the flattened '_avg' / '_p99' aggregator-suffixed key).
+
+#### `--search-stat`, `--search-stat` `<str>`
+
+Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to 'avg' when omitted (set by the v1->v2 converter).
+
+#### `--search-direction`, `--search-direction` `<str>`
+
+Optimization direction. Required when --search-space is set.
+
+#### `--search-max-iterations`, `--search-max-iterations` `<int>`
+
+Maximum number of search iterations. Each iteration runs --num-profile-runs benchmarks. Required when --search-space is set.
+<br/>_Constraints: ≥ 2, ≤ 200_
+
+#### `--search-initial-points`, `--search-initial-points` `<int>`
+
+Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &lt; --search-max-iterations.
+<br/>_Constraints: ≥ 1_
+
+#### `--search-random-seed`, `--search-random-seed` `<int>`
+
+Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
 
 ### Accuracy
 
@@ -4401,6 +4491,36 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
 <br/>_Default: `repeated`_
+
+#### `--search-space`, `--search-space` `<list>`
+
+Adaptive-search space dimensions. Repeatable. Each value is 'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. Mutually exclusive with magic-list flags (--concurrency 10,20,30) and with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md.
+
+#### `--search-metric`, `--search-metric` `<str>`
+
+Metric tag to optimize, e.g. 'output_token_throughput'. Required when --search-space is set. Must match a key in RunResult.summary_metrics produced by the run (NOT the flattened '_avg' / '_p99' aggregator-suffixed key).
+
+#### `--search-stat`, `--search-stat` `<str>`
+
+Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to 'avg' when omitted (set by the v1->v2 converter).
+
+#### `--search-direction`, `--search-direction` `<str>`
+
+Optimization direction. Required when --search-space is set.
+
+#### `--search-max-iterations`, `--search-max-iterations` `<int>`
+
+Maximum number of search iterations. Each iteration runs --num-profile-runs benchmarks. Required when --search-space is set.
+<br/>_Constraints: ≥ 2, ≤ 200_
+
+#### `--search-initial-points`, `--search-initial-points` `<int>`
+
+Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &lt; --search-max-iterations.
+<br/>_Constraints: ≥ 1_
+
+#### `--search-random-seed`, `--search-random-seed` `<int>`
+
+Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
 
 ### Accuracy
 
@@ -5496,6 +5616,36 @@ If true, every sweep variation reuses the same random seed (correlated compariso
 Execution order for sweep + multi-trial composition. 'repeated' (default) iterates trials as the outer loop and variations as the inner loop, so all variations run within trial 1, then within trial 2, etc. 'independent' inverts the loops: all trials at one variation complete before the next variation starts. Both modes produce the same total runs, only the artifact-path layout and submit order differ.
 <br/>_Choices: [`independent`, `repeated`]_
 <br/>_Default: `repeated`_
+
+#### `--search-space`, `--search-space` `<list>`
+
+Adaptive-search space dimensions. Repeatable. Each value is 'path:lo,hi[:kind]', e.g. 'phases.profiling.concurrency:1,1000:int'. Mutually exclusive with magic-list flags (--concurrency 10,20,30) and with explicit sweep blocks. See docs/sweeping/bayesian-optimization.md.
+
+#### `--search-metric`, `--search-metric` `<str>`
+
+Metric tag to optimize, e.g. 'output_token_throughput'. Required when --search-space is set. Must match a key in RunResult.summary_metrics produced by the run (NOT the flattened '_avg' / '_p99' aggregator-suffixed key).
+
+#### `--search-stat`, `--search-stat` `<str>`
+
+Statistic on the metric: avg / p50 / p90 / p95 / p99. Defaults to 'avg' when omitted (set by the v1->v2 converter).
+
+#### `--search-direction`, `--search-direction` `<str>`
+
+Optimization direction. Required when --search-space is set.
+
+#### `--search-max-iterations`, `--search-max-iterations` `<int>`
+
+Maximum number of search iterations. Each iteration runs --num-profile-runs benchmarks. Required when --search-space is set.
+<br/>_Constraints: ≥ 2, ≤ 200_
+
+#### `--search-initial-points`, `--search-initial-points` `<int>`
+
+Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &lt; --search-max-iterations.
+<br/>_Constraints: ≥ 1_
+
+#### `--search-random-seed`, `--search-random-seed` `<int>`
+
+Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
 
 ### Accuracy
 
