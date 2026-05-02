@@ -190,6 +190,7 @@ async def test_main_cancels_poll_task_in_finally(monkeypatch, tmp_path):
     # Stub the heavy pieces.
     fake_plan = MagicMock()
     fake_plan.configs = []
+    fake_plan.is_adaptive_search = False
     monkeypatch.setattr(
         "aiperf.sweep_controller.plan_builder.build_plan_from_sweep",
         lambda cr: fake_plan,
@@ -212,7 +213,9 @@ async def test_main_cancels_poll_task_in_finally(monkeypatch, tmp_path):
         def __init__(self, base_dir):
             self.base_dir = base_dir
 
-        async def execute(self, plan, executor, *, cancel_check=None):
+        async def execute(
+            self, plan, executor, *, cancel_check=None, search_planner=None
+        ):
             return []
 
     monkeypatch.setattr("aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Orch)
