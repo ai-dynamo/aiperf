@@ -460,28 +460,17 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
 
 def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
-    """Block in-process sweep / adaptive outer loop when running inside an operator-managed pod.
+    """Block in-process grid sweep when running inside an operator-managed pod.
 
-    The k8s operator drives sweeps cluster-wide via the AIPerfSweep CR (one
-    AIPerfJob per variation, controller pod sees a single-config plan). It
-    does NOT support adaptive outer loops in v1: variation k>0 is unknown
-    until variation k-1 has been scored, breaking the operator's deterministic
-    cardinality contract (status.totalVariations is set at CR creation).
-    Both grid sweeps and outer loops are hard-rejected here.
+    The k8s operator drives grid sweeps cluster-wide via the AIPerfSweep CR
+    (one AIPerfJob per variation, controller pod sees a single-config plan).
+    Adaptive outer loops, in contrast, run inside the controller pod itself
+    via ``BayesianSearchPlanner`` — the controller proposes each variation
+    one at a time, so the in-process adaptive path is allowed under the
+    operator and is not blocked here.
     """
     if os.environ.get("AIPERF_OPERATOR_MANAGED") != "1":
         return
-    if plan.is_adaptive_search:
-        ol = plan.adaptive_search
-        raise SystemExit(
-            f"Adaptive outer loop ({ol.algorithm}, "
-            f"max_iterations={ol.max_iterations}, search-space={[d.path for d in ol.search_space]}) "
-            f"is not supported in operator-managed runs (AIPERF_OPERATOR_MANAGED=1). "
-            f"Cluster sweeps use the AIPerfSweep CRD with a deterministic variation set; "
-            f"adaptive outer loops need adaptive variation choice. Run in-process "
-            f"(without the operator) or use a grid AIPerfSweep instead. "
-            f"See docs/sweeping/bayesian-optimization.md."
-        )
     if plan.is_sweep:
         swept_params = sorted(
             {

@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the operator-managed-pod rejection of adaptive outer-loop plans."""
+"""Tests for the operator-managed-pod handling of adaptive outer-loop plans.
+
+v2: adaptive search is allowed under the operator — the controller pod owns the
+BO loop in cluster mode. Only deterministic grid sweeps still need the
+AIPerfSweep CRD.
+"""
 
 from __future__ import annotations
-
-import pytest
 
 from aiperf.cli_runner import _reject_in_process_sweep_under_operator
 from aiperf.config.adaptive_search import AdaptiveSearchConfig, SearchSpaceDimension
@@ -46,10 +49,15 @@ def _bo_plan() -> BenchmarkPlan:
     )
 
 
-def test_reject_bo_under_operator(monkeypatch):
+def test_bo_allowed_under_operator(monkeypatch):
+    """v2: adaptive search is allowed under AIPERF_OPERATOR_MANAGED=1.
+
+    The controller pod owns the BO loop in cluster mode; the in-process
+    rejection that existed in v1 has been lifted.
+    """
     monkeypatch.setenv("AIPERF_OPERATOR_MANAGED", "1")
-    with pytest.raises(SystemExit, match="adaptive outer loop"):
-        _reject_in_process_sweep_under_operator(_bo_plan())
+    # Should NOT raise — controller pod owns the BO loop in cluster mode.
+    _reject_in_process_sweep_under_operator(_bo_plan())
 
 
 def test_bo_allowed_outside_operator(monkeypatch):
