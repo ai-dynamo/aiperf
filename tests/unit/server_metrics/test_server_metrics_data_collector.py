@@ -7,6 +7,7 @@ import aiohttp
 import pytest
 
 from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.mixins.base_metrics_collector_mixin import (
     FetchResult,
     HttpTraceTiming,
@@ -201,15 +202,28 @@ http_requests_total{method="GET",status="404"} 5.0
             record = collector._parse_metrics_to_records(make_fetch_result(empty_data))
             assert record is None
 
-    def test_parse_invalid_format_raises_error(self):
-        """Test that invalid Prometheus format raises ValueError."""
+    def test_parse_invalid_format_raises_incompatible(self):
+        """Invalid Prometheus exposition format is reclassified as
+        IncompatibleMetricsEndpointError so the collector auto-disables
+        instead of looping on parse failures every scrape interval."""
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
 
         # Invalid TYPE directive without metric name
         invalid_format = "# HELP comment\n# TYPE comment"
 
-        with pytest.raises(ValueError):
+        with pytest.raises(IncompatibleMetricsEndpointError):
             collector._parse_metrics_to_records(make_fetch_result(invalid_format))
+
+    def test_parse_trtllm_iteration_stats_json_raises_incompatible(self):
+        """The TRT-LLM iteration-stats JSON body (``[]`` or a JSON array of
+        iteration objects) at /metrics is the canonical trigger for this
+        bug class — must produce IncompatibleMetricsEndpointError, not a
+        bare ValueError."""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+
+        for json_body in ("[]", '[{"iter": 1, "numActiveRequests": 0}]'):
+            with pytest.raises(IncompatibleMetricsEndpointError):
+                collector._parse_metrics_to_records(make_fetch_result(json_body))
 
     def test_parse_incomplete_histogram(self):
         """Test that incomplete histograms (missing sum/count) still create samples with None values."""
@@ -267,6 +281,141 @@ test_counter{label="a"} 30.0
 
         assert len(samples) == 1
         assert samples[0].value == 30.0
+
+
+class TestPrometheusFallbackProbe:
+    """When the configured /metrics path returns non-Prometheus content,
+    the collector should probe `<base>/prometheus/metrics` once, swap the
+    URL there on success, and fall through to auto-disable on failure.
+
+    This is the TRT-LLM compatibility path: ``return_perf_metrics: true``
+    mounts Prometheus exposition at the non-standard /prometheus/metrics
+    location while the default /metrics still serves iteration-stats JSON.
+    """
+
+    PROM_BODY = "# HELP up Whether the target is up\n# TYPE up gauge\nup 1.0\n"
+    JSON_BODY = "[]"
+
+    @pytest.mark.asyncio
+    async def test_probe_swaps_url_on_successful_prometheus_fallback(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/metrics"
+        )
+        # Original /metrics raises Incompatible (JSON path), then the probe
+        # at /prometheus/metrics succeeds with valid Prom exposition.
+        fetch_results = [
+            IncompatibleMetricsEndpointError("/metrics returned application/json"),
+            FetchResult(
+                text=self.PROM_BODY,
+                trace_timing=HttpTraceTiming(
+                    start_ns=1, start_perf_ns=0, first_byte_perf_ns=1, end_perf_ns=2
+                ),
+            ),
+        ]
+
+        async def fake_fetch() -> FetchResult:
+            value = fetch_results.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        sent: list = []
+
+        async def fake_send(records: list) -> None:
+            sent.append(records)
+
+        with (
+            patch.object(collector, "_fetch_metrics_text", side_effect=fake_fetch),
+            patch.object(
+                collector, "_send_records_via_callback", side_effect=fake_send
+            ),
+        ):
+            await collector._collect_and_process_metrics()
+
+        assert collector._endpoint_url == "http://server:60000/prometheus/metrics"
+        assert collector._prometheus_fallback_attempted is True
+        # The fallback attempt produced a record from the alt endpoint.
+        assert len(sent) == 1 and len(sent[0]) == 1
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_restores_url_and_reraises(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/metrics"
+        )
+
+        # Original /metrics raises Incompatible, then the probe at
+        # /prometheus/metrics ALSO raises (e.g. 404 or also JSON).
+        async def fake_fetch() -> FetchResult:
+            raise IncompatibleMetricsEndpointError("simulated probe failure")
+
+        with (
+            patch.object(collector, "_fetch_metrics_text", side_effect=fake_fetch),
+            pytest.raises(IncompatibleMetricsEndpointError),
+        ):
+            await collector._collect_and_process_metrics()
+
+        # URL must be restored so it shows up correctly in logs / status messages
+        assert collector._endpoint_url == "http://server:60000/metrics"
+        assert collector._prometheus_fallback_attempted is True
+
+    @pytest.mark.asyncio
+    async def test_probe_runs_at_most_once_per_collector(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/metrics"
+        )
+
+        async def always_incompatible() -> FetchResult:
+            raise IncompatibleMetricsEndpointError("never works")
+
+        with patch.object(
+            collector, "_fetch_metrics_text", side_effect=always_incompatible
+        ) as mock_fetch:
+            with pytest.raises(IncompatibleMetricsEndpointError):
+                await collector._collect_and_process_metrics()
+            # Two fetches: the original and the one fallback attempt.
+            assert mock_fetch.await_count == 2
+
+            mock_fetch.reset_mock()
+            with pytest.raises(IncompatibleMetricsEndpointError):
+                await collector._collect_and_process_metrics()
+            # Second cycle must not re-probe — single fetch on the original URL.
+            assert mock_fetch.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_probe_when_url_already_targets_prometheus_path(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/prometheus/metrics"
+        )
+
+        async def fake_fetch() -> FetchResult:
+            raise IncompatibleMetricsEndpointError("already on prometheus path")
+
+        with patch.object(
+            collector, "_fetch_metrics_text", side_effect=fake_fetch
+        ) as mock_fetch:
+            with pytest.raises(IncompatibleMetricsEndpointError):
+                await collector._collect_and_process_metrics()
+            # Only one fetch; the probe is skipped because we're already on
+            # /prometheus/metrics — there's no further alt path to try.
+            assert mock_fetch.await_count == 1
+        assert collector._prometheus_fallback_attempted is False
+
+    @pytest.mark.asyncio
+    async def test_no_probe_when_url_does_not_end_with_metrics(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/custom/path"
+        )
+
+        async def fake_fetch() -> FetchResult:
+            raise IncompatibleMetricsEndpointError("non-standard path")
+
+        with patch.object(
+            collector, "_fetch_metrics_text", side_effect=fake_fetch
+        ) as mock_fetch:
+            with pytest.raises(IncompatibleMetricsEndpointError):
+                await collector._collect_and_process_metrics()
+            assert mock_fetch.await_count == 1
+        assert collector._prometheus_fallback_attempted is False
 
 
 class TestAsyncLifecycle:
