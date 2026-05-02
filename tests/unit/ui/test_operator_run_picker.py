@@ -197,3 +197,19 @@ def test_build_picker_rows_handles_stale_pinned_epoch() -> None:
     assert out["label"]["text"].startswith("Run ?")
     assert out["label"]["status"] == "unknown"
     assert out["label"]["notLatest"] is True
+
+
+def test_orphan_pinned_epoch_keeps_dropdown_openable() -> None:
+    """Stale URL on a job with one epoch must still allow Jump-to-latest."""
+    fixture = json.dumps([_epochs_fixture()[2]])  # one epoch only
+    script = f"""
+        import {{ buildButtonLabel }} from {RUN_PICKER_PATH.as_uri()!r};
+        const out = buildButtonLabel({{
+          epochs: {fixture}, current: '9999', now: 5000,
+        }});
+        console.log(JSON.stringify(out));
+    """
+    out = json.loads(_run_node(script))
+    assert out["text"].startswith("Run ?")
+    assert out["notLatest"] is True
+    assert out["inert"] is False

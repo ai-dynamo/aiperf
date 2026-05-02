@@ -47,11 +47,22 @@ export function RunPicker({ namespace, name, epochs, current, onPick }) {
         if (r) { onPick(r.isLatest ? undefined : r.epoch); setOpen(false); }
       }
     }
+    function onFocusOut(e) {
+      // dismiss only when focus is leaving the entire wrapper, not when it
+      // just moves between options or back to the button.
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const next = e.relatedTarget;
+      if (next && wrap.contains(next)) return;
+      setOpen(false);
+    }
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
+    document.addEventListener('focusout', onFocusOut);
     return () => {
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('focusout', onFocusOut);
     };
   }, [open, rows, focusIdx, onPick]);
 

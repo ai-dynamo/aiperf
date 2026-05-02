@@ -89,7 +89,7 @@ export function buildButtonLabel({ epochs, current, now }) {
       status: 'unknown',
       isLatest: false,
       notLatest: true,
-      inert: epochs.length === 1,
+      inert: false,
     };
   }
   const ord = ordinalByEpoch.get(String(found.epoch));
