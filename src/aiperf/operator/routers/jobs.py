@@ -399,9 +399,10 @@ def derive_run_status(
     fall through to ``"unknown"`` rather than guessing.
 
     Example:
-        >>> row = _some_row(phase="Succeeded")
-        >>> derive_run_status(row, live_running_epoch=None)
-        'succeeded'
+        For a row with phase="Succeeded" and no live in-flight epoch,
+        ``derive_run_status(row, live_running_epoch=None)`` returns ``"succeeded"``.
+        For the same row when ``live_running_epoch`` matches ``row.epoch``,
+        it returns ``"running"`` regardless of phase.
     """
     if live_running_epoch is not None and row.epoch == live_running_epoch:
         return "running"
