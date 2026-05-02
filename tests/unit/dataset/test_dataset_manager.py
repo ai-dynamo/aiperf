@@ -1073,6 +1073,8 @@ class TestPreformatPayloads:
             mock_fmt.assert_not_called()
 
         assert conversations[0].turns[0].raw_payload is None
+
+
 # ============================================================================
 # Accuracy mode sampling strategy guards
 # ============================================================================

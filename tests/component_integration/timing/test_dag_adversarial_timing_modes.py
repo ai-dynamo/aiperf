@@ -122,7 +122,9 @@ def _mk_source(
 
     corr_counter = {"n": 0}
 
-    def _start(parent_correlation_id, child_conversation_id, agent_depth, branch_mode):
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **_kw
+    ):
         corr_counter["n"] += 1
         s = MagicMock()
         s.x_correlation_id = f"corr-{child_conversation_id}-{corr_counter['n']}"
@@ -134,7 +136,7 @@ def _mk_source(
 
     cs.start_branch_child.side_effect = _start
 
-    def _start_pre(child_conversation_id):
+    def _start_pre(child_conversation_id, **_kw):
         if pre_session_factory is not None:
             return pre_session_factory(child_conversation_id)
         corr_counter["n"] += 1

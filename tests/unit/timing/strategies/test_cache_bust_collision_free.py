@@ -48,7 +48,7 @@ def test_no_collisions_across_10k_distinct_inputs():
         for lane in range(10):
             for recycle_pass in range(100):
                 marker = build_cache_bust_marker(
-                    _BENCHMARK_ID, recycle_pass, lane, trace_id, _TARGET
+                    _BENCHMARK_ID, recycle_pass, lane, trace_id, target=_TARGET
                 )
                 markers.add(marker)
     assert len(markers) == expected, (
@@ -67,7 +67,7 @@ def test_collision_free_at_same_pass_lane_different_traces():
     markers: set[str] = set()
     for i in range(100):
         marker = build_cache_bust_marker(
-            _BENCHMARK_ID, 0, 0, f"trace_collision_{i}", _TARGET
+            _BENCHMARK_ID, 0, 0, f"trace_collision_{i}", target=_TARGET
         )
         markers.add(_rid(marker))
     assert len(markers) == 100, (
@@ -78,10 +78,10 @@ def test_collision_free_at_same_pass_lane_different_traces():
 
 def test_same_input_yields_same_marker_across_calls():
     """Determinism: same args -> same digest, every call."""
-    args = (_BENCHMARK_ID, 7, 3, "trace_determ", _TARGET)
-    first = build_cache_bust_marker(*args)
+    args = (_BENCHMARK_ID, 7, 3, "trace_determ")
+    first = build_cache_bust_marker(*args, target=_TARGET)
     for _ in range(100):
-        assert build_cache_bust_marker(*args) == first
+        assert build_cache_bust_marker(*args, target=_TARGET) == first
 
 
 def test_input_dimensions_each_independently_change_digest():
@@ -90,20 +90,23 @@ def test_input_dimensions_each_independently_change_digest():
     Mirrors ``test_marker_changes_per_input_dimension`` but as 4 independent
     micro-checks so a regression in any one dimension surfaces clearly.
     """
-    base_args = ("bench", 5, 2, "trace_dim", _TARGET)
-    base = build_cache_bust_marker(*base_args)
+    base_args = ("bench", 5, 2, "trace_dim")
+    base = build_cache_bust_marker(*base_args, target=_TARGET)
 
     # benchmark_id
-    assert build_cache_bust_marker("other_bench", 5, 2, "trace_dim", _TARGET) != base
+    assert (
+        build_cache_bust_marker("other_bench", 5, 2, "trace_dim", target=_TARGET)
+        != base
+    )
 
     # recycle_pass
-    assert build_cache_bust_marker("bench", 6, 2, "trace_dim", _TARGET) != base
+    assert build_cache_bust_marker("bench", 6, 2, "trace_dim", target=_TARGET) != base
 
     # trajectory_index
-    assert build_cache_bust_marker("bench", 5, 99, "trace_dim", _TARGET) != base
+    assert build_cache_bust_marker("bench", 5, 99, "trace_dim", target=_TARGET) != base
 
     # trace_id
-    assert build_cache_bust_marker("bench", 5, 2, "trace_other", _TARGET) != base
+    assert build_cache_bust_marker("bench", 5, 2, "trace_other", target=_TARGET) != base
 
 
 def test_trace_id_collision_within_pass_zero_lane_zero():
@@ -113,8 +116,8 @@ def test_trace_id_collision_within_pass_zero_lane_zero():
     so a regression that drops trace_id from the digest input would collapse
     these two markers. Distinct rids required.
     """
-    a = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_a", _TARGET)
-    b = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_b", _TARGET)
+    a = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_a", target=_TARGET)
+    b = build_cache_bust_marker(_BENCHMARK_ID, 0, 0, "trace_b", target=_TARGET)
     assert _rid(a) != _rid(b)
 
 
@@ -139,7 +142,7 @@ def test_marker_is_collision_free_under_birthday_paradox_stress(count):
                 # Spread recycle_pass widely so we sample the input domain.
                 recycle_pass = pass_offset * 1900 + lane * 7 + trace_idx
                 marker = build_cache_bust_marker(
-                    _BENCHMARK_ID, recycle_pass, lane, trace_id, _TARGET
+                    _BENCHMARK_ID, recycle_pass, lane, trace_id, target=_TARGET
                 )
                 rid = _rid(marker)
                 if rid in markers:

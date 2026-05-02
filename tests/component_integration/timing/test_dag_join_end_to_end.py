@@ -75,7 +75,9 @@ async def test_parent_resumes_after_all_children_complete():
     # start_branch_child returns a fake SampledSession with a unique x_correlation_id.
     child_corrs = iter(["corr-c1", "corr-c2"])
 
-    def _start(parent_correlation_id, child_conversation_id, agent_depth, branch_mode):
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **_kw
+    ):
         s = MagicMock()
         s.x_correlation_id = next(child_corrs)
         return s

@@ -47,6 +47,7 @@ def _mk_user_config(
     uc.tokenizer.revision = None
     uc.tokenizer.name = "t"
     uc.endpoint.model_names = list(model_names)
+    uc.loadgen.inter_turn_delay_cap_seconds = None
     return uc
 
 
@@ -57,7 +58,16 @@ def _make_loader(filename, uc, monkeypatch):
         "synthesize_prompts_from_hash_ids",
         lambda rs: {r.key: f"p-{r.key}" for r in rs},
     )
-    loader.prompt_generator = MagicMock()
+    pg = MagicMock()
+    # sample_partial_tail_tokens reads _corpus_size as an int and slices
+    # _tokenized_corpus; give the mock real values so the partial-tail path
+    # doesn't trip MagicMock arithmetic.
+    pg._corpus_size = 10000
+    pg._tokenized_corpus = list(range(10000))
+    # _decode_tokens_to_text routes through prompt_generator.tokenizer.decode;
+    # return a real str so Pydantic Text validation accepts the prompt.
+    pg.tokenizer.decode = lambda tokens: f"decoded-{len(tokens)}"
+    loader.prompt_generator = pg
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False
     loader._tokenizer_revision = None

@@ -104,11 +104,16 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         if request_info.payload_bytes is not None:
             # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
-            # by the mmap loader / DatasetManager, so we skip per-request
-            # orjson.loads validation here — that round-trip costs a full JSON
-            # parse on every request for no defensive value (the bytes are
-            # already canonical wire form). See dataset_manager.py and the
-            # PAYLOAD_BYTES mmap loader for upstream validation.
+            # by the mmap loader / DatasetManager. Defensive guard against any
+            # invalid bytes that bypass upstream validation — round-trip
+            # through orjson.loads so a malformed payload turns into an error
+            # RequestRecord rather than reaching the wire.
+            try:
+                orjson.loads(request_info.payload_bytes)
+            except (orjson.JSONDecodeError, ValueError, TypeError) as e:
+                raise ValueError(
+                    f"invalid JSON in pre-serialised payload_bytes: {e}"
+                ) from e
             formatted_payload = request_info.payload_bytes
         else:
             current_turn = request_info.turns[-1] if request_info.turns else None

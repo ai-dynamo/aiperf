@@ -329,11 +329,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/common/scenario/context_overflow.py",
-      "is_context_overflow_response"
-    ],
-    [
-      "BLE001",
       "src/aiperf/common/tokenizer.py",
       "resolve_alias"
     ],
@@ -369,8 +364,8 @@
     ],
     [
       "BLE001",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler._credit_will_dispatch_children"
+      "src/aiperf/dataset/composer/base.py",
+      "_estimate_chat_template_overheads"
     ],
     [
       "BLE001",
@@ -640,6 +635,11 @@
     [
       "BLE001",
       "src/aiperf/records/inference_result_parser.py",
+      "InferenceResultParser._compute_chat_template_token_count"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/records/inference_result_parser.py",
       "InferenceResultParser.parse_request_record"
     ],
     [
@@ -869,11 +869,6 @@
     ],
     [
       "C901",
-      "src/aiperf/common/scenario/context_overflow.py",
-      "is_context_overflow_response"
-    ],
-    [
-      "C901",
       "src/aiperf/common/scenario/validator.py",
       "validate_scenario"
     ],
@@ -911,6 +906,11 @@
       "C901",
       "src/aiperf/dataset/dataset_manager.py",
       "DatasetManager._convert_media_urls_to_inline"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._preformat_payloads"
     ],
     [
       "C901",
@@ -1314,11 +1314,6 @@
     ],
     [
       "D103",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "longest_common_prefix"
-    ],
-    [
-      "D103",
       "src/aiperf/records/record_processor_service.py",
       "main"
     ],
@@ -1406,6 +1401,11 @@
       "PLR0912",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_parallel"
     ],
     [
       "PLR0912",
@@ -1549,6 +1549,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner.run"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1566,11 +1571,6 @@
       "PLR0912",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
       "ProgressDashboard.create_stats_table"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/cli_runner.py",
-      "_print_aggregate_summary"
     ],
     [
       "PLR0915",

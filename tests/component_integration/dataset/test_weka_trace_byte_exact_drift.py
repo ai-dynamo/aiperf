@@ -128,10 +128,22 @@ def real_qwen_tokenizer() -> Tokenizer:
     Cached locally under ``~/.cache/huggingface/hub/``; no network required.
     Construct the wrapper directly from a HuggingFace ``AutoTokenizer`` so we
     don't go through the patched ``Tokenizer.from_pretrained`` classmethod.
+
+    Skipped when the tokenizer is not in the local HF cache (e.g. clean CI
+    runners with ``HF_HUB_OFFLINE=1`` set by the package conftest). The
+    byte-exact corpus is meaningful only against the recorded Qwen tokenizer
+    so synthesizing a fake tokenizer would defeat the contract.
     """
     from transformers import AutoTokenizer
 
-    auto = AutoTokenizer.from_pretrained(TOKENIZER_NAME, local_files_only=True)
+    try:
+        auto = AutoTokenizer.from_pretrained(TOKENIZER_NAME, local_files_only=True)
+    except Exception as e:
+        pytest.skip(
+            f"Real Qwen tokenizer ({TOKENIZER_NAME}) not in local HF cache: {e}. "
+            'Run `python -c "from transformers import AutoTokenizer; '
+            f"AutoTokenizer.from_pretrained('{TOKENIZER_NAME}')\"` to populate."
+        )
     tokenizer = Tokenizer()
     tokenizer._tokenizer = auto
     tokenizer._resolved_name = TOKENIZER_NAME
@@ -145,6 +157,15 @@ def real_prompt_generator(real_qwen_tokenizer: Tokenizer) -> PromptGenerator:
     by Qwen) so ``raw_messages`` content is decoded via the same tokenizer the
     drift test counts against.
     """
+    # PromptGenerator.__init__ calls rng.derive(...). The package-scoped
+    # ``reset_random_generator`` is function-scoped so it has not yet run when
+    # this module-scoped fixture is evaluated. Seed once here to make this
+    # fixture self-contained — the per-test ``reset_random_generator`` will
+    # re-seed before each test runs.
+    from aiperf.common import random_generator as rng
+
+    rng.reset()
+    rng.init(42)
     config = PromptConfig(
         mean=200,
         stddev=0,
@@ -174,6 +195,7 @@ def _make_user_config(model_names: tuple[str, ...]) -> Any:
     uc.tokenizer.revision = None
     uc.tokenizer.name = TOKENIZER_NAME
     uc.endpoint.model_names = sorted(model_names)
+    uc.loadgen.inter_turn_delay_cap_seconds = None
     return uc
 
 

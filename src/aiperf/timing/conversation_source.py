@@ -150,6 +150,7 @@ class ConversationSource:
         parent_correlation_id: str,
         child_conversation_id: str,
         agent_depth: int,
+        *,
         branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
         cache_bust_marker: str | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,

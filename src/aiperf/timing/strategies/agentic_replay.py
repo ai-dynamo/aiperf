@@ -402,7 +402,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             new_pass,
             trajectory_index,
             trace_id,
-            self._cache_bust_target,
+            target=self._cache_bust_target,
         )
         self._session_marker[x_correlation_id] = marker
         return marker
