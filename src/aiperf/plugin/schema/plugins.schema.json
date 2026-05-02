@@ -241,6 +241,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/GpuTelemetryCollectorPlugin"
       }
+    },
+    "search_recipe": {
+      "title": "Search Recipe Plugins",
+      "type": "object",
+      "description": "Search recipes are named, plugin-registered presets that compile down to\nAdaptiveSearchConfig (Bayesian Optimization) or sweep.variables (grid) at the\nv1->v2 converter boundary. Selected via `--search-recipe <name>` on the CLI.\nOne-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SearchRecipePlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -1709,6 +1717,47 @@
       ],
       "title": "GPU Telemetry Collector Plugin",
       "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
+    },
+    "SearchRecipePlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Search Recipe Plugin",
+      "description": "Search recipes are named, plugin-registered presets that compile down to\nAdaptiveSearchConfig (Bayesian Optimization) or sweep.variables (grid) at the\nv1->v2 converter boundary. Selected via `--search-recipe <name>` on the CLI.\nOne-to-one mapping per benchmark run."
     }
   }
 }

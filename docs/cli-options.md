@@ -1076,6 +1076,14 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
 
+#### `--search-recipe`, `--search-recipe` `<str>`
+
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+
+#### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
+
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
+
 ### Accuracy
 
 #### `--accuracy-benchmark`, `--accuracy-benchmark` `<str>`
@@ -1261,7 +1269,7 @@ Explore and validate AIPerf plugins
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -2308,6 +2316,14 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-recipe`, `--search-recipe` `<str>`
+
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+
+#### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
+
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
 
 ### Accuracy
 
@@ -3407,6 +3423,14 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-recipe`, `--search-recipe` `<str>`
+
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+
+#### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
+
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
 
 ### Accuracy
 
@@ -4521,6 +4545,14 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-recipe`, `--search-recipe` `<str>`
+
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+
+#### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
+
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
 
 ### Accuracy
 
@@ -5646,6 +5678,14 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-recipe`, `--search-recipe` `<str>`
+
+Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
+
+#### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
+
+Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise.
 
 ### Accuracy
 

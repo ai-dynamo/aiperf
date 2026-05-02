@@ -191,7 +191,7 @@ spec:
                     properties:
                       image:
                         type: string
-                        description: Container image for AIPerf
+                        description: Container image
                         default: nvcr.io/nvidia/aiperf:latest
                       imagePullPolicy:
                         type: string
@@ -227,7 +227,6 @@ spec:
                         minimum: 0
                       ttlSecondsAfterFinished:
                         type: integer
-                        minimum: 0
                         description: TTL after finished (seconds)
                         default: 300
                       resultsTtlDays:
@@ -377,10 +376,7 @@ spec:
                             x-kubernetes-preserve-unknown-fields: true
                       scheduling:
                         type: object
-                        description: Kueue gang-scheduling configuration. Set scheduling.queueName to a LocalQueue name to
-                          admit this job's controller + worker pods atomically via Kueue. When unset, the operator falls back
-                          to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME (operator-deploy env). Safe to leave unset on clusters
-                          without Kueue.
+                        description: Kueue scheduling configuration
                         properties:
                           queueName:
                             type: string

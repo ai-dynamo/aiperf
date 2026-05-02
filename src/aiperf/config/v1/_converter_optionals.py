@@ -72,12 +72,21 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
     emits its model_dump() as `out["adaptive_search"]`. MultiRunConfig has
     `extra="forbid"` so the typed field is the only legal carrier.
 
+    When --search-recipe is set, the named recipe expands into an
+    AdaptiveSearchConfig (or sweep_variables) and the resulting fields are
+    written onto ``lg`` so the existing --search-* path consumes them. The
+    user-set snapshot of ``lg.model_fields_set`` is captured before recipe
+    expansion so we can detect (and reject) explicit --search-* + recipe
+    combinations.
+
     Hard-fails if --search-space is set without the required companion flags
     (--search-metric, --search-direction, --search-max-iterations).
     """
     lg = user.loadgen
     if lg is None or not lg.model_fields_set:
         return None
+    user_set = set(lg.model_fields_set)
+    _maybe_expand_search_recipe(user, lg, user_set)
     mapping = {
         "num_profile_runs": "num_runs",
         "profile_run_cooldown_seconds": "cooldown_seconds",
@@ -115,6 +124,91 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
                 "their composition is undefined. Drop one of them."
             )
     return out or None
+
+
+_RECIPE_OVERRIDABLE_FIELDS: tuple[str, ...] = (
+    "search_space",
+    "search_metric",
+    "search_stat",
+    "search_direction",
+    "search_max_iterations",
+    "search_initial_points",
+    "search_random_seed",
+)
+
+
+def _maybe_expand_search_recipe(user: UserConfig, lg: Any, user_set: set[str]) -> None:
+    """Expand --search-recipe into lg.search_* fields, in place.
+
+    Mutates ``lg``: sets the recipe's expanded ``search_space`` /
+    ``search_metric`` / ``search_direction`` / ``search_max_iterations`` /
+    ``search_initial_points`` fields and adds them to ``model_fields_set`` so
+    the existing ``_build_adaptive_search`` path consumes them.
+
+    Rejects explicit --search-* + --search-recipe combinations; the snapshot in
+    ``user_set`` is the user-set field list captured BEFORE this function runs.
+    """
+    if "search_recipe" not in user_set or lg.search_recipe is None:
+        return
+
+    user_search_flags = sorted(user_set & set(_RECIPE_OVERRIDABLE_FIELDS))
+    if user_search_flags:
+        raise TypeError(
+            f"--search-recipe {lg.search_recipe!r} is mutually exclusive with "
+            f"explicit --search-* flags {user_search_flags}. "
+            "Either drop the explicit flags and let the recipe expand them, "
+            "or drop --search-recipe and configure --search-* by hand."
+        )
+
+    # Local imports keep the v1 layer free of unconditional plugin-system
+    # imports at module load (matches the late-import pattern used by
+    # _build_adaptive_search for OptimizationDirection / parse_search_space).
+    from aiperf.plugin.enums import PluginType
+    from aiperf.plugin.plugins import get_class
+    from aiperf.search_recipes._base import SearchRecipeContext
+
+    sla_targets: dict[str, float] = {}
+    if "ttft_sla_ms" in user_set and lg.ttft_sla_ms is not None:
+        sla_targets["ttft_sla_ms"] = float(lg.ttft_sla_ms)
+
+    recipe_cls = get_class(PluginType.SEARCH_RECIPE, lg.search_recipe)
+    recipe = recipe_cls()
+    ctx = SearchRecipeContext(user_config=user, sla_targets=sla_targets)
+    output = recipe.expand(ctx)
+
+    if output.adaptive_search is None:
+        # Phase 1 only ships a BO recipe; grid recipes land in Phase 3 and will
+        # write into a different downstream path (sweep.variables) here.
+        raise TypeError(
+            f"--search-recipe {lg.search_recipe!r} produced a sweep_variables "
+            "output, which the v1->v2 converter does not yet support. Phase 3 "
+            "wires grid recipes through to the sweep.variables block."
+        )
+
+    adaptive = output.adaptive_search
+    space_strs = [
+        f"{dim.path}:{dim.lo},{dim.hi}:{dim.kind}" for dim in adaptive.search_space
+    ]
+    _set_recipe_field(lg, "search_space", space_strs)
+    _set_recipe_field(lg, "search_metric", adaptive.objective_metric)
+    _set_recipe_field(lg, "search_stat", adaptive.objective_stat)
+    _set_recipe_field(lg, "search_direction", adaptive.objective_direction.value)
+    _set_recipe_field(lg, "search_max_iterations", adaptive.max_iterations)
+    _set_recipe_field(lg, "search_initial_points", adaptive.n_initial_points)
+    if adaptive.random_seed is not None:
+        _set_recipe_field(lg, "search_random_seed", adaptive.random_seed)
+
+
+def _set_recipe_field(lg: Any, name: str, value: Any) -> None:
+    """Assign a recipe-derived value onto ``lg`` and mark it as user-set.
+
+    Pydantic gates `model_fields_set` on direct ``__setattr__`` only when
+    validation is enabled; explicit ``__pydantic_fields_set__.add()`` makes the
+    intent explicit and matches the snapshot semantics ``_build_adaptive_search``
+    relies on.
+    """
+    setattr(lg, name, value)
+    lg.__pydantic_fields_set__.add(name)
 
 
 def _build_adaptive_search(lg: Any) -> dict[str, Any] | None:

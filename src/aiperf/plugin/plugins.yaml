@@ -1741,3 +1741,19 @@ zmq_proxy:
     description: |
       XPUB/XSUB proxy for publish-subscribe pattern. Routes messages from PUB
       clients to SUB services with subscription management and message broadcasting.
+
+# =============================================================================
+# Search Recipes
+# =============================================================================
+# Search recipes are named presets that compile to AdaptiveSearchConfig (BO) or
+# sweep.variables (grid) at the v1->v2 converter boundary.
+# =============================================================================
+search_recipe:
+  max-throughput-ttft-sla:
+    class: aiperf.search_recipes.builtins:MaxThroughputUnderTTFTSLA
+    description: |
+      Maximize output_token_throughput at the highest concurrency where p95 TTFT
+      stays under --ttft-sla-ms. Bayesian-optimized over concurrency.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency

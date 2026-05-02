@@ -704,3 +704,35 @@ class LoadGeneratorConfig(BaseConfig):
             group=Groups.MULTI_RUN,
         ),
     ] = None
+
+    search_recipe: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Named search-recipe preset that expands to an adaptive-search or "
+                "sweep block. Mutually exclusive with explicit --search-* flags. "
+                "Recipes are registered under the search_recipe plugin category. "
+                "Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-recipe",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    ttft_sla_ms: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description=(
+                "Time-to-first-token SLA threshold in milliseconds. Required by "
+                "TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise."
+            ),
+        ),
+        CLIParameter(
+            name=("--ttft-sla-ms",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
