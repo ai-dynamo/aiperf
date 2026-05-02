@@ -16,7 +16,9 @@ Use BO when:
 Use a grid sweep when:
 - You need a complete Pareto frontier (use existing `--concurrency 10,20,50,100` magic-list flags + `sweep_aggregate/`).
 - You want to compare specific points the team has agreed on.
-- You need cluster-distributed sweeping (BO is in-process only in v1; cluster runs use `AIPerfSweep` CRDs).
+- You need a complete characterization of every variation (BO converges on the best point and may stop early).
+
+BO works in-process via `aiperf profile --search-*` AND under the operator via `AIPerfSweep` CRDs that include a `multi_run.adaptive_search` block. The controller pod owns the planner state; the kopf operator side is BO-agnostic. See [Adaptive search on Kubernetes](../kubernetes/sweeps.md#adaptive-search-bayesian-optimization) for the cluster-side wiring.
 
 ## Quick start
 
@@ -84,7 +86,8 @@ Plateau is **scale-free** — works for throughput (~1000) and latency (~50) wit
 - Magic-list flags that produce sweeps (`--concurrency 10,20,30`).
 - Explicit `sweep:` blocks in YAML.
 - `--convergence-metric` (adaptive trial-level early stop). Reason: the trial-level convergence semantics are orthogonal to outer-loop convergence; they need separate thought before composition.
-- The Kubernetes operator (`AIPERF_OPERATOR_MANAGED=1`). The operator's deterministic-cardinality contract is incompatible with adaptive variation choice. Submit cluster sweeps as `AIPerfSweep` CRDs (grid only) or run BO in-process.
+
+`--search-*` is **not** mutually exclusive with the Kubernetes operator. Cluster-side adaptive search is supported via an `AIPerfSweep` CR with a `multi_run.adaptive_search` block — the controller pod instantiates the same `BayesianSearchPlanner` used in-process and drives the loop one `AIPerfJob` per iteration. See [Adaptive search on Kubernetes](../kubernetes/sweeps.md#adaptive-search-bayesian-optimization).
 
 ## Output schema
 

@@ -104,6 +104,96 @@ When `convergence` is set, `multi_run.trials` must be unset; `convergence.maxRun
 governs the per-cell trial cap. `sweep` and `convergence` compose freely: each
 cell of a grid sweep runs adaptive trials.
 
+## Adaptive search (Bayesian Optimization)
+
+For large or continuous search spaces where grid enumeration is infeasible,
+set `multi_run.adaptive_search` instead of `spec.sweep`. The controller pod
+instantiates a `BayesianSearchPlanner` (the same `skopt`-backed planner used
+in-process by `aiperf profile --search-*`) and drives the loop one
+`AIPerfJob` per iteration. `multi_run.trials` continues to govern trials per
+proposed point.
+
+Use adaptive search when:
+
+- The search space is too large to grid-enumerate (e.g., concurrency 1–1000).
+- You only care about finding the best point, not characterizing the entire frontier.
+- A single scalar objective captures what you care about.
+
+Use grid sweeps (`spec.sweep`) when:
+
+- You need a complete Pareto frontier across pre-agreed points.
+- You want exact reproducibility of which variations were run.
+
+### Example AIPerfSweep CR
+
+```yaml
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfSweep
+metadata:
+  name: bo-concurrency-search
+spec:
+  multiRun:
+    trials: 3
+    cooldownSeconds: 30
+    adaptiveSearch:
+      algorithm: bayes
+      searchSpace:
+        - path: phases.profiling.concurrency
+          lo: 1
+          hi: 1000
+          kind: int
+      objectiveMetric: output_token_throughput
+      objectiveStat: avg
+      objectiveDirection: maximize
+      maxIterations: 30
+      initialPoints: 5
+      randomSeed: 42
+  template:
+    spec:
+      benchmark:
+        models: [Qwen/Qwen3-0.6B]
+        endpoint:
+          urls: [http://server:8000/v1/chat/completions]
+          type: chat
+          streaming: true
+        datasets:
+          - name: main
+            type: synthetic
+        phases:
+          - name: profiling
+            type: poisson
+            duration: 120
+            concurrency: 8
+            rate: 10
+```
+
+`multi_run.adaptive_search` is mutually exclusive with `spec.sweep` (grid
+expansion); the controller pod hard-fails at submit time if both are set.
+
+### Status fields are upper bounds
+
+`status.totalVariations` and `status.maxTotalRuns` are **upper bounds** under
+adaptive search — early plateau convergence (see
+[Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection))
+may terminate the loop before `maxIterations` is reached, in which case the
+actual run count will be lower than the projected `totalVariations`. This
+mirrors the role `convergence.maxRuns` already plays for trial-level
+convergence.
+
+The controller pod writes its own terminal-phase status; the operator's
+`Aggregating` rollup gate already accommodates short-circuited runs via the
+JSON-patch test-op guard, so an early-stopped adaptive sweep aggregates over
+the actually-completed children.
+
+### Output
+
+- `<base>/<ns>/<sweep>-i{iter:04d}[-t{trial:02d}]/<child-epoch>/` — per-iteration child artifacts.
+- `<base>/<ns>/<sweep>/<sweep-epoch>/search_history.json` — incremental BO trajectory (rewritten after every iteration; partial trajectory survives a crash).
+- `<base>/<ns>/<sweep>/<sweep-epoch>/aggregate/` — same `sweep_aggregate/` schema produced by grid sweeps; `aggregate_sweep_and_export` groups by stamped `variation_values` and is mode-agnostic.
+
+For the in-process equivalent and full flag/grammar reference, see
+[Bayesian-Optimization Outer Loop](../sweeping/bayesian-optimization.md).
+
 ## Cancel
 
 ```bash

@@ -30,7 +30,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/metrics-reference.md](docs/metrics-reference.md): Metric definitions, formulas, and requirements.
 - [docs/plugins/plugin-system.md](docs/plugins/plugin-system.md): Plugin architecture, categories (endpoint, dataset, grader, ui, service, ...), YAML registry format, creation guide.
 - [docs/plugins/creating-your-first-plugin.md](docs/plugins/creating-your-first-plugin.md): End-to-end plugin walkthrough.
-- [docs/sweeping/bayesian-optimization.md](docs/sweeping/bayesian-optimization.md): Bayesian-Optimization adaptive outer loop: --search-space CLI flags, search-space grammar, convergence detection, mutual-exclusion rules.
+- [docs/sweeping/bayesian-optimization.md](docs/sweeping/bayesian-optimization.md): Bayesian-Optimization adaptive outer loop (in-process + cluster-side via AIPerfSweep): --search-space CLI flags, search-space grammar, convergence detection, mutual-exclusion rules.
 - [docs/reference/](docs/reference/): Tokenizer and other reference material.
 
 ## Kubernetes
