@@ -216,6 +216,11 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
         "endpoint": endpoint,
         "models": models,
         "phases": phases,
+        # Dataset name "main": kept in sync with _V1_DEFAULT_DATASET_NAME in
+        # search_recipes.builtins (which can't import from this module without
+        # creating a load-order cycle through aiperf.config/__init__.py).
+        # If renaming, update both call sites and the regression test in
+        # tests/unit/search_recipes/test_grid_recipe_converter.py.
         "datasets": [{"name": "main", **ds}],
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,

@@ -66,3 +66,22 @@ def test_grid_recipe_with_magic_list_concurrency_raises():
     user = _user(search_recipe="concurrency-ramp", concurrency=[10, 20, 30])
     with pytest.raises(TypeError, match="mutually exclusive with magic-list"):
         convert_user_to_aiperf(user, _service())
+
+
+def test_grid_recipe_dataset_path_targets_converter_actual_dataset_name():
+    """Recipes that sweep ISL/OSL must target the dataset the v1->v2 converter
+    actually creates. The converter materializes a single dataset named "main"
+    from CLI input; recipes hardcode that same name (`_V1_DEFAULT_DATASET_NAME`).
+
+    Locks in the contract: if the converter ever renames the default dataset
+    or supports multiple datasets from CLI input, this test fires first.
+    """
+    user = _user(search_recipe="prefill-ttft-curve", isl_min=512, isl_max=4096)
+    aiperf = convert_user_to_aiperf(user, _service())
+    # Exactly one dataset, named "main".
+    assert len(aiperf.datasets) == 1
+    assert aiperf.datasets[0].name == "main"
+    # And the sweep variable's dotted path resolves to that same dataset.
+    expected_path = "datasets.main.prompts.isl"
+    assert aiperf.sweep is not None
+    assert expected_path in aiperf.sweep.variables

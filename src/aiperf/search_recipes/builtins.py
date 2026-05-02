@@ -26,6 +26,17 @@ from aiperf.search_recipes._base import (
     SLAFilter,
 )
 
+# Hardcoded to match the dataset name the v1 -> v2 converter materializes from
+# CLI input (`aiperf.config.v1.converter.py`, currently the literal "main").
+# Not a shared module-level constant: pulling that constant from anywhere under
+# `aiperf.config` triggers `aiperf/config/__init__.py`, which eagerly loads
+# `_models_benchmark`, which now imports `search_recipes._base` for typing —
+# and we're inside loading search_recipes.builtins, so the cycle is unavoidable.
+# Greppable across both call sites; if the converter ever renames its singleton
+# dataset, both places fail loudly via the regression test in
+# tests/unit/search_recipes/test_grid_recipe_converter.py.
+_V1_DEFAULT_DATASET_NAME = "main"
+
 __all__ = [
     "ConcurrencyRamp",
     "DecodeITLCurve",
@@ -200,11 +211,15 @@ class ConcurrencyRamp(SearchRecipe):
 class PrefillTTFTCurve(SearchRecipe):
     """Sweep ISL at concurrency=1 and fit a TTFT vs ISL curve.
 
-    Sweeps ``datasets.profiling.prompts.isl`` log-spaced over
+    Sweeps ``datasets.main.prompts.isl`` log-spaced over
     ``[--isl-min, --isl-max]`` (defaults 256, 32768). Concurrency is forced to
     a fixed value of 1 to isolate prefill cost from queueing effects. The
     post-process handler fits ``TTFT = a * ISL + b`` and falls back to a
     quadratic fit when ``r^2 < 0.85``.
+
+    The dataset key is the v1 converter's hardcoded singleton name (see
+    ``V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
+    config tree always carries one dataset by that name.
 
     Streaming MUST be enabled (TTFT is streaming-only); the recipe rejects
     non-streaming configs.
@@ -221,7 +236,7 @@ class PrefillTTFTCurve(SearchRecipe):
     )
 
     _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
-    _ISL_PATH: ClassVar[str] = "datasets.profiling.prompts.isl"
+    _ISL_PATH: ClassVar[str] = f"datasets.{V1_DEFAULT_DATASET_NAME}.prompts.isl"
     _DEFAULT_ISL_MIN: ClassVar[int] = 256
     _DEFAULT_ISL_MAX: ClassVar[int] = 32768
     _DEFAULT_STEPS: ClassVar[int] = 8
@@ -343,9 +358,13 @@ class DecodeITLCurve(SearchRecipe):
     """Sweep concurrency x OSL grid and fit an ITL surface.
 
     Sweeps ``phases.profiling.concurrency`` (6 log-spaced points in [1, 200])
-    against ``datasets.profiling.prompts.osl`` (4 log-spaced
+    against ``datasets.main.prompts.osl`` (4 log-spaced
     points in [64, 1024]); ``itl_surface_fit`` post-process emits
     ``decode_itl_surface.json`` with raw points and a bilinear-grid surface.
+
+    The dataset key is the v1 converter's hardcoded singleton name (see
+    ``V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
+    config tree always carries one dataset by that name.
 
     Override the grid via ``ctx.sweep_overrides`` keys
     ``concurrency_min`` / ``concurrency_max`` / ``concurrency_steps`` /
@@ -362,7 +381,7 @@ class DecodeITLCurve(SearchRecipe):
     )
 
     _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
-    _OSL_PATH: ClassVar[str] = "datasets.profiling.prompts.osl"
+    _OSL_PATH: ClassVar[str] = f"datasets.{V1_DEFAULT_DATASET_NAME}.prompts.osl"
     _DEFAULT_CONCURRENCY_MIN: ClassVar[int] = 1
     _DEFAULT_CONCURRENCY_MAX: ClassVar[int] = 200
     _DEFAULT_CONCURRENCY_STEPS: ClassVar[int] = 6
