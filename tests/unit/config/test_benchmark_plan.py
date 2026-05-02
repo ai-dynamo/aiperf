@@ -574,6 +574,39 @@ class TestBenchmarkPlanAdaptiveSearch:
         # is_sweep stays grid-only (length-1 variations).
         assert plan.is_sweep is False
 
+    def test_benchmark_plan_adaptive_search_is_not_single_run(self) -> None:
+        """Adaptive (BO) plans must not register as single-run plans.
+
+        Regression: search-recipe BO plans carry exactly one starting config
+        (the planner mutates it across iterations), so the prior
+        ``is_single_run = len==1 and trials<=1`` rule routed them through
+        ``_run_single_benchmark`` in cli_runner, bypassing the BO planner
+        entirely. ``search_history.json`` was never written and the recipe
+        executed as a one-shot profile.
+        """
+        from aiperf.config.adaptive_search import (
+            AdaptiveSearchConfig,
+            SearchSpaceDimension,
+        )
+        from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+
+        config = _make_benchmark_config()
+        cfg = AdaptiveSearchConfig(
+            algorithm="bayes",
+            search_space=[SearchSpaceDimension(path="x", lo=1, hi=10, kind="int")],
+            objective_metric="m",
+            objective_stat="avg",
+            objective_direction=OptimizationDirection.MAXIMIZE,
+            max_iterations=20,
+        )
+        plan = BenchmarkPlan(
+            configs=[config],
+            variations=[SweepVariation(index=0, label="base", values={})],
+            adaptive_search=cfg,
+        )
+        assert plan.is_adaptive_search is True
+        assert plan.is_single_run is False
+
     def test_benchmark_plan_repeated_mode_rejects_convergence_metric(self) -> None:
         """REPEATED + --convergence-metric is rejected at plan-build time.
 

@@ -185,8 +185,15 @@ class BenchmarkPlan(BaseModel):
 
     @property
     def is_single_run(self) -> bool:
-        """True if this plan has exactly one config and one trial."""
-        return len(self.configs) == 1 and self.trials <= 1
+        """True if this plan executes exactly one profile run end-to-end.
+
+        Adaptive search (BO) plans carry a single starting config but the
+        planner mutates it across iterations — those are NOT single runs and
+        must dispatch to the multi-run orchestrator so the planner is wired.
+        """
+        return (
+            len(self.configs) == 1 and self.trials <= 1 and self.adaptive_search is None
+        )
 
     @property
     def is_sweep(self) -> bool:
