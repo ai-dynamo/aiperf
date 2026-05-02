@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -357,6 +357,49 @@ class TestPrometheusFallbackProbe:
         # URL must be restored so it shows up correctly in logs / status messages
         assert collector._endpoint_url == "http://server:60000/metrics"
         assert collector._prometheus_fallback_attempted is True
+
+    @pytest.mark.asyncio
+    async def test_probe_404_translates_to_incompatible_endpoint_error(self) -> None:
+        """The realistic TRT-LLM-without-`return_perf_metrics` case:
+        ``/metrics`` returns JSON, ``/prometheus/metrics`` returns 404
+        (i.e. ``aiohttp.ClientResponseError``, NOT
+        ``IncompatibleMetricsEndpointError``). The probe failure must be
+        translated to ``IncompatibleMetricsEndpointError`` so the base
+        mixin's auto-disable wrapper triggers — otherwise the collector
+        would keep scraping the broken original URL every interval.
+        """
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://server:60000/metrics"
+        )
+        call_count = {"n": 0}
+
+        async def fake_fetch() -> FetchResult:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call (against /metrics): JSON body → Incompatible
+                raise IncompatibleMetricsEndpointError("/metrics returned JSON")
+            # Second call (against /prometheus/metrics): 404 → ClientResponseError
+            raise aiohttp.ClientResponseError(
+                request_info=MagicMock(),
+                history=(),
+                status=404,
+                message="Not Found",
+            )
+
+        with (
+            patch.object(collector, "_fetch_metrics_text", side_effect=fake_fetch),
+            pytest.raises(IncompatibleMetricsEndpointError) as exc_info,
+        ):
+            await collector._collect_and_process_metrics()
+
+        # The 404 (a ClientResponseError) was translated, not bubbled up raw —
+        # so the auto-disable wrapper will catch it.
+        assert "Prometheus fallback" in str(exc_info.value)
+        assert "return_perf_metrics" in str(exc_info.value)
+        # And the chained __cause__ preserves the original 404 for diagnostics.
+        assert isinstance(exc_info.value.__cause__, aiohttp.ClientResponseError)
+        # URL restored to the original.
+        assert collector._endpoint_url == "http://server:60000/metrics"
 
     @pytest.mark.asyncio
     async def test_probe_runs_at_most_once_per_collector(self) -> None:

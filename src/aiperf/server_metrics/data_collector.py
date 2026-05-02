@@ -181,8 +181,17 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
     async def _probe_prometheus_fallback_or_reraise(self) -> None:
         """Attempt ``<base>/prometheus/metrics`` once. On success, swap the
         collector's URL and dispatch the record from the alt endpoint. On
-        failure, restore the original URL and re-raise so the base mixin
-        can auto-disable.
+        failure, restore the original URL and re-raise as
+        ``IncompatibleMetricsEndpointError`` so the base mixin can auto-disable.
+
+        Probe failures from any cause — 404 (path not mounted because
+        ``return_perf_metrics`` is unset), connection-refused, transient HTTP
+        errors, or another non-Prometheus body at the alt path — are all
+        funneled into ``IncompatibleMetricsEndpointError``. Without this
+        translation, a 404 on ``/prometheus/metrics`` would surface as
+        ``aiohttp.ClientResponseError`` and bypass the auto-disable wrapper,
+        causing the collector to keep retrying the (still-broken) original
+        URL on every subsequent scrape interval.
         """
         self._prometheus_fallback_attempted = True
         original_url = self._endpoint_url
@@ -197,9 +206,18 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         self._last_response_hash = None
         try:
             await self._fetch_parse_send()
-        except Exception:
+        except IncompatibleMetricsEndpointError:
             self._endpoint_url = original_url
             raise
+        except Exception as e:
+            self._endpoint_url = original_url
+            raise IncompatibleMetricsEndpointError(
+                f"Prometheus fallback {candidate_url!r} also failed ({e!r}); "
+                f"original endpoint {original_url!r} returned non-Prometheus "
+                f"content. For TRT-LLM, set 'return_perf_metrics: true' in "
+                f"extra_llm_api_options.yaml to enable Prometheus exposition "
+                f"at /prometheus/metrics."
+            ) from e
         self.info(
             f"Prometheus fallback succeeded; collector swapped to {candidate_url!r}."
         )

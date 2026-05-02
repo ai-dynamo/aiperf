@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -139,6 +140,33 @@ class TestAutoDisableOnIncompatibleEndpoint:
         # subsequent cycles short-circuited at the disabled gate, so no
         # additional error callbacks fired (no parse-error spam).
         assert collector.calls == 1
+        assert error_cb.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_log_disable_warning_only_once(self) -> None:
+        """The real-world trigger: `_collect_metrics_loop` calls
+        ``execute_async(self.collect_and_process_metrics())`` every interval
+        without awaiting prior cycles, so multiple scrape coroutines can
+        be in flight when the first one raises. Every concurrent call
+        will reach the except block, but the warning + error_callback
+        must fire exactly once across the cohort.
+        """
+        error_cb = AsyncMock()
+        collector = _RaisingCollector(
+            endpoint_url="http://localhost:9999/metrics",
+            collection_interval=0.1,
+            reachability_timeout=1.0,
+            error_callback=error_cb,
+        )
+
+        await asyncio.gather(
+            *(collector.collect_and_process_metrics() for _ in range(8))
+        )
+
+        assert collector._endpoint_disabled is True
+        # Concurrent cohort all raised, but only the first arrival into
+        # the except block flipped the flag; subsequent arrivals saw the
+        # disabled check and short-circuited before logging.
         assert error_cb.await_count == 1
 
 
