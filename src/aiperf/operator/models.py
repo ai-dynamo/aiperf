@@ -12,21 +12,14 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
-from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
-from aiperf.kubernetes.enums import ImagePullPolicy
+from aiperf.config.deployment import DeploymentConfig
 from aiperf.kubernetes.k8s_models import K8sCamelModel
-
-
-def _camel(name: str) -> str:
-    """snake_case -> camelCase for Pydantic field aliases."""
-    head, *tail = name.split("_")
-    return head + "".join(part.capitalize() for part in tail)
 
 
 class OwnerReference(K8sCamelModel):
@@ -207,28 +200,80 @@ class MetricsSummary:
 # ``status.summary``. Keep this list aligned with the metric tags emitted by
 # the controller's ``/api/metrics`` endpoint and the ``profile_export_aiperf.json``
 # results format. New metrics surface in summary by adding their tag here.
+#
+# Excluded by policy (see metrics/types/*.py for the source-of-truth flags):
+#   - ``MetricFlags.INTERNAL`` (credit_drop_latency, requested_osl,
+#     min_request_timestamp, max_response_timestamp) — implementation
+#     detail, not user-facing.
+#   - ``MetricFlags.EXPERIMENTAL`` (stream_setup_latency, stream_prefill_latency,
+#     thinking_efficiency, overall_thinking_efficiency) — schema not yet
+#     stable, gated by --enable-experimental-metrics.
 _SUMMARY_TAGS: tuple[str, ...] = (
+    # Throughput family
     "request_throughput",
-    "request_latency",
-    "request_count",
-    "time_to_first_token",
-    "time_to_second_token",
-    "inter_token_latency",
     "output_token_throughput",
     "total_token_throughput",
     "output_token_throughput_per_user",
     "prefill_throughput_per_user",
-    "output_sequence_length",
-    "input_sequence_length",
-    "output_token_count",
-    "error_request_count",
-    "benchmark_duration",
-    # Goodput tags drive the RealtimeKpiGrid's Goodput tile. They're only
-    # populated by the controller when the user declared SLOs via --goodput,
-    # but mirroring them unconditionally is harmless: absent in input → absent
-    # in output.
+    "e2e_output_token_throughput",
+    "image_throughput",
     "goodput",
+    # Latency family
+    "request_latency",
+    "time_to_first_token",
+    "time_to_first_output_token",
+    "time_to_second_token",
+    "inter_token_latency",
+    "inter_chunk_latency",
+    "image_latency",
+    # Tokens / sequence lengths
+    "input_sequence_length",
+    "output_sequence_length",
+    "output_token_count",
+    "reasoning_token_count",
+    "error_isl",
+    "osl_mismatch_diff_pct",
+    "osl_mismatch_count",
+    "usage_prompt_tokens",
+    "usage_completion_tokens",
+    "usage_total_tokens",
+    "usage_reasoning_tokens",
+    "usage_prompt_tokens_diff_pct",
+    "usage_completion_tokens_diff_pct",
+    "usage_reasoning_tokens_diff_pct",
+    "usage_discrepancy_count",
+    # Counts & totals
+    "request_count",
     "good_request_count",
+    "error_request_count",
+    "total_isl",
+    "total_osl",
+    "total_error_isl",
+    "total_output_tokens",
+    "total_usage_prompt_tokens",
+    "total_usage_completion_tokens",
+    "total_usage_total_tokens",
+    "total_reasoning_tokens",
+    "benchmark_duration",
+    "num_images",
+    # Video
+    "video_inference_time",
+    "video_peak_memory",
+    # HTTP trace (only present when --collect-http-traces is enabled)
+    "http_req_duration",
+    "http_req_total",
+    "http_req_waiting",
+    "http_req_blocked",
+    "http_req_connecting",
+    "http_req_dns_lookup",
+    "http_req_sending",
+    "http_req_receiving",
+    "http_req_connection_overhead",
+    "http_req_connection_reused",
+    "http_req_chunks_sent",
+    "http_req_chunks_received",
+    "http_req_data_sent",
+    "http_req_data_received",
 )
 
 
@@ -308,63 +353,15 @@ class K8sEndpointConfig(AIPerfBaseModel):
         return v
 
 
-class AIPerfJobSpec(AIPerfBaseModel):
+class AIPerfJobSpec(DeploymentConfig):
     """Validated AIPerfJob spec mirroring the full CRD spec.
 
-    Composes DeploymentConfig fields (camelCase on the wire via aliases) plus
-    benchmark: AIPerfConfig plus skip_endpoint_check. Validate a raw CRD dict
-    via AIPerfJobSpec.model_validate(spec) — from_crd_spec is a thin alias for
-    back-compat.
+    Inherits the eleven shared deployment fields (image, podTemplate,
+    scheduling, …) from DeploymentConfig and adds the operator-only
+    ``skip_endpoint_check`` and ``benchmark`` fields. Validate a raw CRD
+    dict via ``AIPerfJobSpec.model_validate(spec)``; ``from_crd_spec`` is
+    a thin back-compat alias.
     """
-
-    model_config = ConfigDict(
-        extra="forbid",
-        populate_by_name=True,
-        alias_generator=lambda f: _camel(f),
-    )
-
-    image: str = Field(
-        default="nvcr.io/nvidia/aiperf:latest",
-        description="Container image for AIPerf",
-    )
-    image_pull_policy: ImagePullPolicy | None = Field(
-        default=None, description="Image pull policy (Always, Never, IfNotPresent)"
-    )
-    resource_mode: Literal["guaranteed", "burstable", "none"] = Field(
-        default="burstable",
-        description="CPU/memory resource mode for controller and worker pods.",
-    )
-    connections_per_worker: int = Field(
-        default=100,
-        ge=1,
-        description="Maximum concurrent connections each worker handles.",
-    )
-    timeout_seconds: float = Field(
-        default=0, ge=0, description="Job timeout in seconds (0 = no timeout)"
-    )
-    ttl_seconds_after_finished: int | None = Field(
-        default=300, ge=0, description="TTL after finished (seconds)"
-    )
-    results_ttl_days: int | None = Field(
-        default=None, ge=1, le=365, description="TTL for results in PVC (days)"
-    )
-    keep_failed_pods: bool = Field(
-        default=False,
-        description="Preserve failed JobSet pod attempts for debugging.",
-    )
-    cancel: bool = Field(default=False, description="Set to true to cancel the job")
-    pod_template: PodTemplateConfig = Field(
-        default_factory=PodTemplateConfig,
-        description="Pod template configuration",
-    )
-    scheduling: SchedulingConfig = Field(
-        default_factory=SchedulingConfig,
-        description="Kueue gang-scheduling configuration. Set "
-        "scheduling.queueName to a LocalQueue name to admit this job's "
-        "controller + worker pods atomically via Kueue. When unset, the "
-        "operator falls back to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME "
-        "(operator-deploy env). Safe to leave unset on clusters without Kueue.",
-    )
 
     skip_endpoint_check: bool = Field(
         default=False,

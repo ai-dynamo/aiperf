@@ -27,6 +27,7 @@ import { KpiTile } from './kpi-tile.js';
 export const TILE_CONFIG = [
   // ---- Throughput row ----
   { id: 'tok_s',       label: 'tok/s',      unit: 'tok/s',  summaryKey: 'output_token_throughput.avg', seriesKey: 'output_token_throughput', sloKey: 'output_token_throughput', toneRule: 'higher_is_better', fmt: 'thousands' },
+  { id: 'e2e_tok_s',   label: 'e2e tok/s',  unit: 'tok/s',  summaryKey: 'e2e_output_token_throughput.avg', seriesKey: 'e2e_output_token_throughput', sloKey: null, toneRule: 'higher_is_better', fmt: 'thousands' },
   { id: 'req_s',       label: 'req/s',      unit: 'req/s',  summaryKey: 'request_throughput.avg',       seriesKey: 'request_throughput',       sloKey: 'request_throughput',       toneRule: 'higher_is_better', fmt: 'number2' },
   { id: 'concurrency', label: 'conc',       unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'concurrency_from_phases', sloKey: null,                       toneRule: 'neutral',          fmt: 'thousands' },
   { id: 'err_pct',     label: 'err %',      unit: '%',      summaryKey: 'error_rate.avg',               seriesKey: 'error_rate',               sloKey: 'error_rate',               toneRule: 'lower_is_better',  fmt: 'percent2' },
@@ -50,7 +51,7 @@ export const TILE_CONFIG = [
   { id: 'records',     label: 'records',    unit: '',       summaryKey: null,                           seriesKey: null,                       resolverKey: 'records_progress',    sloKey: null,                       toneRule: 'records_progress', fmt: 'records_ratio' },
 ];
 
-const LARGER_IS_BETTER_SET = new Set(['output_token_throughput', 'request_throughput', 'goodput', 'pods_ready']);
+const LARGER_IS_BETTER_SET = new Set(['output_token_throughput', 'e2e_output_token_throughput', 'request_throughput', 'goodput', 'pods_ready']);
 
 // Read a dotted path from a possibly-nested object. Returns null on miss.
 function readPath(obj, path) {
