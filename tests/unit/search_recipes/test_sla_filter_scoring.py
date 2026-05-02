@@ -194,3 +194,43 @@ def test_tell_without_sla_filters_keeps_feasible_true_unchanged(monkeypatch):
     iteration = planner.history()[0]
     assert iteration.feasible is True
     assert captured == [-100.0]
+
+
+def test_tell_warns_once_per_unmeasurable_metric_tag(monkeypatch, caplog):
+    """Two consecutive iterations with the same missing tag emit exactly one warning.
+
+    The warn-once dedup is non-trivial state on the planner; verify it directly
+    so a regression (e.g. forgetting to populate _warned_unmeasurable_metrics)
+    surfaces here instead of in noisy logs.
+    """
+    import logging
+
+    caplog.set_level(
+        logging.WARNING, logger="aiperf.orchestrator.search_planner.bayesian"
+    )
+
+    planner = BayesianSearchPlanner(_base_config(), _cfg_with_filter(threshold=200.0))
+
+    def silent_tell(x, y, *args, **kwargs):
+        pass
+
+    monkeypatch.setattr(planner._opt, "tell", silent_tell)
+
+    for _ in range(2):
+        proposal = planner.ask()
+        assert proposal is not None
+        _, variation = proposal
+        # ttft_p95 absent both times → constraint unmeasurable on both iterations.
+        planner.tell(variation, [_make_result(throughput=100.0, ttft_p95=None)])
+
+    unmeasurable_warnings = [
+        r for r in caplog.records if "unmeasurable" in r.getMessage()
+    ]
+    assert len(unmeasurable_warnings) == 1, (
+        f"expected exactly one unmeasurable warning across two iterations with the "
+        f"same missing metric, got {len(unmeasurable_warnings)}"
+    )
+    # And the message is informative — names the metric and the iteration.
+    msg = unmeasurable_warnings[0].getMessage()
+    assert "time_to_first_token" in msg
+    assert "iteration 0" in msg

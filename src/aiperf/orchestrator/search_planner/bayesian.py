@@ -346,10 +346,12 @@ class BayesianSearchPlanner(SearchPlanner):
     def _trial_satisfies(self, run: RunResult, sla: SLAFilter) -> bool:
         """Return True iff ``run`` satisfies the single SLA filter ``sla``.
 
-        Missing metric or missing stat is treated as infeasible: it is safer to
-        flag an unmeasurable point than to silently call it feasible. The
-        unmeasurable case is logged once per (planner instance, metric tag) by
-        the caller (``_compute_constraint_penalty``).
+        Missing metric/stat is treated as infeasible (safer than silently
+        passing); the caller logs each unmeasurable tag once. Boundary:
+        strict ops (``lt``/``gt``) call ``value == threshold`` infeasible
+        while the soft penalty is 0 there — feasibility flag drives best
+        selection, GP penalty drives exploration; the two are intentionally
+        separable for the rare exact-on-the-line case.
         """
         metric = run.summary_metrics.get(sla.metric_tag)
         if metric is None:
@@ -417,9 +419,9 @@ class BayesianSearchPlanner(SearchPlanner):
         constraint contributes a fixed ``W`` (treated as a 1.0× normalized
         violation) and is logged once per metric tag.
 
-        ``W = 100 * max(self._max_seen_loss, 1.0)`` keeps the penalty
-        dominant over typical objective values without poisoning the GP
-        kernel with infinities.
+        ``W = _PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)`` keeps
+        the penalty dominant over typical objective values without poisoning
+        the GP kernel with infinities.
 
         Returns ``(penalty, has_unmeasurable)`` where ``has_unmeasurable`` is
         True if at least one filter could not be measured — this flag forces
@@ -429,7 +431,7 @@ class BayesianSearchPlanner(SearchPlanner):
         if not self._cfg.sla_filters:
             return 0.0, False
 
-        weight = 100.0 * max(self._max_seen_loss, 1.0)
+        weight = _PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)
         penalty = 0.0
         has_unmeasurable = False
         for sla in self._cfg.sla_filters:
@@ -440,12 +442,15 @@ class BayesianSearchPlanner(SearchPlanner):
                 if sla.metric_tag not in self._warned_unmeasurable_metrics:
                     self._warned_unmeasurable_metrics.add(sla.metric_tag)
                     logger.warning(
-                        "SLA filter on %r (stat=%s) is unmeasurable for this "
-                        "iteration; treating as infeasible and applying a "
-                        "fixed-magnitude penalty (=%s) to the BO loss. Subsequent "
-                        "iterations with the same missing tag will not re-log.",
+                        "SLA filter on metric %r (stat=%s) is unmeasurable on "
+                        "iteration %d; treating as infeasible and applying a "
+                        "fixed-magnitude penalty (=%s) to the BO loss. Likely "
+                        "cause: a streaming-only metric on a non-streaming "
+                        "endpoint, or a typo in --search-stat. Subsequent "
+                        "iterations with the same tag will not re-log.",
                         sla.metric_tag,
                         sla.stat,
+                        self._iter,
                         weight,
                     )
                 continue
@@ -467,6 +472,11 @@ _PLATEAU_MEAN_EPSILON = 1e-9
 # degraded mode and BO is essentially random until the first success.
 _NO_DATA_SENTINEL_LOSS = 1.0e6
 
+# Soft-penalty multiplier on max(|loss|) for SLA-filter violations. Finite
+# (not ±inf / 1e18) to avoid GP variance distortion; tune up if BO ignores
+# soft constraints, down if it dominates exploration too early.
+_PENALTY_WEIGHT_MULTIPLIER: float = 100.0
+
 
 def _coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> Any:
     """Skopt returns numpy scalars; coerce to plain Python int/float."""
@@ -478,15 +488,11 @@ def _coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> Any:
 def _signed_violation(value: float, sla: SLAFilter) -> float:
     """Signed magnitude of how much ``value`` violates ``sla``.
 
-    Positive = violation (constraint not satisfied), negative = slack
-    (constraint satisfied with room). The caller clamps to ``max(0, .)`` so
-    only violations contribute to the penalty term. Sign convention:
-
-    - ``lt`` / ``le``: violation = value - threshold (positive when over the cap)
-    - ``gt`` / ``ge``: violation = threshold - value (positive when under the floor)
-
-    Defined at module scope (not on the planner) because it is purely a
-    function of value+filter; no planner state is read.
+    Positive = violation, negative = slack. Caller clamps to ``max(0, .)`` so
+    only violations contribute to the penalty. Sign convention: ``lt``/``le``
+    use ``value - threshold`` (positive when over the cap); ``gt``/``ge`` use
+    ``threshold - value`` (positive when under the floor). Defined at module
+    scope because it reads no planner state.
     """
     if sla.op in ("lt", "le"):
         return value - sla.threshold
