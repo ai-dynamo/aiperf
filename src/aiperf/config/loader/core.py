@@ -188,6 +188,44 @@ def load_config_from_string(
     return _validate_config_dict(data, file_path)
 
 
+def load_config_dict(
+    file_path: Path | str,
+    *,
+    substitute_env: bool = True,
+) -> dict[str, Any]:
+    """Load a YAML config file and return the expanded dict, skipping validation.
+
+    Returns the post-env-var, post-Jinja2 dict so callers can deep-merge CLI
+    overrides on top before running ``AIPerfConfig.model_validate``. Used by
+    ``resolve_config`` when the user combines ``--config <yaml>`` with CLI
+    flags.
+
+    Raises ``ConfigurationError`` if the file is missing/unreadable; YAML/
+    Jinja errors propagate from the underlying loaders.
+    """
+    file_path = Path(file_path)
+    if not file_path.exists():
+        raise ConfigurationError(
+            f"Configuration file not found: {file_path}", file_path=file_path
+        )
+    if not file_path.is_file():
+        raise ConfigurationError(
+            f"Path is not a file: {file_path}", file_path=file_path
+        )
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigurationError(
+            f"Failed to read configuration file: {e}", file_path=file_path
+        ) from e
+
+    data = _parse_yaml_mapping(content, file_path)
+    if substitute_env:
+        data = substitute_env_vars(data, file_path)
+    context = build_template_context(data)
+    return render_jinja2_templates(data, context)
+
+
 def dump_config(
     config: AIPerfConfig,
     *,

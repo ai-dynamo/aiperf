@@ -108,6 +108,7 @@ async def sweep(
         cr_dict = _build_sweep_cr_dict(
             config_file=config_file,
             kube_options=kube_options,
+            user_config=user_config,
             multi_run_trials=multi_run_trials,
             cooldown_seconds=cooldown_seconds,
             convergence_metric=convergence_metric,
@@ -136,6 +137,7 @@ def _build_sweep_cr_dict(
     *,
     config_file: Path | None,
     kube_options: KubeOptions,
+    user_config: UserConfig | None = None,
     multi_run_trials: int | None,
     cooldown_seconds: float,
     convergence_metric: str | None,
@@ -148,6 +150,12 @@ def _build_sweep_cr_dict(
     The config file must contain (at minimum) a base AIPerfConfig. Optional
     top-level ``sweep:`` and ``multi_run:`` keys are extracted and placed under
     ``AIPerfSweep.spec``; the remainder becomes ``spec.template.spec.benchmark``.
+
+    When ``user_config`` is provided and carries explicitly-set CLI flags
+    (e.g. ``--search-recipe``, ``--ttft-sla-ms``, ``--streaming``), those
+    overrides are deep-merged onto the YAML before AIPerfConfig validation,
+    and recipe-expanded ``sweep`` / ``multi_run`` blocks bubble up to the CR
+    spec the same way YAML-declared ones do.
 
     Raises:
         ValueError: ``config_file`` is None — `aiperf kube sweep` requires a
@@ -206,6 +214,18 @@ def _build_sweep_cr_dict(
     # unresolved `{{ ... }}` literals never trip AIPerfSweepSpec.model_validate
     # below or reach the operator. Mirrors `aiperf kube profile -f`'s pipeline.
     bench_dict = expand_config_dict(bench_dict)
+
+    # Deep-merge explicitly-set CLI flags (e.g. `--search-recipe`,
+    # `--ttft-sla-ms`, `--streaming`) onto the YAML before validation. Recipe
+    # expansion produces `sweep` / `multi_run` blocks which we hoist to the
+    # AIPerfSweep spec instead of embedding inside the benchmark.
+    bench_dict, sweep_cfg, multirun_cfg_from_yaml = _apply_cli_overrides(
+        bench_dict=bench_dict,
+        user_config=user_config,
+        sweep_cfg=sweep_cfg,
+        multirun_cfg_from_yaml=multirun_cfg_from_yaml,
+    )
+
     # Validate via AIPerfConfig so v1->v2 shorthand promotions
     # (`model:`/`dataset:`/`phases:`) expand to the long-form the operator
     # expects -- matching the path `kube profile` takes for CR-shaped input.
@@ -262,6 +282,65 @@ def _build_sweep_cr_dict(
 
     AIPerfSweepSpec.model_validate(spec)
     return cr_dict
+
+
+# K8s `MultiRunConfig` (sweep_models.py) is `extra="forbid"` and only accepts
+# this set of keys. Grid-recipe-only fields (`post_process`, `sla_filters`)
+# get stripped before bubbling the recipe-driven multi_run block up to the
+# AIPerfSweep CR -- those have no controller-side consumer yet.
+_K8S_MULTIRUN_KEYS: frozenset[str] = frozenset(
+    {
+        "trials",
+        "cooldown_seconds",
+        "cooldownSeconds",
+        "auto_set_seed",
+        "autoSetSeed",
+        "disable_warmup_after_first",
+        "disableWarmupAfterFirst",
+        "mode",
+        "adaptive_search",
+        "adaptiveSearch",
+    }
+)
+
+
+def _apply_cli_overrides(
+    *,
+    bench_dict: dict[str, Any],
+    user_config: UserConfig | None,
+    sweep_cfg: Any,
+    multirun_cfg_from_yaml: Any,
+) -> tuple[dict[str, Any], Any, Any]:
+    """Merge user_config CLI overrides onto bench_dict; bubble recipe-driven
+    `sweep` / `multi_run` blocks up to the AIPerfSweep spec.
+
+    Recipe expansion (``--search-recipe X --ttft-sla-ms 200``) produces a
+    sweep block (grid recipes) and/or a multi_run.adaptive_search block (BO
+    recipes). Both belong on AIPerfSweep.spec, NOT on the embedded benchmark.
+    YAML-declared sweep / multi_run keys win over recipe-driven ones; recipes
+    only fill in when the YAML didn't already supply them.
+
+    Returns (merged bench_dict, resolved sweep_cfg, resolved multirun_cfg).
+    """
+    from aiperf.cli_commands.kube._kube_common import _build_v1_overrides, _deep_merge
+
+    if user_config is None:
+        return bench_dict, sweep_cfg, multirun_cfg_from_yaml
+    overrides = _build_v1_overrides(user_config)
+    if not overrides:
+        return bench_dict, sweep_cfg, multirun_cfg_from_yaml
+
+    recipe_sweep = overrides.pop("sweep", None)
+    recipe_multirun = overrides.pop("multi_run", None)
+    if overrides:
+        bench_dict = _deep_merge(bench_dict, overrides)
+    if recipe_sweep is not None and sweep_cfg is None:
+        sweep_cfg = recipe_sweep
+    if recipe_multirun is not None and multirun_cfg_from_yaml is None:
+        filtered = {k: v for k, v in recipe_multirun.items() if k in _K8S_MULTIRUN_KEYS}
+        if filtered:
+            multirun_cfg_from_yaml = filtered
+    return bench_dict, sweep_cfg, multirun_cfg_from_yaml
 
 
 def _name_from_config_file(config_file: Path) -> str:

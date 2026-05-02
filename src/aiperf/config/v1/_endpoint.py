@@ -43,7 +43,7 @@ class EndpointConfig(BaseConfig):
     model_names: Annotated[
         list[str],
         Field(
-            ...,
+            default_factory=list,
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),

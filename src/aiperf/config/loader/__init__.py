@@ -62,6 +62,7 @@ from __future__ import annotations
 from aiperf.config.loader.core import (
     dump_config,
     load_config,
+    load_config_dict,
     load_config_from_env,
     load_config_from_string,
     merge_configs,
@@ -97,6 +98,7 @@ __all__ = [
     "load_benchmark_plan",
     "load_config",
     "load_config_from_env",
+    "load_config_dict",
     "load_config_from_string",
     "dump_config",
     "save_config",
