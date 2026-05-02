@@ -25,6 +25,175 @@ Recipes expand at the v1->v2 converter boundary into the same machinery the expl
 
 Power users can keep the explicit `--search-*` flags; recipes are mutually exclusive with them at the converter (clear error on collision).
 
+## How it feels — a walkthrough
+
+This section shows the user experience end-to-end. Every recipe collapses several BO/grid flags into one named selector, and emits artifacts the user can read directly.
+
+### Before / after
+
+```bash
+# Before: write the BO config from scratch
+aiperf profile --model X --url Y --streaming \
+  --search-space "phases.profiling.concurrency:1,1000:int" \
+  --search-metric output_token_throughput \
+  --search-direction maximize \
+  --search-max-iterations 30
+# Hope you picked the right metric. Hope max-iterations is sensible.
+# No SLA constraint — the winner might violate p95 TTFT silently.
+
+# After: name the workflow, supply the SLA
+aiperf profile --model X --url Y --streaming \
+  --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200
+```
+
+### Flow at a glance
+
+```mermaid
+flowchart LR
+    user["aiperf profile<br/>--search-recipe NAME<br/>--ttft-sla-ms 200"] --> v1["LoadGeneratorConfig<br/>(search_recipe='...')"]
+    v1 --> conv["v1->v2 converter:<br/>expand_search_recipe()"]
+    conv -->|BO recipe| AS["MultiRunConfig.adaptive_search<br/>+ sla_filters<br/>+ recipe_name"]
+    conv -->|grid recipe| SW["sweep.variables<br/>+ MultiRunConfig.post_process"]
+    AS --> BO["BayesianSearchPlanner:<br/>soft penalty for SLA violation<br/>lexicographic best (feasible first)"]
+    SW --> GRID["MultiRunOrchestrator<br/>+ SweepAnalyzer.compute<br/>(SLA-aware filtering)"]
+    BO --> outA["search_history.json<br/>(recipe + filters + best)"]
+    GRID --> outB["sweep_aggregate/<br/>profile_export_aiperf_sweep.json"]
+    GRID --> outC["sweep_aggregate/<br/>(recipe-named).json<br/>(post-process artifact)"]
+
+    classDef inputs fill:#cce5ff,stroke:#0066cc;
+    classDef outputs fill:#d4edda,stroke:#28a745;
+    class user,v1 inputs;
+    class outA,outB,outC outputs;
+```
+
+### Five recipes, five interaction shapes
+
+```mermaid
+flowchart TB
+    subgraph BO["BO recipes — single objective + SLA"]
+        b1["aiperf profile --search-recipe<br/>max-throughput-ttft-sla --ttft-sla-ms 200"]
+        b2["aiperf profile --search-recipe<br/>max-throughput-itl-sla --itl-sla-ms 50"]
+        b1 --> bo_out["search_history.json<br/>{recipe, best (feasible-first),<br/>iterations[], sla_filters[]}"]
+        b2 --> bo_out
+    end
+
+    subgraph GRID_P["Grid + post-process — characterization"]
+        g1["aiperf profile --search-recipe<br/>concurrency-ramp<br/>--degradation-threshold 0.20"]
+        g1 --> g1_out["sweep_aggregate/<br/>degradation_knee.json<br/>{baseline_concurrency,<br/>knee_concurrency, all_points[]}"]
+        g2["aiperf profile --search-recipe<br/>prefill-ttft-curve --streaming<br/>--isl-min 256 --isl-max 32768"]
+        g2 --> g2_out["sweep_aggregate/<br/>prefill_curve.json<br/>{fit_form: linear|quadratic,<br/>coefficients, r_squared,<br/>below_floor, raw_points[]}"]
+        g3["aiperf profile --search-recipe<br/>decode-itl-curve --streaming"]
+        g3 --> g3_out["sweep_aggregate/<br/>decode_itl_surface.json<br/>{surface: bilinear grid,<br/>raw_points[], swept_params[]}"]
+    end
+
+    classDef cmd fill:#cce5ff,stroke:#0066cc;
+    classDef art fill:#d4edda,stroke:#28a745;
+    class b1,b2,g1,g2,g3 cmd;
+    class bo_out,g1_out,g2_out,g3_out art;
+```
+
+### Concrete BO interaction (`max-throughput-ttft-sla`)
+
+```text
+$ aiperf profile --model deepseek-r1 --url http://localhost:8000 \
+    --endpoint-type chat --streaming \
+    --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200
+
+[expand] recipe=max-throughput-ttft-sla
+         search_space=[phases.profiling.concurrency: 1..1000 int]
+         objective=output_token_throughput.avg → MAXIMIZE
+         max_iterations=30, n_initial_points=5
+         sla_filters=[time_to_first_token.p95 < 200.0]
+
+[BO  iter 0] concurrency=  47  → throughput=2143  TTFT.p95= 87  feasible
+[BO  iter 1] concurrency= 891  → throughput=2890  TTFT.p95=412  ✗ infeasible (penalty=22.6)
+[BO  iter 2] concurrency= 312  → throughput=3120  TTFT.p95=178  feasible
+[BO  iter 3] concurrency= 524  → throughput=3340  TTFT.p95=215  ✗ infeasible (penalty=2.5)
+[BO  iter 4] concurrency= 401  → throughput=3290  TTFT.p95=193  feasible  ★ best so far
+...
+[BO  iter 12] no improvement for 7 iterations — stopping (improvement_patience)
+
+→ artifacts/<run>/search_history.json
+   {"recipe": "max-throughput-ttft-sla",
+    "best": {"iteration_idx": 4, "objective_value": 3290,
+             "variation_values": {"phases.profiling.concurrency": 401},
+             "feasible": true, "feasible_count": 8},
+    "config": {"sla_filters": [{"metric_tag": "time_to_first_token",
+                                "stat": "p95", "op": "lt", "threshold": 200.0}],
+               ...}}
+```
+
+The user reads `best.variation_values` and gets a concrete answer: **deploy at concurrency=401 to maximize throughput while keeping p95 TTFT under 200 ms.** Without the recipe they'd have written ~5 BO flags by hand and post-hoc filtered for the SLA themselves.
+
+The above terminal log is illustrative — the actual progress format depends on the dashboard / progress UI mode.
+
+### Concrete grid + curve interaction (`prefill-ttft-curve`)
+
+```text
+$ aiperf profile --model deepseek-r1 --url http://localhost:8000 \
+    --endpoint-type chat --streaming \
+    --search-recipe prefill-ttft-curve --isl-min 256 --isl-max 32768
+
+[expand] sweep_variables={
+   datasets.main.prompts.isl: [256, 512, 1024, 2048, 4096, 8192, 16384, 32768],
+   phases.profiling.concurrency: [1]
+ }
+[expand] post_process: ttft_curve_fit → prefill_curve.json
+
+[run  1/8] ISL=  256 conc=1 → TTFT.avg=  18.2 ms
+[run  2/8] ISL=  512 conc=1 → TTFT.avg=  31.7 ms
+...
+[run  8/8] ISL=32768 conc=1 → TTFT.avg=2104.0 ms
+
+[post-process] ttft_curve_fit → linear fit r²=0.998
+→ artifacts/<run>/sweep_aggregate/prefill_curve.json
+   {"fit_form": "linear",
+    "coefficients": [0.0641, 1.83],
+    "r_squared": 0.998,
+    "below_floor": false,
+    "raw_points": [{"isl": 256, "ttft_ms": 18.2}, ..., {"isl": 32768, "ttft_ms": 2104.0}]}
+```
+
+The user gets a usable equation: **`TTFT(ms) = 0.0641 × ISL + 1.83`** — feed it into a capacity planner directly. Quadratic fallback fires automatically if linear `r² < 0.85`; `below_floor` flags low-confidence fits.
+
+### Failure paths fail loud
+
+```text
+$ aiperf profile --search-recipe max-throughput-ttft-sla
+TypeError: recipe 'max-throughput-ttft-sla' requires --ttft-sla-ms
+           (TTFT SLA threshold in milliseconds); pass it on the CLI alongside
+           --search-recipe.
+
+$ aiperf profile --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200 \
+    --search-space "phases.profiling.concurrency:1,500:int"
+TypeError: --search-recipe 'max-throughput-ttft-sla' is mutually exclusive
+           with explicit --search-* flags ['search_space']. Either drop the
+           explicit flags and let the recipe expand them, or drop --search-recipe
+           and configure --search-* by hand.
+
+$ aiperf profile --search-recipe prefill-ttft-curve --no-streaming \
+    --isl-min 256 --isl-max 32768
+ValueError: recipe 'prefill-ttft-curve' requires --streaming (TTFT is a
+            streaming-only metric); enable streaming on the endpoint or pick
+            a different recipe.
+```
+
+### What stays invisible
+
+```mermaid
+flowchart LR
+    R["recipe.expand(ctx)"] --> O["SearchRecipeOutput<br/>(adaptive_search XOR sweep_variables)"]
+    O --> C["converter writes:<br/>multi_run.adaptive_search<br/>+ sweep.variables<br/>+ multi_run.post_process<br/>+ multi_run.sla_filters"]
+    C --> P["BayesianSearchPlanner / SweepAnalyzer<br/>SLA-aware scoring + filtering"]
+    P --> EXP["aggregate_sweep_and_export<br/>+ post-process hook"]
+    EXP --> AR["sweep_aggregate/*"]
+
+    classDef hidden fill:#f4f4f4,stroke:#999,color:#666;
+    class R,O,C,P,EXP hidden;
+```
+
+That whole pipeline — Protocol dispatch, mutual-exclusion checking, model_dump round-trips, soft-penalty math, lexicographic best, post-process plugin lookup — is invisible to the user. They typed two flags. They got an answer.
+
 ## Catalog
 
 | Recipe | Algorithm | What it answers | Inputs | Output |
