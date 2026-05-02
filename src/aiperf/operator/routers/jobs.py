@@ -419,22 +419,68 @@ def derive_run_status(
 
 
 async def _list_job_epochs_impl(
-    base_dir: Path, namespace: str, name: str
+    api: ApiClient | None,
+    base_dir: Path,
+    namespace: str,
+    name: str,
 ) -> JobEpochsResponse:
     """Body of GET /api/v1/jobs/{namespace}/{name}/epochs.
 
-    Lists every persisted run directory under
-    ``<base_dir>/<namespace>/<name>/`` and flags the one that ``latest.txt``
-    points at. Order is ascending by mtime so the UI history view reads
-    chronologically; the latest entry sits at the tail.
+    Reads rich rows from the runs SQLite index and reconciles each row's
+    ``phase`` / ``error`` against the live CR's ``status.runEpoch`` to
+    produce a single normalized ``status`` enum per epoch. Falls back to a
+    disk walk (``list_runs_async``) when the index has no rows for this
+    job — those rows report ``status='unknown'`` and ``started_at``/
+    ``ended_at`` of ``None``.
 
-    Returns an empty list when no run dirs exist (job has never been
-    persisted, or PVC directory was reaped) — callers should treat this
-    identically to "no archived runs".
+    Order is ascending by ``mtime_epoch`` so the latest entry sits at the
+    tail; this matches the prior contract.
+
+    Returns an empty list when neither the index nor the disk has rows
+    (job has never been persisted, or PVC directory was reaped).
     """
+    from aiperf.operator import runs_index
+
+    # Resolve the live in-flight epoch from the CR (None if not running).
+    live_running_epoch: str | None = None
+    if api is not None:
+        try:
+            cr = await get_raw_aiperfjob(api, namespace, name)
+        except Exception:  # noqa: BLE001 — UI surface, never block on CR errors
+            cr = None
+        if isinstance(cr, dict):
+            cr_status = cr.get("status") or {}
+            if isinstance(cr_status, dict) and cr_status.get("phase") == "Running":
+                run_epoch = cr_status.get("runEpoch")
+                if run_epoch is not None:
+                    live_running_epoch = str(run_epoch)
+
+    # Index-first read.
+    rich_rows: list[RunIndexRow] = []
+    try:
+        rich_rows = await runs_index.list_runs_for_job(namespace, name)
+    except Exception:  # noqa: BLE001 — index unavailable degrades to disk
+        rich_rows = []
+
+    if rich_rows:
+        rich_rows.sort(key=lambda r: r.mtime_epoch or 0)
+        return JobEpochsResponse(
+            epochs=[
+                JobEpochSummary(
+                    epoch=r.epoch,
+                    is_latest=bool(r.is_latest),
+                    mtime_epoch=int(r.mtime_epoch or 0),
+                    file_count=r.file_count,
+                    status=derive_run_status(r, live_running_epoch=live_running_epoch),
+                    started_at=_iso_to_unix(r.start_time),
+                    ended_at=_iso_to_unix(r.end_time),
+                )
+                for r in rich_rows
+            ]
+        )
+
+    # Disk fallback — index has nothing for this job.
     runs = await list_runs_async(base_dir, namespace, name)
-    # ``list_runs_async`` returns descending; the API exposes ascending so the
-    # latest entry sits at index -1, matching the UI history strip.
     return JobEpochsResponse(
         epochs=[
             JobEpochSummary(
@@ -442,10 +488,30 @@ async def _list_job_epochs_impl(
                 is_latest=r.is_latest,
                 mtime_epoch=r.mtime_epoch,
                 file_count=r.file_count,
+                status=(
+                    "running"
+                    if live_running_epoch is not None and r.epoch == live_running_epoch
+                    else "unknown"
+                ),
+                started_at=None,
+                ended_at=None,
             )
             for r in reversed(runs)
         ]
     )
+
+
+def _iso_to_unix(ts: str | None) -> int | None:
+    """Parse a ``2026-05-01T00:00:00+00:00`` style timestamp to unix seconds; None on miss."""
+    if not ts:
+        return None
+    try:
+        from datetime import datetime
+
+        # Accept both 'Z' suffix and explicit offsets.
+        return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+    except (ValueError, TypeError):
+        return None
 
 
 async def _create_job_impl(
@@ -720,6 +786,14 @@ def create_jobs_router(
             )
         return api
 
+    def _optional_api() -> ApiClient | None:
+        """Return the live ApiClient, or None if lifespan hasn't initialized it.
+
+        Used by endpoints that can degrade gracefully when the cluster is not
+        reachable (e.g. epoch listing falls back to the runs index + disk).
+        """
+        return _holder[0] if _holder else None
+
     @router.get("/jobs", response_model=ActiveJobListResponse)
     async def list_jobs() -> ActiveJobListResponse:
         return await _list_jobs_impl(_require_api(), _results_dir)
@@ -744,7 +818,9 @@ def create_jobs_router(
         response_model_by_alias=True,
     )
     async def list_job_epochs(namespace: str, name: str) -> JobEpochsResponse:
-        return await _list_job_epochs_impl(_results_dir, namespace, name)
+        return await _list_job_epochs_impl(
+            _optional_api(), _results_dir, namespace, name
+        )
 
     @router.post("/jobs/{namespace}/{name}/cancel", response_model=CancelResponse)
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
