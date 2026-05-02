@@ -282,6 +282,86 @@ from aiperf.plugin.enums import PluginType
 EndpointClass = plugins.get_class(PluginType.ENDPOINT, 'chat')
 ```
 
+## Search Recipes
+
+Named, plugin-registered presets that bundle a search space + objective +
+optional SLA constraints + optional post-process step into a single
+`--search-recipe <name>` CLI selector. Recipes implement the
+`SearchRecipe` Protocol in `aiperf.search_recipes._base` and expand to a
+populated `AdaptiveSearchConfig` (BO) or `sweep_variables` dict (grid) at
+the v1->v2 converter boundary; the recipe NAME never reaches `AIPerfConfig`.
+
+```python
+# src/my_pkg/recipes.py
+from typing import ClassVar
+
+from aiperf.common.enums import OptimizationDirection
+from aiperf.config.adaptive_search import AdaptiveSearchConfig, SearchSpaceDimension
+from aiperf.search_recipes._base import (
+    SearchRecipe,
+    SearchRecipeContext,
+    SearchRecipeOutput,
+    SLAFilter,
+)
+
+
+class MaxThroughputUnderTTFTSLA(SearchRecipe):
+    """Maximize output_token_throughput under a p95 TTFT SLA."""
+
+    name: ClassVar[str] = "max-throughput-ttft-sla"
+    description: ClassVar[str] = "Maximize tokens/s where p95 TTFT < --ttft-sla-ms."
+
+    def expand(self, ctx: SearchRecipeContext) -> SearchRecipeOutput:
+        threshold = ctx.sla_targets.get("ttft_sla_ms")
+        if threshold is None:
+            raise ValueError(
+                f"recipe {self.name!r} requires --ttft-sla-ms; pass it on the CLI."
+            )
+        return SearchRecipeOutput(
+            adaptive_search=AdaptiveSearchConfig(
+                algorithm="bayes",
+                search_space=[
+                    SearchSpaceDimension(
+                        path="phases.profiling.concurrency",
+                        lo=1, hi=1000, kind="int",
+                    ),
+                ],
+                objective_metric="output_token_throughput",
+                objective_stat="avg",
+                objective_direction=OptimizationDirection.MAXIMIZE,
+                max_iterations=30,
+                n_initial_points=5,
+            ),
+            sla_filters=[
+                SLAFilter(
+                    metric_tag="time_to_first_token",
+                    stat="p95",
+                    op="lt",
+                    threshold=float(threshold),
+                ),
+            ],
+        )
+```
+
+Register under the `search_recipe` plugin category in `plugins.yaml`:
+
+```yaml
+search_recipe:
+  max-throughput-ttft-sla:
+    class: aiperf.search_recipes.builtins:MaxThroughputUnderTTFTSLA
+    description: |
+      Maximize output_token_throughput where p95 TTFT < --ttft-sla-ms.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency
+```
+
+Grid recipes return `sweep_variables` (and optionally a `PostProcessSpec`)
+instead of `adaptive_search`; post-process handlers register under the
+`search_recipe_post_process` plugin category and run after
+`SweepAnalyzer.compute()`. See `docs/sweeping/search-recipes.md` for the
+full author's guide and the catalog of built-in recipes.
+
 ## Kubernetes Operator Handler Pattern
 
 All `@kopf.on.*` decorators live in `src/aiperf/operator/main.py`; handler

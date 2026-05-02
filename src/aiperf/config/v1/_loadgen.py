@@ -739,6 +739,23 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    itl_sla_ms: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description=(
+                "Inter-token-latency SLA threshold in milliseconds. Required by "
+                "ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. "
+                "Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter."
+            ),
+        ),
+        CLIParameter(
+            name=("--itl-sla-ms",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
     degradation_threshold: Annotated[
         float | None,
         Field(

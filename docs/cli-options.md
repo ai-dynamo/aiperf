@@ -1085,6 +1085,11 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
+#### `--itl-sla-ms`, `--itl-sla-ms` `<float>`
+
+Inter-token-latency SLA threshold in milliseconds. Required by ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
+
 #### `--degradation-threshold`, `--degradation-threshold` `<float>`
 
 Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
@@ -2342,6 +2347,11 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
+#### `--itl-sla-ms`, `--itl-sla-ms` `<float>`
+
+Inter-token-latency SLA threshold in milliseconds. Required by ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
+
 #### `--degradation-threshold`, `--degradation-threshold` `<float>`
 
 Relative latency degradation threshold for the concurrency-ramp recipe (e.g. 0.20 = 20%). The recipe's post-process handler reports the first concurrency where p99 latency exceeds baseline * (1 + threshold). Recipe-only flag; ignored unless --search-recipe concurrency-ramp is set.
@@ -3463,6 +3473,11 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
+
+#### `--itl-sla-ms`, `--itl-sla-ms` `<float>`
+
+Inter-token-latency SLA threshold in milliseconds. Required by ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
 #### `--degradation-threshold`, `--degradation-threshold` `<float>`
@@ -4601,6 +4616,11 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
+
+#### `--itl-sla-ms`, `--itl-sla-ms` `<float>`
+
+Inter-token-latency SLA threshold in milliseconds. Required by ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
 #### `--degradation-threshold`, `--degradation-threshold` `<float>`
@@ -5750,6 +5770,11 @@ Named search-recipe preset that expands to an adaptive-search or sweep block. Mu
 #### `--ttft-sla-ms`, `--ttft-sla-ms` `<float>`
 
 Time-to-first-token SLA threshold in milliseconds. Required by TTFT-SLA recipes (e.g. max-throughput-ttft-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
+<br/>_Constraints: > 0_
+
+#### `--itl-sla-ms`, `--itl-sla-ms` `<float>`
+
+Inter-token-latency SLA threshold in milliseconds. Required by ITL-SLA recipes (e.g. max-throughput-itl-sla); ignored otherwise. Must be > 0 — a 0 or negative threshold yields an unsatisfiable filter.
 <br/>_Constraints: > 0_
 
 #### `--degradation-threshold`, `--degradation-threshold` `<float>`

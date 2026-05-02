@@ -118,6 +118,8 @@ navigation:
       path: tutorials/parameter-sweeping.md
     - page: Bayesian Optimization
       path: sweeping/bayesian-optimization.md
+    - page: Search Recipes
+      path: sweeping/search-recipes.md
     - page: Adaptive Search Tutorial
       path: tutorials/adaptive-search.md
     - page: Time Slicing for Performance Analysis

@@ -7,9 +7,8 @@ Phase 1 ships ``MaxThroughputUnderTTFTSLA`` (BO).
 Phase 3 adds the grid recipes ``ConcurrencyRamp`` and ``PrefillTTFTCurve``,
 each pairing a swept parameter with a post-process handler that emits a
 derived artifact under ``sweep_aggregate/``.
-
-Additional recipes (max-throughput-itl-sla, throughput-vs-latency-pareto,
-isl-elasticity, saturation-curve) land in later phases.
+Phase 4 adds the ITL counterparts: ``MaxThroughputUnderITLSLA`` (BO) and
+``DecodeITLCurve`` (grid + ``itl_surface_fit``).
 """
 
 from __future__ import annotations
@@ -29,6 +28,8 @@ from aiperf.search_recipes._base import (
 
 __all__ = [
     "ConcurrencyRamp",
+    "DecodeITLCurve",
+    "MaxThroughputUnderITLSLA",
     "MaxThroughputUnderTTFTSLA",
     "PrefillTTFTCurve",
 ]
@@ -254,6 +255,154 @@ class PrefillTTFTCurve(SearchRecipe):
                 "swept_param": self._ISL_PATH,
             },
             output_filename="prefill_curve.json",
+        )
+        return SearchRecipeOutput(
+            sweep_variables=sweep_variables,
+            post_process=post_process,
+        )
+
+
+class MaxThroughputUnderITLSLA(SearchRecipe):
+    """Maximize output_token_throughput at the highest concurrency where p95 ITL
+    stays under ``--itl-sla-ms``.
+
+    Bayesian-optimized over ``phases.profiling.concurrency`` in [1, 1000]; the
+    SLA constraint lands as an ``SLAFilter`` on
+    ``SearchRecipeOutput.sla_filters`` and feeds ``BayesianSearchPlanner`` for
+    lexicographic feasibility scoring (same wiring as the TTFT-SLA twin).
+
+    Streaming MUST be enabled (ITL is a streaming-only metric); the recipe
+    rejects non-streaming configs at expand time.
+
+    Example:
+        aiperf profile --search-recipe max-throughput-itl-sla --itl-sla-ms 50
+    """
+
+    name: ClassVar[str] = "max-throughput-itl-sla"
+    description: ClassVar[str] = (
+        "Maximize output_token_throughput at the highest concurrency where p95 ITL "
+        "stays under --itl-sla-ms. Bayesian-optimized over concurrency."
+    )
+
+    _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
+    _CONCURRENCY_LO: ClassVar[float] = 1
+    _CONCURRENCY_HI: ClassVar[float] = 1000
+    _MAX_ITERATIONS: ClassVar[int] = 30
+    _N_INITIAL_POINTS: ClassVar[int] = 5
+
+    def expand(self, ctx: SearchRecipeContext) -> SearchRecipeOutput:
+        threshold = ctx.sla_targets.get("itl_sla_ms")
+        if threshold is None:
+            raise ValueError(
+                f"recipe {self.name!r} requires --itl-sla-ms (ITL SLA threshold "
+                "in milliseconds); pass it on the CLI alongside --search-recipe."
+            )
+
+        endpoint = ctx.user_config.endpoint
+        # ITL is a streaming-only metric (per-token timing emerges from SSE
+        # chunks); refusing non-streaming configs here avoids a late "unknown
+        # metric inter_token_latency" error mid-BO. ``is False`` (not
+        # ``not endpoint.streaming``) so an unset (None) flag falls through.
+        if endpoint is not None and endpoint.streaming is False:
+            raise ValueError(
+                f"recipe {self.name!r} requires --streaming (ITL is a streaming-only "
+                "metric); enable streaming on the endpoint or pick a different recipe."
+            )
+
+        adaptive_search = AdaptiveSearchConfig(
+            algorithm="bayes",
+            search_space=[
+                SearchSpaceDimension(
+                    path=self._CONCURRENCY_PATH,
+                    lo=self._CONCURRENCY_LO,
+                    hi=self._CONCURRENCY_HI,
+                    kind="int",
+                ),
+            ],
+            objective_metric="output_token_throughput",
+            objective_stat="avg",
+            objective_direction=OptimizationDirection.MAXIMIZE,
+            max_iterations=self._MAX_ITERATIONS,
+            n_initial_points=self._N_INITIAL_POINTS,
+        )
+        sla_filters = [
+            SLAFilter(
+                metric_tag="inter_token_latency",
+                stat="p95",
+                op="lt",
+                threshold=float(threshold),
+            ),
+        ]
+        return SearchRecipeOutput(
+            adaptive_search=adaptive_search,
+            sla_filters=sla_filters,
+        )
+
+
+class DecodeITLCurve(SearchRecipe):
+    """Sweep concurrency x OSL grid and fit an ITL surface.
+
+    Sweeps ``phases.profiling.concurrency`` (6 log-spaced points in [1, 200])
+    against ``phases.profiling.synthetic_output_tokens.mean`` (4 log-spaced
+    points in [64, 1024]); ``itl_surface_fit`` post-process emits
+    ``decode_itl_surface.json`` with raw points and a bilinear-grid surface.
+
+    Override the grid via ``ctx.sweep_overrides`` keys
+    ``concurrency_min`` / ``concurrency_max`` / ``concurrency_steps`` /
+    ``osl_min`` / ``osl_max`` / ``osl_steps``. Streaming MUST be enabled.
+
+    Example:
+        aiperf profile --search-recipe decode-itl-curve --streaming
+    """
+
+    name: ClassVar[str] = "decode-itl-curve"
+    description: ClassVar[str] = (
+        "Sweep concurrency x OSL grid; fit ITL surface (bilinear) and emit "
+        "decode_itl_surface.json with raw points."
+    )
+
+    _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
+    _OSL_PATH: ClassVar[str] = "phases.profiling.synthetic_output_tokens.mean"
+    _DEFAULT_CONCURRENCY_MIN: ClassVar[int] = 1
+    _DEFAULT_CONCURRENCY_MAX: ClassVar[int] = 200
+    _DEFAULT_CONCURRENCY_STEPS: ClassVar[int] = 6
+    _DEFAULT_OSL_MIN: ClassVar[int] = 64
+    _DEFAULT_OSL_MAX: ClassVar[int] = 1024
+    _DEFAULT_OSL_STEPS: ClassVar[int] = 4
+
+    def expand(self, ctx: SearchRecipeContext) -> SearchRecipeOutput:
+        endpoint = ctx.user_config.endpoint
+        if endpoint is not None and endpoint.streaming is False:
+            raise ValueError(
+                f"recipe {self.name!r} requires --streaming (ITL is a streaming-only "
+                "metric); enable streaming on the endpoint or pick a different recipe."
+            )
+
+        overrides = ctx.sweep_overrides
+        c_lo = int(overrides.get("concurrency_min", self._DEFAULT_CONCURRENCY_MIN))
+        c_hi = int(overrides.get("concurrency_max", self._DEFAULT_CONCURRENCY_MAX))
+        c_steps = int(
+            overrides.get("concurrency_steps", self._DEFAULT_CONCURRENCY_STEPS)
+        )
+        o_lo = int(overrides.get("osl_min", self._DEFAULT_OSL_MIN))
+        o_hi = int(overrides.get("osl_max", self._DEFAULT_OSL_MAX))
+        o_steps = int(overrides.get("osl_steps", self._DEFAULT_OSL_STEPS))
+
+        concurrency_values = _logspace_int_steps(c_lo, c_hi, c_steps)
+        osl_values = _logspace_int_steps(o_lo, o_hi, o_steps)
+        sweep_variables: dict[str, list[Any]] = {
+            self._CONCURRENCY_PATH: concurrency_values,
+            self._OSL_PATH: osl_values,
+        }
+        post_process = PostProcessSpec(
+            handler="itl_surface_fit",
+            params={
+                "metric_tag": "inter_token_latency",
+                "stat": "avg",
+                "concurrency_param": self._CONCURRENCY_PATH,
+                "osl_param": self._OSL_PATH,
+            },
+            output_filename="decode_itl_surface.json",
         )
         return SearchRecipeOutput(
             sweep_variables=sweep_variables,

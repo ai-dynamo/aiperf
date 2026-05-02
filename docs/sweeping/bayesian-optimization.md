@@ -4,6 +4,8 @@
 -->
 # Bayesian-Optimization Outer Loop
 
+> **New users start here:** [Search Recipes](search-recipes.md) bundle the BO knobs below into named presets such as `--search-recipe max-throughput-ttft-sla --ttft-sla-ms 200`. Use the explicit `--search-*` flags documented on this page when no recipe matches your workflow.
+
 `aiperf profile --search-space ... --search-metric ... --search-direction ... --search-max-iterations ...` runs an adaptive outer loop instead of a grid sweep. Each iteration the planner asks `skopt` for the next point in the search space, runs `--num-profile-runs` benchmarks at it, scores the configured objective, and feeds the result back to the optimizer.
 
 ## When to use it

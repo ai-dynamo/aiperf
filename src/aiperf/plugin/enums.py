@@ -143,11 +143,11 @@ GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECT
 
 SearchRecipeTypeStr: TypeAlias = str
 SearchRecipeType = plugins.create_enum(PluginType.SEARCH_RECIPE, "SearchRecipeType", module=__name__)
-"""Dynamic enum for search recipe. Example: SearchRecipeType.CONCURRENCY_RAMP, SearchRecipeType.MAX_THROUGHPUT_TTFT_SLA, SearchRecipeType.PREFILL_TTFT_CURVE"""
+"""Dynamic enum for search recipe. Example: SearchRecipeType.CONCURRENCY_RAMP, SearchRecipeType.MAX_THROUGHPUT_ITL_SLA, SearchRecipeType.PREFILL_TTFT_CURVE"""
 
 SearchRecipePostProcessTypeStr: TypeAlias = str
 SearchRecipePostProcessType = plugins.create_enum(PluginType.SEARCH_RECIPE_POST_PROCESS, "SearchRecipePostProcessType", module=__name__)
-"""Dynamic enum for search recipe post process. Example: SearchRecipePostProcessType.DEGRADATION_KNEE_DETECT, SearchRecipePostProcessType.TTFT_CURVE_FIT"""
+"""Dynamic enum for search recipe post process. Example: SearchRecipePostProcessType.DEGRADATION_KNEE_DETECT, SearchRecipePostProcessType.ITL_SURFACE_FIT, SearchRecipePostProcessType.TTFT_CURVE_FIT"""
 
 # =============================================================================
 # Composite Enums (merged from multiple categories)

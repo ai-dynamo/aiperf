@@ -1757,6 +1757,14 @@ search_recipe:
     metadata:
       algorithm: bayes
       sweep_path: phases.profiling.concurrency
+  max-throughput-itl-sla:
+    class: aiperf.search_recipes.builtins:MaxThroughputUnderITLSLA
+    description: |
+      Maximize output_token_throughput at the highest concurrency where p95 ITL
+      stays under --itl-sla-ms. Bayesian-optimized over concurrency.
+    metadata:
+      algorithm: bayes
+      sweep_path: phases.profiling.concurrency
   concurrency-ramp:
     class: aiperf.search_recipes.builtins:ConcurrencyRamp
     description: |
@@ -1773,6 +1781,14 @@ search_recipe:
     metadata:
       algorithm: grid
       sweep_path: phases.profiling.synthetic_input_tokens.mean
+  decode-itl-curve:
+    class: aiperf.search_recipes.builtins:DecodeITLCurve
+    description: |
+      Sweep concurrency x OSL grid; fit ITL surface (axis-aligned grid with
+      nulls for unmeasured cells) and emit decode_itl_surface.json.
+    metadata:
+      algorithm: grid
+      sweep_path: phases.profiling.synthetic_output_tokens.mean
 
 # =============================================================================
 # Search Recipe Post-Process Handlers
@@ -1793,3 +1809,9 @@ search_recipe_post_process:
       Fit TTFT vs ISL with linear regression; refit quadratic when r^2 is
       below the configured floor (default 0.85). Used by the
       prefill-ttft-curve recipe.
+  itl_surface_fit:
+    class: aiperf.search_recipes.post_process:ItlSurfaceFit
+    description: |
+      Build an axis-aligned ITL(concurrency, OSL) surface from a 2D grid
+      sweep. Emits raw points + grid with nulls for unmeasured cells. Used
+      by the decode-itl-curve recipe.

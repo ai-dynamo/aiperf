@@ -13,6 +13,8 @@ Built-in handlers:
 - :class:`DegradationKneeDetect` -- p99 latency knee for ``concurrency-ramp``.
 - :class:`TTFTCurveFit` -- linear/quadratic TTFT vs ISL fit for
   ``prefill-ttft-curve``.
+- :class:`ItlSurfaceFit` -- 2D ITL(concurrency, OSL) surface for
+  ``decode-itl-curve``.
 
 Handlers are registered under the ``search_recipe_post_process`` plugin
 category and looked up by name at the hook site.
@@ -26,6 +28,7 @@ import numpy as np
 
 __all__ = [
     "DegradationKneeDetect",
+    "ItlSurfaceFit",
     "PostProcessHandler",
     "TTFTCurveFit",
 ]
@@ -315,3 +318,152 @@ def _polyfit_with_r2(
     ss_tot = float(np.sum((y - y_mean) ** 2))
     r_squared = 0.0 if ss_tot == 0.0 else 1.0 - (ss_res / ss_tot)
     return list(coeffs), r_squared
+
+
+def _extract_2d_points(
+    sweep_aggregate: dict[str, Any],
+    *,
+    concurrency_param: str,
+    osl_param: str,
+    metric_tag: str,
+    stat: str,
+) -> list[tuple[float, float, float]]:
+    """Pull ``(concurrency, osl, metric_value)`` triples from the sweep aggregate.
+
+    Mirrors :func:`_extract_points` for two swept dimensions. Tolerates both
+    flat-key (``<metric_tag>_<stat>``) and tag-only blocks per sweep-aggregate
+    layouts produced by single-trial vs multi-trial paths in
+    :class:`SweepAnalyzer`. Skips rows missing either swept-parameter key or
+    the requested metric block.
+
+    Returns a flat list of triples sorted by ``(concurrency, osl)`` for stable
+    grid construction. Raises ``ValueError`` when no rows remain after filtering
+    so handlers fail loudly rather than emit an empty surface silently.
+    """
+    rows = sweep_aggregate.get("per_combination_metrics") or []
+    flat_key = f"{metric_tag}_{stat}"
+    triples: list[tuple[float, float, float]] = []
+    for row in rows:
+        params = row.get("parameters") or {}
+        metrics = row.get("metrics") or {}
+        if concurrency_param not in params or osl_param not in params:
+            continue
+        block = metrics.get(flat_key)
+        if block is None or "mean" not in block:
+            block = metrics.get(metric_tag)
+        if block is None or "mean" not in block:
+            continue
+        triples.append(
+            (
+                float(params[concurrency_param]),
+                float(params[osl_param]),
+                float(block["mean"]),
+            )
+        )
+    if not triples:
+        raise ValueError(
+            f"itl_surface_fit: sweep aggregate has no rows with parameters "
+            f"{concurrency_param!r} + {osl_param!r} and metric "
+            f"{metric_tag!r} (flat key {flat_key!r}); check that the recipe "
+            "swept both axes and streaming was enabled."
+        )
+    triples.sort(key=lambda t: (t[0], t[1]))
+    return triples
+
+
+class ItlSurfaceFit:
+    """Build a 2D ITL(concurrency, OSL) surface from a grid sweep.
+
+    Used by the ``decode-itl-curve`` recipe. Walks
+    ``per_combination_metrics`` for ``(concurrency, OSL, ITL)`` triples,
+    builds an axis-aligned grid keyed by the unique sorted concurrency and
+    OSL values found in the sweep, and emits ``null`` (JSON) for cells where
+    no triple was measured.
+
+    The "bilinear" surface is the as-measured grid itself; downstream
+    consumers (Dynamo profiler, plotting tools) interpolate between cells.
+    Genuinely missing cells stay ``null`` -- the handler refuses to invent
+    values for them.
+
+    Required ``params`` keys:
+
+    - ``metric_tag`` (str): ITL metric tag, typically ``"inter_token_latency"``.
+    - ``stat`` (str): statistic, e.g. ``"avg"``.
+    - ``concurrency_param`` (str): dotted-path swept on the concurrency axis,
+      e.g. ``"phases.profiling.concurrency"``.
+    - ``osl_param`` (str): dotted-path swept on the OSL axis, e.g.
+      ``"phases.profiling.synthetic_output_tokens.mean"``.
+
+    Returns a dict with ``swept_metric``, ``stat``, ``swept_params``,
+    ``raw_points``, and a ``surface`` block:
+    ``{"concurrency_axis": [...], "osl_axis": [...], "itl_grid": [[...]]}``.
+    ``itl_grid[i][j]`` is the ITL value at ``concurrency_axis[i]``,
+    ``osl_axis[j]`` (or ``None`` when no triple measured).
+
+    Example:
+        >>> handler = ItlSurfaceFit()
+        >>> agg = {"per_combination_metrics": [
+        ...     {"parameters": {"phases.profiling.concurrency": 1,
+        ...                     "phases.profiling.synthetic_output_tokens.mean": 64},
+        ...      "metrics": {"inter_token_latency_avg": {"mean": 10.0}}},
+        ...     {"parameters": {"phases.profiling.concurrency": 1,
+        ...                     "phases.profiling.synthetic_output_tokens.mean": 256},
+        ...      "metrics": {"inter_token_latency_avg": {"mean": 12.0}}},
+        ... ]}
+        >>> out = handler.process(agg, {
+        ...     "metric_tag": "inter_token_latency", "stat": "avg",
+        ...     "concurrency_param": "phases.profiling.concurrency",
+        ...     "osl_param": "phases.profiling.synthetic_output_tokens.mean",
+        ... })
+        >>> out["surface"]["concurrency_axis"]
+        [1.0]
+    """
+
+    name: ClassVar[str] = "itl_surface_fit"
+    description: ClassVar[str] = (
+        "Build an axis-aligned ITL(concurrency, OSL) surface from a 2D grid "
+        "sweep; emit raw points + grid with nulls for unmeasured cells."
+    )
+
+    def process(
+        self,
+        sweep_aggregate: dict[str, Any],
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        metric_tag = str(params["metric_tag"])
+        stat = str(params["stat"])
+        concurrency_param = str(params["concurrency_param"])
+        osl_param = str(params["osl_param"])
+
+        triples = _extract_2d_points(
+            sweep_aggregate,
+            concurrency_param=concurrency_param,
+            osl_param=osl_param,
+            metric_tag=metric_tag,
+            stat=stat,
+        )
+
+        # Build axes from observed unique values rather than from recipe
+        # defaults so missing cells are detected (not silently filled).
+        concurrency_axis = sorted({t[0] for t in triples})
+        osl_axis = sorted({t[1] for t in triples})
+        cell_index: dict[tuple[float, float], float] = {
+            (c, o): v for c, o, v in triples
+        }
+        itl_grid: list[list[float | None]] = [
+            [cell_index.get((c, o)) for o in osl_axis] for c in concurrency_axis
+        ]
+
+        return {
+            "swept_metric": metric_tag,
+            "stat": stat,
+            "swept_params": [concurrency_param, osl_param],
+            "raw_points": [
+                {"concurrency": c, "osl": o, "itl_ms": v} for c, o, v in triples
+            ],
+            "surface": {
+                "concurrency_axis": concurrency_axis,
+                "osl_axis": osl_axis,
+                "itl_grid": itl_grid,
+            },
+        }

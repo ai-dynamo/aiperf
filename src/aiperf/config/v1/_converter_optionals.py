@@ -247,6 +247,8 @@ def _invoke_recipe(user: UserConfig, lg: Any, user_set: set[str]) -> Any:
     sla_targets: dict[str, float] = {}
     if "ttft_sla_ms" in user_set and lg.ttft_sla_ms is not None:
         sla_targets["ttft_sla_ms"] = float(lg.ttft_sla_ms)
+    if "itl_sla_ms" in user_set and lg.itl_sla_ms is not None:
+        sla_targets["itl_sla_ms"] = float(lg.itl_sla_ms)
 
     sweep_overrides: dict[str, Any] = {}
     for key in ("degradation_threshold", "isl_min", "isl_max"):
