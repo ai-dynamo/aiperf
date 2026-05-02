@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat
+from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig, BenchmarkPlan
 from aiperf.orchestrator.convergence.ci_width import CIWidthConvergence
@@ -62,6 +62,7 @@ def _make_plan(
         convergence_stat=convergence_stat,
         convergence_threshold=convergence_threshold,
         export_level=export_level,
+        parameter_sweep_mode=SweepMode.INDEPENDENT,
         **overrides,
     )
 
