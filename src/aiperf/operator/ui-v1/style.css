@@ -3175,21 +3175,24 @@ select, input {
   border-left: 1px solid var(--border);
   background: var(--bg-raised);
   position: sticky;
-  top: var(--top-bar-height, 48px);
+  top: 0;
   align-self: start;
-  max-height: calc(100vh - var(--top-bar-height, 48px));
+  max-height: 100vh;
   overflow-y: auto;
   display: flex; flex-direction: column;
   gap: var(--space-3);
 }
 
-/* Identity bar — sticky title strip above the body grid. */
+/* Identity bar — sticky title strip above the body grid. The shell's
+ * .content already owns the page scroll context (overflow-y: auto), so
+ * sticky elements anchor to .content's top edge — no top-bar-height
+ * offset is needed. */
 .job-detail__id {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   position: sticky;
-  top: var(--top-bar-height, 48px);
+  top: 0;
   z-index: 5;
 }
 .job-detail__id-row1 {
