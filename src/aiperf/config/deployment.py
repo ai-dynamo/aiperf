@@ -72,9 +72,12 @@ class PodTemplateConfig(BaseConfig):
         default_factory=dict,
         description="Additional pod labels",
     )
-    image_pull_secrets: list[str] = Field(
+    image_pull_secrets: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Image pull secret names",
+        description=(
+            "Image pull secrets, K8s LocalObjectReference shape: "
+            "`[{name: secretName}, ...]`."
+        ),
     )
     service_account_name: str | None = Field(
         default=None,

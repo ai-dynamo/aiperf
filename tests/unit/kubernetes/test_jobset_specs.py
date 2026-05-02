@@ -70,11 +70,13 @@ class TestPodSpecSchedulingOverrides:
             {"key": "nvidia.com/gpu", "operator": "Exists"}
         ]
 
-    def test_image_pull_secrets_converted_to_objects(
+    def test_image_pull_secrets_pass_through(
         self, minimal_container: AIPerfContainerSpec
     ) -> None:
-        """Bare secret names must be wrapped as ``{"name": ...}`` objects."""
-        template = PodTemplateConfig(image_pull_secrets=["secret-a", "secret-b"])
+        """imagePullSecrets is k8s-native ``[{name: ...}]`` end-to-end."""
+        template = PodTemplateConfig(
+            image_pull_secrets=[{"name": "secret-a"}, {"name": "secret-b"}]
+        )
         job = AIPerfReplicatedJobSpec(
             name="workers", containers=[minimal_container], pod_template=template
         )

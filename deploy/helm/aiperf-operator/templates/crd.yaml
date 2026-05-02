@@ -100,86 +100,22 @@ spec:
                   boundaries and normalized by the operator before validation.
                 properties:
                   models:
-                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                     description: Model configuration. Accepts a single model name string, a list of model names, or an advanced
                       configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.
-                    properties:
-                      strategy:
-                        type: string
-                        description: Strategy for selecting models when multiple are configured. round_robin cycles through
-                          models, random selects randomly, weighted uses configured weights, modality_aware routes by input
-                          type.
-                        enum:
-                        - round_robin
-                        - random
-                        - weighted
-                      items:
-                        type: array
-                        description: List of model configurations. At least one model required.
-                        items:
-                          type: object
-                          description: |-
-                            Configuration for a single model in advanced models configuration.
-
-                            Used when the models section uses the advanced format with
-                            explicit items, weights, and per-model settings.
-                          properties:
-                            name:
-                              type: string
-                              description: Model name or identifier as known to the inference server.
-                            weight:
-                              type: number
-                              minimum: 0.0
-                              maximum: 1.0
-                              description: 'Selection weight for weighted strategy (0.0-1.0). Weights are normalized across
-                                all models. Example: weight=0.7 means ~70%% of requests to this model.'
-                            lora:
-                              type: string
-                              description: LoRA adapter name to load with this model. Server must support dynamic LoRA adapter
-                                loading.
-                            modalities:
-                              type: array
-                              items:
-                                type: string
-                              description: 'List of input modalities this model supports. Used with modality_aware selection
-                                strategy. Valid values: ''text'', ''image'', ''audio'', ''video''.'
-                            tokenizer:
-                              type: object
-                              description: |-
-                                Per-model tokenizer override configuration.
-
-                                Allows specifying a different tokenizer for a specific model,
-                                useful when models require specialized tokenization.
-                              properties:
-                                name:
-                                  type: string
-                                  description: HuggingFace tokenizer identifier or local filesystem path.
-                              required:
-                              - name
-                          required:
-                          - name
-                        minItems: 1
-                    required:
-                    - items
-                    x-kubernetes-preserve-unknown-fields: true
                   model:
                     description: Shorthand sibling for `models`. Accepts a string, list of strings, or ModelsAdvanced object.
                       Hoisted into `models` by the before-validator and not present after validation.
                     x-kubernetes-preserve-unknown-fields: true
-                    type: object
                   endpoint:
                     type: object
                     description: Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication,
                       timeout, and connection settings.
                     properties:
                       urls:
-                        type: array
+                        x-kubernetes-preserve-unknown-fields: true
                         description: 'List of server URLs to benchmark. Requests distributed according to url_strategy. Example:
                           [''http://localhost:8000/v1/chat/completions'']'
-                        items:
-                          type: string
-                        minItems: 1
-                        x-kubernetes-preserve-unknown-fields: true
                       urlStrategy:
                         type: string
                         enum:
@@ -305,7 +241,7 @@ spec:
                         type: object
                         description: 'Additional fields to include in request body. Merged into every request. Common fields:
                           temperature, top_p, top_k, stop.'
-                        additionalProperties: true
+                        x-kubernetes-preserve-unknown-fields: true
                       downloadVideoContent:
                         type: boolean
                         description: For video generation endpoints, download the video content after generation completes.
@@ -328,8 +264,8 @@ spec:
                         && self.type == ''video_generation'')'
                       message: requestContentType='multipart/form-data' is only supported on endpoint.type='video_generation'
                         today
-                    - rule: self.urls.all(u, isURL(u))
-                      message: every endpoint.urls entry must be a valid URL
+                    - rule: '!has(self.path) || self.path.startsWith(''/'')'
+                      message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
                   datasets:
                     type: array
                     description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
@@ -344,7 +280,6 @@ spec:
                     description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into `datasets`
                       as a one-entry list with name='default' by the before-validator and not present after validation.
                     x-kubernetes-preserve-unknown-fields: true
-                    type: object
                   phases:
                     type: array
                     description: 'Ordered benchmark phases. Each entry must have a unique ''name'' (e.g. ''warmup'', ''profiling'').
@@ -360,12 +295,10 @@ spec:
                       warmup entry by the before-validator and not present after validation. Mutually exclusive with `phases`;
                       requires `profiling` alongside it.
                     x-kubernetes-preserve-unknown-fields: true
-                    type: object
                   profiling:
                     description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as the
                       profiling entry by the before-validator and not present after validation. Mutually exclusive with `phases`.
                     x-kubernetes-preserve-unknown-fields: true
-                    type: object
                   artifacts:
                     type: object
                     description: Artifacts configuration for benchmark output. Controls output directory and export formats.
@@ -490,89 +423,14 @@ spec:
                           or WorkerGroupManager after tokenizer validation. Excluded from JSON/YAML serialization. Do not
                           set in a CR spec — any user value is ignored.]
                   gpuTelemetry:
-                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                     description: 'GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization,
                       temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable.'
-                    properties:
-                      enabled:
-                        type: boolean
-                        description: Enable GPU telemetry collection. Set to false to disable.
-                        default: true
-                      urls:
-                        type: array
-                        description: 'DCGM exporter endpoint URLs. Example: http://localhost:9400/metrics'
-                        items:
-                          type: string
-                      metricsFile:
-                        type: string
-                        description: Path to CSV file with pre-recorded GPU metrics. Alternative to live DCGM collection.
-                      collector:
-                        type: string
-                        enum:
-                        - dcgm
-                        - pynvml
-                        description: GPU telemetry collector backend. Use 'dcgm' for DCGM exporter endpoints or 'pynvml' for
-                          local PyNVML collection.
-                      mode:
-                        type: string
-                        description: GPU telemetry display mode. Summary emits aggregate console output; realtime_dashboard
-                          enables live dashboard updates.
-                        enum:
-                        - summary
-                        - realtime_dashboard
-                    x-kubernetes-preserve-unknown-fields: true
                   serverMetrics:
-                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                     description: 'Server metrics configuration for Prometheus scraping. Collects operational metrics (queue
                       depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled:
                       false to disable.'
-                    properties:
-                      enabled:
-                        type: boolean
-                        description: Enable Prometheus metrics scraping. Set to false to disable.
-                        default: true
-                      urls:
-                        type: array
-                        description: Prometheus metrics endpoint URLs to scrape. Typically the /metrics endpoint on inference
-                          servers.
-                        items:
-                          type: string
-                      formats:
-                        type: array
-                        description: 'Export formats for scraped metrics. Options: json, csv, parquet, jsonl.'
-                        items:
-                          type: string
-                          description: |-
-                            Format options for server metrics export.
-
-                            Controls which output files are generated for server metrics data.
-                            Default selection is JSON + CSV (JSONL excluded to avoid large files).
-                          enum:
-                          - json
-                          - csv
-                          - jsonl
-                          - parquet
-                      discovery:
-                        type: object
-                        description: Auto-discovery of Prometheus endpoints in Kubernetes. Discovers pods via Dynamo labels,
-                          Prometheus annotations, or custom label selectors.
-                        properties:
-                          mode:
-                            type: string
-                            description: 'Discovery mode: ''auto'' detects environment and tries K8s if in-cluster, ''kubernetes''
-                              forces K8s API discovery, ''disabled'' uses only explicit URLs.'
-                            enum:
-                            - auto
-                            - kubernetes
-                            - disabled
-                          labelSelector:
-                            type: string
-                            description: 'Kubernetes label selector for discovery. Example: ''app=vllm,env=prod''. Applied
-                              in addition to built-in Dynamo and Prometheus discovery.'
-                          namespace:
-                            type: string
-                            description: Kubernetes namespace to search. If not specified, searches all namespaces.
-                    x-kubernetes-preserve-unknown-fields: true
                   runtime:
                     type: object
                     description: Runtime configuration for worker processes and inter-process communication.
@@ -734,7 +592,7 @@ spec:
                     description: User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load. Preserved
                       on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve them again at
                       run time.
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
                   sweep:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
@@ -845,25 +703,6 @@ spec:
                 required:
                 - endpoint
                 x-kubernetes-validations:
-                - rule: has(self.models) || has(self.model)
-                  message: 'benchmark requires either ''models'' (canonical: object with ''items'') or ''model'' (shorthand:
-                    string, list of strings, or ModelsAdvanced object). The operator hoists ''model'' into ''models'' before
-                    validation.'
-                - rule: has(self.datasets) || has(self.dataset)
-                  message: 'benchmark requires either ''datasets'' (canonical: list with named entries) or ''dataset'' (shorthand:
-                    single dict, hoisted into a one-entry ''datasets'' list with name=''default'').'
-                - rule: has(self.phases) || has(self.warmup) || has(self.profiling)
-                  message: 'benchmark requires either ''phases'' (canonical: ordered list with named entries) or shorthand
-                    ''warmup''/''profiling'' phase dicts. Top-level ''warmup''/''profiling'' are hoisted into a [warmup, profiling]
-                    phases list before validation.'
-                - rule: '!(has(self.models) && has(self.model))'
-                  message: set 'models' (canonical) OR 'model' (shorthand), not both
-                - rule: '!(has(self.datasets) && has(self.dataset))'
-                  message: set 'datasets' (canonical) OR 'dataset' (shorthand), not both
-                - rule: '!(has(self.phases) && (has(self.warmup) || has(self.profiling)))'
-                  message: use 'phases' (canonical list) OR top-level 'warmup'/'profiling' shorthand, not both
-                - rule: '!has(self.warmup) || has(self.profiling)'
-                  message: '''warmup'' shorthand requires ''profiling'' alongside it; warmup-only runs are not supported'
                 - rule: '!has(self.multiRun) || !has(self.multiRun.parameterSweepSameSeed) || !self.multiRun.parameterSweepSameSeed
                     || has(self.randomSeed)'
                   message: multiRun.parameterSweepSameSeed=true requires randomSeed to be set; without a base seed every variation
@@ -920,19 +759,19 @@ spec:
                     description: Environment variables in K8s EnvVar format
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   volumes:
                     type: array
                     description: Pod volumes in K8s Volume format
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   volumeMounts:
                     type: array
                     description: Volume mounts in K8s VolumeMount format
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   nodeSelector:
                     type: object
                     description: Node selector labels
@@ -943,13 +782,13 @@ spec:
                     description: Pod tolerations for scheduling on tainted nodes
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   affinity:
                     type: object
                     description: Pod affinity/anti-affinity rules in K8s Affinity format (nodeAffinity, podAffinity, podAntiAffinity).
                       Use to co-locate or separate bench pods from other workloads (e.g. keep benchmark pods off inference
                       nodes via podAntiAffinity topologyKey=kubernetes.io/hostname).
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
                   annotations:
                     type: object
                     description: Additional pod annotations
@@ -962,16 +801,17 @@ spec:
                       type: string
                   imagePullSecrets:
                     type: array
-                    description: Image pull secret names
+                    description: 'Image pull secrets, K8s LocalObjectReference shape: `[{name: secretName}, ...]`.'
                     items:
-                      type: string
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                   serviceAccountName:
                     type: string
                     description: Service account name for pods
                   containerSecurityContext:
                     type: object
                     description: Container securityContext overrides (merged into each container spec)
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
                   shareProcessNamespace:
                     type: boolean
                     description: When true, all containers in the pod share a single PID namespace. Enables kubectl exec cross-container
@@ -994,14 +834,14 @@ spec:
                       independent of affinity rules.
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   hostAliases:
                     type: array
                     description: 'Entries appended to the pod''s /etc/hosts (K8s HostAlias format: {ip, hostnames: [...]}).
                       Useful when benchmarking endpoints that aren''t in cluster DNS.'
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   dnsPolicy:
                     type: string
                     enum:
@@ -1015,7 +855,7 @@ spec:
                     type: object
                     description: 'Pod DNS config (K8s PodDNSConfig format: nameservers, searches, options). Typically paired
                       with dns_policy=''None''.'
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
                   terminationGracePeriodSeconds:
                     type: integer
                     minimum: 0
@@ -1025,7 +865,7 @@ spec:
                     type: object
                     description: 'Pod-level securityContext (PodSecurityContext format: fsGroup, runAsUser, runAsNonRoot,
                       supplementalGroups, sysctls, etc.). Distinct from container_security_context which applies per-container.'
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
                   initContainers:
                     type: array
                     description: InitContainers that run to completion before the main containers start. Full K8s Container
@@ -1033,14 +873,14 @@ spec:
                       fixups.
                     items:
                       type: object
-                      additionalProperties: true
+                      x-kubernetes-preserve-unknown-fields: true
                   extraPodSpec:
                     type: object
                     description: 'Escape hatch: raw PodSpec keys merged into the rendered pod spec last (keys here override
                       typed fields above). Use for K8s PodSpec fields not yet modeled here (e.g. schedulingGates, resourceClaims,
                       overhead). Typed fields are preferred when available because preflight checks, env merging, and securityContext
                       merging only apply to typed fields.'
-                    additionalProperties: true
+                    x-kubernetes-preserve-unknown-fields: true
               scheduling:
                 type: object
                 description: Kueue scheduling configuration

@@ -254,7 +254,7 @@ def build_sample_pod_template() -> PodTemplateConfig:
         ],
         annotations={"custom/annotation": "value"},
         labels={"custom-label": "value"},
-        image_pull_secrets=["my-registry-secret"],
+        image_pull_secrets=[{"name": "my-registry-secret"}],
         env=[
             {"name": "CUSTOM_VAR", "value": "custom_value"},
             {

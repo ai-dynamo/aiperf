@@ -605,7 +605,7 @@ class TestCheckSecrets:
     @pytest.mark.asyncio
     async def test_all_secrets_exist(self) -> None:
         dc = DeploymentConfig(
-            pod_template=PodTemplateConfig(image_pull_secrets=["regcred"]),
+            pod_template=PodTemplateConfig(image_pull_secrets=[{"name": "regcred"}]),
         )
         checker = _make_checker(deploy_config=dc)
         mock_core = MagicMock(
@@ -618,7 +618,7 @@ class TestCheckSecrets:
     @pytest.mark.asyncio
     async def test_missing_secret_fails(self) -> None:
         dc = DeploymentConfig(
-            pod_template=PodTemplateConfig(image_pull_secrets=["regcred"]),
+            pod_template=PodTemplateConfig(image_pull_secrets=[{"name": "regcred"}]),
         )
         checker = _make_checker(deploy_config=dc)
         mock_core = MagicMock(
@@ -634,7 +634,7 @@ class TestCheckSecrets:
     @pytest.mark.asyncio
     async def test_forbidden_secret_warns(self) -> None:
         dc = DeploymentConfig(
-            pod_template=PodTemplateConfig(image_pull_secrets=["regcred"]),
+            pod_template=PodTemplateConfig(image_pull_secrets=[{"name": "regcred"}]),
         )
         checker = _make_checker(deploy_config=dc)
         mock_core = MagicMock(

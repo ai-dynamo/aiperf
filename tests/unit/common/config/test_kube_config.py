@@ -647,5 +647,5 @@ class TestToDeploymentConfig:
         assert result.pod_template.tolerations == [toleration]
         assert result.pod_template.annotations == {"owner": "ml-team"}
         assert result.pod_template.labels == {"env": "prod"}
-        assert result.pod_template.image_pull_secrets == ["registry-creds"]
+        assert result.pod_template.image_pull_secrets == [{"name": "registry-creds"}]
         assert result.pod_template.service_account_name == "bench-sa"

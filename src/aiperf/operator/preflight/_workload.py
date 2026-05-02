@@ -21,7 +21,9 @@ from aiperf.operator.preflight._common import PUBLIC_REGISTRIES
 def _collect_referenced_secrets(pod_template) -> set[str]:
     """Collect all secret names referenced by pull secrets, volumes, and env."""
     needed: set[str] = set()
-    needed.update(pod_template.image_pull_secrets)
+    for ips in pod_template.image_pull_secrets:
+        if name := ips.get("name"):
+            needed.add(name)
     for vol in pod_template.volumes:
         secret = vol.get("secret", {})
         if secret_name := secret.get("secretName"):

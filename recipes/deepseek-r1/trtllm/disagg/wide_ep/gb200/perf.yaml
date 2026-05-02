@@ -61,7 +61,7 @@ spec:
       record_processors: 32
   podTemplate:
     imagePullSecrets:
-      - nvcrimagepullsecret
+      - {name: nvcrimagepullsecret}
     affinity:
       podAntiAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:

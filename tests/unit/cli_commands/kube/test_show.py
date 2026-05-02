@@ -112,7 +112,7 @@ def test_show_passes_through_non_benchmark_fields(
     doc["spec"]["image"] = "custom-image:v1"
     doc["spec"]["connectionsPerWorker"] = 200
     doc["spec"]["podTemplate"] = {
-        "imagePullSecrets": ["mysecret"],
+        "imagePullSecrets": [{"name": "mysecret"}],
         "env": [{"name": "X", "value": "y"}],
     }
     path = _write(tmp_path / "job.yaml", doc)
@@ -125,7 +125,7 @@ def test_show_passes_through_non_benchmark_fields(
     assert rendered["metadata"]["name"] == "test-job"
     assert rendered["spec"]["image"] == "custom-image:v1"
     assert rendered["spec"]["connectionsPerWorker"] == 200
-    assert rendered["spec"]["podTemplate"]["imagePullSecrets"] == ["mysecret"]
+    assert rendered["spec"]["podTemplate"]["imagePullSecrets"] == [{"name": "mysecret"}]
     assert rendered["spec"]["podTemplate"]["env"] == [{"name": "X", "value": "y"}]
 
 

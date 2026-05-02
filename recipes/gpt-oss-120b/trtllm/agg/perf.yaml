@@ -62,7 +62,7 @@ spec:
       record_processors: 32
   podTemplate:
     imagePullSecrets:
-      - nvcrimagepullsecret
+      - {name: nvcrimagepullsecret}
     env:
       - name: AIPERF_HTTP_CONNECTION_LIMIT
         value: "252"

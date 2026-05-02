@@ -65,7 +65,7 @@ spec:
         operator: Exists
         effect: NoSchedule
     imagePullSecrets:
-      - my-registry-secret
+      - {name: my-registry-secret}
     env:
       - name: AIPERF_HTTP_CONNECTION_LIMIT
         value: "200"

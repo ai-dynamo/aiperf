@@ -140,7 +140,7 @@ class TestReplicatedJobSpec:
             tolerations=[{"key": "gpu", "operator": "Exists"}],
             annotations={"custom/annotation": "value"},
             labels={"custom-label": "value"},
-            image_pull_secrets=["my-registry"],
+            image_pull_secrets=[{"name": "my-registry"}],
             service_account_name="my-sa",
         )
         job = AIPerfReplicatedJobSpec(

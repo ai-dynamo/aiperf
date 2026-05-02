@@ -107,7 +107,7 @@ def build_full_aiperfjob_spec() -> dict[str, Any]:
             ],
             "annotations": {"prometheus.io/scrape": "true"},
             "labels": {"team": "ml-platform"},
-            "imagePullSecrets": ["my-registry-secret"],
+            "imagePullSecrets": [{"name": "my-registry-secret"}],
             "serviceAccountName": "aiperf-sa",
             "env": [
                 {"name": "DEBUG", "value": "true"},

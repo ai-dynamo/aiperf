@@ -331,7 +331,7 @@ class KubeOptions(KubeManageOptions):
             tolerations=self.tolerations,
             annotations=self.annotations,
             labels=self.labels,
-            image_pull_secrets=self.image_pull_secrets,
+            image_pull_secrets=[{"name": s} for s in self.image_pull_secrets],
             service_account_name=self.service_account,
         )
 

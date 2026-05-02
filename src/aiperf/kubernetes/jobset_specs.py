@@ -137,9 +137,7 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
             if value:
                 pod_spec[key] = value
         if tmpl.image_pull_secrets:
-            pod_spec["imagePullSecrets"] = [
-                {"name": name} for name in tmpl.image_pull_secrets
-            ]
+            pod_spec["imagePullSecrets"] = list(tmpl.image_pull_secrets)
         if tmpl.share_process_namespace:
             pod_spec["shareProcessNamespace"] = True
         if tmpl.termination_grace_period_seconds is not None:

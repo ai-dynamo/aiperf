@@ -61,8 +61,12 @@ spec:
       type: concurrency
 ```
 
-You **cannot** mix the two forms for the same slot (apiserver rejects with
-`set 'datasets' (canonical) OR 'dataset' (shorthand), not both`).
+You **cannot** mix the two forms for the same slot — the operator's
+`normalize_before_validation` raises a Pydantic ``ValueError`` on reconcile
+(`status.phase=Failed` with `set 'datasets' (canonical) OR 'dataset'
+(shorthand), not both`). The check can't move to CEL because the shorthand
+fields are typeless preserve-unknown siblings — see the "Rules NOT enforced
+at apiserver level" table below.
 
 ## Rule catalog
 
@@ -74,13 +78,6 @@ counterpart are new invariants the apiserver enforces at admission.
 
 | Tier | Rule | Mirrors |
 |---|---|---|
-| 1A | `has(self.models) || has(self.model)` | structural `required` (replaced) |
-| 1A | `has(self.datasets) || has(self.dataset)` | structural `required` (replaced) |
-| 1A | `has(self.phases) || has(self.warmup) || has(self.profiling)` | structural `required` (replaced) |
-| 1A | `!(has(self.models) && has(self.model))` | shorthand normalizer in `config.py:normalize_before_validation` |
-| 1A | `!(has(self.datasets) && has(self.dataset))` | shorthand normalizer |
-| 1A | `!(has(self.phases) && (has(self.warmup) || has(self.profiling)))` | shorthand normalizer |
-| 1A | `!has(self.warmup) || has(self.profiling)` | shorthand normalizer |
 | 2G | `parameterSweepSameSeed=true ⇒ randomSeed` | `validate_sweep_same_seed_requires_seed` |
 | 2I | `sweep ⇒ ui ≠ 'dashboard'` | `validate_sweep_no_dashboard_ui` |
 
@@ -152,6 +149,8 @@ decorators and surface only on reconcile:
 
 | Python validator | Why CEL can't see it |
 |---|---|
+| `normalize_before_validation` (shorthand-or-canonical OR-requirement) | needs `has(self.model)` etc; shorthand siblings are typeless preserve-unknown fields |
+| `normalize_before_validation` (shorthand-and-canonical mutual exclusion) | same — typeless preserve-unknown fields |
 | `validate_phase_names_unique` | needs `phases[].name`; items are opaque |
 | `validate_datasets_unique_names` | needs `datasets[].name`; items are opaque |
 | `validate_dataset_references` | needs `phases[].dataset` and `datasets[].name` |

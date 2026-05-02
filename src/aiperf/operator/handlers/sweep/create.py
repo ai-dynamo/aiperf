@@ -335,11 +335,7 @@ async def _create_sweep_controller_jobset(
         "securityContext",
     ):
         if key in pod_template and pod_template[key] is not None:
-            value = pod_template[key]
-            if key == "imagePullSecrets" and value and isinstance(value[0], str):
-                # CRD takes a list of bare names; native PodSpec wants {name: ...}.
-                value = [{"name": s} for s in value]
-            pod_spec[key] = value
+            pod_spec[key] = pod_template[key]
 
     jobset_body = {
         "apiVersion": "jobset.x-k8s.io/v1alpha2",

@@ -198,8 +198,7 @@ Or in YAML:
 spec:
   podTemplate:
     imagePullSecrets:
-      - my-registry
-```
+      - {name: my-registry}```
 
 ### API Keys and Secrets
 

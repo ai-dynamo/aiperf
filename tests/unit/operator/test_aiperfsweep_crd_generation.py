@@ -192,26 +192,38 @@ def test_benchmark_required_excludes_shorthand_canonicals_aiperfsweep():
         assert canonical not in required
 
 
-def test_benchmark_cel_rules_accept_shorthand_or_canonical_aiperfjob():
-    """CEL ``x-kubernetes-validations`` must enforce the OR-of-shorthand rule.
+def test_benchmark_cel_rules_omit_typeless_shorthand_aiperfjob():
+    """Shorthand-or-canonical CEL rules must NOT be emitted.
 
-    Each canonical-name slot pairs with at least one shorthand sibling; the
-    rule must say ``has(self.canonical) || has(self.shorthand[, ...])``.
+    ``model``/``dataset``/``warmup``/``profiling`` are typeless
+    preserve-unknown siblings (must accept scalar, list, or object). CEL
+    ``has(self.X)`` won't compile against a typeless field — the
+    apiserver refuses the entire CRD if those rules are present.
+    Enforcement lives in ``normalize_before_validation`` in
+    ``src/aiperf/config/config.py`` instead.
     """
     benchmark = _benchmark_node_aiperfjob()
-    rules = {r["rule"]: r for r in benchmark.get("x-kubernetes-validations", [])}
-    assert "has(self.models) || has(self.model)" in rules
-    assert "has(self.datasets) || has(self.dataset)" in rules
-    assert "has(self.phases) || has(self.warmup) || has(self.profiling)" in rules
+    rules = {r["rule"] for r in benchmark.get("x-kubernetes-validations", [])}
+    forbidden = {
+        "has(self.models) || has(self.model)",
+        "has(self.datasets) || has(self.dataset)",
+        "has(self.phases) || has(self.warmup) || has(self.profiling)",
+    }
+    assert not (rules & forbidden), (
+        f"shorthand-referencing CEL rules must be removed (got {rules & forbidden})"
+    )
 
 
-def test_benchmark_cel_rules_accept_shorthand_or_canonical_aiperfsweep():
-    """Inner template benchmark also carries the relaxation rules."""
+def test_benchmark_cel_rules_omit_typeless_shorthand_aiperfsweep():
+    """Inner template benchmark must also omit the typeless-shorthand rules."""
     benchmark = _benchmark_node_aiperfsweep()
-    rules = {r["rule"]: r for r in benchmark.get("x-kubernetes-validations", [])}
-    assert "has(self.models) || has(self.model)" in rules
-    assert "has(self.datasets) || has(self.dataset)" in rules
-    assert "has(self.phases) || has(self.warmup) || has(self.profiling)" in rules
+    rules = {r["rule"] for r in benchmark.get("x-kubernetes-validations", [])}
+    forbidden = {
+        "has(self.models) || has(self.model)",
+        "has(self.datasets) || has(self.dataset)",
+        "has(self.phases) || has(self.warmup) || has(self.profiling)",
+    }
+    assert not (rules & forbidden)
 
 
 def test_runtime_apihost_requires_apiport_cel_rule():
@@ -238,14 +250,24 @@ def _benchmark_rules_aiperfsweep() -> set[str]:
 
 
 def test_benchmark_mutual_exclusion_canonical_and_shorthand():
-    """A user that sets both forms (e.g. models AND model) gets rejected."""
+    """Shorthand-and-canonical mutual-exclusion rules must NOT be emitted.
+
+    Same typeless-field reason as the OR-rules: the apiserver rejects the
+    CRD if it sees ``has(self.model)`` etc. against a preserve-unknown
+    sibling. ``normalize_before_validation`` raises a Pydantic
+    ``ValueError`` when both forms are set, so the operator surfaces the
+    failure on reconcile.
+    """
+    forbidden = {
+        "!(has(self.models) && has(self.model))",
+        "!(has(self.datasets) && has(self.dataset))",
+        "!(has(self.phases) && (has(self.warmup) || has(self.profiling)))",
+        "!has(self.warmup) || has(self.profiling)",
+    }
     for rules in (_benchmark_rules_aiperfjob(), _benchmark_rules_aiperfsweep()):
-        assert "!(has(self.models) && has(self.model))" in rules
-        assert "!(has(self.datasets) && has(self.dataset))" in rules
-        assert (
-            "!(has(self.phases) && (has(self.warmup) || has(self.profiling)))" in rules
+        assert not (rules & forbidden), (
+            f"shorthand-referencing CEL rules must be removed (got {rules & forbidden})"
         )
-        assert "!has(self.warmup) || has(self.profiling)" in rules
 
 
 # -----------------------------------------------------------------------------

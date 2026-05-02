@@ -133,6 +133,26 @@ def _convert_schema(
     if not schema:
         return {}
 
+    # ``x-kubernetes-preserve-unknown-fields: true`` set as ``json_schema_extra``
+    # on a Pydantic field is the explicit author-side signal that the field is
+    # polymorphic at the CRD layer (the Pydantic ``BeforeValidator`` accepts
+    # string / list / object even though the type annotation is strict). Emit
+    # a typeless polymorphic node with the mixed-union sentinel so admission
+    # accepts every legal shape and the post-pass leaves it typeless. Without
+    # this short-circuit the recursive walker would emit the resolved strict
+    # shape (e.g. ``ModelsAdvanced.items``) and reject the list/string forms
+    # that recipes use (``models: [<id>]``).
+    if schema.get("x-kubernetes-preserve-unknown-fields") and (
+        "$ref" in schema or "type" in schema or "properties" in schema
+    ):
+        result: dict[str, Any] = {
+            "x-kubernetes-preserve-unknown-fields": True,
+            _MIXED_UNION_SENTINEL: True,
+        }
+        if "description" in schema and schema["description"]:
+            result["description"] = schema["description"]
+        return result
+
     if "$ref" in schema:
         resolved = _resolve_ref(schema["$ref"], defs)
         merged = _convert_schema(resolved, defs, depth)
@@ -172,8 +192,18 @@ def _convert_schema(
         # strict apiserver validation while keeping it visible in the CRD).
         if schema.get("x-kubernetes-preserve-unknown-fields"):
             result["x-kubernetes-preserve-unknown-fields"] = True
-            # The marker requires type=object on the K8s side.
-            result.setdefault("type", "object")
+            # ``Any | None`` (Pydantic emits anyOf:[{}, {type:null}]) means the
+            # field genuinely accepts strings, lists, or objects — that's the
+            # contract for shorthand siblings like ``model: "name"``,
+            # ``model: ["a","b"]``, and ``warmup: {type: concurrency, ...}``.
+            # Forcing ``type: object`` here would reject the scalar/list forms
+            # at admission. Mark with the mixed-union sentinel so the post-pass
+            # ``_ensure_type_on_preserve_unknown`` leaves the node typeless.
+            if not real_type:
+                result[_MIXED_UNION_SENTINEL] = True
+                result.pop("type", None)
+            else:
+                result.setdefault("type", "object")
         return result
 
     if "anyOf" in schema and not is_nullable:
@@ -315,7 +345,16 @@ def _convert_schema(
             ap = schema["additionalProperties"]
             if isinstance(ap, bool):
                 if ap:
-                    result["additionalProperties"] = ap
+                    # Pydantic emits ``additionalProperties: true`` for ``dict[str, Any]``.
+                    # K8s structural-schema strict-decode rejects unknown nested keys
+                    # under such items unless ``x-kubernetes-preserve-unknown-fields:
+                    # true`` is also set — ``additionalProperties: true`` alone is not
+                    # honored by the strict decoder. Translate so PodTemplateConfig
+                    # list-of-dict fields (volumes, env, volumeMounts, tolerations,
+                    # initContainers, hostAliases, topologySpreadConstraints,
+                    # imagePullSecrets) survive strict-decode of corev1-shaped sub-keys
+                    # (claimName, valueFrom.secretKeyRef, etc.).
+                    result["x-kubernetes-preserve-unknown-fields"] = True
             elif isinstance(ap, dict):
                 if "$ref" in ap or "type" in ap:
                     converted = _convert_schema(ap, defs, depth + 1)
@@ -388,16 +427,22 @@ def _decorate_aiperf_config_node(node: dict[str, Any]) -> None:
     Bundles every cross-field invariant declared on AIPerfConfig that the
     apiserver can enforce ahead of the operator's reconcile loop:
 
-    * Shorthand-or-canonical OR-requirement (replaces the structural
-      ``required`` list — the operator's before-validator hoists shorthand
-      after admission).
-    * Shorthand-and-canonical mutual exclusion (you can't set both forms).
     * Cross-field rules currently encoded as Pydantic ``@model_validator``
       decorators on ``AIPerfConfig`` and ``BenchmarkConfig``: dataset-name
       uniqueness, phase-name uniqueness, phase→dataset reference integrity,
       seamless-not-on-first-phase, ``parameter_sweep_same_seed`` requires
       ``random_seed``, dashboard UI incompatible with sweeps. See the named
       validators in ``src/aiperf/config/config.py``.
+
+    Shorthand siblings (``model``, ``dataset``, ``warmup``, ``profiling``)
+    accept scalar / list / object values and are emitted as typeless
+    ``x-kubernetes-preserve-unknown-fields`` so admission accepts all three
+    shapes. CEL cannot ``has()`` a typeless field — the apiserver refuses
+    to install rules that reference one. The shorthand-or-canonical
+    OR-requirement and the shorthand-and-canonical mutual exclusion
+    therefore stay in ``normalize_before_validation`` in
+    ``src/aiperf/config/config.py``; the operator surfaces them on
+    reconcile via ``status.phase=Failed``.
     """
     if not isinstance(node, dict):
         return
@@ -424,64 +469,6 @@ def _decorate_aiperf_config_node(node: dict[str, Any]) -> None:
     _add_validation_rules(
         node,
         (
-            # Tier 1A — OR-requirements (shorthand or canonical).
-            {
-                "rule": "has(self.models) || has(self.model)",
-                "message": (
-                    "benchmark requires either 'models' (canonical: object with "
-                    "'items') or 'model' (shorthand: string, list of strings, "
-                    "or ModelsAdvanced object). The operator hoists 'model' "
-                    "into 'models' before validation."
-                ),
-            },
-            {
-                "rule": "has(self.datasets) || has(self.dataset)",
-                "message": (
-                    "benchmark requires either 'datasets' (canonical: list "
-                    "with named entries) or 'dataset' (shorthand: single dict, "
-                    "hoisted into a one-entry 'datasets' list with "
-                    "name='default')."
-                ),
-            },
-            {
-                "rule": ("has(self.phases) || has(self.warmup) || has(self.profiling)"),
-                "message": (
-                    "benchmark requires either 'phases' (canonical: ordered "
-                    "list with named entries) or shorthand 'warmup'/"
-                    "'profiling' phase dicts. Top-level 'warmup'/'profiling' "
-                    "are hoisted into a [warmup, profiling] phases list "
-                    "before validation."
-                ),
-            },
-            # Tier 1A — mutual exclusion.
-            {
-                "rule": "!(has(self.models) && has(self.model))",
-                "message": (
-                    "set 'models' (canonical) OR 'model' (shorthand), not both"
-                ),
-            },
-            {
-                "rule": "!(has(self.datasets) && has(self.dataset))",
-                "message": (
-                    "set 'datasets' (canonical) OR 'dataset' (shorthand), not both"
-                ),
-            },
-            {
-                "rule": (
-                    "!(has(self.phases) && (has(self.warmup) || has(self.profiling)))"
-                ),
-                "message": (
-                    "use 'phases' (canonical list) OR top-level "
-                    "'warmup'/'profiling' shorthand, not both"
-                ),
-            },
-            {
-                "rule": "!has(self.warmup) || has(self.profiling)",
-                "message": (
-                    "'warmup' shorthand requires 'profiling' alongside it; "
-                    "warmup-only runs are not supported"
-                ),
-            },
             # Tier 2G — parameter_sweep_same_seed requires random_seed.
             {
                 "rule": (
@@ -508,11 +495,21 @@ def _decorate_aiperf_config_node(node: dict[str, Any]) -> None:
                     "ui='simple' or 'none' with sweep configurations."
                 ),
             },
-            # Tier 4P/4Q/4R skipped: the array items for `phases` and
-            # `datasets` are opaque (`x-kubernetes-preserve-unknown-fields`)
+            # Tier 1A shorthand rules skipped: ``model``/``dataset``/
+            # ``warmup``/``profiling`` are typeless preserve-unknown siblings
+            # (must accept scalar, list, or object). CEL ``has(self.X)`` won't
+            # compile against a typeless field — the apiserver refuses the
+            # CRD entirely. Shorthand-or-canonical OR-requirement and
+            # shorthand-and-canonical mutual exclusion stay in
+            # ``normalize_before_validation`` in
+            # ``src/aiperf/config/config.py`` and surface as
+            # ``status.phase=Failed`` after admission.
+            #
+            # Tier 4P/4Q/4R skipped: the array items for ``phases`` and
+            # ``datasets`` are opaque (``x-kubernetes-preserve-unknown-fields``)
             # because their entries are heterogeneous Pydantic discriminated
-            # unions. CEL can't dereference `phases[].name`, `datasets[].name`,
-            # `phases[].dataset`, or `phases[0].seamless` through opaque
+            # unions. CEL can't dereference ``phases[].name``, ``datasets[].name``,
+            # ``phases[].dataset``, or ``phases[0].seamless`` through opaque
             # items, so phase/dataset name uniqueness, phase→dataset
             # reference integrity, and "seamless not on first" stay enforced
             # in the operator-side Pydantic validators
@@ -570,10 +567,22 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
                     "supported on endpoint.type='video_generation' today"
                 ),
             },
-            # Tier 4O — every URL must be a valid URL.
+            # Tier 4O skipped: ``urls`` is a typeless preserve-unknown field
+            # (recipes pass plain string URLs that the apiserver must accept
+            # without structural validation). CEL ``self.urls.all(u, isURL(u))``
+            # won't compile against a typeless field; URL well-formedness is
+            # enforced by the Pydantic ``EndpointConfig`` validator.
+            # Tier 4 — endpoint.path must be an absolute HTTP path.
+            # A bare segment like ``v1/chat/completions`` (missing leading
+            # slash) silently sends to the wrong URL and surfaces as a 404
+            # at request time. Catching this at admission saves one round
+            # of "why is my benchmark hitting the wrong endpoint" debugging.
             {
-                "rule": "self.urls.all(u, isURL(u))",
-                "message": "every endpoint.urls entry must be a valid URL",
+                "rule": "!has(self.path) || self.path.startsWith(\'/\')",
+                "message": (
+                    "endpoint.path must start with \'/\' "
+                    "(e.g. \'/v1/chat/completions\', not \'v1/chat/completions\')"
+                ),
             },
         ),
     )

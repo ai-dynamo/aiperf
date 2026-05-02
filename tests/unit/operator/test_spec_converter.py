@@ -196,7 +196,7 @@ class TestToDeploymentConfig:
         assert deploy.pod_template.tolerations[0]["key"] == "nvidia.com/gpu"
         assert deploy.pod_template.annotations == {"prometheus.io/scrape": "true"}
         assert deploy.pod_template.labels == {"team": "ml-platform"}
-        assert deploy.pod_template.image_pull_secrets == ["my-registry-secret"]
+        assert deploy.pod_template.image_pull_secrets == [{"name": "my-registry-secret"}]
         assert deploy.pod_template.service_account_name == "aiperf-sa"
 
     def test_resource_mode_propagated(self) -> None:
