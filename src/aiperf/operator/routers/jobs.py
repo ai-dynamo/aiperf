@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,6 +26,7 @@ from aiperf.kubernetes.client import (
     list_nodes,
     list_pods_all_namespaces,
 )
+from aiperf.operator import runs_index
 from aiperf.operator.job_union import (
     find_any_job,
     list_all_jobs,
@@ -439,8 +441,6 @@ async def _list_job_epochs_impl(
     Returns an empty list when neither the index nor the disk has rows
     (job has never been persisted, or PVC directory was reaped).
     """
-    from aiperf.operator import runs_index
-
     # Resolve the live in-flight epoch from the CR (None if not running).
     live_running_epoch: str | None = None
     if api is not None:
@@ -502,12 +502,10 @@ async def _list_job_epochs_impl(
 
 
 def _iso_to_unix(ts: str | None) -> int | None:
-    """Parse a ``2026-05-01T00:00:00+00:00`` style timestamp to unix seconds; None on miss."""
-    if not ts:
+    """Parse a ``2026-05-01T00:00:00+00:00`` style timestamp to unix seconds; None on miss or non-string input."""
+    if not isinstance(ts, str):
         return None
     try:
-        from datetime import datetime
-
         # Accept both 'Z' suffix and explicit offsets.
         return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
     except (ValueError, TypeError):

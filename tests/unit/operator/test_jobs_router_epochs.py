@@ -174,6 +174,38 @@ def test_list_job_epochs_running_overrides_index_phase(
         asyncio.run(runs_index.close())
 
 
+def test_list_job_epochs_disk_fallback_marks_running_epoch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Disk-fallback path: row whose epoch matches the live runEpoch reports running."""
+    _write_summary(tmp_path, "bench", "j1", "1714069400")
+    from aiperf.operator.results_layout import write_latest
+
+    write_latest(tmp_path, "bench", "j1", "1714069400")
+
+    async def _running_cr(*_args, **_kwargs):
+        return {
+            "metadata": {"name": "j1", "namespace": "bench"},
+            "status": {"phase": "Running", "runEpoch": 1714069400},
+        }
+
+    from aiperf.operator.routers import jobs as jobs_module
+
+    monkeypatch.setattr(jobs_module, "get_raw_aiperfjob", _running_cr)
+
+    # No runs_index.open() — the index path returns nothing, disk fallback runs.
+    api = MagicMock()
+    c = _client(api, tmp_path)
+    r = c.get("/api/v1/jobs/bench/j1/epochs")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["epochs"]) == 1
+    assert body["epochs"][0]["status"] == "running"
+    # No timestamps from disk fallback.
+    assert body["epochs"][0]["startedAt"] is None
+    assert body["epochs"][0]["endedAt"] is None
+
+
 def test_list_job_epochs_phase_failed(tmp_path: Path, monkeypatch) -> None:
     """Phase=Failed in the index produces status=failed in the response."""
     import asyncio
