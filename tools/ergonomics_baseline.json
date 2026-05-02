@@ -198,6 +198,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/analysis/rebaseline_memory_constants.py",
+      "validate_time_series"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/validate_memory_estimator_against_findings.py",
+      "main"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_commands/kube/generate.py",
       "generate"
     ],
@@ -245,6 +255,11 @@
       "function-size",
       "src/aiperf/kubernetes/cli_helpers.py",
       "resolve_target"
+    ],
+    [
+      "function-size",
+      "src/aiperf/kubernetes/jobset_helpers.py",
+      "build_env_vars"
     ],
     [
       "function-size",

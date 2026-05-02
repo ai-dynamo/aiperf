@@ -309,6 +309,16 @@
     ],
     [
       "D103",
+      "src/aiperf/analysis/rebaseline_memory_constants.py",
+      "main"
+    ],
+    [
+      "D103",
+      "src/aiperf/analysis/validate_memory_estimator_against_findings.py",
+      "main"
+    ],
+    [
+      "D103",
       "src/aiperf/controller/system_controller.py",
       "profile_results_have_successes"
     ],
@@ -561,6 +571,11 @@
       "PLR0915",
       "src/aiperf/transports/aiohttp_trace.py",
       "create_aiohttp_trace_config"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/workers/worker_pod_tokenizer_download.py",
+      "download_tokenizer"
     ],
     [
       "TID251",
