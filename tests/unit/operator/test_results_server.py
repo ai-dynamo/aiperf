@@ -244,30 +244,13 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    def test_create_app_does_not_block_on_slow_dashboard_build(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import threading
-        import time
+    def test_results_server_mounts_dashboard_proxy_route(self, tmp_path: Path) -> None:
+        """results-server registers the /dashboard/{path:path} proxy route."""
+        from aiperf.operator.results_server import create_app
 
-        from aiperf.operator import results_server
-
-        started = threading.Event()
-
-        def slow_build(_base_dir: Path):
-            started.set()
-            time.sleep(0.5)
-            return None, 0
-
-        monkeypatch.setattr(results_server, "build_dashboard", slow_build)
-
-        t0 = time.monotonic()
-        app = results_server.create_app(tmp_path)
-        elapsed = time.monotonic() - t0
-
-        assert app is not None
-        assert elapsed < 0.2
-        assert started.is_set() is False
+        app = create_app(results_dir=tmp_path)
+        paths = {route.path for route in app.routes if hasattr(route, "path")}
+        assert "/dashboard/{path:path}" in paths
 
 
 # ============================================================
