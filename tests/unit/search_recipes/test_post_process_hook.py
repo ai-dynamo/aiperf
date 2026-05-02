@@ -163,3 +163,39 @@ async def test_post_process_hook_skipped_when_no_spec(tmp_path: Path):
     assert not (out_dir / "post_process_errors.json").exists()
     # No degradation_knee.json since there is no spec.
     assert not (out_dir / "degradation_knee.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_post_process_hook_quarantines_unregistered_handler(tmp_path: Path):
+    """Handler name that isn't in the plugin registry should land in errors,
+    not crash the sweep. Standard artifacts must still be written.
+
+    Locks in the BLE001 quarantine in run_post_process_hook so a regression
+    (e.g. someone removing the try/except for being "too broad") surfaces here.
+    """
+    spec = PostProcessSpec(
+        handler="not_a_real_handler",
+        params={},
+        output_filename="never_written.json",
+    )
+    plan = _make_plan(
+        configs=[_config(c) for c in (1, 50)],
+        post_process=spec,
+    )
+    results = [
+        _result_for("v0", 1, 10.0, 100.0),
+        _result_for("v1", 50, 11.0, 200.0),
+    ]
+    out_dir = await aggregate_sweep_and_export(results, plan, tmp_path, _logger())
+    assert out_dir is not None
+    # Standard artifacts survived.
+    assert (out_dir / "profile_export_aiperf_sweep.json").exists()
+    assert (out_dir / "profile_export_aiperf_sweep.csv").exists()
+    # Output file the bogus handler claimed was never written.
+    assert not (out_dir / "never_written.json").exists()
+    # Sidecar errors file names the missing handler.
+    errors_path = out_dir / "post_process_errors.json"
+    assert errors_path.exists()
+    payload = orjson.loads(errors_path.read_bytes())
+    assert payload["handler"] == "not_a_real_handler"
+    assert "error" in payload

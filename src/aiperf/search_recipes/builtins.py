@@ -131,6 +131,9 @@ def _logspace_int_steps(lo: float, hi: float, steps: int) -> list[int]:
     log_lo = math.log(lo)
     log_hi = math.log(hi)
     raw = [math.exp(log_lo + (log_hi - log_lo) * i / (steps - 1)) for i in range(steps)]
+    # ``max(..., 1)`` defends against ``lo < 1`` (e.g. a recipe author later
+    # passing 0.5 for fractional concurrency); for the current callers (lo>=1)
+    # this is always a no-op since round of a positive log-spaced value is >=1.
     rounded = sorted({max(int(round(v)), 1) for v in raw})
     return rounded
 

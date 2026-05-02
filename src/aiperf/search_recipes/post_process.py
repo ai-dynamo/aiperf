@@ -270,17 +270,26 @@ class TTFTCurveFit:
         fit_form = "linear"
         coefficients = linear_coeffs
         r_squared = linear_r2
+        below_floor = False
         if linear_r2 < r2_floor and len(points) >= 3:
             quadratic_coeffs, quadratic_r2 = _polyfit_with_r2(x, y, deg=2)
             if quadratic_r2 > linear_r2:
                 fit_form = "quadratic"
                 coefficients = quadratic_coeffs
                 r_squared = quadratic_r2
+        if r_squared < r2_floor:
+            # Either we had only 2 points (can't quadratic-refit) or the quadratic
+            # was no improvement; either way the chosen fit doesn't meet the
+            # configured floor. Surface it so downstream consumers can flag the
+            # curve as low-confidence rather than silently trusting bad coefficients.
+            below_floor = True
 
         return {
             "fit_form": fit_form,
             "coefficients": [float(c) for c in coefficients],
             "r_squared": float(r_squared),
+            "below_floor": below_floor,
+            "r_squared_floor": r2_floor,
             "raw_points": [{"isl": x_i, "ttft_ms": y_i} for x_i, y_i in points],
             "swept_metric": metric_tag,
             "stat": stat,

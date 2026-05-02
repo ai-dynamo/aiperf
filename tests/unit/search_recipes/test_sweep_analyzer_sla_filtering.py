@@ -126,3 +126,40 @@ def test_compute_accepts_filter_as_dict():
         ],
     )
     assert out["metadata"]["sla_constraints"]["feasible_count"] == 1
+
+
+def test_compute_reads_single_trial_tag_only_key_layout():
+    """Single-trial sweeps store ``"<metric_tag>": {"avg": v, "p99": v, ...}``
+    instead of the multi-trial flat ``"<metric_tag>_<stat>": {"mean": v}`` shape.
+
+    Locks in dual-key support in `_passes_filter` so single-trial sweeps don't
+    silently mark every combination infeasible due to key-shape mismatch.
+    """
+    # Single-trial layout: stat lives as a direct attribute on the metric dict.
+    single_trial_stats = {
+        ParameterCombination({"concurrency": 10}): {
+            "request_throughput": {"avg": 100.0, "p50": 99.0, "p99": 110.0},
+            "time_to_first_token": {"avg": 35.0, "p50": 34.0, "p99": 50.0},
+        },
+        ParameterCombination({"concurrency": 20}): {
+            "request_throughput": {"avg": 180.0, "p50": 175.0, "p99": 200.0},
+            "time_to_first_token": {"avg": 220.0, "p50": 210.0, "p99": 250.0},
+        },
+    }
+    out = SweepAnalyzer.compute(
+        single_trial_stats,
+        [{"name": "concurrency", "values": [10, 20]}],
+        sla_filters=[
+            SLAFilter(
+                metric_tag="time_to_first_token",
+                stat="p99",
+                op="lt",
+                threshold=200.0,
+            )
+        ],
+    )
+    constraints = out["metadata"]["sla_constraints"]
+    assert constraints["feasible_count"] == 1, (
+        "single-trial layout should produce one feasible combo (concurrency=10 has p99=50<200)"
+    )
+    assert constraints["infeasible_count"] == 1
