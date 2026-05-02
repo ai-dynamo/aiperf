@@ -1,5 +1,5 @@
 import { html } from 'htm/preact';
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette, modelColor } from '../lib/theme.js';
 import { query, setQuery } from '../lib/router.js';
@@ -616,10 +616,11 @@ export function Compare() {
     }
   }
 
-  const facets = extractFacets(storedJobs);
-  const filtered = applyJobFilters(storedJobs, {
-    nsFilter, modelFilter, endpointFilter, search,
-  });
+  const facets = useMemo(() => extractFacets(storedJobs), [storedJobs]);
+  const filtered = useMemo(
+    () => applyJobFilters(storedJobs, { nsFilter, modelFilter, endpointFilter, search }),
+    [storedJobs, nsFilter, modelFilter, endpointFilter, search],
+  );
   const anyFilterActive = nsFilter.size > 0 || modelFilter.size > 0 || endpointFilter.size > 0;
 
   const entries = compareData?.entries ?? [];
