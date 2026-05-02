@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import orjson
 from fastapi import APIRouter, HTTPException
@@ -47,6 +47,7 @@ from aiperf.operator.routers.jobs_models import (
     JobEventsResponse,
     JobPodSummary,
 )
+from aiperf.operator.runs_index_models import RunIndexRow
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client.models import V1Node, V1Pod
@@ -381,6 +382,39 @@ async def _get_job_impl(
         status=raw_status or {},
         pods=[_pod_summary(p) for p in pods_raw],
     )
+
+
+def derive_run_status(
+    row: RunIndexRow,
+    *,
+    live_running_epoch: str | None,
+) -> Literal["running", "succeeded", "failed", "cancelled", "unknown"]:
+    """Reconcile a runs-index row with the live CR into a single status enum.
+
+    The live in-flight epoch always reports ``"running"`` even if the index
+    row's ``phase`` lags behind (the index is updated on completion; the CR
+    is the truth-of-the-moment for "is this epoch alive right now?"). For
+    every other row, ``error`` overrides phase (a row that finished with an
+    error is failed, regardless of the phase column), and unknown phases
+    fall through to ``"unknown"`` rather than guessing.
+
+    Example:
+        >>> row = _some_row(phase="Succeeded")
+        >>> derive_run_status(row, live_running_epoch=None)
+        'succeeded'
+    """
+    if live_running_epoch is not None and row.epoch == live_running_epoch:
+        return "running"
+    if row.error:
+        return "failed"
+    phase = (row.phase or "").lower()
+    if phase == "succeeded":
+        return "succeeded"
+    if phase == "failed":
+        return "failed"
+    if phase == "cancelled":
+        return "cancelled"
+    return "unknown"
 
 
 async def _list_job_epochs_impl(
