@@ -6,6 +6,8 @@ import { query, setQuery } from '../lib/router.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
 import { fmtNumber } from '../lib/format.js';
+import { applyJobFilters, extractFacets, FILTER_NONE } from './compare-filters.js';
+export { applyJobFilters, extractFacets, FILTER_NONE };
 
 // Metrics where lower is better
 const LOWER_IS_BETTER = new Set([
