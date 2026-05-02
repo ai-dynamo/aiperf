@@ -3015,3 +3015,9 @@ select, input {
 @media (max-width: 900px) {
   .live-2col { grid-template-columns: 1fr; }
 }
+
+.live-charts-section-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 3px;
+}
