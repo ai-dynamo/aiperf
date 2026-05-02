@@ -212,6 +212,136 @@ multiRun:
     assert "multiRun" not in cr["spec"]["template"]["spec"]["benchmark"]
 
 
+def test_build_sweep_cr_dict_expands_singular_shorthand(tmp_path: Path) -> None:
+    """Bare AIPerfConfig YAML with `model:`/`dataset:`/`phases:` shorthand survives.
+
+    Regression: prior to the fix, ``_build_sweep_cr_dict`` dumped the raw YAML
+    straight into ``template.spec.benchmark`` without running it through
+    AIPerfConfig validation, so ``model: foo`` (singular) reached
+    ``AIPerfSweepSpec.model_validate`` unexpanded and tripped a
+    ``benchmark.models field required`` error. The shorthand must promote
+    just like ``aiperf kube profile -f`` does.
+    """
+    config_file = tmp_path / "shorthand.yaml"
+    config_file.write_text(
+        """
+model: shorthand-model
+endpoint:
+  url: http://mock:8000
+  type: chat
+  streaming: true
+dataset:
+  type: synthetic
+  prompts: {isl: 256, osl: 50}
+phases:
+  type: concurrency
+  concurrency: 4
+  requests: 30
+sweep:
+  type: grid
+  variables:
+    random_seed: [1, 2]
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    bench = cr["spec"]["template"]["spec"]["benchmark"]
+    assert [m["name"] for m in bench["models"]["items"]] == ["shorthand-model"]
+    # `dataset:` (singular) -> `datasets: [{name: default, ...}]`
+    assert any(d.get("name") == "default" for d in bench["datasets"])
+    # `phases:` (flat) -> `phases: [{name: default, ...}]`
+    assert any(p.get("name") == "default" for p in bench["phases"])
+
+
+def test_build_sweep_cr_dict_unwraps_aiperfjob_cr(tmp_path: Path) -> None:
+    """Passing an AIPerfJob CR YAML extracts ``spec.benchmark`` rather than
+    nesting the entire CR under ``template.spec.benchmark``.
+
+    Regression: ``aiperf kube init`` produces an AIPerfJob CR; users who fed
+    that file straight to ``aiperf kube sweep -f`` saw a stack of validation
+    errors (``benchmark.models field required`` etc.) because the apiVersion /
+    kind / metadata wrapper was being treated as benchmark fields.
+    """
+    config_file = tmp_path / "job-cr.yaml"
+    config_file.write_text(
+        """
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: my-bench
+spec:
+  benchmark:
+    model: cr-model
+    endpoint:
+      url: http://mock:8000
+      type: chat
+      streaming: true
+    dataset:
+      type: synthetic
+      prompts: {isl: 256, osl: 50}
+    phases:
+      type: concurrency
+      concurrency: 8
+      requests: 30
+    sweep:
+      type: grid
+      variables:
+        random_seed: [1, 2]
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    bench = cr["spec"]["template"]["spec"]["benchmark"]
+    # CR wrapper keys are NOT inside benchmark
+    for stray in ("apiVersion", "kind", "metadata", "spec"):
+        assert stray not in bench, f"{stray!r} leaked into benchmark"
+    assert [m["name"] for m in bench["models"]["items"]] == ["cr-model"]
+    # sweep block hoisted out of benchmark to spec.sweep
+    assert "sweep" not in bench
+    assert cr["spec"]["sweep"]["type"] == "grid"
+
+
+def test_build_sweep_cr_dict_rejects_aiperfsweep_cr(tmp_path: Path) -> None:
+    """An AIPerfSweep CR is already a sweep; reject with a pointer to kubectl."""
+    config_file = tmp_path / "sweep-cr.yaml"
+    config_file.write_text(
+        """
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfSweep
+metadata:
+  name: existing
+spec: {}
+"""
+    )
+    with pytest.raises(ValueError, match="already an AIPerfSweep CR"):
+        sweep_cmd._build_sweep_cr_dict(
+            config_file=config_file,
+            kube_options=_kube_options_mock(),
+            multi_run_trials=None,
+            cooldown_seconds=0,
+            convergence_metric=None,
+            convergence_min_runs=3,
+            convergence_max_runs=10,
+            convergence_threshold=0.05,
+        )
+
+
 # =============================================================================
 # Adversarial regression-locks for the just-landed bug-fixes.
 # =============================================================================
