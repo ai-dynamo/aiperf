@@ -8,6 +8,8 @@ the `bo` extra.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 skopt = pytest.importorskip("skopt")
@@ -157,3 +159,120 @@ def _make_result(variation: SweepVariation, *, throughput: float) -> RunResult:
         variation_label=variation.label,
         variation_values=variation.values,
     )
+
+
+# ----------------------------------------------------------------------------
+# Mathematical-correctness tests added in the post-integration math fix-up.
+# Cover: sample-vs-population variance for plateau, mean-≈-0 incoherence guard,
+# failed-iteration loss sign-flip consistency and empty-history sentinel.
+# ----------------------------------------------------------------------------
+
+
+def test_plateau_uses_sample_variance_not_population():
+    """Population variance (/n) trips ~12% earlier than sample variance (/n-1).
+
+    With objective values [99.0, 100.0, 101.0] (mean=100, max-min=2):
+      population stddev = sqrt((1+0+1)/3) = 0.8165 → CV = 0.008165
+      sample stddev     = sqrt((1+0+1)/2) = 1.0    → CV = 0.01
+    A threshold of 0.009 must NOT declare convergence (sample CV is over);
+    population formula would have falsely declared converged.
+    """
+    cfg = _cfg(max_iterations=20, plateau_window=3, plateau_threshold=0.009)
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    for value in (99.0, 100.0, 101.0):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=value)])
+    assert not planner.is_converged()
+
+
+def test_plateau_refuses_convergence_when_mean_is_zero():
+    """A zero-mean window has no scale; coefficient of variation is undefined.
+
+    The threshold is *relative* — applying it as absolute against zero-mean
+    values is dimensionally wrong (compares unitless ratio against the
+    metric's own units). Refuse to declare convergence in that regime.
+    """
+    cfg = _cfg(max_iterations=20, plateau_window=3, plateau_threshold=0.5)
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    # Symmetric values around zero: mean → 0, classical CV undefined.
+    for value in (-1e-6, 0.0, 1e-6):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=value)])
+    assert not planner.is_converged()
+
+
+def test_failed_iteration_loss_uses_finite_sentinel_with_no_history():
+    """No prior successful runs → sentinel loss; never inf/nan; same magnitude
+    regardless of direction (so the GP kernel matrix stays well-posed)."""
+    from aiperf.orchestrator.search_planner.bayesian import _NO_DATA_SENTINEL_LOSS
+
+    for direction in (OptimizationDirection.MAXIMIZE, OptimizationDirection.MINIMIZE):
+        cfg = _cfg(max_iterations=5, n_initial_points=1, objective_direction=direction)
+        planner = BayesianSearchPlanner(_base_config(), cfg)
+        loss = planner._failed_iteration_loss()
+        assert math.isfinite(loss)
+        assert loss == pytest.approx(_NO_DATA_SENTINEL_LOSS)
+
+
+def test_failed_iteration_loss_is_worse_than_worst_real_loss_maximize():
+    """With prior MAXIMIZE successes, fallback loss must exceed worst real loss
+    (skopt minimizes, so 'worse' = larger loss)."""
+    cfg = _cfg(
+        max_iterations=10,
+        n_initial_points=1,
+        objective_direction=OptimizationDirection.MAXIMIZE,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    # Tell two successful iterations; objectives 100.0 and 50.0.
+    # In skopt's loss space (MAXIMIZE → negate): -100.0 and -50.0.
+    # Worst loss = max(-100, -50) = -50.0.
+    for value in (100.0, 50.0):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=value)])
+    fallback = planner._failed_iteration_loss()
+    # Fallback must be strictly worse than -50 (i.e., greater than -50).
+    assert fallback > -50.0
+    # And finite, not inf or nan.
+    assert math.isfinite(fallback)
+
+
+def test_failed_iteration_loss_is_worse_than_worst_real_loss_minimize():
+    """With prior MINIMIZE successes (loss = objective passthrough), fallback
+    loss must exceed the largest seen objective."""
+    cfg = _cfg(
+        max_iterations=10,
+        n_initial_points=1,
+        objective_direction=OptimizationDirection.MINIMIZE,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+    for value in (10.0, 25.0):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=value)])
+    fallback = planner._failed_iteration_loss()
+    assert fallback > 25.0
+    assert math.isfinite(fallback)
+
+
+def test_objective_to_loss_sign_consistency_round_trip():
+    """A successful tell and a failed-fallback tell must use the same sign
+    convention so skopt's history is internally consistent."""
+    cfg_max = _cfg(
+        max_iterations=10,
+        n_initial_points=1,
+        objective_direction=OptimizationDirection.MAXIMIZE,
+    )
+    planner_max = BayesianSearchPlanner(_base_config(), cfg_max)
+    # MAXIMIZE: objective 50 → loss -50.
+    assert planner_max._objective_to_loss(50.0) == pytest.approx(-50.0)
+    # MAXIMIZE: objective 0 → loss -0 (== 0).
+    assert planner_max._objective_to_loss(0.0) == pytest.approx(0.0)
+
+    cfg_min = _cfg(
+        max_iterations=10,
+        n_initial_points=1,
+        objective_direction=OptimizationDirection.MINIMIZE,
+    )
+    planner_min = BayesianSearchPlanner(_base_config(), cfg_min)
+    # MINIMIZE: passthrough.
+    assert planner_min._objective_to_loss(50.0) == pytest.approx(50.0)
+    assert planner_min._objective_to_loss(-50.0) == pytest.approx(-50.0)

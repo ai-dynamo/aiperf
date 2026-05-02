@@ -96,23 +96,20 @@ class BayesianSearchPlanner(SearchPlanner):
     def tell(self, variation: SweepVariation, results: list[RunResult]) -> None:
         objective = self._extract_objective(results)
         if objective is None:
-            # Skopt cannot accept None; tell it the worst value seen so far,
-            # or a baseline if none seen, so the iteration counter still advances.
-            tell_value = self._fallback_tell_value()
+            # Iteration produced no usable objective (every trial failed, or the
+            # configured metric/stat was missing). Skopt cannot accept None and
+            # the optimizer must remain consistent with the ask/tell pairing,
+            # so we synthesize a deliberately-bad loss in skopt's space.
+            tell_value = self._failed_iteration_loss()
             logger.warning(
-                "BO iteration %d at %s produced no successful runs; "
-                "telling skopt fallback %s and continuing.",
+                "Search iteration %d at %s produced no usable objective; "
+                "telling skopt fallback loss=%s and continuing.",
                 self._iter,
                 variation.values,
                 tell_value,
             )
         else:
-            sign = (
-                -1.0
-                if self._cfg.objective_direction == OptimizationDirection.MAXIMIZE
-                else 1.0
-            )
-            tell_value = sign * objective
+            tell_value = self._objective_to_loss(objective)
 
         if self._pending_x is None:
             raise RuntimeError("tell() called without matching ask()")
@@ -142,12 +139,20 @@ class BayesianSearchPlanner(SearchPlanner):
         ]
         if len(recent_objs) < window:
             return False
-        mean = sum(recent_objs) / len(recent_objs)
-        if mean == 0:
-            return all(abs(v) < self._cfg.plateau_threshold for v in recent_objs)
-        # Coefficient of variation: scale-free relative spread.
-        variance = sum((v - mean) ** 2 for v in recent_objs) / len(recent_objs)
-        cv = math.sqrt(variance) / abs(mean)
+        # Plateau test: coefficient of variation (sample stddev / |mean|).
+        # Sample variance uses Bessel's correction (n-1) for unbiasedness with
+        # small windows; population variance (/n) underestimates by a factor of
+        # (n-1)/n which trips the threshold ~12% prematurely at the n=5 default.
+        n = len(recent_objs)
+        mean = sum(recent_objs) / n
+        # When |mean| is essentially zero we cannot form a coefficient of
+        # variation: it has no scale. Refuse to declare convergence in that
+        # regime — the user's threshold is a *relative* coefficient and applying
+        # it as an absolute compares unlike units. Wait for non-zero mean.
+        if abs(mean) < _PLATEAU_MEAN_EPSILON:
+            return False
+        sample_variance = sum((v - mean) ** 2 for v in recent_objs) / (n - 1)
+        cv = math.sqrt(sample_variance) / abs(mean)
         return cv < self._cfg.plateau_threshold
 
     def history(self) -> list[SearchIteration]:
@@ -156,9 +161,18 @@ class BayesianSearchPlanner(SearchPlanner):
     def _extract_objective(self, results: list[RunResult]) -> float | None:
         """Average the configured stat across all successful trials.
 
-        summary_metrics keys are bare metric tags; the stat (avg/p99/...)
-        is a field on JsonMetricResult — NOT a suffix on the key. This is
-        the gotcha called out in the design doc.
+        Returns the arithmetic mean of `JsonMetricResult.<stat>` over successful
+        trials, or None when no trial produced the metric. summary_metrics keys
+        are bare metric tags; the stat (avg/p99/...) is a JsonMetricResult field
+        — NOT a suffix on the key.
+
+        Math note: arithmetic mean of per-trial means is the unbiased estimator
+        of the true mean iff trials carry equal weight (the usual case under
+        --num-profile-runs N with consistent --request-count). For percentile
+        stats (p50/p99/...) the result is the *expected per-trial percentile*,
+        not the percentile of the pooled samples — these differ for skewed
+        distributions. BO optimizes whichever quantity is fed in, so the
+        percentile-of-trial-percentiles framing is consistent across iterations.
         """
         successful = [
             r
@@ -177,16 +191,53 @@ class BayesianSearchPlanner(SearchPlanner):
             return None
         return sum(values) / len(values)
 
-    def _fallback_tell_value(self) -> float:
-        """Worst-seen value for the running optimizer, or 0 if none seen."""
-        seen = [
-            h.objective_value for h in self._history if h.objective_value is not None
-        ]
-        if not seen:
-            return 0.0
+    def _objective_to_loss(self, objective: float) -> float:
+        """Map objective-space value to skopt's loss-space (which it minimizes).
+
+        Skopt minimizes; for MAXIMIZE we negate, for MINIMIZE we pass through.
+        Single sign-flip site avoids the inconsistency where success and
+        failure paths apply sign in different places.
+        """
         if self._cfg.objective_direction == OptimizationDirection.MAXIMIZE:
-            return -min(seen)  # worst (smallest) maximize value, sign-flipped
-        return max(seen)
+            return -objective
+        return objective
+
+    def _failed_iteration_loss(self) -> float:
+        """Loss (skopt-space) to tell skopt when an iteration has no usable objective.
+
+        Strategy:
+
+        - If we have prior successful objectives, return the worst-seen loss
+          plus a 10%-or-1.0-absolute margin. This keeps the GP kernel matrix
+          well-posed (no inf/nan) while telling skopt this point is unambiguously
+          worse than anywhere it has actually seen succeed.
+        - With no prior data, fall back to a large finite sentinel
+          (``_NO_DATA_SENTINEL_LOSS``). BO is essentially random until the first
+          successful iteration; the warning logged at the call site flags this.
+        """
+        prior_losses = [
+            self._objective_to_loss(h.objective_value)
+            for h in self._history
+            if h.objective_value is not None
+        ]
+        if not prior_losses:
+            return _NO_DATA_SENTINEL_LOSS
+        worst_loss = max(prior_losses)
+        margin = max(abs(worst_loss) * 0.1, 1.0)
+        return worst_loss + margin
+
+
+# Plateau-detection numerical guard. Coefficient of variation has no meaning
+# when |mean| collapses to zero; this floor lets us refuse to claim convergence
+# in that regime without exposing yet another knob to users.
+_PLATEAU_MEAN_EPSILON = 1e-9
+
+# Sentinel loss told to skopt for an iteration that produced no usable objective
+# AND for which we have no successful prior to scale against. Large enough to be
+# unambiguously worse than any plausible real metric, finite enough not to
+# poison the GP's kernel matrix. Not user-tunable: the no-data branch is a
+# degraded mode and BO is essentially random until the first success.
+_NO_DATA_SENTINEL_LOSS = 1.0e6
 
 
 def _coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> Any:
