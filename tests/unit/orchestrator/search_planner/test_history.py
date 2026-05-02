@@ -80,3 +80,52 @@ def test_write_search_history_skips_iterations_without_objective(tmp_path: Path)
     write_search_history(tmp_path, history, _cfg())
     data = orjson.loads((tmp_path / "search_history.json").read_bytes())
     assert data["best"]["iteration_idx"] == 1
+
+
+def test_write_search_history_includes_all_adaptive_config_fields(tmp_path: Path):
+    cfg = AdaptiveSearchConfig(
+        algorithm="bayes",
+        search_space=[SearchSpaceDimension(path="x", lo=1, hi=10, kind="int")],
+        objective_metric="output_token_throughput",
+        objective_stat="avg",
+        objective_direction=OptimizationDirection.MAXIMIZE,
+        max_iterations=30,
+        n_initial_points=7,
+        random_seed=42,
+        improvement_patience=8,
+        plateau_window=4,
+        plateau_threshold=0.025,
+    )
+    history = [
+        SearchIteration(
+            iteration_idx=0, variation_values={"x": 5}, objective_value=10.0
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    data = orjson.loads((tmp_path / "search_history.json").read_bytes())
+    config_block = data["config"]
+    assert config_block["algorithm"] == "bayes"
+    assert config_block["objective_metric"] == "output_token_throughput"
+    assert config_block["objective_stat"] == "avg"
+    assert config_block["objective_direction"] == "maximize"
+    assert config_block["max_iterations"] == 30
+    assert config_block["n_initial_points"] == 7
+    assert config_block["random_seed"] == 42
+    assert config_block["improvement_patience"] == 8
+    assert config_block["plateau_window"] == 4
+    assert config_block["plateau_threshold"] == 0.025
+    assert config_block["search_space"] == [
+        {"path": "x", "lo": 1.0, "hi": 10.0, "kind": "int"}
+    ]
+    # Field ordering: budget knobs sit between max_iterations and search_space.
+    keys = list(config_block.keys())
+    assert keys.index("max_iterations") < keys.index("n_initial_points")
+    assert keys.index("plateau_threshold") < keys.index("search_space")
+
+
+def test_write_search_history_random_seed_none_serializes_as_null(tmp_path: Path):
+    cfg = _cfg()
+    assert cfg.random_seed is None
+    write_search_history(tmp_path, [], cfg)
+    data = orjson.loads((tmp_path / "search_history.json").read_bytes())
+    assert data["config"]["random_seed"] is None

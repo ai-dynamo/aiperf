@@ -118,6 +118,8 @@ navigation:
       path: tutorials/parameter-sweeping.md
     - page: Bayesian Optimization
       path: sweeping/bayesian-optimization.md
+    - page: Adaptive Search Tutorial
+      path: tutorials/adaptive-search.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
@@ -193,6 +195,8 @@ navigation:
     path: kubernetes/gpu-telemetry.md
   - page: Direct Mode (no operator)
     path: kubernetes/direct-mode.md
+  - page: Adaptive Search on Kubernetes
+    path: kubernetes/adaptive-search.md
   - page: AI-Assisted Deployment Guide
     path: kubernetes/ai-deployment-guide.md
   - page: AI-Assisted Debugging Guide
@@ -245,6 +249,8 @@ navigation:
     path: api/synthesis.md
   - page: Sweep Aggregates API Reference
     path: api/sweep-aggregates.md
+  - page: Search History API Reference
+    path: api/search-history.md
 
 - section: Architecture & Internals
   collapsed: true
@@ -265,3 +271,5 @@ navigation:
   contents:
   - page: Parameter Sweeping Errors
     path: troubleshooting/parameter-sweeping-errors.md
+  - page: Adaptive Search Errors
+    path: troubleshooting/adaptive-search-errors.md

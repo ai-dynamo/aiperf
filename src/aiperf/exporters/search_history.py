@@ -82,6 +82,11 @@ def write_search_history(
             "objective_stat": cfg.objective_stat,
             "objective_direction": str(cfg.objective_direction),
             "max_iterations": cfg.max_iterations,
+            "n_initial_points": cfg.n_initial_points,
+            "random_seed": cfg.random_seed,
+            "improvement_patience": cfg.improvement_patience,
+            "plateau_window": cfg.plateau_window,
+            "plateau_threshold": cfg.plateau_threshold,
             "search_space": [
                 {"path": d.path, "lo": d.lo, "hi": d.hi, "kind": d.kind}
                 for d in cfg.search_space

@@ -31,6 +31,9 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/plugins/plugin-system.md](docs/plugins/plugin-system.md): Plugin architecture, categories (endpoint, dataset, grader, ui, service, ...), YAML registry format, creation guide.
 - [docs/plugins/creating-your-first-plugin.md](docs/plugins/creating-your-first-plugin.md): End-to-end plugin walkthrough.
 - [docs/sweeping/bayesian-optimization.md](docs/sweeping/bayesian-optimization.md): Bayesian-Optimization adaptive outer loop (in-process + cluster-side via AIPerfSweep): --search-space CLI flags, search-space grammar, convergence detection, mutual-exclusion rules.
+- [docs/tutorials/adaptive-search.md](docs/tutorials/adaptive-search.md): Narrative walkthrough — picking concurrency that maximizes throughput on a real model with `aiperf profile --search-*`; reading `search_history.json`; when to use BO vs grid.
+- [docs/api/search-history.md](docs/api/search-history.md): Schema reference for `search_history.json` (BO trajectory artifact) — top-level keys, per-iteration fields, `convergence_reason` enum, mid-run partial-state semantics, programmatic consumption.
+- [docs/troubleshooting/adaptive-search-errors.md](docs/troubleshooting/adaptive-search-errors.md): Adaptive-search error catalog — missing `[bo]` extra, malformed `--search-space`, mutual-exclusion conflicts, all-trials-failed sentinel, n_initial_points validator.
 - [docs/reference/](docs/reference/): Tokenizer and other reference material.
 
 ## Kubernetes
@@ -55,6 +58,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/kubernetes/memory-estimator.md](docs/kubernetes/memory-estimator.md): Per-component memory model (RecordsManager, Workers, DatasetManager, RecordProcessor, ...); calibration constants; OOM-risk thresholds; tuning recipes.
 - [docs/kubernetes/kueue.md](docs/kubernetes/kueue.md): Kueue gang-scheduling integration — `spec.scheduling.{queueName,priorityClass}`, namespace default queues, Workload admission watching.
 - [docs/kubernetes/sweeps.md](docs/kubernetes/sweeps.md): Tutorial: parameter sweeps and multi-run on Kubernetes via AIPerfSweep CRD.
+- [docs/kubernetes/adaptive-search.md](docs/kubernetes/adaptive-search.md): Cluster-side Bayesian Optimization deep-dive — controller-pod ownership, `multi_run.adaptive_search` CR shape, status fields as upper bounds, cancellation, results layout.
 - [docs/kubernetes/gpu-telemetry.md](docs/kubernetes/gpu-telemetry.md): GPU telemetry on Kubernetes — opt-out sidecar, endpoint configuration (no auto-discovery), DCGM scrape flow, ingest path.
 - [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
 - [docs/kubernetes/user-files.md](docs/kubernetes/user-files.md): User-declared templated output files (`artifacts.user_files`) — schema, jinja2 context, injected names, error catalog.
