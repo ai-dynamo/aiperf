@@ -177,6 +177,36 @@ class _SweepControllerSettings(BaseSettings):
     )
 
 
+class _DashboardSettings(BaseSettings):
+    """Plotly Dashboard sidecar wiring (operator + results-server).
+
+    The dashboard is an opt-in third container in the operator Pod;
+    these settings let other containers locate it.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DASHBOARD_",
+        extra="allow",
+    )
+
+    PORT: int = Field(
+        default=0,
+        ge=0,
+        le=65535,
+        description="Pod-local HTTP port the dashboard sidecar listens on. "
+        "0 means the sidecar is disabled / absent. results-server uses this "
+        "to reverse-proxy /dashboard/*; the operator uses it to fire "
+        "fire-and-forget refresh POSTs after a benchmark completion claim.",
+    )
+    PROXY_ENABLED: bool = Field(
+        default=False,
+        description="When true, results-server forwards /dashboard/* to the "
+        "sidecar at localhost:PORT and the SPA shows the 'Plots ↗' top-nav "
+        "entry. When false, /dashboard/* returns 503 and the link is hidden. "
+        "Set independently from PORT so a misconfigured chart fails closed.",
+    )
+
+
 class _OperatorEnvironment(BaseSettings):
     """Root operator environment configuration.
 
@@ -250,6 +280,10 @@ class _OperatorEnvironment(BaseSettings):
     SWEEP_CONTROLLER: _SweepControllerSettings = Field(
         default_factory=_SweepControllerSettings,
         description="Sweep-controller pod settings (child-create collision handling).",
+    )
+    DASHBOARD: _DashboardSettings = Field(
+        default_factory=_DashboardSettings,
+        description="Plotly Dashboard sidecar wiring.",
     )
 
 
