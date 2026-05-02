@@ -53,20 +53,26 @@ class MultiRunOrchestrator:
         executor: RunExecutor,
         *,
         cancel_check: Callable[[], bool] | None = None,
+        search_planner: Any = None,
     ) -> list[RunResult]:
         """Execute all (variation, trial) runs in the plan.
 
-        Iteration order honors plan.parameter_sweep_mode:
+        Iteration order:
 
-        - INDEPENDENT: variations outer, trials inner. Artifact
-          tree is <base>/<variation>/profile_runs/run_NNNN/.
-        - REPEATED (default): trials outer, variations inner. Artifact tree is
-          <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/.
-          The trial-NNNN prefix is the orchestrator's; the inner run_NNNN
-          comes from the per-cell strategy with the trial index threaded
-          through, so each cell has exactly one run labeled to match the
-          trial it belongs to (run_0001 under trial_0001, run_0002 under
-          trial_0002, ...).
+        - When ``plan.adaptive_search`` is set, dispatches to
+          :meth:`execute_adaptive_search` (BO / adaptive). ``search_planner``
+          must be supplied in this case.
+        - Otherwise honors plan.parameter_sweep_mode:
+
+          - INDEPENDENT: variations outer, trials inner. Artifact
+            tree is <base>/<variation>/profile_runs/run_NNNN/.
+          - REPEATED (default): trials outer, variations inner. Artifact tree is
+            <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/.
+            The trial-NNNN prefix is the orchestrator's; the inner run_NNNN
+            comes from the per-cell strategy with the trial index threaded
+            through, so each cell has exactly one run labeled to match the
+            trial it belongs to (run_0001 under trial_0001, run_0002 under
+            trial_0002, ...).
 
         Args:
             plan: BenchmarkPlan with configs[], variations[], trials, convergence config.
@@ -75,11 +81,24 @@ class MultiRunOrchestrator:
                 trial inside a variation. When it returns True, the orchestrator
                 returns the partial results gathered so far without starting any
                 further runs.
+            search_planner: Outer-loop planner instance (e.g.
+                ``BayesianSearchPlanner``). Required when ``plan.is_adaptive_search``;
+                ignored otherwise.
 
         Returns:
             Flat list of RunResult, ordered by the active iteration order.
         """
         from aiperf.common.enums import SweepMode
+
+        if plan.is_adaptive_search:
+            if search_planner is None:
+                raise ValueError(
+                    "plan.adaptive_search is set but no search_planner was passed to execute(). "
+                    "The CLI runner is expected to instantiate one and forward it."
+                )
+            return await self.execute_adaptive_search(
+                plan, executor, search_planner, cancel_check=cancel_check
+            )
 
         if plan.parameter_sweep_mode == SweepMode.REPEATED:
             return await self._execute_repeated(
@@ -212,6 +231,66 @@ class MultiRunOrchestrator:
                     await asyncio.sleep(cooldown)
 
         return cell_results, False
+
+    async def execute_adaptive_search(
+        self,
+        plan: BenchmarkPlan,
+        executor: RunExecutor,
+        planner: Any,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> list[RunResult]:
+        """Drive an adaptive outer loop (e.g. BO).
+
+        Each iteration: ask planner for a (cfg, variation), run all trials
+        for it via :meth:`_run_independent_cell`, feed results back to the
+        planner, write search_history.json incrementally.
+        """
+        from aiperf._cli_runner_helpers import build_strategy
+        from aiperf.exporters.search_history import write_search_history
+
+        all_results: list[RunResult] = []
+        logger.info(
+            f"Starting adaptive outer-loop benchmark "
+            f"({plan.adaptive_search.algorithm}, max_iterations={plan.adaptive_search.max_iterations}, "
+            f"trials per point={plan.trials})"
+        )
+
+        while True:
+            if cancel_check is not None and cancel_check():
+                logger.info(
+                    f"Adaptive outer loop cancelled after {planner._iter} iterations"
+                )
+                return all_results
+
+            proposal = planner.ask()
+            if proposal is None:
+                logger.info("Adaptive outer loop converged or max_iterations exhausted")
+                return all_results
+            cfg, variation = proposal
+            strategy = build_strategy(plan, logger)
+            strategy.validate_config(cfg)
+
+            logger.info(f"[BO iter {variation.index}] proposing {variation.values}")
+            cell_results, aborted = await self._run_independent_cell(
+                plan,
+                executor,
+                strategy=strategy,
+                cfg=cfg,
+                variation=variation,
+                var_idx=variation.index,
+                prior_all_results=all_results,
+                cancel_check=cancel_check,
+            )
+            planner.tell(variation, cell_results)
+            all_results.extend(cell_results)
+            write_search_history(self.base_dir, planner.history(), plan.adaptive_search)
+
+            if aborted:
+                logger.warning(
+                    f"Outer-loop cell at iter {variation.index} aborted; halting BO"
+                )
+                return all_results
 
     async def _execute_repeated(
         self,
