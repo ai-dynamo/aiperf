@@ -85,6 +85,8 @@ spec:
           value: {{ .Values.operator.env.resultsCompressOnDisk | default "true" | quote }}
         - name: AIPERF_K8S_SHARE_PROCESS_NAMESPACE
           value: {{ .Values.podTemplate.shareProcessNamespace | default false | quote }}
+        - name: AIPERF_DASHBOARD_PORT
+          value: {{ if .Values.dashboard.enabled }}{{ .Values.dashboard.port | quote }}{{ else }}"0"{{ end }}
         {{- with .Values.chaos.controllerHttpUrlOverride }}
         - name: AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE
           value: {{ . | quote }}
@@ -148,6 +150,10 @@ spec:
           value: "/tmp"
         - name: MPLCONFIGDIR
           value: "/tmp/matplotlib"
+        - name: AIPERF_DASHBOARD_PORT
+          value: {{ if .Values.dashboard.enabled }}{{ .Values.dashboard.port | quote }}{{ else }}"0"{{ end }}
+        - name: AIPERF_DASHBOARD_PROXY_ENABLED
+          value: {{ if .Values.dashboard.enabled }}"1"{{ else }}"0"{{ end }}
         livenessProbe:
           httpGet:
             path: /healthz
@@ -178,6 +184,60 @@ spec:
         - name: results
           mountPath: {{ .Values.storage.mountPath | quote }}
           readOnly: true
+      {{- if .Values.dashboard.enabled }}
+      - name: dashboard
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - python
+        - -m
+        - aiperf.operator.dashboard_server
+        ports:
+        - name: dashboard
+          containerPort: {{ .Values.dashboard.port }}
+          protocol: TCP
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AIPERF_RESULTS_DIR
+          value: {{ .Values.storage.mountPath | quote }}
+        - name: AIPERF_DASHBOARD_PORT
+          value: {{ .Values.dashboard.port | quote }}
+        - name: TMPDIR
+          value: "/tmp"
+        - name: MPLCONFIGDIR
+          value: "/tmp/matplotlib"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.dashboard.port }}
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.dashboard.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          {{- toYaml .Values.dashboard.resources | nindent 10 }}
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: results
+          mountPath: {{ .Values.storage.mountPath | quote }}
+          readOnly: true
+      {{- end }}
       volumes:
       - name: tmp
         emptyDir:
