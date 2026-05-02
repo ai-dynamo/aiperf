@@ -771,3 +771,60 @@ async def test_submit_sweep_calls_save_last_benchmark_once(
     # First two positional args are (cr_name, namespace).
     assert pos[0] == cr_name
     assert pos[1] == "ns"
+
+
+def test_build_sweep_cr_dict_renders_jinja_in_benchmark(tmp_path: Path) -> None:
+    """`_build_sweep_cr_dict` must render `{{ ... }}` literals before stuffing
+    raw YAML into `spec.template.spec.benchmark`. Without this, unresolved
+    Jinja literals trip AIPerfSweepSpec.model_validate's int_parsing on
+    `phases[].concurrency`, mirroring the bug fixed in `aiperf kube profile -f`.
+    """
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(
+        """
+variables:
+  base_concurrency: 30
+  multiplier: 4
+models: [Qwen/Qwen3-0.6B]
+endpoint:
+  urls: [http://localhost:8000/v1/chat/completions]
+  type: chat
+  streaming: true
+datasets:
+  - {name: main, type: synthetic}
+phases:
+  - name: profiling
+    type: concurrency
+    duration: 5
+    concurrency: "{{ base_concurrency * multiplier }}"
+sweep:
+  type: grid
+  variables:
+    random_seed: [1, 2]
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        multi_run_trials=2,
+        cooldown_seconds=10,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+
+    benchmark = cr["spec"]["template"]["spec"]["benchmark"]
+    import yaml
+
+    rendered = yaml.safe_dump(benchmark)
+    assert "{{" not in rendered, (
+        f"Jinja literals leaked into spec.template.spec.benchmark:\n{rendered}"
+    )
+    assert "}}" not in rendered
+
+    phase_concurrencies = [p["concurrency"] for p in benchmark["phases"]]
+    assert all(isinstance(c, int) for c in phase_concurrencies), (
+        f"phases[].concurrency must be int after Jinja render, got: {phase_concurrencies}"
+    )
+    assert phase_concurrencies == [120]  # 30 * 4

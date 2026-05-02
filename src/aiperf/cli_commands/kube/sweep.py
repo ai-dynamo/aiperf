@@ -161,9 +161,15 @@ def _build_sweep_cr_dict(
 
     import yaml
 
+    from aiperf.config.loader import expand_config_dict
+
     raw = yaml.safe_load(config_file.read_text()) or {}
     sweep_cfg = raw.pop("sweep", None)
     multirun_cfg_from_yaml = raw.pop("multi_run", None) or raw.pop("multiRun", None)
+    # Render Jinja2 / ${ENV_VAR} in the benchmark portion before submission so
+    # unresolved `{{ ... }}` literals never trip AIPerfSweepSpec.model_validate
+    # below or reach the operator. Mirrors `aiperf kube profile -f`'s pipeline.
+    raw = expand_config_dict(raw)
 
     deployment = kube_options.to_deployment_config()
     deployment_dict = deployment.model_dump(
