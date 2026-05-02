@@ -215,6 +215,8 @@ navigation:
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
+  - page: Adaptive-Search Architecture
+    path: reference/adaptive-search-architecture.md
 
 - section: Server Metrics
   collapsed: true
