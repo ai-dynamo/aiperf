@@ -8,7 +8,7 @@ Sits next to sweep_aggregate/ in the artifact dir, NOT inside it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -108,7 +108,7 @@ def _compute_best_payload(
     }
 
 
-def _build_config_block(cfg: AdaptiveSearchConfig) -> dict:
+def _build_config_block(cfg: AdaptiveSearchConfig) -> dict[str, Any]:
     """Project an AdaptiveSearchConfig into the search_history.json `config` shape."""
     return {
         "algorithm": cfg.algorithm,

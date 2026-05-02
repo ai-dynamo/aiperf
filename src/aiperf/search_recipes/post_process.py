@@ -22,9 +22,32 @@ category and looked up by name at the hook site.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
+
+# Statistic name accepted by sweep-aggregate readers. Mirrors the Literal on
+# ``SLAFilter.stat`` (``aiperf.config.adaptive_search``); a typo here at type-
+# check time beats a silent infeasible-cell at runtime.
+StatLiteral: TypeAlias = Literal["avg", "p50", "p90", "p95", "p99"]
+_STAT_VALUES: tuple[str, ...] = ("avg", "p50", "p90", "p95", "p99")
+
+
+def _stat_or_raise(value: Any, *, handler: str) -> StatLiteral:
+    """Validate a runtime ``params['stat']`` against the allowed values.
+
+    Handler ``params`` arrive as ``dict[str, Any]`` (recipes inject heterogeneous
+    payloads); this gate narrows to the ``StatLiteral`` so ``_extract_points``
+    and friends keep an honest type. Raises ``ValueError`` on unknown values
+    naming the handler so a typo (``p98``) surfaces with full context.
+    """
+    if value in _STAT_VALUES:
+        return value  # type: ignore[return-value]
+    raise ValueError(
+        f"{handler}: params['stat']={value!r} is not a recognized statistic; "
+        f"expected one of {_STAT_VALUES}."
+    )
+
 
 __all__ = [
     "DegradationKneeDetect",
@@ -72,7 +95,7 @@ def _extract_points(
     *,
     swept_param: str,
     metric_tag: str,
-    stat: str,
+    stat: StatLiteral,
 ) -> list[tuple[float, float]]:
     """Pull ``(swept_value, metric_value)`` pairs from the sweep aggregate.
 
@@ -163,7 +186,7 @@ class DegradationKneeDetect:
     ) -> dict[str, Any]:
         threshold_pct = float(params["threshold_pct"])
         metric_tag = str(params["metric_tag"])
-        stat = str(params["stat"])
+        stat = _stat_or_raise(params["stat"], handler="degradation_knee_detect")
         swept_param = str(params["swept_param"])
 
         points = _extract_points(
@@ -249,7 +272,7 @@ class TTFTCurveFit:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         metric_tag = str(params["metric_tag"])
-        stat = str(params["stat"])
+        stat = _stat_or_raise(params["stat"], handler="ttft_curve_fit")
         swept_param = str(params["swept_param"])
         r2_floor = float(params.get("r_squared_floor", self._R2_FLOOR_DEFAULT))
 
@@ -326,7 +349,7 @@ def _extract_2d_points(
     concurrency_param: str,
     osl_param: str,
     metric_tag: str,
-    stat: str,
+    stat: StatLiteral,
 ) -> list[tuple[float, float, float]]:
     """Pull ``(concurrency, osl, metric_value)`` triples from the sweep aggregate.
 
@@ -431,7 +454,7 @@ class ItlSurfaceFit:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         metric_tag = str(params["metric_tag"])
-        stat = str(params["stat"])
+        stat = _stat_or_raise(params["stat"], handler="itl_surface_fit")
         concurrency_param = str(params["concurrency_param"])
         osl_param = str(params["osl_param"])
 

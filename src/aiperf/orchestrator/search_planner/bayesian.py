@@ -17,16 +17,22 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from aiperf.config.adaptive_search import (
     AdaptiveSearchConfig,
-    SearchSpaceDimension,
     SLAFilter,
 )
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation, _set_nested_value
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+from aiperf.orchestrator.search_planner._bayesian_helpers import (
+    NO_DATA_SENTINEL_LOSS,
+    PENALTY_WEIGHT_MULTIPLIER,
+    PLATEAU_MEAN_EPSILON,
+    coerce_for_kind,
+    signed_violation,
+)
 from aiperf.orchestrator.search_planner.base import (
     SearchIteration,
     SearchPlanner,
@@ -101,7 +107,7 @@ class BayesianSearchPlanner(SearchPlanner):
         self._pending_x = x  # remember for tell() to call skopt.tell()
         values: dict[str, Any] = {}
         for dim, suggestion in zip(self._cfg.search_space, x, strict=True):
-            values[dim.path] = _coerce_for_kind(suggestion, dim)
+            values[dim.path] = coerce_for_kind(suggestion, dim)
 
         cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
         for path, val in values.items():
@@ -116,6 +122,20 @@ class BayesianSearchPlanner(SearchPlanner):
         return cfg, variation
 
     def tell(self, variation: SweepVariation, results: list[RunResult]) -> None:
+        """Report ``results`` for an ``ask()``-issued ``variation`` to the planner.
+
+        Per iteration: extracts per-trial objectives, computes feasibility
+        against ``self._cfg.sla_filters`` (warn-once dedup for unmeasurable
+        constraints), and tells skopt a penalty-augmented loss while recording
+        the RAW objective in :class:`SearchIteration` for honest post-run
+        reporting. ``has_unmeasurable`` forces ``iteration_feasible=False``
+        even when the per-trial check coincidentally passed.
+
+        ``variation`` must match the most recent ``ask()`` (no pending ask =
+        ``RuntimeError``). An empty/all-failed ``results`` still tells skopt
+        via a synthetic worse-than-worst loss (see ``_failed_iteration_loss``)
+        so the optimizer stays ask/tell-consistent.
+        """
         per_trial_objectives = self._extract_trial_objectives(results)
 
         if self._pending_x is None:
@@ -254,7 +274,7 @@ class BayesianSearchPlanner(SearchPlanner):
         # variation: it has no scale. Refuse to declare convergence in that
         # regime — the user's threshold is a *relative* coefficient and applying
         # it as an absolute compares unlike units. Wait for non-zero mean.
-        if abs(mean) < _PLATEAU_MEAN_EPSILON:
+        if abs(mean) < PLATEAU_MEAN_EPSILON:
             return False
         sample_variance = sum((v - mean) ** 2 for v in recent_objs) / (n - 1)
         cv = math.sqrt(sample_variance) / abs(mean)
@@ -329,7 +349,7 @@ class BayesianSearchPlanner(SearchPlanner):
           well-posed (no inf/nan) while telling skopt this point is unambiguously
           worse than anywhere it has actually seen succeed.
         - With no prior data, fall back to a large finite sentinel
-          (``_NO_DATA_SENTINEL_LOSS``). BO is essentially random until the first
+          (``NO_DATA_SENTINEL_LOSS``). BO is essentially random until the first
           successful iteration; the warning logged at the call site flags this.
         """
         prior_losses = [
@@ -338,7 +358,7 @@ class BayesianSearchPlanner(SearchPlanner):
             if h.objective_value is not None
         ]
         if not prior_losses:
-            return _NO_DATA_SENTINEL_LOSS
+            return NO_DATA_SENTINEL_LOSS
         worst_loss = max(prior_losses)
         margin = max(abs(worst_loss) * 0.1, 1.0)
         return worst_loss + margin
@@ -385,7 +405,10 @@ class BayesianSearchPlanner(SearchPlanner):
         return False
 
     def _averaged_metric_value(
-        self, results: list[RunResult], metric_tag: str, stat: str
+        self,
+        results: list[RunResult],
+        metric_tag: str,
+        stat: Literal["avg", "p50", "p90", "p95", "p99"],
     ) -> float | None:
         """Return the mean of stat(metric_tag) across successful trials, or None.
 
@@ -419,7 +442,7 @@ class BayesianSearchPlanner(SearchPlanner):
         constraint contributes a fixed ``W`` (treated as a 1.0× normalized
         violation) and is logged once per metric tag.
 
-        ``W = _PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)`` keeps
+        ``W = PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)`` keeps
         the penalty dominant over typical objective values without poisoning
         the GP kernel with infinities.
 
@@ -431,7 +454,7 @@ class BayesianSearchPlanner(SearchPlanner):
         if not self._cfg.sla_filters:
             return 0.0, False
 
-        weight = _PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)
+        weight = PENALTY_WEIGHT_MULTIPLIER * max(self._max_seen_loss, 1.0)
         penalty = 0.0
         has_unmeasurable = False
         for sla in self._cfg.sla_filters:
@@ -454,46 +477,7 @@ class BayesianSearchPlanner(SearchPlanner):
                         weight,
                     )
                 continue
-            violation = max(0.0, _signed_violation(value, sla))
+            violation = max(0.0, signed_violation(value, sla))
             denom = abs(sla.threshold) if sla.threshold != 0 else 1.0
             penalty += weight * (violation / denom)
         return penalty, has_unmeasurable
-
-
-# Plateau-detection numerical guard. Coefficient of variation has no meaning
-# when |mean| collapses to zero; this floor lets us refuse to claim convergence
-# in that regime without exposing yet another knob to users.
-_PLATEAU_MEAN_EPSILON = 1e-9
-
-# Sentinel loss told to skopt for an iteration that produced no usable objective
-# AND for which we have no successful prior to scale against. Large enough to be
-# unambiguously worse than any plausible real metric, finite enough not to
-# poison the GP's kernel matrix. Not user-tunable: the no-data branch is a
-# degraded mode and BO is essentially random until the first success.
-_NO_DATA_SENTINEL_LOSS = 1.0e6
-
-# Soft-penalty multiplier on max(|loss|) for SLA-filter violations. Finite
-# (not ±inf / 1e18) to avoid GP variance distortion; tune up if BO ignores
-# soft constraints, down if it dominates exploration too early.
-_PENALTY_WEIGHT_MULTIPLIER: float = 100.0
-
-
-def _coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> Any:
-    """Skopt returns numpy scalars; coerce to plain Python int/float."""
-    if dim.kind == "int":
-        return int(value)
-    return float(value)
-
-
-def _signed_violation(value: float, sla: SLAFilter) -> float:
-    """Signed magnitude of how much ``value`` violates ``sla``.
-
-    Positive = violation, negative = slack. Caller clamps to ``max(0, .)`` so
-    only violations contribute to the penalty. Sign convention: ``lt``/``le``
-    use ``value - threshold`` (positive when over the cap); ``gt``/``ge`` use
-    ``threshold - value`` (positive when under the floor). Defined at module
-    scope because it reads no planner state.
-    """
-    if sla.op in ("lt", "le"):
-        return value - sla.threshold
-    return sla.threshold - value

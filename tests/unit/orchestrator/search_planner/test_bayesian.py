@@ -204,14 +204,16 @@ def test_plateau_refuses_convergence_when_mean_is_zero():
 def test_failed_iteration_loss_uses_finite_sentinel_with_no_history():
     """No prior successful runs → sentinel loss; never inf/nan; same magnitude
     regardless of direction (so the GP kernel matrix stays well-posed)."""
-    from aiperf.orchestrator.search_planner.bayesian import _NO_DATA_SENTINEL_LOSS
+    from aiperf.orchestrator.search_planner._bayesian_helpers import (
+        NO_DATA_SENTINEL_LOSS,
+    )
 
     for direction in (OptimizationDirection.MAXIMIZE, OptimizationDirection.MINIMIZE):
         cfg = _cfg(max_iterations=5, n_initial_points=1, objective_direction=direction)
         planner = BayesianSearchPlanner(_base_config(), cfg)
         loss = planner._failed_iteration_loss()
         assert math.isfinite(loss)
-        assert loss == pytest.approx(_NO_DATA_SENTINEL_LOSS)
+        assert loss == pytest.approx(NO_DATA_SENTINEL_LOSS)
 
 
 def test_failed_iteration_loss_is_worse_than_worst_real_loss_maximize():
