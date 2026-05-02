@@ -20,6 +20,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.config._base import BaseConfig
 from aiperf.config.adaptive_search import AdaptiveSearchConfig, SLAFilter
+from aiperf.search_recipes._user_config_view import RecipeUserConfigView
 
 __all__ = [
     "PostProcessSpec",
@@ -93,11 +94,13 @@ class SearchRecipeContext(BaseConfig):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    user_config: Any = Field(
+    user_config: RecipeUserConfigView = Field(
         description=(
             "The fully-populated v1 UserConfig the recipe is expanding under. Typed "
-            "Any because aiperf.search_recipes lives downstream of the v1 import "
-            "boundary (TID251); recipes treat it as a read-only dotted-path object."
+            "as the structural Protocol RecipeUserConfigView (defined in "
+            "_user_config_view.py) because aiperf.search_recipes lives downstream "
+            "of the v1 import boundary (TID251 / v1-import-leak); a real UserConfig "
+            "is structurally compatible. Treat as read-only dotted-path access."
         ),
     )
     sla_targets: dict[str, float] = Field(
