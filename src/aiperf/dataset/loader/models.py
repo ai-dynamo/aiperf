@@ -4,24 +4,20 @@
 from typing import Any, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
 
-class SingleTurn(AIPerfBaseModel):
-    """Defines the schema for single-turn data.
+class MultimodalContent(AIPerfBaseModel):
+    """Shared multimodal field surface for custom dataset entry schemas.
 
-    User can use this format to quickly provide a custom single turn dataset.
-    Each line in the file will be treated as a single turn conversation.
-
-    The single turn type
-      - supports multi-modal (e.g. text, image, audio, video)
-      - supports client-side batching for each data (e.g. batch_size > 1)
-      - supports optional session_id for causal ordering across entries
+    Holds the eight modality fields (text/texts, image/images, audio/audios,
+    video/videos) and the two validators common to every entry type that
+    accepts multimodal content. Concrete entry classes inherit and add
+    their type discriminator and any type-specific fields/validators.
     """
-
-    type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
 
     # TODO (TL-89): investigate if we only want to support single field for each modality
     text: str | None = Field(None, description="Simple text string content")
@@ -47,6 +43,53 @@ class SingleTurn(AIPerfBaseModel):
         None,
         description="List of video strings or Video objects format",
     )
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_fields(self) -> Self:
+        """Ensure mutually exclusive fields are not set together"""
+        if self.text and self.texts:
+            raise ValueError("text and texts cannot be set together")
+        if self.image and self.images:
+            raise ValueError("image and images cannot be set together")
+        if self.audio and self.audios:
+            raise ValueError("audio and audios cannot be set together")
+        if self.video and self.videos:
+            raise ValueError("video and videos cannot be set together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_at_least_one_modality(self) -> Self:
+        """Ensure at least one modality is provided"""
+        if not any(
+            [
+                self.text,
+                self.texts,
+                self.image,
+                self.images,
+                self.audio,
+                self.audios,
+                self.video,
+                self.videos,
+            ]
+        ):
+            raise ValueError("At least one modality must be provided")
+        return self
+
+
+class SingleTurn(MultimodalContent):
+    """Defines the schema for single-turn data.
+
+    User can use this format to quickly provide a custom single turn dataset.
+    Each line in the file will be treated as a single turn conversation.
+
+    The single turn type
+      - supports multi-modal (e.g. text, image, audio, video)
+      - supports client-side batching for each data (e.g. batch_size > 1)
+      - supports optional session_id for causal ordering across entries
+    """
+
+    type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
+
     timestamp: int | float | None = Field(
         default=None,
         description="Timestamp of the turn in milliseconds. Supports floating point, but scheduling accuracy is at the millisecond level.",
@@ -68,36 +111,10 @@ class SingleTurn(AIPerfBaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_mutually_exclusive_fields(self) -> "SingleTurn":
-        """Ensure mutually exclusive fields are not set together"""
-        if self.text and self.texts:
-            raise ValueError("text and texts cannot be set together")
-        if self.image and self.images:
-            raise ValueError("image and images cannot be set together")
-        if self.audio and self.audios:
-            raise ValueError("audio and audios cannot be set together")
-        if self.video and self.videos:
-            raise ValueError("video and videos cannot be set together")
+    def validate_timestamp_delay_exclusive(self) -> Self:
+        """Ensure timestamp and delay are not set together"""
         if self.timestamp and self.delay:
             raise ValueError("timestamp and delay cannot be set together")
-        return self
-
-    @model_validator(mode="after")
-    def validate_at_least_one_modality(self) -> "SingleTurn":
-        """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
-            raise ValueError("At least one modality must be provided")
         return self
 
 
@@ -127,7 +144,7 @@ class MultiTurn(AIPerfBaseModel):
         return self
 
 
-class RandomPool(AIPerfBaseModel):
+class RandomPool(MultimodalContent):
     """Defines the schema for random pool data entry.
 
     The random pool custom dataset
@@ -138,61 +155,6 @@ class RandomPool(AIPerfBaseModel):
     """
 
     type: Literal[CustomDatasetType.RANDOM_POOL] = CustomDatasetType.RANDOM_POOL
-
-    text: str | None = Field(None, description="Simple text string content")
-    texts: list[str] | list[Text] | None = Field(
-        None,
-        description="List of text strings or Text objects format",
-    )
-    image: str | None = Field(None, description="Simple image string content")
-    images: list[str] | list[Image] | None = Field(
-        None,
-        description="List of image strings or Image objects format",
-    )
-    audio: str | None = Field(None, description="Simple audio string content")
-    audios: list[str] | list[Audio] | None = Field(
-        None,
-        description="List of audio strings or Audio objects format",
-    )
-    video: str | None = Field(
-        None,
-        description="Simple video string content. Can be a URL, local file path, or base64 encoded data URL.",
-    )
-    videos: list[str] | list[Video] | None = Field(
-        None,
-        description="List of video strings or Video objects format",
-    )
-
-    @model_validator(mode="after")
-    def validate_mutually_exclusive_fields(self) -> "RandomPool":
-        """Ensure mutually exclusive fields are not set together"""
-        if self.text and self.texts:
-            raise ValueError("text and texts cannot be set together")
-        if self.image and self.images:
-            raise ValueError("image and images cannot be set together")
-        if self.audio and self.audios:
-            raise ValueError("audio and audios cannot be set together")
-        if self.video and self.videos:
-            raise ValueError("video and videos cannot be set together")
-        return self
-
-    @model_validator(mode="after")
-    def validate_at_least_one_modality(self) -> "RandomPool":
-        """Ensure at least one modality is provided"""
-        if not any(
-            [
-                self.text,
-                self.texts,
-                self.image,
-                self.images,
-                self.audio,
-                self.audios,
-                self.video,
-                self.videos,
-            ]
-        ):
-            raise ValueError("At least one modality must be provided")
-        return self
 
 
 class MooncakeTrace(AIPerfBaseModel):
