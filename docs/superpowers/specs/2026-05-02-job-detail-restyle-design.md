@@ -151,13 +151,38 @@ A new helper module `src/aiperf/operator/ui-v1/lib/theme-switch.js`:
 - Exports `setTheme(t)` so a top-bar toggle (added to `top-nav.js`) can
   switch between dark / light / auto.
 - The toggle is a single icon button in the top-right of the existing
-  top-nav, next to the search button. Clicking cycles
-  `auto → light → dark → auto`. Tooltip shows current resolved theme.
+  top-nav — `top-nav.js` currently has `topbar-right` containing a
+  single `search-btn` with no shared icon-button class. The new toggle
+  introduces a `topbar-icon-btn` class (28×28, transparent bg, hover
+  `--bg-raised`, color `--muted` resting / `--text` hover, mirrors the
+  search button's font-family and metrics) used here and re-usable by
+  future top-nav additions. Clicking cycles
+  `auto → light → dark → auto`. Tooltip shows the resolved theme.
 
-The legacy aliases at the bottom of `style.css` (`--surface0`, `--mauve`,
-`--ctp-base`, …) keep their existing dark values and gain light-theme
-counterparts in the same `[data-theme="light"]` block, so any imported
-legacy CSS keeps working without per-file edits.
+The legacy aliases at the bottom of `style.css` (verified at
+`style.css:76–104`: `--surface0/1/2`, `--ctp-base`, `--mauve`,
+`--lavender`, `--mantle`, `--crust`, `--peach`, `--maroon`,
+`--sapphire`, `--sky`, `--teal`, `--flamingo`, `--rosewater`,
+`--yellow`, `--bg-alt`, `--bg-elevated`, `--success`, `--warning`,
+`--error`, `--info`, `--accent-alt`, `--overlay0`, `--subtext0/1`)
+keep their existing dark values and gain light-theme counterparts in
+the same `[data-theme="light"]` block, so any imported legacy CSS keeps
+working without per-file edits. We **reuse** the existing
+`--success/--warning/--error/--info` semantic tokens rather than
+inventing new `--ok/--bad/--info` aliases — see Token system above.
+
+`src/aiperf/operator/ui-v1/lib/theme.js` exports a `palette` object
+that mirrors CSS hex values (`palette.bg`, `palette.blue`, etc.,
+verified at `lib/theme.js:2–56`) plus `phaseColor()` and `modelColor()`
+helpers. **The mirror stays as-is in this PR** — both `palette`
+constants and the helpers continue to return their dark-theme hex
+values verbatim, because they are consumed by Chart.js options
+(`pages/job-detail.js:36–50`, etc.) which run only in JS and don't see
+CSS variables. This means Chart.js charts render with dark-theme axis
+colors even in light mode in this PR; making chart colors theme-aware
+is explicitly punted to a follow-up (see Out of scope). The note in
+`MODEL_COLORS` (`lib/theme.js:100`) using a hardcoded `'#76b900'`
+literal where it could use `palette.green` is also out of scope.
 
 ## Layout — split-pane workspace
 
@@ -326,18 +351,29 @@ Currently a simple list. Becomes a card with:
 - **Footer**: `Show all N files` link + total size pip when truncated
   to the first 8 rows.
 
-Two new endpoints are required from the operator:
+Endpoint plan (verified against `src/aiperf/operator/routers/results_files.py`):
 
-- `POST /api/jobs/{ns}/{name}/runs/{epoch}/archive` — stream a zip of
-  all artifacts (used by Download all). Implementation can wrap the
-  existing `results_layout` directory walk + `zipfile.ZipFile`. Must
-  honor the results-ready marker.
-- `GET /api/jobs/{ns}/{name}/runs/{epoch}/profile_export?format=json` —
-  alias for the existing canonical `profile_export_aiperf.json`. Used
-  by Quick export JSON.
-
-Both endpoints are added in
-`src/aiperf/operator/routers/results_files.py`.
+- **Download all (.zip)** — reuse the **existing**
+  `GET /api/v1/results/{ns}/{job_id}/runs/{epoch}.zip`
+  (`results_files.py:443`, helper `_bundle_response` at `:334`,
+  builder `_build_job_bundle` at `:50`). The bundle is constructed
+  in-memory, not truly streamed — for very large runs the operator
+  may sit on memory briefly, but typical runs are <10MB so this is
+  acceptable. The endpoint transparently strips `.zst` suffixes via
+  `_display_name` (`results_files.py:43`); the UI-side button just
+  hits this URL with `window.location` or a direct `<a download>`.
+  Note the URL **must** include `/runs/{epoch}` — non-epoch variants
+  return 409 (`results_files.py:425`).
+- **Quick export JSON** — genuinely new endpoint:
+  `GET /api/v1/results/{ns}/{job_id}/runs/{epoch}/profile_export?format=json`
+  added to `results_files.py`. Aliases the canonical
+  `profile_export_aiperf.json` artifact (with `.zst` decompression)
+  but skips the directory listing roundtrip. Returns
+  `application/json` with `Content-Disposition: attachment;
+  filename=profile_export_aiperf.json`. Honors whatever
+  ready-marker gate the existing per-file route uses (the marker
+  itself is enforced upstream of this router — `results_files.py`
+  receives a resolved run-dir).
 
 ### `RelaunchButton`, cancel button, sweep link, similar-runs link
 
@@ -352,44 +388,78 @@ the resolved theme.
 
 ## Testing
 
-- All existing `data-testid` selectors stay. The page-level testid
-  `page-job-detail` continues to wrap the whole view; new sub-testids
-  are added (`job-detail-id`, `job-detail-rail`, `job-detail-rail-phase`,
-  `job-detail-rail-pods`, `job-detail-rail-sla`, `job-detail-rail-config`,
-  `job-detail-rail-sweep`, `job-detail-rail-actions`,
-  `job-detail-artifacts-download-all`,
-  `job-detail-artifacts-quick-export`,
-  `job-detail-theme-toggle`).
-- The existing operator UI e2e tests in `tests/operator-ui-e2e/` and
-  the dashboard tests in `tests/unit/api/` must stay green. The split
-  layout is asserted by a new e2e case
-  `test_job_detail_split_pane_layout.py` that verifies: identity bar
-  is sticky, right rail is 280px wide on desktop, right rail collapses
-  below the main column under 1100px, theme toggle cycles and
-  persists.
-- A new screenshot test `test_job_detail_theme_screenshots.py` captures
-  the page in dark and light at 1440×900 and stores them under
-  `docs/media/images/job-detail-{dark,light}.png` (overwriting in place
-  per the dashboard-screenshots convention).
+Existing testids that **must not change** (referenced by
+`tests/e2e/operator_ui/test_run_detail_v1.py`): `page-job-detail`
+(`job-detail.js:2128`), `panel-diagnostics`, `strip-pods`, `kpi-rail`,
+`job-detail-ns-pill`, `job-detail-model-pill`, `job-detail-live`,
+`job-detail-cancel*`, plus all `kpi-<slugified-label>` testids on
+KpiCards (slug formula in `kpi-card.js:9` stays the same — only the
+visual rendering changes).
+
+New sub-testids added: `job-detail-id`, `job-detail-rail`,
+`job-detail-rail-phase`, `job-detail-rail-pods`,
+`job-detail-rail-records`, `job-detail-rail-sla`,
+`job-detail-rail-config`, `job-detail-rail-sweep`,
+`job-detail-rail-actions`, `job-detail-artifacts-download-all`,
+`job-detail-artifacts-quick-export`, `job-detail-theme-toggle`.
+
+Coverage:
+
+- `tests/e2e/operator_ui/test_run_detail_v1.py` must stay green
+  unmodified — split-pane is additive structure, the existing testids
+  resolve via the new wrappers.
+- New e2e case `test_run_detail_split_pane.py` asserts: identity bar
+  is `position: sticky`, right rail has explicit `width: 280px` on
+  desktop ≥1100px, right rail collapses below the main column at
+  <1100px, theme toggle cycles `auto → light → dark → auto` and the
+  resolved `data-theme` attribute on `<html>` updates accordingly,
+  `localStorage.aiperfTheme` round-trips.
+- New `test_job_detail_theme_screenshots.py` captures the page in
+  dark and light at 1440×900, writing
+  `docs/media/images/job-detail-{dark,light}.png` (overwriting in
+  place, per the dashboard-screenshots-in-docs convention).
+- `DiagnosticsPanel`'s URL writeback (`history.replaceState` +
+  `popstate` dispatch — see `diagnostics-panel.js:32–36` and the
+  matching `popstate` listener at `job-detail.js:2333`) **must
+  survive the drawer wrap**. The drawer mounts `DiagnosticsPanel`
+  unchanged; the parent JSX in `job-detail.js` keeps its `popstate`
+  listener.
 
 ## Migration / rollout
 
 The work is one PR on the user's current branch (`ajc/k8s`).
 Sub-commits in this order so each one is independently reviewable:
 
-1. Token block in `style.css` (dark theme, preserves all existing
-   visual output bit-for-bit by using current values for the new
-   `--cat-*` tokens too).
-2. Light theme block + `theme-switch.js` + top-nav toggle.
-3. New `KV` component + `IdentityBar` extraction + replace header card
-   with identity bar.
+1. Token block in `style.css` (dark theme). The new `--bg /
+   --bg-card / --bg-raised` values shift slightly from current
+   (`#0c0c0c → #0e0e10`, `#161616 → #131316`, `#222222 → #1c1c22`) —
+   visually equivalent, but **not** bit-for-bit identical. New
+   `--cat-throughput / --cat-latency / --cat-tokens / --cat-errors`
+   tokens are added but no consumer uses them yet, so categorical
+   colors look unchanged until step 6.
+2. Light theme block + `theme-switch.js` + top-nav toggle (new
+   `topbar-icon-btn` class).
+3. New `KV` component + `IdentityBar` extraction + replace header
+   card. Preserve `job-detail-ns-pill`, `job-detail-model-pill`,
+   `job-detail-live`, `job-detail-cancel*` testids on the new
+   identity bar JSX.
 4. Split-pane layout shell (`__body / __main / __rail` CSS + JSX
-   reordering of existing components into the rail).
-5. KPI tile rewrite — hero vs. secondary split, new sparkline sizes,
+   reordering of existing components into the rail). The existing
+   `KpiRail` wrapper keeps `data-testid="kpi-rail"` and now nests
+   the new hero + secondary children. The existing `PodsStrip`
+   keeps `data-testid="strip-pods"` even when relocated to the
+   right rail.
+5. KPI tile rewrite — hero vs. secondary split (both still
+   inside `KpiRail`), new sparkline sizes (220×36 / 150×22),
    gradient bar, trend badge.
-6. Metrics table sticky group headers + categorical token swap.
-7. Artifacts card rewrite + new download-all + quick-export endpoints.
-8. Diagnostics drawer extraction.
+6. Metrics table sticky group headers + categorical token swap
+   (`palette.blue → var(--cat-throughput)`, etc.).
+7. Artifacts card rewrite + new `profile_export?format=json`
+   endpoint. The existing `/runs/{epoch}.zip` route stays — only
+   the UI button now points at it.
+8. Diagnostics drawer extraction (preserve `popstate` dispatch
+   in the parent; mount `DiagnosticsPanel` unchanged inside the
+   drawer; keep `data-testid="panel-diagnostics"`).
 9. Screenshot regeneration + docs update.
 
 ## Out of scope (follow-ups)
@@ -399,6 +469,16 @@ Sub-commits in this order so each one is independently reviewable:
 - Replace the legacy `--surface0/--mauve/--lavender/--ctp-base/...`
   alias block in `style.css` with native v2 tokens once all consumers
   are migrated.
+- Make Chart.js axis / grid / tick colors theme-aware. Today
+  `pages/job-detail.js` and similar pass hardcoded `palette.overlay0 /
+  surface0 / overlay1` to Chart.js options; in light mode these read
+  as too-dark grays on white. Fixing this requires either threading a
+  theme parameter through every chart constructor, or replacing each
+  chart's options object with a function that re-reads
+  `getComputedStyle(document.documentElement).getPropertyValue('--...')`
+  on theme change.
+- Swap the hardcoded `'#76b900'` literal in
+  `MODEL_COLORS` (`lib/theme.js:100`) for `palette.green`.
 - Configurable hero KPI selection (let the user pin which 3 KPIs show).
 - Customizable right-rail (drag to reorder, hide cards).
 - Mobile / narrow-viewport layout polish (the spec covers the 1100px
