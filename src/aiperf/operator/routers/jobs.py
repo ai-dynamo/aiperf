@@ -28,6 +28,8 @@ from aiperf.kubernetes.client import (
 )
 from aiperf.operator import runs_index
 from aiperf.operator.job_union import (
+    _read_summary,
+    _summary_path,
     find_any_job,
     list_all_jobs,
     synthesize_status_from_summary,
@@ -351,12 +353,12 @@ async def _get_job_impl(
         job_dir = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
         if job_dir is None:
             raise HTTPException(404, f"No persisted run for {namespace}/{name}")
-        summary_path = job_dir / "profile_export_aiperf.json"
-        try:
-            summary = orjson.loads(summary_path.read_bytes())
-        except (OSError, orjson.JSONDecodeError) as e:
-            logger.warning(f"Failed to read archived summary {summary_path}: {e}")
-            summary = {}
+        # ``_summary_path`` handles the .zst-then-raw fallback used elsewhere
+        # in the codebase (results_db.py:76, runs_index.py:907) — without it
+        # archived-job detail pages on a deployment with the default
+        # AIPERF_RESULTS_COMPRESS_ON_DISK=true silently render empty Final KPIs.
+        summary_file = _summary_path(job_dir)
+        summary = (_read_summary(summary_file) or {}) if summary_file else {}
         conditions: list[dict[str, Any]] | None = None
         conditions_path = job_dir / "conditions.json"
         if conditions_path.is_file():
