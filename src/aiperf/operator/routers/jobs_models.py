@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -206,6 +206,22 @@ class JobEpochSummary(AIPerfBaseModel):
     mtime_epoch: int = Field(description="UNIX seconds of the run dir's mtime.")
     file_count: int = Field(
         description="Number of files persisted under this epoch dir."
+    )
+    status: Literal["running", "succeeded", "failed", "cancelled", "unknown"] = Field(
+        default="unknown",
+        description=(
+            "Normalized run status. 'running' for the live in-flight epoch; "
+            "'succeeded'/'failed'/'cancelled' for terminal phases; "
+            "'unknown' when the runs index hasn't ingested this epoch yet."
+        ),
+    )
+    started_at: int | None = Field(
+        default=None,
+        description="UNIX seconds when this run started, or None if unknown.",
+    )
+    ended_at: int | None = Field(
+        default=None,
+        description="UNIX seconds when this run ended, or None if still running / unknown.",
     )
 
 
