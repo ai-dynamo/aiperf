@@ -96,6 +96,16 @@ class AdaptiveSearchConfig(BaseConfig):
         gt=0,
         description="Coefficient-of-variation threshold for plateau (relative; scale-free).",
     )
+    improvement_patience: int = Field(
+        default=10,
+        ge=2,
+        description=(
+            "Stop after this many consecutive iterations with no improvement "
+            "over the running best objective. Standard idiom from skopt's "
+            "HollowIterationsStopper and Hyperopt's no_progress_loss; "
+            "complements plateau_threshold (either signal can stop the loop)."
+        ),
+    )
     random_seed: int | None = Field(
         default=None,
         description="If set, passed as `random_state` to skopt.Optimizer for reproducibility.",

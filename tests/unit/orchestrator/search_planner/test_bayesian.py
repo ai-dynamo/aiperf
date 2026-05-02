@@ -276,3 +276,153 @@ def test_objective_to_loss_sign_consistency_round_trip():
     # MINIMIZE: passthrough.
     assert planner_min._objective_to_loss(50.0) == pytest.approx(50.0)
     assert planner_min._objective_to_loss(-50.0) == pytest.approx(-50.0)
+
+
+# ----------------------------------------------------------------------------
+# Literature-driven improvements added after research-paper review.
+# Letham et al. 2017 (arXiv:1706.07094): pass per-trial observations to the GP
+# rather than pre-averaging — lets skopt's GP fit the noise term properly.
+# Hyperopt no_progress_loss / skopt HollowIterationsStopper: improvement-over-
+# best patience as a second termination signal.
+# ----------------------------------------------------------------------------
+
+
+def test_per_trial_observations_passed_to_skopt(monkeypatch):
+    """tell() with N>=2 trials must pass N (x, y) pairs to skopt.Optimizer.tell.
+
+    Pre-fix, the planner pre-averaged trials and called `opt.tell(x, mean_y)`.
+    Post-fix it calls `opt.tell([x]*N, [y1, y2, ...])` so the GP sees the
+    within-point variance — matches Letham et al. 2017 (arXiv:1706.07094).
+    """
+    planner = BayesianSearchPlanner(_base_config(), _cfg(max_iterations=5))
+
+    captured: dict = {"calls": []}
+    real_tell = planner._opt.tell
+
+    def spy_tell(x, y, *args, **kwargs):
+        captured["calls"].append((x, y))
+        return real_tell(x, y, *args, **kwargs)
+
+    monkeypatch.setattr(planner._opt, "tell", spy_tell)
+
+    _, variation = planner.ask()
+    # Three trials at the same point with distinct objectives.
+    trial_results = [
+        _make_result(variation, throughput=10.0),
+        _make_result(variation, throughput=12.0),
+        _make_result(variation, throughput=11.0),
+    ]
+    planner.tell(variation, trial_results)
+
+    assert len(captured["calls"]) == 1
+    x_passed, y_passed = captured["calls"][0]
+    # Should be a list of x's (one per trial) and a list of y's.
+    assert isinstance(x_passed, list)
+    assert len(x_passed) == 3
+    assert isinstance(y_passed, list)
+    assert len(y_passed) == 3
+    # All x's identical.
+    assert all(xi == x_passed[0] for xi in x_passed)
+    # Per-trial losses for MAXIMIZE = -throughput. Order may vary; check sets.
+    assert sorted(y_passed) == sorted([-10.0, -12.0, -11.0])
+    # History stores the mean for plateau detection.
+    assert planner.history()[0].objective_value == pytest.approx(11.0)
+
+
+def test_single_trial_path_uses_scalar_tell(monkeypatch):
+    """When only one trial succeeds, tell() should pass scalar x, y.
+
+    Calling `opt.tell([x], [y])` on skopt 0.10 works but is needlessly
+    awkward; the scalar form is what every prior test exercised and what
+    the rest of the test suite relies on.
+    """
+    planner = BayesianSearchPlanner(_base_config(), _cfg(max_iterations=5))
+
+    captured: dict = {"calls": []}
+    real_tell = planner._opt.tell
+
+    def spy_tell(x, y, *args, **kwargs):
+        captured["calls"].append((x, y))
+        return real_tell(x, y, *args, **kwargs)
+
+    monkeypatch.setattr(planner._opt, "tell", spy_tell)
+
+    _, variation = planner.ask()
+    planner.tell(variation, [_make_result(variation, throughput=42.0)])
+
+    x_passed, y_passed = captured["calls"][0]
+    assert isinstance(y_passed, float)
+    assert y_passed == pytest.approx(-42.0)
+
+
+def test_improvement_patience_stops_after_no_progress():
+    """is_converged() returns True once `improvement_patience` consecutive
+    iterations show no improvement on best-so-far. Mirrors skopt's
+    HollowIterationsStopper / Hyperopt's no_progress_loss."""
+    cfg = _cfg(
+        max_iterations=20,
+        n_initial_points=1,
+        improvement_patience=3,
+        # Disable plateau detection by setting an unreachable threshold; we
+        # want this test to specifically exercise the patience stop, not CV.
+        plateau_window=20,
+        plateau_threshold=1e-9,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+
+    # First iteration sets the best.
+    _, v = planner.ask()
+    planner.tell(v, [_make_result(v, throughput=100.0)])
+    assert not planner.is_converged()
+
+    # Three subsequent iterations all worse-than-best (throughput=50 << 100).
+    for _ in range(3):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=50.0)])
+
+    # 3 consecutive no-improvement iterations >= patience(3) → converged.
+    assert planner.is_converged()
+
+
+def test_improvement_patience_resets_on_better_value():
+    """A new best resets the patience counter."""
+    cfg = _cfg(
+        max_iterations=20,
+        n_initial_points=1,
+        improvement_patience=3,
+        plateau_window=20,
+        plateau_threshold=1e-9,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+
+    # Iterations: [100 (best), 50, 50, 200 (new best!), 50, 50]
+    # Should NOT converge: after the new best at iter 4, only 2 no-improvement.
+    for value in (100.0, 50.0, 50.0, 200.0, 50.0, 50.0):
+        _, v = planner.ask()
+        planner.tell(v, [_make_result(v, throughput=value)])
+        # After the 4th iteration (new best=200), counter resets to 0.
+
+    # 2 no-improvement iterations after the 200 new-best < patience(3).
+    assert not planner.is_converged()
+
+
+def test_improvement_patience_handles_failed_iterations():
+    """A failed iteration counts toward patience (no progress IS no progress)."""
+    cfg = _cfg(
+        max_iterations=20,
+        n_initial_points=1,
+        improvement_patience=2,
+        plateau_window=20,
+        plateau_threshold=1e-9,
+    )
+    planner = BayesianSearchPlanner(_base_config(), cfg)
+
+    _, v = planner.ask()
+    planner.tell(v, [_make_result(v, throughput=100.0)])
+    # Two failed iterations: each produces no objective, both count as
+    # no-improvement.
+    for _ in range(2):
+        _, v = planner.ask()
+        planner.tell(v, [RunResult(label="x", success=False)])
+
+    assert planner.is_converged()

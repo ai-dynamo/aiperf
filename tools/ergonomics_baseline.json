@@ -309,6 +309,11 @@
     [
       "function-size",
       "src/aiperf/operator/routers/jobs.py",
+      "_list_job_epochs_impl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/operator/routers/jobs.py",
       "create_jobs_router"
     ],
     [

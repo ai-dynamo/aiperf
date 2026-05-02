@@ -56,6 +56,11 @@ class BayesianSearchPlanner(SearchPlanner):
         self._history: list[SearchIteration] = []
         # Track ask/tell pairs so skopt's tell sees the same X it returned.
         self._pending_x: list[Any] | None = None
+        # Patience-based stop: track best loss in skopt's loss space and the
+        # number of consecutive iterations since it last improved. Matches
+        # skopt's HollowIterationsStopper and Hyperopt's no_progress_loss.
+        self._best_loss: float | None = None
+        self._iters_since_improvement: int = 0
 
         dims = []
         for d in cfg.search_space:
@@ -94,8 +99,12 @@ class BayesianSearchPlanner(SearchPlanner):
         return cfg, variation
 
     def tell(self, variation: SweepVariation, results: list[RunResult]) -> None:
-        objective = self._extract_objective(results)
-        if objective is None:
+        per_trial_objectives = self._extract_trial_objectives(results)
+
+        if self._pending_x is None:
+            raise RuntimeError("tell() called without matching ask()")
+
+        if not per_trial_objectives:
             # Iteration produced no usable objective (every trial failed, or the
             # configured metric/stat was missing). Skopt cannot accept None and
             # the optimizer must remain consistent with the ask/tell pairing,
@@ -108,19 +117,50 @@ class BayesianSearchPlanner(SearchPlanner):
                 variation.values,
                 tell_value,
             )
+            self._opt.tell(self._pending_x, float(tell_value))
+            objective_for_history: float | None = None
         else:
-            tell_value = self._objective_to_loss(objective)
+            # Per-trial observations let skopt's GP estimate the noise term
+            # (sigma_n^2) properly. Pre-averaging the trials before telling
+            # discards the within-point variance the GP could have used —
+            # see Letham et al. 2017, "Constrained Bayesian Optimization with
+            # Noisy Experiments" (arXiv:1706.07094). When we have N>=2 trials
+            # we feed N copies of the same x with the N losses; skopt's
+            # Optimizer.tell accepts repeated x's and the GP fits accordingly.
+            losses = [self._objective_to_loss(o) for o in per_trial_objectives]
+            if len(losses) == 1:
+                self._opt.tell(self._pending_x, float(losses[0]))
+            else:
+                xs = [list(self._pending_x) for _ in losses]
+                self._opt.tell(xs, [float(loss) for loss in losses])
+            # History stores the arithmetic mean for plateau detection and
+            # user-facing summaries; the GP itself sees per-trial values.
+            objective_for_history = sum(per_trial_objectives) / len(
+                per_trial_objectives
+            )
 
-        if self._pending_x is None:
-            raise RuntimeError("tell() called without matching ask()")
-        self._opt.tell(self._pending_x, float(tell_value))
         self._pending_x = None
+
+        # Track improvement-over-best for the patience-based stop. Mirrors
+        # skopt's HollowIterationsStopper and Hyperopt's no_progress_loss:
+        # consecutive iterations without improvement-over-best trigger
+        # convergence. Computed in skopt's loss space so the comparison is
+        # direction-agnostic.
+        if objective_for_history is not None:
+            iter_loss = self._objective_to_loss(objective_for_history)
+            if self._best_loss is None or iter_loss < self._best_loss:
+                self._best_loss = iter_loss
+                self._iters_since_improvement = 0
+            else:
+                self._iters_since_improvement += 1
+        else:
+            self._iters_since_improvement += 1
 
         self._history.append(
             SearchIteration(
                 iteration_idx=self._iter,
                 variation_values=dict(variation.values),
-                objective_value=objective,
+                objective_value=objective_for_history,
                 results=list(results),
             )
         )
@@ -128,6 +168,14 @@ class BayesianSearchPlanner(SearchPlanner):
 
     def is_converged(self) -> bool:
         if self._iter >= self._cfg.max_iterations:
+            return True
+        # Improvement-over-best patience stop. If no successful iteration has
+        # ever improved on the running best for `improvement_patience`
+        # consecutive iterations, declare converged. Idiom from skopt's
+        # HollowIterationsStopper and Hyperopt's no_progress_loss; treats
+        # "we've stopped finding better points" as a stronger termination
+        # signal than "values stopped fluctuating" alone.
+        if self._iters_since_improvement >= self._cfg.improvement_patience:
             return True
         window = self._cfg.plateau_window
         if len(self._history) < window:
@@ -158,38 +206,38 @@ class BayesianSearchPlanner(SearchPlanner):
     def history(self) -> list[SearchIteration]:
         return list(self._history)
 
-    def _extract_objective(self, results: list[RunResult]) -> float | None:
-        """Average the configured stat across all successful trials.
+    def _extract_trial_objectives(self, results: list[RunResult]) -> list[float]:
+        """Return per-trial objective values (one float per successful trial).
 
-        Returns the arithmetic mean of `JsonMetricResult.<stat>` over successful
-        trials, or None when no trial produced the metric. summary_metrics keys
-        are bare metric tags; the stat (avg/p99/...) is a JsonMetricResult field
-        — NOT a suffix on the key.
+        Pre-research-fix this returned the arithmetic mean as a single float;
+        now returns the full list so skopt's GP can fit the noise term
+        (sigma_n^2) properly via repeated observations at the same x. See
+        Letham et al. 2017, "Constrained Bayesian Optimization with Noisy
+        Experiments" (arXiv:1706.07094). Pre-averaging discards the
+        within-point variance the GP could have used to estimate noise.
 
-        Math note: arithmetic mean of per-trial means is the unbiased estimator
-        of the true mean iff trials carry equal weight (the usual case under
-        --num-profile-runs N with consistent --request-count). For percentile
-        stats (p50/p99/...) the result is the *expected per-trial percentile*,
-        not the percentile of the pooled samples — these differ for skewed
-        distributions. BO optimizes whichever quantity is fed in, so the
-        percentile-of-trial-percentiles framing is consistent across iterations.
+        summary_metrics keys are bare metric tags; the stat (avg/p99/...)
+        is a JsonMetricResult field — NOT a suffix on the key.
+
+        Math note on the chosen stat: per-trial percentiles are the *expected
+        per-trial percentile*, not the percentile of pooled samples — these
+        differ for skewed distributions. BO optimizes whichever quantity is
+        fed in, so consistency across iterations is what matters; the framing
+        (per-trial vs. pooled) is a measurement-philosophy choice the user
+        makes via --search-stat.
         """
         successful = [
             r
             for r in results
             if r.success and self._cfg.objective_metric in r.summary_metrics
         ]
-        if not successful:
-            return None
         values: list[float] = []
         for r in successful:
             mr = r.summary_metrics[self._cfg.objective_metric]
             stat_value = getattr(mr, self._cfg.objective_stat, None)
             if stat_value is not None:
                 values.append(float(stat_value))
-        if not values:
-            return None
-        return sum(values) / len(values)
+        return values
 
     def _objective_to_loss(self, objective: float) -> float:
         """Map objective-space value to skopt's loss-space (which it minimizes).
