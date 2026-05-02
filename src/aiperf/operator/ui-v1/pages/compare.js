@@ -420,6 +420,13 @@ export function Compare() {
   // a "+N more" pill so the strip doesn't wrap into a wall of chips.
   const [chipsExpanded, setChipsExpanded] = useState(false);
 
+  const [nsFilter, setNsFilter] = useState(new Set());
+  const [modelFilter, setModelFilter] = useState(new Set());
+  const [endpointFilter, setEndpointFilter] = useState(new Set());
+  // Per-dimension overflow-collapse (mirrors chipsExpanded for the
+  // selection chip-strip below; each filter row collapses past 6 chips).
+  const [facetExpanded, setFacetExpanded] = useState({ ns: false, model: false, endpoint: false });
+
   // Pareto Lab state — ported from operator/ui/views/analysis.js. The axis
   // preset is the active (x, y) metric pair; ``labActiveClusters = null``
   // means "show all clusters" (default), and a populated Set means the
@@ -488,6 +495,8 @@ export function Compare() {
       return;
     }
     setActiveClusterLabel(cluster);
+    setNsFilter(new Set([ns]));
+    setModelFilter(new Set([model]));
     setSelectedKeys(matches);
     if (matches.length >= 2) {
       // Auto-trigger the compare so the user lands on a populated view
@@ -539,6 +548,8 @@ export function Compare() {
     if (activeClusterLabel) setActiveClusterLabel(null);
     if (unmatchedClusterLabel) setUnmatchedClusterLabel(null);
     if (query.value.cluster) setQuery({ cluster: '' });
+    if (nsFilter.size) setNsFilter(new Set());
+    if (modelFilter.size) setModelFilter(new Set());
   }
 
   function toggleJob(key) {
@@ -561,13 +572,31 @@ export function Compare() {
   // for jobs by name before they can see anything.
   function selectRecent(n) {
     clearDeepLinkContext();
-    const sorted = [...storedJobs].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
       const ta = a?.start_time ? Date.parse(a.start_time) : 0;
       const tb = b?.start_time ? Date.parse(b.start_time) : 0;
       return tb - ta;
     });
     const picks = sorted.slice(0, n).map(compositeKey).filter(Boolean);
     if (picks.length >= 2) setSelectedKeys(picks);
+  }
+
+  function toggleFacet(setFn, value) {
+    setFn((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return next;
+    });
+  }
+
+  function clearFilters() {
+    setNsFilter(new Set());
+    setModelFilter(new Set());
+    setEndpointFilter(new Set());
+  }
+
+  function toggleFacetExpanded(dim) {
+    setFacetExpanded((prev) => ({ ...prev, [dim]: !prev[dim] }));
   }
 
   async function handleCompare() {
@@ -587,12 +616,11 @@ export function Compare() {
     }
   }
 
-  const filtered = storedJobs.filter((job) => {
-    const id = job.job_id ?? '';
-    const ns = job.namespace ?? '';
-    const q = search.toLowerCase();
-    return id.toLowerCase().includes(q) || ns.toLowerCase().includes(q);
+  const facets = extractFacets(storedJobs);
+  const filtered = applyJobFilters(storedJobs, {
+    nsFilter, modelFilter, endpointFilter, search,
   });
+  const anyFilterActive = nsFilter.size > 0 || modelFilter.size > 0 || endpointFilter.size > 0;
 
   const entries = compareData?.entries ?? [];
   // Display keys match composite values-map keys from the backend.
@@ -747,6 +775,68 @@ export function Compare() {
     },
   };
 
+  const FACET_COLLAPSE_AT = 6;
+  const FACET_VISIBLE_WHEN_COLLAPSED = 5;
+  const renderFacetRow = (label, dim, facetMap, filterSet, setFilterFn) => {
+    const entries = Array.from(facetMap.entries()).sort((a, b) => b[1] - a[1]);
+    if (entries.length <= 1) return null;
+    const expanded = facetExpanded[dim];
+    const collapsed = entries.length > FACET_COLLAPSE_AT && !expanded;
+    const visible = collapsed ? entries.slice(0, FACET_VISIBLE_WHEN_COLLAPSED) : entries;
+    const overflow = entries.length - visible.length;
+    return html`
+      <div style="margin-bottom: var(--space-2)" data-testid=${'compare-facet-' + dim}>
+        <div style="font-size: var(--font-size-xs); color: var(--overlay0); margin-bottom: var(--space-1)">${label}</div>
+        <div style="display: flex; flex-wrap: wrap; gap: var(--space-1)">
+          ${visible.map(([value, count]) => {
+            const on = filterSet.has(value);
+            const display = value === FILTER_NONE ? '(none)' : value;
+            return html`
+              <span
+                key=${value}
+                onclick=${() => toggleFacet(setFilterFn, value)}
+                onkeydown=${(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleFacet(setFilterFn, value);
+                  }
+                }}
+                role="button"
+                tabindex="0"
+                aria-pressed=${on}
+                title=${value === FILTER_NONE ? '(no value)' : value}
+                style=${'display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); cursor: pointer; border: 1px solid;'
+                  + (on
+                    ? ' background: var(--mauve)22; color: var(--mauve); border-color: var(--mauve);'
+                    : ' background: transparent; color: var(--subtext0); border-color: var(--surface1);')}
+              >
+                <span style="font-family: var(--font-mono)">${display}</span>
+                <span style="opacity: 0.6">· ${count}</span>
+              </span>
+            `;
+          })}
+          ${(collapsed || (expanded && entries.length > FACET_COLLAPSE_AT)) && html`
+            <span
+              onclick=${() => toggleFacetExpanded(dim)}
+              onkeydown=${(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleFacetExpanded(dim);
+                }
+              }}
+              role="button"
+              tabindex="0"
+              data-testid=${'compare-facet-toggle-' + dim}
+              style="display: inline-flex; align-items: center; padding: var(--space-1) var(--space-2); border-radius: 999px; font-size: var(--font-size-xs); cursor: pointer; background: var(--surface0); color: var(--subtext0); border: 1px solid var(--surface1)"
+            >
+              ${collapsed ? '+' + overflow + ' more' : 'Show less'}
+            </span>
+          `}
+        </div>
+      </div>
+    `;
+  };
+
   return html`
     <div class="compare-page" data-testid="page-compare">
       <div class="section-header" style="margin-bottom: var(--space-4)">
@@ -767,6 +857,27 @@ export function Compare() {
             oninput=${(e) => setSearch(e.target.value)}
             style="width: 100%; margin-bottom: var(--space-3)"
           />
+
+          ${renderFacetRow('Namespace', 'ns', facets.ns, nsFilter, setNsFilter)}
+          ${renderFacetRow('Model', 'model', facets.model, modelFilter, setModelFilter)}
+          ${renderFacetRow('Endpoint', 'endpoint', facets.endpoint, endpointFilter, setEndpointFilter)}
+          ${anyFilterActive && html`
+            <div style="margin-bottom: var(--space-3)">
+              <span
+                onclick=${clearFilters}
+                onkeydown=${(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    clearFilters();
+                  }
+                }}
+                role="button"
+                tabindex="0"
+                data-testid="compare-clear-filters"
+                style="font-size: var(--font-size-xs); color: var(--subtext0); cursor: pointer; text-decoration: underline; text-decoration-style: dotted"
+              >Clear filters</span>
+            </div>
+          `}
 
           ${!jobsLoading && storedJobs.length >= 2 && selectedKeys.length === 0 && html`
             <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3)" data-testid="compare-quick-pick">
