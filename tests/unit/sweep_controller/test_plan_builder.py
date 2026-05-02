@@ -61,7 +61,7 @@ def test_build_plan_no_sweep_just_multirun():
 def test_build_plan_convergence_uses_max_runs_for_trials():
     cr = _sweep_cr(
         {
-            "multiRun": {"cooldownSeconds": 30},
+            "multiRun": {"cooldownSeconds": 30, "mode": "independent"},
             "convergence": {"metric": "ttft_p99", "minRuns": 3, "maxRuns": 7},
             "template": {"spec": {"benchmark": _benchmark()}},
         }
