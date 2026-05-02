@@ -1,5 +1,7 @@
 import { html } from 'htm/preact';
+import { useState, useEffect } from 'preact/hooks';
 import { route, navigate } from '../lib/router.js';
+import { cycleTheme, getResolvedTheme } from '../lib/theme-switch.js';
 
 const PRIMARY_GROUP = {
   items: [
@@ -52,6 +54,13 @@ function routeSlug(path) {
 export function TopNav({ onSearchClick, features }) {
   const currentRoute = route.value;
   const navGroups = buildNavGroups(features);
+  const [resolved, setResolved] = useState(getResolvedTheme());
+
+  useEffect(() => {
+    const onThemeChange = () => setResolved(getResolvedTheme());
+    window.addEventListener('themechange', onThemeChange);
+    return () => window.removeEventListener('themechange', onThemeChange);
+  }, []);
 
   return html`
     <header class="topbar" data-testid="top-nav">
@@ -93,6 +102,15 @@ export function TopNav({ onSearchClick, features }) {
         </nav>
       </div>
       <div class="topbar-right">
+        <button
+          class="topbar-icon-btn"
+          data-testid="topbar-theme-toggle"
+          title=${`Theme: ${resolved}`}
+          aria-label="Toggle theme"
+          onClick=${cycleTheme}
+        >
+          ${resolved === 'dark' ? '☾' : '☀'}
+        </button>
         <button
           class="search-btn"
           onclick=${onSearchClick}

@@ -2,6 +2,7 @@ import { html, render } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { route, matchRoute } from './lib/router.js';
 import { globalError } from './lib/state.js';
+import { initTheme } from './lib/theme-switch.js';
 import { TopNav } from './components/top-nav.js';
 import { Breadcrumb } from './components/breadcrumb.js';
 import { CommandPalette } from './components/command-palette.js';
@@ -100,4 +101,5 @@ function App() {
   `;
 }
 
+initTheme();
 render(html`<${App} />`, document.getElementById('app'));

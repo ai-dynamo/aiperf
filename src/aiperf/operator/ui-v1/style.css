@@ -1,25 +1,41 @@
 /* CSS Custom Properties - NVIDIA Design System */
 :root {
-  /* Background layers (neutral grays) */
-  --bg: #0c0c0c;
-  --bg-card: #161616;
-  --bg-raised: #222222;
+  /* Surfaces */
+  --bg: #0e0e10;
+  --bg-card: #131316;
+  --bg-raised: #1c1c22;
+  --card-grad: linear-gradient(180deg, #181820 0%, #131316 100%);
+  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 
   /* Borders */
-  --border: #313131;
+  --border: #25252b;
+  --border-strong: #2c2c33;
   --border-hover: #4b4b4b;
-  --border-subtle: #1a1a1a;
+  --border-subtle: #1d1d22;
 
-  /* Text scale (neutral grays) */
-  --dim: #4b4b4b;
-  --muted: #757575;
-  --sub: #a7a7a7;
-  --text: #eeeeee;
+  /* Text scale */
+  --text: #ececec;
+  --text-strong: #ffffff;
+  --sub: #c0c0c8;
+  --muted: #87878f;
+  --dim: #6b6b73;
+  --faint: #5d5d65;
+  --hairline: #3a3a40;
   --white: #ffffff;
 
   /* Accent (NVIDIA green) */
-  --accent: #76b900;
+  --accent: #94d340;
+  --accent-strong: #76b900;
+  --accent-tint: rgba(148, 211, 64, 0.10);
+  --accent-border: rgba(148, 211, 64, 0.30);
   --accent-dim: rgba(118, 185, 0, 0.15);
+
+  /* Categorical (table-group stripes, format chips) */
+  --cat-throughput: #7aa9d6;
+  --cat-latency: #cf9a6e;
+  --cat-tokens: #b691d4;
+  --cat-errors: #e57373;
+  --warn: #ffc107;
 
   /* Semantic colors */
   --blue: #3b82f6;
@@ -35,8 +51,8 @@
   --pink-dim: rgba(171, 71, 188, 0.15);
 
   /* Typography */
-  --font-sans: 'IBM Plex Mono', ui-monospace, monospace;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.8125rem;
   --font-size-base: 0.875rem;
@@ -102,6 +118,87 @@
   --warning: #f59e0b;
   --error: #ef4444;
   --info: #3b82f6;
+}
+
+[data-theme="light"] {
+  /* Surfaces */
+  --bg: #f6f6f8;
+  --bg-card: #ffffff;
+  --bg-raised: #fafafb;
+  --card-grad: #ffffff;
+  --card-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+
+  /* Borders */
+  --border: #e2e2e6;
+  --border-strong: #d8d8de;
+  --border-hover: #d8d8de;
+  --border-subtle: #ececef;
+
+  /* Text scale */
+  --text: #1a1a1c;
+  --text-strong: #0a0a0c;
+  --sub: #2a2a30;
+  --muted: #6b6b73;
+  --dim: #8a8a92;
+  --faint: #b0b0b8;
+  --hairline: #c8c8cd;
+  --white: #0a0a0c;
+
+  /* Accent (NVIDIA green) */
+  --accent: #76b900;
+  --accent-strong: #5d9400;
+  --accent-tint: rgba(118, 185, 0, 0.10);
+  --accent-border: rgba(118, 185, 0, 0.40);
+  --accent-dim: rgba(118, 185, 0, 0.10);
+
+  /* Categorical (Tailwind-600 set) */
+  --cat-throughput: #2563eb;
+  --cat-latency: #ea580c;
+  --cat-tokens: #9333ea;
+  --cat-errors: #dc2626;
+  --warn: #d97706;
+
+  /* Semantic colors */
+  --blue: #2563eb;
+  --cyan: #2c8a98;
+  --green: #5d9400;
+  --amber: #b58300;
+  --red: #c54040;
+  --pink: #9255bf;
+  --blue-dim: rgba(37, 99, 235, 0.12);
+  --green-dim: rgba(118, 185, 0, 0.12);
+  --pink-dim: rgba(146, 85, 191, 0.12);
+
+  /* Legacy alias mirrors so legacy consumers keep working in light mode */
+  --bg-tile: #fafafb;
+  --accent-hot: var(--accent-strong);
+  --surface0: #ececef;
+  --surface1: #d8d8de;
+  --surface2: #d8d8de;
+  --overlay0: #6b6b73;
+  --subtext0: #2a2a30;
+  --subtext1: #1a1a1c;
+  --base: #f6f6f8;
+  --mantle: #ffffff;
+  --crust: #ececef;
+  --ctp-base: var(--bg-card);
+  --mauve: var(--accent);
+  --yellow: #b58300;
+  --lavender: var(--accent);
+  --sapphire: #2c8a98;
+  --sky: #2c8a98;
+  --teal: #2c8a98;
+  --peach: #c47128;
+  --maroon: #c54040;
+  --flamingo: #9255bf;
+  --rosewater: #9255bf;
+  --bg-alt: #ffffff;
+  --bg-elevated: #ececef;
+  --accent-alt: #2563eb;
+  --success: #5d9400;
+  --warning: #b58300;
+  --error: #c54040;
+  --info: #2563eb;
 }
 
 /* Reset */
@@ -304,6 +401,30 @@ select, input {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--dim);
+}
+
+/* Top-bar icon button (theme toggle, future utilities) */
+.topbar-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.topbar-icon-btn:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+.topbar-icon-btn[aria-pressed="true"] {
+  color: var(--accent);
 }
 
 /* ──────────────────────────────────────────────────────────────
