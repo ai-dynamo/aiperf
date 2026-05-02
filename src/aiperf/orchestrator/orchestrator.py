@@ -318,15 +318,6 @@ class MultiRunOrchestrator:
         <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/
         - the inner run_NNNN tracks the trial index (one run per cell).
         """
-        if plan.use_adaptive:
-            raise ValueError(
-                "parameter_sweep_mode='repeated' is incompatible with "
-                "convergence-based stopping (--convergence-metric). The "
-                "trial-outer iteration order has no place to evaluate "
-                "convergence per-cell. Use 'independent' for adaptive "
-                "sweeps, or remove --convergence-metric."
-            )
-
         all_results: list[RunResult] = []
         logger.info(
             f"Starting multi-run benchmark (repeated): {plan.trials} trials x "

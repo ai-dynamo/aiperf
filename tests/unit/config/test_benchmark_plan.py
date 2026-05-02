@@ -573,3 +573,24 @@ class TestBenchmarkPlanAdaptiveSearch:
         assert plan.is_adaptive_search is True
         # is_sweep stays grid-only (length-1 variations).
         assert plan.is_sweep is False
+
+    def test_benchmark_plan_repeated_mode_rejects_convergence_metric(self) -> None:
+        """REPEATED + --convergence-metric is rejected at plan-build time.
+
+        Mirrors the CEL admission rule on AIPerfSweepSpec for the k8s path.
+        Trial-outer iteration order has no place to evaluate convergence
+        per-cell.
+        """
+        from aiperf.common.enums import SweepMode
+
+        config = _make_benchmark_config()
+        with pytest.raises(
+            ValidationError,
+            match=r"parameter_sweep_mode='repeated' is incompatible with",
+        ):
+            BenchmarkPlan(
+                configs=[config],
+                variations=[SweepVariation(index=0, label="base", values={})],
+                convergence_metric="request_throughput",
+                parameter_sweep_mode=SweepMode.REPEATED,
+            )

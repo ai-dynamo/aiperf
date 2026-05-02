@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aiperf.common.enums import (
     ConvergenceMode,
@@ -15,6 +15,7 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     SweepMode,
 )
+from aiperf.config.adaptive_search import AdaptiveSearchConfig
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation
 from aiperf.config.zmq import BaseZMQCommunicationConfig
@@ -109,9 +110,10 @@ class BenchmarkPlan(BaseModel):
         default=None,
         description="Path to JSONL export file for distribution convergence mode.",
     )
-    # Sweep-specific config attached by sweep_controller.plan_builder when
-    # the plan is driven by an AIPerfSweep CR. Typed Any to avoid a circular
-    # import on aiperf.kubernetes.sweep_models. None for non-sweep plans.
+    # Sweep-specific config from kubernetes.sweep_models. Typed Any here
+    # because the config layer must not import from the kubernetes layer
+    # at runtime (one-way layering: kubernetes -> config). Validated at
+    # the AIPerfSweepSpec boundary; attached by sweep_controller.plan_builder.
     failure_policy: Any = Field(
         default=None,
         description="Sweep failure-policy config (FailurePolicy); None for non-sweep plans.",
@@ -149,13 +151,11 @@ class BenchmarkPlan(BaseModel):
             "Dispatched in MultiRunOrchestrator.execute."
         ),
     )
-    adaptive_search: Any = Field(
+    adaptive_search: AdaptiveSearchConfig | None = Field(
         default=None,
         description=(
             "Adaptive outer-loop configuration (e.g. Bayesian Optimization). "
-            "Typed AdaptiveSearchConfig but expressed as Any to avoid a circular "
-            "import between aiperf.config and aiperf.orchestrator. None for "
-            "non-adaptive plans. When set, MultiRunOrchestrator.execute "
+            "None for non-adaptive plans. When set, MultiRunOrchestrator.execute "
             "dispatches to execute_adaptive_search instead of grid-mode paths."
         ),
     )
@@ -190,6 +190,18 @@ class BenchmarkPlan(BaseModel):
         Both being True is forbidden by build_benchmark_plan.
         """
         return self.adaptive_search is not None
+
+    @model_validator(mode="after")
+    def _check_repeated_incompatible_with_convergence(self) -> BenchmarkPlan:
+        if self.use_adaptive and self.parameter_sweep_mode == SweepMode.REPEATED:
+            raise ValueError(
+                "parameter_sweep_mode='repeated' is incompatible with "
+                "convergence-based stopping (--convergence-metric). The "
+                "trial-outer iteration order has no place to evaluate "
+                "convergence per-cell. Use 'independent' for adaptive "
+                "sweeps, or remove --convergence-metric."
+            )
+        return self
 
 
 class ResolvedConfig(BaseModel):

@@ -387,19 +387,6 @@ async def test_repeated_mode_artifact_path_includes_trial_prefix(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_repeated_mode_rejects_adaptive_convergence(tmp_path):
-    """Repeated + --convergence-metric must fail loud, not silently misbehave."""
-    plan = _make_two_variation_plan(SweepMode.REPEATED, trials=3)
-    plan = plan.model_copy(update={"convergence_metric": "request_throughput"})
-    executor = FakeExecutor()
-    with pytest.raises(
-        ValueError,
-        match=r"parameter_sweep_mode='repeated' is incompatible with",
-    ):
-        await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
-
-
-@pytest.mark.asyncio
 async def test_repeated_mode_passes_growing_prior_results_to_strategy(
     tmp_path, monkeypatch
 ):
