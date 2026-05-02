@@ -214,6 +214,93 @@ sweep:
             isl: {type: normal, mean: 512, stddev: 20}
 ```
 
+### Paired ISL/OSL via shorthand `dataset:`
+
+When you want to compare hand-picked input/output length pairings -- 128/128 for chatbot-style turns, 256/256 for short Q&A, 512/1024 for summarization -- a grid sweep is the wrong tool (it produces a Cartesian product, not paired combinations) and the verbose scenario form forces three levels of wrapping per pair. The terse singular `dataset:` shorthand inside scenario `runs:` keeps the intent visible:
+
+```yaml
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+
+datasets:
+  - name: main
+    type: synthetic
+    entries: 2000
+
+phases:
+  - name: profiling
+    type: poisson
+    dataset: main
+    duration: 120
+    rate: 30
+    concurrency: 32
+    grace_period: 30
+
+sweep:
+  type: scenarios
+  runs:
+    - {name: short,  dataset: {isl: 128, osl: 128}}
+    - {name: medium, dataset: {isl: 256, osl: 256}}
+    - {name: long,   dataset: {isl: 512, osl: 1024}}
+
+artifacts:
+  dir: ./artifacts/isl_osl_pairs
+  summary: [json]
+```
+
+This produces three variations with paired (`isl`, `osl`) values. Mechanically, the scenario's singular `dataset:` deep-merges by name into the base's matching dataset entry; when the base has only one dataset the name is auto-inherited, so you can omit it. Top-level `isl:`/`osl:` on the scenario `dataset:` hoist into `prompts:` automatically.
+
+#### Disambiguating multiple datasets
+
+When the base declares more than one dataset, the scenario must spell out which one it is targeting via an explicit `name:`. Without it the sweep expander cannot decide where to merge and raises a `ValueError`:
+
+```yaml
+datasets:
+  - {name: main, type: synthetic, entries: 2000}
+  - {name: eval, type: file, path: ./eval.jsonl}
+
+sweep:
+  type: scenarios
+  runs:
+    - dataset: {name: main, isl: 128, osl: 128}     # explicit name required
+    - dataset: {name: main, isl: 256, osl: 256}
+```
+
+#### Limitation: dataset-level `isl:`/`osl:` cannot override a base that already declares `prompts:`
+
+The shorthand `isl:`/`osl:` keys hoist into `prompts:` with `setdefault` semantics -- they fill `prompts:` only when it is not already populated. If the base dataset already declares `prompts:`, the scenario's hoisted values are silently ignored:
+
+```yaml
+# Won't work -- base already declares prompts:
+datasets:
+  - name: main
+    type: synthetic
+    prompts: {isl: 64, osl: 32}    # base prompts pre-set
+
+sweep:
+  type: scenarios
+  runs:
+    - dataset: {isl: 128, osl: 128}    # IGNORED, prompts.isl stays at 64
+```
+
+To override prompts that the base pre-declares, address `prompts:` directly using the explicit nested form:
+
+```yaml
+# Works -- use the nested form to override:
+sweep:
+  type: scenarios
+  runs:
+    - dataset: {prompts: {isl: 128, osl: 128}}    # explicit prompts: branch
+```
+
+In short: the dataset-level `isl:`/`osl:` shortcut only applies when the base dataset has no `prompts:` block of its own; when the base pre-declares prompt distributions, you must reach into `prompts:` to override them.
+
 ## Multi-Run Statistics
 
 When a single benchmark run is insufficient to account for system jitter, multi-run mode repeats each benchmark multiple times and computes aggregate statistics with confidence intervals.
