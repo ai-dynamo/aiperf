@@ -79,6 +79,7 @@ from aiperf.common.enums.metric_enums import (
     TemperatureMetricUnit,
     TemperatureMetricUnitInfo,
 )
+from aiperf.common.enums.optimization_enums import OptimizationDirection
 
 __all__ = [
     "AIPerfLogLevel",
@@ -128,6 +129,7 @@ __all__ = [
     "MetricValueTypeT",
     "MetricValueTypeVarT",
     "ModelSelectionStrategy",
+    "OptimizationDirection",
     "OslMode",
     "PlotMetricDirection",
     "PowerMetricUnit",

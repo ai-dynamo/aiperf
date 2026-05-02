@@ -13,8 +13,8 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.common.enums import OptimizationDirection
 from aiperf.config._base import BaseConfig
-from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 
 __all__ = ["AdaptiveSearchConfig", "SearchSpaceDimension"]
 
