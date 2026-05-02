@@ -578,10 +578,10 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
             # at request time. Catching this at admission saves one round
             # of "why is my benchmark hitting the wrong endpoint" debugging.
             {
-                "rule": "!has(self.path) || self.path.startsWith(\'/\')",
+                "rule": "!has(self.path) || self.path.startsWith('/')",
                 "message": (
-                    "endpoint.path must start with \'/\' "
-                    "(e.g. \'/v1/chat/completions\', not \'v1/chat/completions\')"
+                    "endpoint.path must start with '/' "
+                    "(e.g. '/v1/chat/completions', not 'v1/chat/completions')"
                 ),
             },
         ),
@@ -950,50 +950,45 @@ def _printer_columns() -> list[dict[str, Any]]:
 # =============================================================================
 
 
-def _deployment_config_properties() -> dict[str, Any]:
-    """Generate operator-specific fields from DeploymentConfig model."""
-    from aiperf.config.deployment import DeploymentConfig
+def _aiperf_job_spec_properties() -> dict[str, Any]:
+    """Generate ``.spec.*`` fields from ``AIPerfJobSpec`` (the validation model).
 
-    schema = DeploymentConfig.model_json_schema(by_alias=True)
+    AIPerfJobSpec — not DeploymentConfig — is the source of truth: the operator
+    calls ``AIPerfJobSpec.model_validate(spec)`` in ``handlers/create.py``.
+    The two models share most fields but differ on a handful of descriptions
+    and constraints (e.g. ``ttl_seconds_after_finished`` carries ``ge=0`` only
+    on AIPerfJobSpec), and AIPerfJobSpec adds ``skip_endpoint_check`` and
+    ``benchmark``. This mirrors what the AIPerfSweep CRD already does via
+    ``AIPerfSweepSpec.template.spec`` (which embeds AIPerfJobSpec).
+    """
+    from aiperf.operator.models import AIPerfJobSpec
+
+    schema = AIPerfJobSpec.model_json_schema(mode="validation", by_alias=True)
     defs = schema.get("$defs", {})
     properties = schema.get("properties", {})
 
-    result = {}
-    for name, prop_schema in properties.items():
-        result[name] = _convert_schema(prop_schema, defs, depth=0)
-
-    return result
+    return {
+        name: _convert_schema(prop_schema, defs, depth=0)
+        for name, prop_schema in properties.items()
+    }
 
 
 def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     """Assemble the full CRD document."""
     spec_properties: dict[str, Any] = {}
 
-    # Operator/deployment fields from DeploymentConfig model
-    operator = _deployment_config_properties()
+    # AIPerfJobSpec is the operator's `.spec` validation model — see
+    # handlers/create.py. Walking it gives every deployment field plus
+    # skip_endpoint_check and benchmark with the descriptions and constraints
+    # the operator actually enforces.
+    operator = _aiperf_job_spec_properties()
+
+    # Pop benchmark for separate handling (description override + decorator
+    # walk). The AIPerfConfig sub-tree is reached via $ref from AIPerfJobSpec.
+    benchmark_walked = operator.pop("benchmark")
+
     spec_properties["image"] = operator.pop("image")
     spec_properties["imagePullPolicy"] = operator.pop("imagePullPolicy")
-    spec_properties["keepFailedPods"] = {
-        "type": "boolean",
-        "description": (
-            "Preserve failed JobSet pod attempts for debugging by disabling "
-            "retries and TTL cleanup."
-        ),
-        "default": False,
-    }
-
-    # AIPerfConfig fields nested under benchmark key.
-    # The schema is fully walked so the apiserver enforces structural validation
-    # on every field. Narrow shorthand boundaries (models, distributions,
-    # endpoint.urls, top-level shortcuts like model/dataset/warmup/profiling,
-    # SyntheticDataset.isl/osl) carry x-kubernetes-preserve-unknown-fields:true
-    # via json_schema_extra so before-validators on AIPerfConfig can normalize
-    # shorthand forms (e.g. ``models: ["name"]``) on the controller side.
-    from aiperf.config.config import AIPerfConfig
-
-    aiperf_config_raw = AIPerfConfig.model_json_schema(mode="validation")
-    aiperf_defs = aiperf_config_raw.get("$defs", {})
-    benchmark_walked = _convert_schema(aiperf_config_raw, aiperf_defs, depth=0)
 
     benchmark_walked["description"] = (
         "Benchmark configuration (AIPerfConfig). Strictly typed via the\n"
@@ -1012,6 +1007,11 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     )
     spec_properties["benchmark"] = benchmark_walked
 
+    # Remaining AIPerfJobSpec fields (resourceMode, connectionsPerWorker,
+    # timeoutSeconds, ..., skipEndpointCheck) in declared model order.
+    for key, value in operator.items():
+        spec_properties[key] = value
+
     # Apply every shape-detector decorator (relaxed-required + cross-field
     # CEL invariants) across the AIPerfConfig walk. Decorators detect their
     # target node by its property shape, so they fire on AIPerfJob's
@@ -1020,21 +1020,6 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     _walk_dict_apply(benchmark_walked, _ensure_type_on_preserve_unknown)
     _walk_dict_apply(benchmark_walked, _decorate_all)
     _walk_dict_apply(benchmark_walked, _strip_mixed_union_sentinels)
-
-    # Remaining operator fields (connectionsPerWorker, timeoutSeconds, etc.).
-    # skipEndpointCheck lives on AIPerfJobSpec (not DeploymentConfig) and is
-    # emitted as a static sibling of `cancel`, preserving insertion order.
-    for key, value in operator.items():
-        spec_properties[key] = value
-        if key == "cancel":
-            spec_properties["skipEndpointCheck"] = {
-                "type": "boolean",
-                "description": (
-                    "Skip the operator-side endpoint reachability probe "
-                    "before deploying"
-                ),
-                "default": False,
-            }
 
     # Tier 3N — scheduling.queueName is immutable after admission. Kueue's
     # own contract treats queueName as immutable, so mirror that at the

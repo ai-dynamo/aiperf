@@ -66,7 +66,7 @@ spec:
             properties:
               image:
                 type: string
-                description: Container image
+                description: Container image for AIPerf
                 default: {{ .Values.defaults.image | quote }}
               imagePullPolicy:
                 type: string
@@ -78,10 +78,6 @@ spec:
                 - Always
                 - Never
                 - IfNotPresent
-              keepFailedPods:
-                type: boolean
-                description: Preserve failed JobSet pod attempts for debugging.
-                default: false
               benchmark:
                 type: object
                 description: |-
@@ -735,6 +731,7 @@ spec:
                 minimum: 0
               ttlSecondsAfterFinished:
                 type: integer
+                minimum: 0
                 description: TTL after finished (seconds)
                 default: 300
               resultsTtlDays:
@@ -742,13 +739,13 @@ spec:
                 minimum: 1
                 maximum: 365
                 description: Days to retain result files before cleanup
+              keepFailedPods:
+                type: boolean
+                description: Preserve failed JobSet pod attempts for debugging.
+                default: false
               cancel:
                 type: boolean
                 description: Set to true to cancel the job
-                default: false
-              skipEndpointCheck:
-                type: boolean
-                description: Skip the operator-side endpoint reachability probe before deploying
                 default: false
               podTemplate:
                 type: object
@@ -883,7 +880,9 @@ spec:
                     x-kubernetes-preserve-unknown-fields: true
               scheduling:
                 type: object
-                description: Kueue scheduling configuration
+                description: Kueue gang-scheduling configuration. Set scheduling.queueName to a LocalQueue name to admit this
+                  job's controller + worker pods atomically via Kueue. When unset, the operator falls back to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME
+                  (operator-deploy env). Safe to leave unset on clusters without Kueue.
                 properties:
                   queueName:
                     type: string
@@ -895,6 +894,10 @@ spec:
                 x-kubernetes-validations:
                 - rule: '!has(oldSelf.queueName) || oldSelf.queueName == self.queueName'
                   message: scheduling.queueName is immutable once set (Kueue treats queueName as immutable after admission)
+              skipEndpointCheck:
+                type: boolean
+                description: Skip the operator-side endpoint reachability probe before deploying.
+                default: false
           status:
             type: object
             x-kubernetes-preserve-unknown-fields: true

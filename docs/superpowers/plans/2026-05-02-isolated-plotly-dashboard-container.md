@@ -115,7 +115,6 @@ class _DashboardSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AIPERF_DASHBOARD_",
-        extra="allow",
     )
 
     PORT: int = Field(

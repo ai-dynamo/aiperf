@@ -171,7 +171,7 @@ class DeploymentConfig(BaseConfig):
 
     image: str = Field(
         default="nvcr.io/nvidia/aiperf:latest",
-        description="Container image",
+        description="Container image for AIPerf",
     )
     image_pull_policy: ImagePullPolicy | None = Field(
         default=None,
@@ -199,6 +199,7 @@ class DeploymentConfig(BaseConfig):
     )
     ttl_seconds_after_finished: int | None = Field(
         default=300,
+        ge=0,
         description="TTL after finished (seconds)",
     )
     results_ttl_days: int | None = Field(
@@ -221,5 +222,9 @@ class DeploymentConfig(BaseConfig):
     )
     scheduling: SchedulingConfig = Field(
         default_factory=SchedulingConfig,
-        description="Kueue scheduling configuration",
+        description="Kueue gang-scheduling configuration. Set "
+        "scheduling.queueName to a LocalQueue name to admit this job's "
+        "controller + worker pods atomically via Kueue. When unset, the "
+        "operator falls back to AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME "
+        "(operator-deploy env). Safe to leave unset on clusters without Kueue.",
     )

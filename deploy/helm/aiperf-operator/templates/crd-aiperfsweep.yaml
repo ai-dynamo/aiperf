@@ -205,7 +205,10 @@ spec:
                         - IfNotPresent
                       resourceMode:
                         type: string
-                        description: CPU/memory resource mode for controller and worker pods.
+                        description: CPU/memory resource mode for controller and worker pods. 'burstable' (default) sets requests
+                          only, no limits (Burstable QoS) so the controller can grow beyond the request during aggregation
+                          without being OOM-killed. 'guaranteed' applies requests==limits (Guaranteed QoS). 'none' omits CPU/memory
+                          requests and limits as an escape hatch.
                         enum:
                         - guaranteed
                         - burstable
@@ -213,7 +216,8 @@ spec:
                         default: burstable
                       connectionsPerWorker:
                         type: integer
-                        description: Maximum concurrent connections each worker handles.
+                        description: Maximum concurrent connections each worker handles. 100 keeps the asyncio event loop
+                          responsive while amortizing per-process overhead.
                         default: 100
                         minimum: 1
                       timeoutSeconds:
@@ -230,7 +234,7 @@ spec:
                         type: integer
                         minimum: 1
                         maximum: 365
-                        description: TTL for results in PVC (days)
+                        description: Days to retain result files before cleanup
                       keepFailedPods:
                         type: boolean
                         description: Preserve failed JobSet pod attempts for debugging.
