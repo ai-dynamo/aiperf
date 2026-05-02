@@ -159,6 +159,82 @@ async def test_handle_computes_max_total_runs_grid_x_trials(monkeypatch):
     assert patch.status["maxTotalRuns"] == 20
 
 
+@pytest.mark.asyncio
+async def test_handle_writes_max_iterations_for_adaptive_search(monkeypatch):
+    """Adaptive sweeps don't know the final variation count up front — the
+    kopf create handler writes `max_iterations` (upper bound) to
+    `status.totalVariations` and `max_iterations * trials` to
+    `status.maxTotalRuns`. The controller pod's terminal-phase write
+    supersedes these on early convergence (defended by the existing
+    `_conditional_phase_set` test-op guard in `child_rollup.py`).
+    """
+    body = _valid_body()
+    body["spec"]["multiRun"]["trials"] = 3
+    body["spec"]["multiRun"]["adaptiveSearch"] = {
+        "algorithm": "bayes",
+        "search_space": [
+            {
+                "path": "phases.profiling.concurrency",
+                "lo": 1,
+                "hi": 1000,
+                "kind": "int",
+            }
+        ],
+        "objective_metric": "output_token_throughput",
+        "objective_stat": "avg",
+        "objective_direction": "maximize",
+        "max_iterations": 10,
+    }
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+    await sweep_create.handle(
+        body=body,
+        spec=body["spec"],
+        name="s",
+        namespace="ns",
+        patch=patch,
+    )
+    assert patch.status["totalVariations"] == 10
+    assert patch.status["maxTotalRuns"] == 30
+
+
+@pytest.mark.asyncio
+async def test_handle_adaptive_search_without_trials_defaults_to_one(monkeypatch):
+    """When `multiRun.adaptiveSearch` is set but `multiRun.trials` is unset,
+    `maxTotalRuns` falls back to `max_iterations * 1` (single trial per
+    variation) — mirroring the in-process default."""
+    body = _valid_body()
+    body["spec"]["multiRun"].pop("trials", None)
+    body["spec"]["multiRun"]["adaptiveSearch"] = {
+        "algorithm": "bayes",
+        "search_space": [
+            {
+                "path": "phases.profiling.concurrency",
+                "lo": 1,
+                "hi": 1000,
+                "kind": "int",
+            }
+        ],
+        "objective_metric": "output_token_throughput",
+        "objective_stat": "avg",
+        "objective_direction": "maximize",
+        "max_iterations": 7,
+    }
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+    await sweep_create.handle(
+        body=body,
+        spec=body["spec"],
+        name="s",
+        namespace="ns",
+        patch=patch,
+    )
+    assert patch.status["totalVariations"] == 7
+    assert patch.status["maxTotalRuns"] == 7
+
+
 # ===========================================================================
 # Adversarial regression-locks for second-pass fixes (commit 793260d7b):
 # `_create_or_skip_409` and `_create_or_skip_409_custom` must wrap non-409

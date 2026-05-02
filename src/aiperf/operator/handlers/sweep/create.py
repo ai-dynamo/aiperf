@@ -51,15 +51,8 @@ async def handle(
         }
     else:
         sweep_input = dict(base_benchmark)
-    expanded = expand_sweep(sweep_input)
-    n_variations = len(expanded)
 
-    if validated.convergence is not None:
-        max_trials = validated.convergence.max_runs
-    elif validated.multi_run is not None and validated.multi_run.trials is not None:
-        max_trials = validated.multi_run.trials
-    else:
-        max_trials = 1
+    n_variations, max_total_runs = _compute_cardinality(validated, sweep_input)
 
     sweep_uid = body["metadata"]["uid"]
     creation_ts = body["metadata"].get("creationTimestamp", "")
@@ -67,7 +60,7 @@ async def handle(
 
     patch.status["phase"] = "Pending"
     patch.status["totalVariations"] = n_variations
-    patch.status["maxTotalRuns"] = n_variations * max_trials
+    patch.status["maxTotalRuns"] = max_total_runs
     patch.status["completedRuns"] = 0
     patch.status["failedRuns"] = 0
     patch.status["runEpoch"] = int(epoch) if epoch.isdigit() else 0
@@ -92,8 +85,47 @@ async def handle(
     }
     logger.info(
         f"AIPerfSweep {namespace}/{name} created: {n_variations} variations, "
-        f"max {max_trials} trials/cell"
+        f"max {max_total_runs} total runs"
     )
+
+
+def _compute_cardinality(
+    validated: Any,
+    sweep_input: dict[str, Any],
+) -> tuple[int, int]:
+    """Compute `(totalVariations, maxTotalRuns)` for the create-handler status.
+
+    Adaptive search (Bayesian Optimization) sweeps don't know the final
+    variation count up front -- only an upper bound (`max_iterations`).
+    Write that bound so dashboards can render a determinate progress bar;
+    early convergence routes through the controller pod's terminal-phase
+    write, which supersedes any premature rollup-driven Aggregating phase
+    via the existing `_conditional_phase_set` test-op guard in
+    `child_rollup.py`.
+
+    For non-adaptive sweeps, expand the grid/scenarios input via
+    `expand_sweep` and multiply by `max_trials` (derived from convergence
+    max_runs or multi_run.trials, defaulting to 1).
+    """
+    if validated.convergence is not None:
+        max_trials = validated.convergence.max_runs
+    elif validated.multi_run is not None and validated.multi_run.trials is not None:
+        max_trials = validated.multi_run.trials
+    else:
+        max_trials = 1
+
+    adaptive = (
+        validated.multi_run.adaptive_search if validated.multi_run is not None else None
+    )
+    if adaptive is not None:
+        trials = (
+            validated.multi_run.trials if validated.multi_run.trials is not None else 1
+        )
+        return adaptive.max_iterations, adaptive.max_iterations * trials
+
+    expanded = expand_sweep(sweep_input)
+    n_variations = len(expanded)
+    return n_variations, n_variations * max_trials
 
 
 def _epoch_from_creation_ts(ts: str) -> str:
