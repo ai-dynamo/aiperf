@@ -22,11 +22,15 @@ import orjson  # noqa: E402
 
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
 from aiperf.config.benchmark import BenchmarkRun  # noqa: E402
+from aiperf.kubernetes.sweep_models import AIPerfSweepSpec  # noqa: E402
 from aiperf.orchestrator.executor import RunExecutor  # noqa: E402
 from aiperf.orchestrator.models import RunResult  # noqa: E402
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator  # noqa: E402
 from aiperf.orchestrator.search_planner.bayesian import (  # noqa: E402
     BayesianSearchPlanner,
+)
+from aiperf.sweep_controller.main import (  # noqa: E402
+    _write_sweep_parent_aggregate,
 )
 from aiperf.sweep_controller.plan_builder import build_plan_from_sweep  # noqa: E402
 
@@ -137,3 +141,40 @@ async def test_cluster_search_e2e_via_build_plan_from_sweep(tmp_path: Path):
     assert history["best"] is not None
     # reward = concurrency * 5 — should produce positive objectives.
     assert history["best"]["objective_value"] > 0
+
+    # children.json must enumerate exactly max_iterations x trials entries —
+    # results-driven, not derived from plan.variations (which is a length-1
+    # placeholder for adaptive search).
+    spec = AIPerfSweepSpec.model_validate(cr["spec"])
+    _write_sweep_parent_aggregate(
+        base_dir=tmp_path,
+        sweep_cr=cr,
+        spec=spec,
+        results=results,
+        plan=plan,
+        sweep_run_epoch="1",
+        with_trial_suffix=False,
+    )
+    children_path = (
+        tmp_path
+        / cr["metadata"]["namespace"]
+        / "sweeps"
+        / cr["metadata"]["name"]
+        / "1"
+        / "children.json"
+    )
+    assert children_path.exists(), "children.json must be written"
+    children_doc = orjson.loads(children_path.read_bytes())
+    children = children_doc["children"]
+    # max_iterations=5 x trials=1 = 5 entries.
+    assert len(children) == 5, (
+        f"children.json must list exactly max_iterations x trials entries; "
+        f"got {len(children)}: {children}"
+    )
+    # Each child must carry a distinct variation_index drawn from the actual
+    # results stream, not from the placeholder plan.variations[0].
+    variation_indices = [c["variation_index"] for c in children]
+    assert len(set(variation_indices)) == 5, (
+        f"each adaptive iteration must produce a distinct variation_index; "
+        f"got {variation_indices}"
+    )

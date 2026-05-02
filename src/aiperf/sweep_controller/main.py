@@ -22,8 +22,6 @@ from typing import Any
 
 import orjson
 
-from aiperf.common.enums import SweepMode
-
 logger = logging.getLogger(__name__)
 
 AGGREGATE_READY_MARKER = ".aiperf_results_ready.json"
@@ -223,23 +221,27 @@ def _write_sweep_parent_aggregate(
         doc=doc,
         conditions=None,
     )
-    # Build children manifest by walking variations x trials in the same order
-    # the orchestrator emits results. plan.trials is the static upper bound;
-    # adaptive strategies may emit fewer or more, so we walk len(results) and
-    # roll variation_index forward as trials saturate.
+    # Build children manifest by walking the actual results stream, not
+    # plan.variations. For adaptive search plan.variations is a length-1
+    # placeholder and the real variation set lives in `results` — each
+    # RunResult carries its `trial_index` directly and its variation cell
+    # is identified by `variation_label`. For grid/repeated mode the
+    # results stream still preserves the same (var, trial) ordering, so
+    # this single results-driven path handles both.
     children: list[dict[str, Any]] = []
-    trials_per_variation = max(int(getattr(plan, "trials", 1) or 1), 1)
-    n_variations = max(len(plan.variations), 1)
-    for idx, r in enumerate(results):
-        if plan.parameter_sweep_mode == SweepMode.REPEATED:
-            # Trial-outer / variation-inner: idx -> (trial * N) + var
-            trial_idx = min(idx // n_variations, trials_per_variation - 1)
-            var_idx = idx % n_variations
+    label_to_var_idx: dict[str, int] = {}
+    next_var_idx = 0
+    for r in results:
+        explicit_idx = r.variation_values.get("index") if r.variation_values else None
+        if isinstance(explicit_idx, int):
+            var_idx = explicit_idx
         else:
-            # Variation-outer / trial-inner: idx -> (var * trials) + trial
-            var_idx = min(idx // trials_per_variation, n_variations - 1)
-            trial_idx = idx % trials_per_variation
-        variation = plan.variations[var_idx]
+            cell_key = r.variation_label or ""
+            if cell_key not in label_to_var_idx:
+                label_to_var_idx[cell_key] = next_var_idx
+                next_var_idx += 1
+            var_idx = label_to_var_idx[cell_key]
+        trial_idx = int(r.trial_index)
         trial_for_name = trial_idx if with_trial_suffix else None
         child_name = build_child_name(
             sweep_name=name,
@@ -252,7 +254,7 @@ def _write_sweep_parent_aggregate(
                 "namespace": namespace,
                 "name": child_name,
                 "variation_index": var_idx,
-                "variation_label": getattr(variation, "label", ""),
+                "variation_label": r.variation_label,
                 "trial_index": trial_idx if with_trial_suffix else None,
                 "child_run_epoch": sweep_run_epoch,
                 "label": r.label,
