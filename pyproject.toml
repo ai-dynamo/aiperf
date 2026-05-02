@@ -98,6 +98,9 @@ dev = [
   "trustme>=1.0.0",
   "pympler>=1.1",
 ]
+bo = [
+  "scikit-optimize>=0.10",
+]
 
 [dependency-groups]
 dev = [
