@@ -11,11 +11,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiofiles
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
 from aiperf.operator.routers.results_schemas import (
@@ -28,6 +28,7 @@ from aiperf.operator.routers.results_schemas import (
 )
 
 CHUNK_SIZE = 64 * 1024
+PROFILE_EXPORT_FILENAME = "profile_export_aiperf.json"
 
 
 def _safe_resolve(base: Path, *parts: str) -> Path | None:
@@ -343,6 +344,29 @@ def _bundle_response(job_dir: Path, bundle_name: str) -> StreamingResponse:
     )
 
 
+def _read_profile_export_bytes(job_dir: Path) -> bytes:
+    """Return the raw JSON bytes of ``profile_export_aiperf.json`` in ``job_dir``.
+
+    Prefers the uncompressed file when present, then falls back to the
+    ``.zst`` companion (decompressed in-memory). Raises ``FileNotFoundError``
+    if neither exists so the caller can map it to a 404. The whole file is
+    read into memory rather than streamed because typical profile exports
+    are small (sub-MB) and callers (the dashboard quick-export button)
+    expect a single ``application/json`` payload, not a streaming download.
+    """
+    raw_path = _safe_resolve(job_dir, PROFILE_EXPORT_FILENAME)
+    if raw_path is not None and raw_path.is_file():
+        return raw_path.read_bytes()
+    zst_path = _safe_resolve(job_dir, PROFILE_EXPORT_FILENAME + ".zst")
+    if zst_path is not None and zst_path.is_file():
+        import zstandard
+
+        dctx = zstandard.ZstdDecompressor()
+        with zst_path.open("rb") as fh, dctx.stream_reader(fh) as reader:
+            return reader.read()
+    raise FileNotFoundError(PROFILE_EXPORT_FILENAME)
+
+
 def _serve_job_file(
     request: Request, job_dir: Path, filename: str
 ) -> StreamingResponse:
@@ -455,6 +479,51 @@ def create_results_files_router(base_dir: Path) -> APIRouter:
     ) -> FileListResponse:
         _validate_epoch(epoch)
         return await _build_file_list_response(base_dir, namespace, job_id, epoch)
+
+    @router.get("/results/{namespace}/{job_id}/runs/{epoch}/profile_export")
+    async def profile_export_quick(
+        namespace: str,
+        job_id: str,
+        epoch: str,
+        format: Literal["json"] = "json",
+    ) -> Response:
+        """Quick-export alias for the canonical ``profile_export_aiperf.json``.
+
+        Mirrors the per-file route but skips the directory-listing roundtrip
+        the artifacts table normally performs. Reads the canonical artifact
+        from the resolved run dir, transparently decompressing the ``.zst``
+        companion when the uncompressed file is absent. Returns
+        ``application/json`` with ``Content-Disposition: attachment;
+        filename="profile_export_aiperf.json"``.
+
+        Raises 404 if the artifact is absent (run still warming up, the
+        sidecar's ready marker has gated the directory upstream of this
+        router, or this run type doesn't produce a profile export).
+
+        ``format`` is currently constrained to ``"json"``; the parameter
+        exists so future shortcuts (csv/parquet) can be added without a
+        new route.
+        """
+        del format  # Reserved for future format shortcuts; only "json" today.
+        _validate_epoch(epoch)
+        job_dir = _resolve_job_dir(base_dir, namespace, job_id, epoch=epoch)
+        try:
+            payload = await asyncio.to_thread(_read_profile_export_bytes, job_dir)
+        except FileNotFoundError:
+            raise HTTPException(
+                404,
+                f"File not found: {PROFILE_EXPORT_FILENAME}",
+            ) from None
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{PROFILE_EXPORT_FILENAME}"'
+                ),
+                "X-Filename": PROFILE_EXPORT_FILENAME,
+            },
+        )
 
     @router.get("/results/{namespace}/{job_id}/runs/{epoch}/{filename:path}")
     async def download_historical_file(

@@ -1018,3 +1018,129 @@ def test_config_retention_endpoint_returns_current_settings(
         body = r.json()
         assert body["retain_runs"] == 15
         assert body["retain_days"] == 30
+
+
+# ============================================================
+# Quick-export profile_export endpoint
+# ============================================================
+
+
+_PROFILE_EXPORT_EPOCH = "1714150923"
+
+
+def test_profile_export_quick_route_returns_json_when_present(tmp_path: Path) -> None:
+    """The quick-export route returns the raw profile_export_aiperf.json bytes
+    with application/json + canonical Content-Disposition, skipping the
+    directory-listing roundtrip the artifacts table normally requires."""
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    payload = orjson.dumps({"request_throughput": {"avg": 123.4, "unit": "req/s"}})
+    _seed_epoch_run(
+        tmp_path,
+        "acme-bench",
+        "vllm-test",
+        _PROFILE_EXPORT_EPOCH,
+        "profile_export_aiperf.json",
+        payload,
+    )
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(
+            f"/api/v1/results/acme-bench/vllm-test/runs/{_PROFILE_EXPORT_EPOCH}"
+            "/profile_export"
+        )
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/json")
+        assert (
+            r.headers["content-disposition"]
+            == 'attachment; filename="profile_export_aiperf.json"'
+        )
+        assert r.headers["x-filename"] == "profile_export_aiperf.json"
+        assert r.content == payload
+        assert orjson.loads(r.content)["request_throughput"]["avg"] == 123.4
+
+
+def test_profile_export_quick_route_decompresses_zst(tmp_path: Path) -> None:
+    """The quick-export route falls back to the .zst companion when the
+    uncompressed JSON is absent — mirrors the per-file route's transparent
+    decompression but pins media_type to application/json."""
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_layout import run_dir, write_latest
+    from aiperf.operator.results_server import create_app
+
+    payload = orjson.dumps({"output_token_throughput": {"avg": 987.6, "unit": "tok/s"}})
+    cctx = zstandard.ZstdCompressor()
+    compressed = cctx.compress(payload)
+
+    d = run_dir(tmp_path, "acme-bench", "vllm-test", _PROFILE_EXPORT_EPOCH)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "profile_export_aiperf.json.zst").write_bytes(compressed)
+    write_latest(tmp_path, "acme-bench", "vllm-test", _PROFILE_EXPORT_EPOCH)
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(
+            f"/api/v1/results/acme-bench/vllm-test/runs/{_PROFILE_EXPORT_EPOCH}"
+            "/profile_export"
+        )
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/json")
+        assert r.content == payload
+
+
+def test_profile_export_quick_route_404_when_missing(tmp_path: Path) -> None:
+    """The run dir exists with other artifacts but no profile_export — must
+    return 404 with a meaningful detail naming the missing file."""
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    _seed_epoch_run(
+        tmp_path,
+        "acme-bench",
+        "vllm-test",
+        _PROFILE_EXPORT_EPOCH,
+        "metrics.json",
+        b'{"x": 1}',
+    )
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(
+            f"/api/v1/results/acme-bench/vllm-test/runs/{_PROFILE_EXPORT_EPOCH}"
+            "/profile_export"
+        )
+        assert r.status_code == 404
+        assert "profile_export_aiperf.json" in r.json()["detail"]
+
+
+def test_profile_export_quick_route_does_not_shadow_filename_route(
+    tmp_path: Path,
+) -> None:
+    """The literal /profile_export route must not be caught by the
+    {filename:path} catch-all that follows it. A real file named
+    'profile_export' (no extension) under the run dir would be served by the
+    catch-all, but the registered literal wins for ambiguity-free callers."""
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_server import create_app
+
+    payload = orjson.dumps({"sentinel": True})
+    _seed_epoch_run(
+        tmp_path,
+        "acme-bench",
+        "vllm-test",
+        _PROFILE_EXPORT_EPOCH,
+        "profile_export_aiperf.json",
+        payload,
+    )
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        r = client.get(
+            f"/api/v1/results/acme-bench/vllm-test/runs/{_PROFILE_EXPORT_EPOCH}"
+            "/profile_export"
+        )
+        # If the catch-all had won, content-type would be application/octet-stream.
+        assert r.headers["content-type"].startswith("application/json")
+        assert orjson.loads(r.content)["sentinel"] is True
