@@ -209,7 +209,7 @@ class TTFTCurveFit:
     - ``metric_tag`` (str): TTFT metric tag, typically ``"time_to_first_token"``.
     - ``stat`` (str): statistic, e.g. ``"avg"``.
     - ``swept_param`` (str): parameter name swept on the ISL axis, e.g.
-      ``"datasets.profiling.prompts.isl"``.
+      ``"datasets.main.prompts.isl"``.
 
     Optional ``params`` keys:
 
@@ -220,17 +220,17 @@ class TTFTCurveFit:
         >>> handler = TTFTCurveFit()
         >>> agg = {
         ...     "per_combination_metrics": [
-        ...         {"parameters": {"datasets.profiling.prompts.isl": 256},
+        ...         {"parameters": {"datasets.main.prompts.isl": 256},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 12.0}}},
-        ...         {"parameters": {"datasets.profiling.prompts.isl": 512},
+        ...         {"parameters": {"datasets.main.prompts.isl": 512},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 24.0}}},
-        ...         {"parameters": {"datasets.profiling.prompts.isl": 1024},
+        ...         {"parameters": {"datasets.main.prompts.isl": 1024},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 48.0}}},
         ...     ]
         ... }
         >>> out = handler.process(agg, {
         ...     "metric_tag": "time_to_first_token", "stat": "avg",
-        ...     "swept_param": "datasets.profiling.prompts.isl",
+        ...     "swept_param": "datasets.main.prompts.isl",
         ... })
         >>> out["fit_form"]
         'linear'
@@ -392,7 +392,7 @@ class ItlSurfaceFit:
     - ``concurrency_param`` (str): dotted-path swept on the concurrency axis,
       e.g. ``"phases.profiling.concurrency"``.
     - ``osl_param`` (str): dotted-path swept on the OSL axis, e.g.
-      ``"datasets.profiling.prompts.osl"``.
+      ``"datasets.main.prompts.osl"``.
 
     Returns a dict with ``swept_metric``, ``stat``, ``swept_params``,
     ``raw_points``, and a ``surface`` block:
@@ -404,16 +404,16 @@ class ItlSurfaceFit:
         >>> handler = ItlSurfaceFit()
         >>> agg = {"per_combination_metrics": [
         ...     {"parameters": {"phases.profiling.concurrency": 1,
-        ...                     "datasets.profiling.prompts.osl": 64},
+        ...                     "datasets.main.prompts.osl": 64},
         ...      "metrics": {"inter_token_latency_avg": {"mean": 10.0}}},
         ...     {"parameters": {"phases.profiling.concurrency": 1,
-        ...                     "datasets.profiling.prompts.osl": 256},
+        ...                     "datasets.main.prompts.osl": 256},
         ...      "metrics": {"inter_token_latency_avg": {"mean": 12.0}}},
         ... ]}
         >>> out = handler.process(agg, {
         ...     "metric_tag": "inter_token_latency", "stat": "avg",
         ...     "concurrency_param": "phases.profiling.concurrency",
-        ...     "osl_param": "datasets.profiling.prompts.osl",
+        ...     "osl_param": "datasets.main.prompts.osl",
         ... })
         >>> out["surface"]["concurrency_axis"]
         [1.0]

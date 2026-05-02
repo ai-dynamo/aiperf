@@ -181,7 +181,7 @@ Set `sweep_variables` (a `path -> list-of-values` map) instead of `adaptive_sear
 return SearchRecipeOutput(
     sweep_variables={
         "phases.profiling.concurrency": [1, 10, 100],
-        "datasets.profiling.prompts.osl": [64, 256, 1024],
+        "datasets.main.prompts.osl": [64, 256, 1024],
     },
     post_process=PostProcessSpec(
         handler="itl_surface_fit",
@@ -189,7 +189,7 @@ return SearchRecipeOutput(
             "metric_tag": "inter_token_latency",
             "stat": "avg",
             "concurrency_param": "phases.profiling.concurrency",
-            "osl_param": "datasets.profiling.prompts.osl",
+            "osl_param": "datasets.main.prompts.osl",
         },
         output_filename="my_surface.json",
     ),

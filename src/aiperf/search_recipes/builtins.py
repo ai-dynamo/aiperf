@@ -218,7 +218,7 @@ class PrefillTTFTCurve(SearchRecipe):
     quadratic fit when ``r^2 < 0.85``.
 
     The dataset key is the v1 converter's hardcoded singleton name (see
-    ``V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
+    ``_V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
     config tree always carries one dataset by that name.
 
     Streaming MUST be enabled (TTFT is streaming-only); the recipe rejects
@@ -236,7 +236,7 @@ class PrefillTTFTCurve(SearchRecipe):
     )
 
     _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
-    _ISL_PATH: ClassVar[str] = f"datasets.{V1_DEFAULT_DATASET_NAME}.prompts.isl"
+    _ISL_PATH: ClassVar[str] = f"datasets.{_V1_DEFAULT_DATASET_NAME}.prompts.isl"
     _DEFAULT_ISL_MIN: ClassVar[int] = 256
     _DEFAULT_ISL_MAX: ClassVar[int] = 32768
     _DEFAULT_STEPS: ClassVar[int] = 8
@@ -363,7 +363,7 @@ class DecodeITLCurve(SearchRecipe):
     ``decode_itl_surface.json`` with raw points and a bilinear-grid surface.
 
     The dataset key is the v1 converter's hardcoded singleton name (see
-    ``V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
+    ``_V1_DEFAULT_DATASET_NAME``); recipes only fire from CLI input so the v2
     config tree always carries one dataset by that name.
 
     Override the grid via ``ctx.sweep_overrides`` keys
@@ -381,7 +381,7 @@ class DecodeITLCurve(SearchRecipe):
     )
 
     _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"
-    _OSL_PATH: ClassVar[str] = f"datasets.{V1_DEFAULT_DATASET_NAME}.prompts.osl"
+    _OSL_PATH: ClassVar[str] = f"datasets.{_V1_DEFAULT_DATASET_NAME}.prompts.osl"
     _DEFAULT_CONCURRENCY_MIN: ClassVar[int] = 1
     _DEFAULT_CONCURRENCY_MAX: ClassVar[int] = 200
     _DEFAULT_CONCURRENCY_STEPS: ClassVar[int] = 6
