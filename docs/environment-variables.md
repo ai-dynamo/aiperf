@@ -57,10 +57,12 @@ Root operator environment configuration. Loads from environment variables. Neste
 | `AIPERF_ENDPOINT_CHECK_TIMEOUT` | `10.0` | > 0, ≤ 300 | Seconds to wait for endpoint health check |
 | `AIPERF_PREFLIGHT_TIMEOUT` | `30.0` | > 0, ≤ 120 | Seconds to wait for all pre-flight checks to complete |
 | `AIPERF_CONFIGMAP_PROPAGATION_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 60 | Seconds to wait after creating the benchmark ConfigMap before creating the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before pods start mounting it, preventing FailedMount races on first deployment with a freshly pulled image. |
+| `AIPERF_CLUSTER_NAME` | `''` | — | Optional human-readable cluster name surfaced in the UI top banner (e.g. 'dgx-prod', 'kind-aiperf'). When unset the banner falls back to the Kubernetes server version. Set via AIPERF_OPERATOR_CLUSTER_NAME on the operator deployment. |
 | `AIPERF_MONITOR` | — | — | Monitor timer settings |
 | `AIPERF_RESULTS` | — | — | Results fetching and storage settings |
 | `AIPERF_PROGRESS` | — | — | Progress-client retry settings (controller HTTP polling). |
 | `AIPERF_SWEEP_CONTROLLER` | — | — | Sweep-controller pod settings (child-create collision handling). |
+| `AIPERF_DASHBOARD` | — | — | Plotly Dashboard sidecar wiring. |
 
 ## APISERVER
 
@@ -92,6 +94,15 @@ Configuration file paths for distributed deployments. Controls paths to configur
 |----------------------|---------|-------------|-------------|
 | `AIPERF_CONFIG_SERVICE_FILE` | `None` | — | Path to service configuration JSON/YAML file. Default: /etc/aiperf/service_config.json in Kubernetes deployments. |
 | `AIPERF_CONFIG_USER_FILE` | `None` | — | Path to user configuration JSON/YAML file. Default: /etc/aiperf/user_config.json in Kubernetes deployments. |
+
+## DASHBOARD
+
+Plotly Dashboard sidecar wiring (operator + results-server). The dashboard is an opt-in third container in the operator Pod; these settings let other containers locate it.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_DASHBOARD_PORT` | `0` | ≥ 0, ≤ 65535 | Pod-local HTTP port the dashboard sidecar listens on. 0 means the sidecar is disabled / absent. results-server uses this to reverse-proxy /dashboard/*; the operator uses it to fire fire-and-forget refresh POSTs after a benchmark completion claim. |
+| `AIPERF_DASHBOARD_PROXY_ENABLED` | `False` | — | When true, results-server forwards /dashboard/* to the sidecar at localhost:PORT and the SPA shows the 'Plots ↗' top-nav entry. When false, /dashboard/* returns 503 and the link is hidden. Set independently from PORT so a misconfigured chart fails closed. |
 
 ## DATASET
 
@@ -165,6 +176,7 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD` | `10.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between API usage and client token counts (default: 10%) |
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
+| `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
 
 ## OPERATORMONITOR
 
@@ -214,6 +226,8 @@ Results fetching and storage settings.
 | `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
 | `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
 | `AIPERF_RESULTS_RETAIN_DAYS` | `0` | ≥ 0, ≤ 36500 | Age-based retention cap in days. 0 disables age policy. A run is deleted only when BOTH this age cap AND RETAIN_RUNS agree the run is outside the keep window; protect_epoch still wins. |
+| `AIPERF_RESULTS_TRANSIENT_FETCH_RETRY_BUDGET_SEC` | `60.0` | ≥ 0.0, ≤ 600.0 | Wall-clock budget (seconds, measured from the completion-claim annotation timestamp) within which a transient HTTP fetch failure is converted to a kopf.TemporaryError so the next monitor tick retries via the orphan-claim recovery path. Past this budget the operator gives up and marks the AIPerfJob Failed with the ResultsFetchFailed condition. WHY: sub-second benchmarks can race the controller's post-export shutdown — the marker has been written and key files exist on the controller PVC, but the operator's HTTP fetch hits a connection-refused or empty list as the controller container terminates. Set 0 to disable retries. |
+| `AIPERF_RESULTS_TRANSIENT_FETCH_RETRY_DELAY_SEC` | `5.0` | ≥ 0.5, ≤ 60.0 | Delay (seconds) passed to ``kopf.TemporaryError`` when retrying a transient results-fetch failure. Each retry runs through the orphan-claim recovery path on the next monitor tick. |
 
 ## SERVERMETRICS
 
