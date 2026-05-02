@@ -191,6 +191,32 @@ async def test_v1_pods_strip_renders_heatmap(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_v1_pods_strip_click_switches_diagnostics_tab(
+    live_operator_app, seeded_results_dir, fake_k8s_client, page
+) -> None:
+    """Clicking PodsStrip writes ``?diag=pods`` AND switches the active tab.
+
+    ``PodsStrip.onExpand`` writes ``?diag=pods`` to the URL and dispatches
+    a synthetic ``popstate`` event. ``DiagnosticsPanel`` must listen for
+    that event and switch its active tab — without the listener the panel
+    only reads the URL on first mount and the click is a no-op.
+    """
+    namespace, name = "aiperf-bench", "aiperf-llama3-c128"
+    _drop_persisted_epochs(seeded_results_dir, namespace, name)
+    _seed_status_phases(fake_k8s_client, namespace, name)
+    _seed_pods_for_job(fake_k8s_client, name, count=2)
+    await page.goto(f"{live_operator_app.base_url}/v1/#/jobs/{namespace}/{name}")
+    await expect(page.get_by_test_id("strip-pods")).to_be_visible(timeout=10_000)
+    # Click the pods strip bar.
+    await page.locator('[data-testid="strip-pods"] .strip-bar').click()
+    # The pods tab should now be active.
+    pods_tab = page.locator('[data-tab-id="pods"]')
+    await expect(pods_tab).to_have_class(
+        re.compile(r"\bdiag-tab--active\b"), timeout=5_000
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.skip(reason="Run manually (comment the skip) to refresh docs/media/images/api-dashboard-v2.png")
 async def test_capture_dashboard_screenshot_v1(
     live_operator_app, seeded_results_dir, fake_k8s_client, page

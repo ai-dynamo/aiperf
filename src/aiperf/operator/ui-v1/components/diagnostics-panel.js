@@ -49,6 +49,17 @@ export function DiagnosticsPanel({
     }
   }, [archived, mode]);
 
+  useEffect(() => {
+    function onPopState() {
+      const fromUrl = readTabFromUrl();
+      if (fromUrl && availableTabs.includes(fromUrl) && fromUrl !== active) {
+        setActive(fromUrl);
+      }
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [availableTabs, active]);
+
   const switchTo = (tab) => {
     setActive(tab);
     writeTabToUrl(tab);
