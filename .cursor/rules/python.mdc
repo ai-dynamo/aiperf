@@ -194,13 +194,11 @@ boundary. Downstream of `cli_commands/`, only `AIPerfConfig` / `BenchmarkPlan`
 / `BenchmarkRun` flow. Enforced by ruff TID251 in `pyproject.toml` and a
 redundant `v1-import-leak` AST check in `tools/check_ergonomics.py`.
 
-Hard rules for adding new CLI flags:
-1. Fits an existing v1 nested class (Endpoint/Input/LoadGen/Output/Tokenizer/
-   Accuracy)? Add the field there.
-2. Doesn't fit? Add as a top-level field on `UserConfig`. NEVER add new nested
-   classes to v1.
-3. NO validators on v1 classes — ever. New validation goes on `AIPerfConfig`
-   (cross-field validators) or in the v1→v2 converter (input-shape coercion).
+Hard rules for adding new config fields:
+1. **Every new config field MUST be added to `AIPerfConfig` (`src/aiperf/config/`)** — the YAML/v2 layer is the source of truth and the single validation gate. CLI exposure is optional.
+2. **NEVER add a CLI flag without first adding the field to `AIPerfConfig`.** v1 (`UserConfig`) is a CLI-input shim; a flag with no v2 destination has nowhere to flow.
+3. CLI-flag placement on v1: fits an existing nested class (Endpoint/Input/LoadGen/Output/Tokenizer/Accuracy)? Add it there. Doesn't fit? Add as a top-level field on `UserConfig`. NEVER add new nested classes to v1.
+4. NO validators on v1 classes — ever. New validation goes on `AIPerfConfig` (cross-field validators) or in the v1→v2 converter (input-shape coercion).
 
 ## Pre-Commit Checklist
 
