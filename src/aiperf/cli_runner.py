@@ -428,8 +428,23 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
     from aiperf.orchestrator.local_executor import LocalSubprocessExecutor
 
     executor = LocalSubprocessExecutor(base_dir=base_dir)
+
+    search_planner = None
+    if plan.is_adaptive_search:
+        from aiperf.orchestrator.search_planner.bayesian import BayesianSearchPlanner
+
+        search_planner = BayesianSearchPlanner(plan.configs[0], plan.adaptive_search)
+        logger.info(
+            f"Bayesian outer loop active: max_iterations={plan.adaptive_search.max_iterations}, "
+            f"search-space={[d.path for d in plan.adaptive_search.search_space]}, "
+            f"objective={plan.adaptive_search.objective_metric}:"
+            f"{plan.adaptive_search.objective_stat}:{plan.adaptive_search.objective_direction}"
+        )
+
     try:
-        results = _asyncio.run(orchestrator.execute(plan, executor))
+        results = _asyncio.run(
+            orchestrator.execute(plan, executor, search_planner=search_planner)
+        )
     except Exception:
         logger.exception("Error executing multi-run benchmark")
         raise
