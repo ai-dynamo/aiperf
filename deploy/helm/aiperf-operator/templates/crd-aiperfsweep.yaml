@@ -1122,6 +1122,16 @@ spec:
                                   Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence
                                   (--convergence-metric) is incompatible with ''repeated''.'
                                 enum: *id001
+                              adaptiveSearch:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                                description: Adaptive outer-loop configuration (Bayesian Optimization). Typed AdaptiveSearchConfig
+                                  but expressed as Any to avoid a circular import between aiperf.config and aiperf.orchestrator
+                                  (adaptive_search.py imports OptimizationDirection). The field_validator below coerces dicts
+                                  to AdaptiveSearchConfig at validation time. Set by the v1 converter when --search-* flags
+                                  are present. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces
+                                  that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead
+                                  of grid-mode paths.
                             x-kubernetes-validations:
                             - rule: '!has(self.convergenceMetric) || !has(self.mode) || self.mode != ''repeated'''
                               message: adaptive convergence (convergenceMetric) is incompatible with mode='repeated'; use

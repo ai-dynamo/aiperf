@@ -3377,6 +3377,11 @@
           "$ref": "#/$defs/SweepMode",
           "default": "repeated",
           "description": "Iteration order for sweep + multi-trial composition. 'repeated' (default): trials outer, variations inner - artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/. 'independent': variations outer, trials inner - artifact tree is <base>/<variation>/profile_runs/run_NNNN/. Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence (--convergence-metric) is incompatible with 'repeated'."
+        },
+        "adaptiveSearch": {
+          "default": null,
+          "description": "Adaptive outer-loop configuration (Bayesian Optimization). Typed AdaptiveSearchConfig but expressed as Any to avoid a circular import between aiperf.config and aiperf.orchestrator (adaptive_search.py imports OptimizationDirection). The field_validator below coerces dicts to AdaptiveSearchConfig at validation time. Set by the v1 converter when --search-* flags are present. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead of grid-mode paths.",
+          "title": "Adaptivesearch"
         }
       },
       "title": "MultiRunConfig",

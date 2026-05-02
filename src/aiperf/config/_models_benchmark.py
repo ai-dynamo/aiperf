@@ -9,9 +9,9 @@ file-size cap. Re-exported via :mod:`aiperf.config.models`.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
@@ -157,6 +157,40 @@ class MultiRunConfig(BaseConfig):
             "incompatible with 'repeated'.",
         ),
     ]
+
+    adaptive_search: Annotated[
+        Any,
+        Field(
+            default=None,
+            description=(
+                "Adaptive outer-loop configuration (Bayesian Optimization). "
+                "Typed AdaptiveSearchConfig but expressed as Any to avoid a "
+                "circular import between aiperf.config and aiperf.orchestrator "
+                "(adaptive_search.py imports OptimizationDirection). The "
+                "field_validator below coerces dicts to AdaptiveSearchConfig at "
+                "validation time. Set by the v1 converter when --search-* flags "
+                "are present. Mutually exclusive with the top-level `sweep` "
+                "block; build_benchmark_plan enforces that. When set, "
+                "MultiRunOrchestrator.execute dispatches to "
+                "execute_adaptive_search instead of grid-mode paths."
+            ),
+        ),
+    ] = None
+
+    @field_validator("adaptive_search", mode="before")
+    @classmethod
+    def _coerce_adaptive_search(cls, value: Any) -> Any:
+        # Lazy-import AdaptiveSearchConfig at validation time -- declaring it as
+        # a top-level type would create a cycle with `aiperf.orchestrator`.
+        if value is None:
+            return None
+        from aiperf.config.adaptive_search import AdaptiveSearchConfig
+
+        if isinstance(value, AdaptiveSearchConfig):
+            return value
+        if isinstance(value, dict):
+            return AdaptiveSearchConfig.model_validate(value)
+        return value
 
 
 class AccuracyConfig(BaseConfig):
