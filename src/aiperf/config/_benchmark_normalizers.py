@@ -22,7 +22,7 @@ _PROFILING_VS_PHASES_MSG = (
     "Use 'warmup'/'profiling' for simple configs "
     "or 'phases' for advanced multi-phase configs."
 )
-_DATASET_VS_DATASETS_MSG = (
+DATASET_VS_DATASETS_MSG = (
     "'dataset' cannot be used with 'datasets'. "
     "Use 'dataset' for a single dataset "
     "or 'datasets' for multiple named datasets."
@@ -48,7 +48,7 @@ def _check_mutual_exclusivity(data: dict[str, Any]) -> None:
     if has_profiling and has_phases:
         raise ValueError(_PROFILING_VS_PHASES_MSG)
     if "dataset" in data and "datasets" in data:
-        raise ValueError(_DATASET_VS_DATASETS_MSG)
+        raise ValueError(DATASET_VS_DATASETS_MSG)
     if "model" in data and "models" in data:
         raise ValueError(_MODEL_VS_MODELS_MSG)
     if has_warmup and not has_profiling:

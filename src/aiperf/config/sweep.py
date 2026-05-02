@@ -185,6 +185,58 @@ def _expand_grid_sweep(
     return results
 
 
+def _normalize_scenario_dataset_form(
+    scenario: dict[str, Any], base: dict[str, Any], idx: int
+) -> None:
+    """Rewrite scenario ``dataset:`` (singular) into ``datasets: [...]`` so it
+    deep-merges cleanly against the always-plural base.
+
+    By the time scenario expansion runs, the base config has already been
+    through ``AIPerfConfig`` validation, which promotes singular ``dataset:``
+    to plural ``datasets:``. A scenario carrying the singular form would
+    otherwise land alongside the plural base key and trip mutual-exclusivity
+    in per-variation validation. This helper resolves the target dataset name
+    (explicit, or inherited from a single-entry base) and rewrites in place.
+    """
+    from aiperf.config._benchmark_normalizers import DATASET_VS_DATASETS_MSG
+
+    if "dataset" not in scenario:
+        return
+    if "datasets" in scenario:
+        raise ValueError(f"sweep run [{idx}]: " + DATASET_VS_DATASETS_MSG)
+
+    original = scenario["dataset"]
+    if not isinstance(original, dict):
+        raise ValueError(
+            f"sweep run [{idx}]: 'dataset:' must be a mapping; "
+            f"got {type(original).__name__}."
+        )
+
+    base_datasets = base.get("datasets") or []
+    explicit_name = original.get("name") if isinstance(original, dict) else None
+    if explicit_name is not None:
+        resolved_name = explicit_name
+    elif len(base_datasets) == 1 and isinstance(base_datasets[0], dict):
+        resolved_name = base_datasets[0].get("name")
+        if resolved_name is None:
+            raise ValueError(
+                f"sweep run [{idx}]: base dataset has no 'name' to inherit; "
+                f"add 'name:' to the scenario's dataset."
+            )
+    else:
+        names = [d.get("name") for d in base_datasets if isinstance(d, dict)]
+        raise ValueError(
+            f"sweep run [{idx}]: scenario uses singular 'dataset:' against a "
+            f"base with multiple datasets ({names!r}); add 'name:' to the "
+            f"scenario's dataset to disambiguate."
+        )
+
+    scenario.pop("dataset")
+    scenario["datasets"] = [
+        {"name": resolved_name, **{k: v for k, v in original.items() if k != "name"}}
+    ]
+
+
 def _expand_scenario_sweep(
     base_data: dict[str, Any], runs: list[dict[str, Any]]
 ) -> list[tuple[dict[str, Any], SweepVariation]]:
@@ -192,6 +244,7 @@ def _expand_scenario_sweep(
     for idx, scenario in enumerate(runs):
         variant = copy.deepcopy(base_data)
         scenario_data = {k: v for k, v in scenario.items() if k != "name"}
+        _normalize_scenario_dataset_form(scenario_data, variant, idx)
         _deep_merge(variant, scenario_data)
         variant = {k: v for k, v in variant.items() if k != "sweep"}
         label = scenario.get("name", f"scenario_{idx}")
