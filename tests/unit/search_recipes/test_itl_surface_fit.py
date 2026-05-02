@@ -10,7 +10,7 @@ import pytest
 from aiperf.search_recipes.post_process import ItlSurfaceFit, PostProcessHandler
 
 CONCURRENCY = "phases.profiling.concurrency"
-OSL = "phases.profiling.synthetic_output_tokens.mean"
+OSL = "datasets.profiling.prompts.osl"
 ITL_AVG = "inter_token_latency_avg"
 
 

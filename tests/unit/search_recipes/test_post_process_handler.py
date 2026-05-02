@@ -115,7 +115,7 @@ def test_degradation_knee_detect_raises_when_no_matching_rows():
 def test_ttft_curve_fit_chooses_form_by_r_squared(points, expected_form):
     handler = TTFTCurveFit()
     agg = _make_aggregate(
-        "phases.profiling.synthetic_input_tokens.mean",
+        "datasets.profiling.prompts.isl",
         "time_to_first_token_avg",
         points,
     )
@@ -124,7 +124,7 @@ def test_ttft_curve_fit_chooses_form_by_r_squared(points, expected_form):
         {
             "metric_tag": "time_to_first_token",
             "stat": "avg",
-            "swept_param": "phases.profiling.synthetic_input_tokens.mean",
+            "swept_param": "datasets.profiling.prompts.isl",
         },
     )
     assert out["fit_form"] == expected_form
@@ -136,7 +136,7 @@ def test_ttft_curve_fit_returns_r_squared_above_floor_for_linear_data():
     handler = TTFTCurveFit()
     points = [(256.0, 12.0), (512.0, 24.0), (1024.0, 48.0), (2048.0, 96.0)]
     agg = _make_aggregate(
-        "phases.profiling.synthetic_input_tokens.mean",
+        "datasets.profiling.prompts.isl",
         "time_to_first_token_avg",
         points,
     )
@@ -145,7 +145,7 @@ def test_ttft_curve_fit_returns_r_squared_above_floor_for_linear_data():
         {
             "metric_tag": "time_to_first_token",
             "stat": "avg",
-            "swept_param": "phases.profiling.synthetic_input_tokens.mean",
+            "swept_param": "datasets.profiling.prompts.isl",
         },
     )
     assert out["r_squared"] > 0.99
@@ -154,7 +154,7 @@ def test_ttft_curve_fit_returns_r_squared_above_floor_for_linear_data():
 def test_ttft_curve_fit_raises_with_single_point():
     handler = TTFTCurveFit()
     agg = _make_aggregate(
-        "phases.profiling.synthetic_input_tokens.mean",
+        "datasets.profiling.prompts.isl",
         "time_to_first_token_avg",
         [(256.0, 12.0)],
     )
@@ -164,7 +164,7 @@ def test_ttft_curve_fit_raises_with_single_point():
             {
                 "metric_tag": "time_to_first_token",
                 "stat": "avg",
-                "swept_param": "phases.profiling.synthetic_input_tokens.mean",
+                "swept_param": "datasets.profiling.prompts.isl",
             },
         )
 

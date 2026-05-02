@@ -209,7 +209,7 @@ class TTFTCurveFit:
     - ``metric_tag`` (str): TTFT metric tag, typically ``"time_to_first_token"``.
     - ``stat`` (str): statistic, e.g. ``"avg"``.
     - ``swept_param`` (str): parameter name swept on the ISL axis, e.g.
-      ``"phases.profiling.synthetic_input_tokens.mean"``.
+      ``"datasets.profiling.prompts.isl"``.
 
     Optional ``params`` keys:
 
@@ -220,17 +220,17 @@ class TTFTCurveFit:
         >>> handler = TTFTCurveFit()
         >>> agg = {
         ...     "per_combination_metrics": [
-        ...         {"parameters": {"phases.profiling.synthetic_input_tokens.mean": 256},
+        ...         {"parameters": {"datasets.profiling.prompts.isl": 256},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 12.0}}},
-        ...         {"parameters": {"phases.profiling.synthetic_input_tokens.mean": 512},
+        ...         {"parameters": {"datasets.profiling.prompts.isl": 512},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 24.0}}},
-        ...         {"parameters": {"phases.profiling.synthetic_input_tokens.mean": 1024},
+        ...         {"parameters": {"datasets.profiling.prompts.isl": 1024},
         ...          "metrics": {"time_to_first_token_avg": {"mean": 48.0}}},
         ...     ]
         ... }
         >>> out = handler.process(agg, {
         ...     "metric_tag": "time_to_first_token", "stat": "avg",
-        ...     "swept_param": "phases.profiling.synthetic_input_tokens.mean",
+        ...     "swept_param": "datasets.profiling.prompts.isl",
         ... })
         >>> out["fit_form"]
         'linear'
@@ -392,7 +392,7 @@ class ItlSurfaceFit:
     - ``concurrency_param`` (str): dotted-path swept on the concurrency axis,
       e.g. ``"phases.profiling.concurrency"``.
     - ``osl_param`` (str): dotted-path swept on the OSL axis, e.g.
-      ``"phases.profiling.synthetic_output_tokens.mean"``.
+      ``"datasets.profiling.prompts.osl"``.
 
     Returns a dict with ``swept_metric``, ``stat``, ``swept_params``,
     ``raw_points``, and a ``surface`` block:
@@ -404,16 +404,16 @@ class ItlSurfaceFit:
         >>> handler = ItlSurfaceFit()
         >>> agg = {"per_combination_metrics": [
         ...     {"parameters": {"phases.profiling.concurrency": 1,
-        ...                     "phases.profiling.synthetic_output_tokens.mean": 64},
+        ...                     "datasets.profiling.prompts.osl": 64},
         ...      "metrics": {"inter_token_latency_avg": {"mean": 10.0}}},
         ...     {"parameters": {"phases.profiling.concurrency": 1,
-        ...                     "phases.profiling.synthetic_output_tokens.mean": 256},
+        ...                     "datasets.profiling.prompts.osl": 256},
         ...      "metrics": {"inter_token_latency_avg": {"mean": 12.0}}},
         ... ]}
         >>> out = handler.process(agg, {
         ...     "metric_tag": "inter_token_latency", "stat": "avg",
         ...     "concurrency_param": "phases.profiling.concurrency",
-        ...     "osl_param": "phases.profiling.synthetic_output_tokens.mean",
+        ...     "osl_param": "datasets.profiling.prompts.osl",
         ... })
         >>> out["surface"]["concurrency_axis"]
         [1.0]

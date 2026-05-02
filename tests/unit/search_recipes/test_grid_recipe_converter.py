@@ -53,7 +53,7 @@ def test_grid_recipe_does_not_set_adaptive_search():
 def test_prefill_ttft_curve_through_converter():
     user = _user(search_recipe="prefill-ttft-curve", isl_min=512, isl_max=4096)
     aiperf = convert_user_to_aiperf(user, _service())
-    isl_path = "phases.profiling.synthetic_input_tokens.mean"
+    isl_path = "datasets.profiling.prompts.isl"
     assert aiperf.sweep is not None
     assert isl_path in aiperf.sweep.variables
     assert aiperf.sweep.variables[isl_path][0] == 512

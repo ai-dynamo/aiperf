@@ -21,7 +21,7 @@ def _ctx(*, streaming: bool = True, **overrides) -> SearchRecipeContext:
 def test_prefill_ttft_curve_default_grid_uses_isl_min_max_endpoints():
     out = PrefillTTFTCurve().expand(_ctx())
     assert out.sweep_variables is not None
-    isl_path = "phases.profiling.synthetic_input_tokens.mean"
+    isl_path = "datasets.profiling.prompts.isl"
     isl_values = out.sweep_variables[isl_path]
     assert isl_values[0] == 256
     assert isl_values[-1] == 32768
@@ -44,7 +44,7 @@ def test_prefill_ttft_curve_emits_ttft_curve_fit_post_process():
 
 def test_prefill_ttft_curve_overrides_isl_range():
     out = PrefillTTFTCurve().expand(_ctx(isl_min=128, isl_max=4096, isl_steps=4))
-    isl_path = "phases.profiling.synthetic_input_tokens.mean"
+    isl_path = "datasets.profiling.prompts.isl"
     isl_values = out.sweep_variables[isl_path]
     assert isl_values[0] == 128
     assert isl_values[-1] == 4096

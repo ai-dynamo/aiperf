@@ -24,7 +24,7 @@ def test_decode_itl_curve_default_grid_uses_concurrency_and_osl_endpoints():
     out = DecodeITLCurve().expand(_ctx())
     assert out.sweep_variables is not None
     concurrency_path = "phases.profiling.concurrency"
-    osl_path = "phases.profiling.synthetic_output_tokens.mean"
+    osl_path = "datasets.profiling.prompts.osl"
     concurrency_values = out.sweep_variables[concurrency_path]
     osl_values = out.sweep_variables[osl_path]
     # Defaults: concurrency in [1, 200] (6 steps), osl in [64, 1024] (4 steps).
@@ -43,10 +43,7 @@ def test_decode_itl_curve_emits_itl_surface_fit_post_process():
     assert (
         out.post_process.params["concurrency_param"] == "phases.profiling.concurrency"
     )
-    assert (
-        out.post_process.params["osl_param"]
-        == "phases.profiling.synthetic_output_tokens.mean"
-    )
+    assert out.post_process.params["osl_param"] == "datasets.profiling.prompts.osl"
     assert out.post_process.output_filename == "decode_itl_surface.json"
 
 
@@ -62,7 +59,7 @@ def test_decode_itl_curve_overrides_concurrency_and_osl_ranges():
         )
     )
     concurrency_values = out.sweep_variables["phases.profiling.concurrency"]
-    osl_values = out.sweep_variables["phases.profiling.synthetic_output_tokens.mean"]
+    osl_values = out.sweep_variables["datasets.profiling.prompts.osl"]
     assert concurrency_values[0] == 4
     assert concurrency_values[-1] == 64
     assert osl_values == [128, 512]
@@ -81,6 +78,6 @@ def test_decode_itl_curve_resolves_through_plugin_registry():
 def test_decode_itl_curve_default_step_counts_match_spec():
     out = DecodeITLCurve().expand(_ctx())
     concurrency_values = out.sweep_variables["phases.profiling.concurrency"]
-    osl_values = out.sweep_variables["phases.profiling.synthetic_output_tokens.mean"]
+    osl_values = out.sweep_variables["datasets.profiling.prompts.osl"]
     assert len(concurrency_values) == 6
     assert len(osl_values) == 4
