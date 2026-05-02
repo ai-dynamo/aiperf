@@ -303,3 +303,139 @@ def test_check_config_file_for_sweep_keys_plain_yaml_with_sweep_key_exits(
     msg = str(captured["message"])
     assert "sweep" in msg
     assert "aiperf kube sweep" in msg
+
+
+# =============================================================================
+# Regression-lock: `_build_cr_spec_and_config` must render Jinja2 templates in
+# `spec.benchmark` BEFORE submission, mirroring `aiperf kube show -f`. The bug:
+# previously the function validated `extract_benchmark_config(spec)` but kept
+# the un-rendered raw spec, so `{{ total_concurrency }}` literals reached the
+# operator and failed Pydantic int_parsing.
+# =============================================================================
+
+
+def _jinja_aiperfjob_cr_yaml() -> str:
+    """A minimal AIPerfJob CR YAML using Jinja2 templates for concurrency/requests."""
+    return (
+        "apiVersion: aiperf.nvidia.com/v1alpha1\n"
+        "kind: AIPerfJob\n"
+        "metadata:\n"
+        "  name: jinja-bench\n"
+        "spec:\n"
+        "  benchmark:\n"
+        "    variables:\n"
+        "      concurrency_per_gpu: 30\n"
+        "      deployment_gpu_count: 4\n"
+        '      total_concurrency: "{{ concurrency_per_gpu * deployment_gpu_count }}"\n'
+        "      isl: 1024\n"
+        "      osl: 1024\n"
+        "    models: [test-model]\n"
+        "    endpoint:\n"
+        "      type: chat\n"
+        "      urls: [http://server:8000]\n"
+        "    datasets:\n"
+        "      - name: main\n"
+        "        type: synthetic\n"
+        "        prompts:\n"
+        '          isl: {mean: "{{ isl }}", stddev: 0}\n'
+        '          osl: {mean: "{{ osl }}", stddev: 0}\n'
+        "    phases:\n"
+        "      - name: warmup\n"
+        "        type: concurrency\n"
+        '        concurrency: "{{ total_concurrency }}"\n'
+        '        requests: "{{ total_concurrency }}"\n'
+        "      - name: profiling\n"
+        "        type: concurrency\n"
+        '        concurrency: "{{ total_concurrency }}"\n'
+        '        requests: "{{ total_concurrency * 10 }}"\n'
+    )
+
+
+def test_build_cr_spec_and_config_renders_jinja_in_benchmark(tmp_path) -> None:
+    """`_build_cr_spec_and_config` must replace `{{ ... }}` literals with
+    rendered scalars. Mirrors `aiperf kube show -f`'s pipeline: extract +
+    expand_config_dict, then re-emit the validated AIPerfConfig back into
+    `spec.benchmark` so the operator never sees raw templates."""
+    import yaml
+
+    from aiperf.cli_commands.kube import profile as profile_mod
+    from aiperf.config.kube import KubeOptions
+
+    config_file = tmp_path / "perf.yaml"
+    config_file.write_text(_jinja_aiperfjob_cr_yaml())
+
+    raw = yaml.safe_load(config_file.read_text())
+    kube_options = KubeOptions(image="aiperf:latest", workers=1)
+
+    spec, config = profile_mod._build_cr_spec_and_config(raw, kube_options)
+
+    rendered_yaml = yaml.safe_dump(spec["benchmark"])
+    assert "{{" not in rendered_yaml, (
+        f"Jinja literals leaked into submitted spec.benchmark:\n{rendered_yaml}"
+    )
+    assert "}}" not in rendered_yaml
+
+    # Walk the rendered phases to confirm scalars are real ints.
+    phase_concurrencies = [p.get("concurrency") for p in spec["benchmark"]["phases"]]
+    assert all(isinstance(c, int) for c in phase_concurrencies), (
+        f"phases concurrency must be int after Jinja render, got: {phase_concurrencies}"
+    )
+    assert phase_concurrencies == [120, 120]  # 30 * 4
+
+    # AIPerfConfig matches: drives memory estimate + connectionsPerWorker.
+    assert config.phases[0].concurrency == 120
+
+
+@pytest.mark.asyncio
+async def test_profile_dry_run_with_jinja_recipe_emits_resolved_cr(
+    tmp_path, capsys
+) -> None:
+    """End-to-end CLI shape: `aiperf kube profile --dry-run -f <jinja-recipe>`
+    prints a CR JSON whose spec.benchmark has no `{{ ... }}` literals."""
+    import orjson
+
+    from aiperf.cli_commands.kube.profile import profile
+    from aiperf.config.kube import KubeOptions
+
+    config_file = tmp_path / "perf.yaml"
+    config_file.write_text(_jinja_aiperfjob_cr_yaml())
+
+    user_config = UserConfig.model_validate({"config_file": str(config_file)})
+    service_config = ServiceConfig()
+    kube_options = KubeOptions(image="aiperf:latest", workers=1)
+
+    captured: dict[str, Any] = {}
+
+    def _capture_print(*args: Any, **kwargs: Any) -> None:
+        captured.setdefault("chunks", []).append(args[0] if args else "")
+
+    with (
+        patch("aiperf.cli_commands.kube.profile._print_memory_estimate"),
+        patch("aiperf.kubernetes.console.console") as mock_console,
+    ):
+        mock_console.print.side_effect = _capture_print
+        await profile(
+            user_config=user_config,
+            service_config=service_config,
+            kube_options=kube_options,
+            dry_run=True,
+        )
+
+    output = "\n".join(str(c) for c in captured.get("chunks", []))
+    assert "{{" not in output, f"Jinja leaked into dry-run CR output:\n{output}"
+    assert "}}" not in output
+
+    # The dry-run path emits orjson; locate the CR JSON chunk and verify shape.
+    cr_chunk = next(
+        (
+            c
+            for c in captured["chunks"]
+            if isinstance(c, str) and c.lstrip().startswith("{")
+        ),
+        None,
+    )
+    assert cr_chunk is not None, "expected a JSON CR dump in console.print output"
+    cr = orjson.loads(cr_chunk)
+    phases = cr["spec"]["benchmark"]["phases"]
+    assert all(isinstance(p["concurrency"], int) for p in phases)
+    assert [p["concurrency"] for p in phases] == [120, 120]

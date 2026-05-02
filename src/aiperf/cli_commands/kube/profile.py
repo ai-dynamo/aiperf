@@ -82,17 +82,27 @@ def _try_load_aiperfjob_cr(path: Any) -> dict | None:
 def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     """Build (overlaid_spec, AIPerfConfig) from a parsed AIPerfJob CR dict.
 
-    Extracts benchmark config from the CR spec, then overlays CLI K8s
-    deployment options (image, podTemplate, workers, etc.) on top.
-    The returned spec is ready to submit to the operator.
+    Extracts benchmark config from the CR spec (rendering env vars + Jinja2
+    templates the same way ``aiperf kube show`` does), then overlays CLI K8s
+    deployment options (image, podTemplate, workers, etc.) on top. The
+    rendered benchmark replaces the raw, template-laden ``spec.benchmark``
+    so the submitted CR contains only resolved scalars (no ``{{ ... }}``
+    literals that would fail operator-side Pydantic validation).
     """
     import copy
     import math
 
+    import yaml
+
+    from aiperf.config import dump_config
     from aiperf.operator.spec_converter import extract_benchmark_config
 
     spec = copy.deepcopy(dict(raw.get("spec", {})))
     config = extract_benchmark_config(spec)
+    # Mirror aiperf/cli_commands/kube/show.py: replace the raw benchmark
+    # block with a fully-rendered version derived from the validated
+    # AIPerfConfig so unresolved Jinja templates never reach the operator.
+    spec["benchmark"] = yaml.safe_load(dump_config(config))
 
     dc = kube_options.to_deployment_config()
     dc_dict = dc.model_dump(mode="json", by_alias=True, exclude_defaults=True)
@@ -178,7 +188,7 @@ def _check_no_sweep_keys(config_dict: dict, *, source: str) -> None:
 def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
     """If `config_file` is a plain YAML config (not an AIPerfJob CR), enforce no-sweep.
 
-    Skips when no config file was given, when the file is unparseable, or
+    Skips when no config file was given, when the file is unparsable, or
     when the file is itself an AIPerfJob CR (which is handled by the CR path).
     Redirects when the file is an AIPerfSweep CR — those belong to
     `aiperf kube sweep`, not `aiperf kube profile`.
@@ -189,7 +199,7 @@ def _check_config_file_for_sweep_keys(config_file: Path | None) -> None:
 
     try:
         raw = yaml.safe_load(config_file.read_text())
-    except Exception:  # noqa: BLE001 - unparseable YAML surfaces later via load_config
+    except Exception:  # noqa: BLE001 - unparsable YAML surfaces later via load_config
         return
     if not isinstance(raw, dict):
         return
