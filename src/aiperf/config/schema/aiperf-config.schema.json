@@ -141,6 +141,227 @@
       "title": "AccuracyGraderType",
       "type": "string"
     },
+    "AdaptiveSearchConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for an adaptive outer loop (e.g. Bayesian Optimization).\n\nAttached to MultiRunConfig.adaptive_search when --search-* flags are set; absent\notherwise. Propagates to BenchmarkPlan.adaptive_search in build_benchmark_plan\nand is consumed by MultiRunOrchestrator.execute_adaptive_search.",
+      "properties": {
+        "algorithm": {
+          "const": "bayes",
+          "default": "bayes",
+          "description": "Search algorithm. v1 only supports Bayesian Optimization (`bayes`).",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "searchSpace": {
+          "description": "Dimensions to optimize over. Must be non-empty.",
+          "items": {
+            "$ref": "#/$defs/SearchSpaceDimension"
+          },
+          "minItems": 1,
+          "title": "Searchspace",
+          "type": "array"
+        },
+        "objectiveMetric": {
+          "description": "Metric tag to optimize, e.g. 'output_token_throughput'. Must match a key in RunResult.summary_metrics produced by the run.",
+          "title": "Objectivemetric",
+          "type": "string"
+        },
+        "objectiveStat": {
+          "default": "avg",
+          "description": "Statistic on the metric (matches JsonMetricResult fields).",
+          "enum": [
+            "avg",
+            "p50",
+            "p90",
+            "p95",
+            "p99"
+          ],
+          "title": "Objectivestat",
+          "type": "string"
+        },
+        "objectiveDirection": {
+          "$ref": "#/$defs/OptimizationDirection",
+          "description": "Whether higher (MAXIMIZE) or lower (MINIMIZE) is better."
+        },
+        "maxIterations": {
+          "description": "Maximum number of BO iterations. Each iteration runs `plan.trials` benchmarks.",
+          "title": "Maxiterations",
+          "oneOf": [
+            {
+              "description": "Maximum number of BO iterations. Each iteration runs `plan.trials` benchmarks.",
+              "maximum": 200,
+              "minimum": 2,
+              "title": "Maxiterations",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "nInitialPoints": {
+          "default": 5,
+          "description": "Sobol-random points before skopt fits the GP. Must be < max_iterations.",
+          "title": "Ninitialpoints",
+          "oneOf": [
+            {
+              "default": 5,
+              "description": "Sobol-random points before skopt fits the GP. Must be < max_iterations.",
+              "minimum": 1,
+              "title": "Ninitialpoints",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "plateauWindow": {
+          "default": 5,
+          "description": "Number of recent iterations to inspect for plateau detection.",
+          "title": "Plateauwindow",
+          "oneOf": [
+            {
+              "default": 5,
+              "description": "Number of recent iterations to inspect for plateau detection.",
+              "minimum": 2,
+              "title": "Plateauwindow",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "plateauThreshold": {
+          "default": 0.01,
+          "description": "Coefficient-of-variation threshold for plateau (relative; scale-free).",
+          "title": "Plateauthreshold",
+          "oneOf": [
+            {
+              "default": 0.01,
+              "description": "Coefficient-of-variation threshold for plateau (relative; scale-free).",
+              "exclusiveMinimum": 0,
+              "title": "Plateauthreshold",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "improvementPatience": {
+          "default": 10,
+          "description": "Stop after this many consecutive iterations with no improvement over the running best objective. Standard idiom from skopt's HollowIterationsStopper and Hyperopt's no_progress_loss; complements plateau_threshold (either signal can stop the loop).",
+          "title": "Improvementpatience",
+          "oneOf": [
+            {
+              "default": 10,
+              "description": "Stop after this many consecutive iterations with no improvement over the running best objective. Standard idiom from skopt's HollowIterationsStopper and Hyperopt's no_progress_loss; complements plateau_threshold (either signal can stop the loop).",
+              "minimum": 2,
+              "title": "Improvementpatience",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "randomSeed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "If set, passed as `random_state` to skopt.Optimizer for reproducibility.",
+          "title": "Randomseed",
+          "x-jinja2-supported": true
+        },
+        "slaFilters": {
+          "description": "SLA constraints applied to BO scoring (soft penalty in skopt's loss space) and to best-result selection (lexicographic feasibility-first filtering). Empty list means unconstrained — pure single-objective BO.",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "title": "Slafilters",
+          "type": "array"
+        },
+        "recipeName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of the search recipe that produced this config, when expanded via --search-recipe. Surfaced in search_history.json for post-run audit. None when AdaptiveSearchConfig was built from explicit --search-* flags.",
+          "title": "Recipename"
+        }
+      },
+      "required": [
+        "searchSpace",
+        "objectiveMetric",
+        "objectiveDirection",
+        "maxIterations"
+      ],
+      "title": "AdaptiveSearchConfig",
+      "type": "object"
+    },
     "ArtifactsConfig": {
       "additionalProperties": false,
       "description": "Artifacts configuration for benchmark output.\n\nControls where and how benchmark results are exported.\nUses flat structure with format arrays instead of nested export configs.",
@@ -3379,18 +3600,34 @@
           "description": "Iteration order for sweep + multi-trial composition. 'repeated' (default): trials outer, variations inner - artifact tree is <base>/profile_runs/trial_NNNN/<variation>/profile_runs/run_NNNN/. 'independent': variations outer, trials inner - artifact tree is <base>/<variation>/profile_runs/run_NNNN/. Both modes produce the same total runs and same sweep_aggregate/ output. Adaptive convergence (--convergence-metric) is incompatible with 'repeated'."
         },
         "adaptiveSearch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdaptiveSearchConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
-          "description": "Adaptive outer-loop configuration (Bayesian Optimization). Typed AdaptiveSearchConfig but expressed as Any to avoid a circular import between aiperf.config and aiperf.orchestrator (adaptive_search.py imports OptimizationDirection). The field_validator below coerces dicts to AdaptiveSearchConfig at validation time. Set by the v1 converter when --search-* flags are present. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead of grid-mode paths.",
-          "title": "Adaptivesearch"
+          "description": "Adaptive outer-loop configuration (Bayesian Optimization). Set by the v1 converter when --search-* flags are present, or by --search-recipe expansion. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead of grid-mode paths."
         },
         "postProcess": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostProcessSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
-          "description": "Optional PostProcessSpec emitted by a grid Search Recipe. Threads through to BenchmarkPlan and is consumed by aggregate_sweep_and_export to produce a derived artifact (e.g. a TTFT-vs-ISL curve fit). Typed Any to avoid a circular import with aiperf.search_recipes; the field_validator below coerces dicts to PostProcessSpec at validation time.",
-          "title": "Postprocess"
+          "description": "Optional PostProcessSpec emitted by a grid Search Recipe. Threads through to BenchmarkPlan and is consumed by aggregate_sweep_and_export to produce a derived artifact (e.g. a TTFT-vs-ISL curve fit)."
         },
         "slaFilters": {
-          "description": "SLA filters threaded from a grid Search Recipe into SweepAnalyzer.compute. BO recipes carry SLA filters on AdaptiveSearchConfig.sla_filters instead; this field is the grid carrier. Typed list[Any] to avoid a circular import with aiperf.config.adaptive_search; the field_validator below coerces dict items to SLAFilter.",
-          "items": {},
+          "description": "SLA filters threaded from a grid Search Recipe into SweepAnalyzer.compute. BO recipes carry SLA filters on AdaptiveSearchConfig.sla_filters instead; this field is the grid carrier.",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
           "title": "Slafilters",
           "type": "array"
         }
@@ -3582,6 +3819,15 @@
       "title": "NormalDistribution",
       "type": "object",
       "x-kubernetes-preserve-unknown-fields": true
+    },
+    "OptimizationDirection": {
+      "description": "Direction of optimization for a metric.\n\nMembers:\n    MAXIMIZE: Higher values are preferred (e.g. throughput, goodput).\n    MINIMIZE: Lower values are preferred (e.g. latency, TTFT, p99).\n\nDefined here for the parameter-sweeping feature. Ideally this would\nbe a property of BaseMetric itself; until then sweep objectives carry\nit explicitly.\n\nExample:\n    >>> OptimizationDirection.MAXIMIZE == \"maximize\"\n    True",
+      "enum": [
+        "maximize",
+        "minimize"
+      ],
+      "title": "OptimizationDirection",
+      "type": "string"
     },
     "OslMode": {
       "description": "Defines how output sequence length is handled in composed datasets.",
@@ -3994,6 +4240,34 @@
         "rate"
       ],
       "title": "PoissonPhase",
+      "type": "object"
+    },
+    "PostProcessSpec": {
+      "additionalProperties": false,
+      "description": "Post-aggregation hook spec emitted by a search recipe.\n\nPhase 1 declares the type only; Phase 3 wires it into\n``aggregate_sweep_and_export`` via a ``SEARCH_RECIPE_POST_PROCESS`` plugin\ncategory.\n\nExample: ``PostProcessSpec(handler=\"ttft_sla_curve\", params={\"sla_ms\": 200},\noutput_filename=\"ttft_sla_curve.json\")``.",
+      "properties": {
+        "handler": {
+          "description": "Registered post-process handler name. Looked up via the search_recipe_post_process plugin category in Phase 3.",
+          "title": "Handler",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "description": "Free-form parameters forwarded to the handler. Shape is handler-defined; Any is intentional because handlers ingest dynamic recipe-derived inputs.",
+          "title": "Params",
+          "type": "object"
+        },
+        "outputFilename": {
+          "description": "Filename (relative to ``sweep_aggregate/`` under the artifact dir) to write the handler's output to. Must end in ``.json`` and contain no path separators -- the hook joins it with ``sweep_aggregate/`` and refuses to escape that directory.",
+          "title": "Outputfilename",
+          "type": "string"
+        }
+      },
+      "required": [
+        "handler",
+        "outputFilename"
+      ],
+      "title": "PostProcessSpec",
       "type": "object"
     },
     "PrefixPromptConfig": {
@@ -4770,6 +5044,70 @@
       "title": "RuntimeConfig",
       "type": "object"
     },
+    "SLAFilter": {
+      "additionalProperties": false,
+      "description": "SLA constraint applied to BO scoring or grid filtering.\n\nA trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.\nPhase 2 wires this into ``BayesianSearchPlanner`` for soft-penalty BO\nscoring and into ``write_search_history`` for lexicographic\nfeasibility-first best-result selection.\n\nLives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because\n``AdaptiveSearchConfig`` carries a ``list[SLAFilter]`` field; the inverse\nlocation would force a circular import. Re-exported from\n``aiperf.search_recipes._base`` for ergonomic recipe authoring.\n\nExample: enforce p95 TTFT under 200 ms via\n``SLAFilter(metric_tag=\"time_to_first_token\", stat=\"p95\", op=\"lt\", threshold=200.0)``.",
+      "properties": {
+        "metricTag": {
+          "description": "Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key in RunResult.summary_metrics produced by the run.",
+          "title": "Metrictag",
+          "type": "string"
+        },
+        "stat": {
+          "default": "p95",
+          "description": "Statistic on the metric to compare against the threshold.",
+          "enum": [
+            "avg",
+            "p50",
+            "p90",
+            "p95",
+            "p99"
+          ],
+          "title": "Stat",
+          "type": "string"
+        },
+        "op": {
+          "description": "Comparison operator. Filter passes when stat(metric) op threshold is true.",
+          "enum": [
+            "lt",
+            "le",
+            "gt",
+            "ge"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "threshold": {
+          "description": "Numeric threshold the metric statistic is compared against.",
+          "title": "Threshold",
+          "oneOf": [
+            {
+              "description": "Numeric threshold the metric statistic is compared against.",
+              "title": "Threshold",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "metricTag",
+        "op",
+        "threshold"
+      ],
+      "title": "SLAFilter",
+      "type": "object"
+    },
     "ScenarioSweep": {
       "additionalProperties": false,
       "description": "Scenario sweep - hand-picked configurations deep-merged with base.",
@@ -4796,6 +5134,78 @@
         "runs"
       ],
       "title": "ScenarioSweep",
+      "type": "object"
+    },
+    "SearchSpaceDimension": {
+      "additionalProperties": false,
+      "description": "One dimension of the BO search space.\n\n`path` is a dotted path of the form `phases.profiling.concurrency` —\nthe same grammar accepted by `aiperf.config.sweep._set_nested_value`.",
+      "properties": {
+        "path": {
+          "description": "Dotted-path into BenchmarkConfig (e.g. 'phases.profiling.concurrency').",
+          "title": "Path",
+          "type": "string"
+        },
+        "lo": {
+          "description": "Inclusive lower bound.",
+          "title": "Lo",
+          "oneOf": [
+            {
+              "description": "Inclusive lower bound.",
+              "title": "Lo",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "hi": {
+          "description": "Inclusive upper bound.",
+          "title": "Hi",
+          "oneOf": [
+            {
+              "description": "Inclusive upper bound.",
+              "title": "Hi",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "kind": {
+          "default": "real",
+          "description": "Dimension type. 'int' rounds skopt suggestions to integers; 'real' keeps floats.",
+          "enum": [
+            "int",
+            "real"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "lo",
+        "hi"
+      ],
+      "title": "SearchSpaceDimension",
       "type": "object"
     },
     "SequenceDistributionEntry": {

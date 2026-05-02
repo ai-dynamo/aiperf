@@ -9,13 +9,15 @@ file-size cap. Re-exported via :mod:`aiperf.config.models`.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field
 
 from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
+from aiperf.config.adaptive_search import AdaptiveSearchConfig, SLAFilter
 from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
+from aiperf.search_recipes._base import PostProcessSpec
 
 
 class MultiRunConfig(BaseConfig):
@@ -159,100 +161,45 @@ class MultiRunConfig(BaseConfig):
     ]
 
     adaptive_search: Annotated[
-        Any,
+        AdaptiveSearchConfig | None,
         Field(
             default=None,
             description=(
                 "Adaptive outer-loop configuration (Bayesian Optimization). "
-                "Typed AdaptiveSearchConfig but expressed as Any to avoid a "
-                "circular import between aiperf.config and aiperf.orchestrator "
-                "(adaptive_search.py imports OptimizationDirection). The "
-                "field_validator below coerces dicts to AdaptiveSearchConfig at "
-                "validation time. Set by the v1 converter when --search-* flags "
-                "are present. Mutually exclusive with the top-level `sweep` "
-                "block; build_benchmark_plan enforces that. When set, "
-                "MultiRunOrchestrator.execute dispatches to "
+                "Set by the v1 converter when --search-* flags are present, or "
+                "by --search-recipe expansion. Mutually exclusive with the "
+                "top-level `sweep` block; build_benchmark_plan enforces that. "
+                "When set, MultiRunOrchestrator.execute dispatches to "
                 "execute_adaptive_search instead of grid-mode paths."
             ),
         ),
     ] = None
 
-    @field_validator("adaptive_search", mode="before")
-    @classmethod
-    def _coerce_adaptive_search(cls, value: Any) -> Any:
-        # Lazy-import AdaptiveSearchConfig at validation time -- declaring it as
-        # a top-level type would create a cycle with `aiperf.orchestrator`.
-        if value is None:
-            return None
-        from aiperf.config.adaptive_search import AdaptiveSearchConfig
-
-        if isinstance(value, AdaptiveSearchConfig):
-            return value
-        if isinstance(value, dict):
-            return AdaptiveSearchConfig.model_validate(value)
-        return value
-
     post_process: Annotated[
-        Any,
+        PostProcessSpec | None,
         Field(
             default=None,
             description=(
-                "Optional PostProcessSpec emitted by a grid Search Recipe. Threads "
-                "through to BenchmarkPlan and is consumed by aggregate_sweep_and_export "
-                "to produce a derived artifact (e.g. a TTFT-vs-ISL curve fit). "
-                "Typed Any to avoid a circular import with aiperf.search_recipes; "
-                "the field_validator below coerces dicts to PostProcessSpec at "
-                "validation time."
+                "Optional PostProcessSpec emitted by a grid Search Recipe. "
+                "Threads through to BenchmarkPlan and is consumed by "
+                "aggregate_sweep_and_export to produce a derived artifact "
+                "(e.g. a TTFT-vs-ISL curve fit)."
             ),
         ),
     ] = None
 
-    @field_validator("post_process", mode="before")
-    @classmethod
-    def _coerce_post_process(cls, value: Any) -> Any:
-        if value is None:
-            return None
-        from aiperf.search_recipes._base import PostProcessSpec
-
-        if isinstance(value, PostProcessSpec):
-            return value
-        if isinstance(value, dict):
-            return PostProcessSpec.model_validate(value)
-        return value
-
     sla_filters: Annotated[
-        list[Any],
+        list[SLAFilter],
         Field(
             default_factory=list,
             description=(
                 "SLA filters threaded from a grid Search Recipe into "
                 "SweepAnalyzer.compute. BO recipes carry SLA filters on "
-                "AdaptiveSearchConfig.sla_filters instead; this field is the grid "
-                "carrier. Typed list[Any] to avoid a circular import with "
-                "aiperf.config.adaptive_search; the field_validator below coerces "
-                "dict items to SLAFilter."
+                "AdaptiveSearchConfig.sla_filters instead; this field is the "
+                "grid carrier."
             ),
         ),
     ]
-
-    @field_validator("sla_filters", mode="before")
-    @classmethod
-    def _coerce_sla_filters(cls, value: Any) -> Any:
-        if value is None:
-            return []
-        from aiperf.config.adaptive_search import SLAFilter
-
-        if not isinstance(value, list):
-            return value
-        coerced: list[Any] = []
-        for item in value:
-            if isinstance(item, SLAFilter):
-                coerced.append(item)
-            elif isinstance(item, dict):
-                coerced.append(SLAFilter.model_validate(item))
-            else:
-                coerced.append(item)
-        return coerced
 
 
 class AccuracyConfig(BaseConfig):

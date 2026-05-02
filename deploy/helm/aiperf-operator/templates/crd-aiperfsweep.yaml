@@ -990,28 +990,235 @@ spec:
                                 enum: *id001
                               adaptiveSearch:
                                 type: object
-                                x-kubernetes-preserve-unknown-fields: true
-                                description: Adaptive outer-loop configuration (Bayesian Optimization). Typed AdaptiveSearchConfig
-                                  but expressed as Any to avoid a circular import between aiperf.config and aiperf.orchestrator
-                                  (adaptive_search.py imports OptimizationDirection). The field_validator below coerces dicts
-                                  to AdaptiveSearchConfig at validation time. Set by the v1 converter when --search-* flags
-                                  are present. Mutually exclusive with the top-level `sweep` block; build_benchmark_plan enforces
-                                  that. When set, MultiRunOrchestrator.execute dispatches to execute_adaptive_search instead
-                                  of grid-mode paths.
+                                description: |-
+                                  Configuration for an adaptive outer loop (e.g. Bayesian Optimization).
+
+                                  Attached to MultiRunConfig.adaptive_search when --search-* flags are set; absent
+                                  otherwise. Propagates to BenchmarkPlan.adaptive_search in build_benchmark_plan
+                                  and is consumed by MultiRunOrchestrator.execute_adaptive_search.
+                                properties:
+                                  algorithm:
+                                    type: string
+                                    description: Search algorithm. v1 only supports Bayesian Optimization (`bayes`).
+                                    enum:
+                                    - bayes
+                                    default: bayes
+                                  searchSpace:
+                                    type: array
+                                    description: Dimensions to optimize over. Must be non-empty.
+                                    items:
+                                      type: object
+                                      description: |-
+                                        One dimension of the BO search space.
+
+                                        `path` is a dotted path of the form `phases.profiling.concurrency` —
+                                        the same grammar accepted by `aiperf.config.sweep._set_nested_value`.
+                                      properties:
+                                        path:
+                                          type: string
+                                          description: Dotted-path into BenchmarkConfig (e.g. 'phases.profiling.concurrency').
+                                        lo:
+                                          type: number
+                                          description: Inclusive lower bound.
+                                        hi:
+                                          type: number
+                                          description: Inclusive upper bound.
+                                        kind:
+                                          type: string
+                                          description: Dimension type. 'int' rounds skopt suggestions to integers; 'real'
+                                            keeps floats.
+                                          enum:
+                                          - int
+                                          - real
+                                          default: real
+                                      required:
+                                      - path
+                                      - lo
+                                      - hi
+                                    minItems: 1
+                                  objectiveMetric:
+                                    type: string
+                                    description: Metric tag to optimize, e.g. 'output_token_throughput'. Must match a key
+                                      in RunResult.summary_metrics produced by the run.
+                                  objectiveStat:
+                                    type: string
+                                    description: Statistic on the metric (matches JsonMetricResult fields).
+                                    enum:
+                                    - avg
+                                    - p50
+                                    - p90
+                                    - p95
+                                    - p99
+                                    default: avg
+                                  objectiveDirection:
+                                    type: string
+                                    description: Whether higher (MAXIMIZE) or lower (MINIMIZE) is better.
+                                    enum:
+                                    - maximize
+                                    - minimize
+                                  maxIterations:
+                                    type: integer
+                                    description: Maximum number of BO iterations. Each iteration runs `plan.trials` benchmarks.
+                                    minimum: 2
+                                    maximum: 200
+                                  nInitialPoints:
+                                    type: integer
+                                    description: Sobol-random points before skopt fits the GP. Must be < max_iterations.
+                                    default: 5
+                                    minimum: 1
+                                  plateauWindow:
+                                    type: integer
+                                    description: Number of recent iterations to inspect for plateau detection.
+                                    default: 5
+                                    minimum: 2
+                                  plateauThreshold:
+                                    type: number
+                                    description: Coefficient-of-variation threshold for plateau (relative; scale-free).
+                                    default: 0.01
+                                    exclusiveMinimum: true
+                                    minimum: 0
+                                  improvementPatience:
+                                    type: integer
+                                    description: Stop after this many consecutive iterations with no improvement over the
+                                      running best objective. Standard idiom from skopt's HollowIterationsStopper and Hyperopt's
+                                      no_progress_loss; complements plateau_threshold (either signal can stop the loop).
+                                    default: 10
+                                    minimum: 2
+                                  randomSeed:
+                                    type: integer
+                                    description: If set, passed as `random_state` to skopt.Optimizer for reproducibility.
+                                  slaFilters:
+                                    type: array
+                                    description: SLA constraints applied to BO scoring (soft penalty in skopt's loss space)
+                                      and to best-result selection (lexicographic feasibility-first filtering). Empty list
+                                      means unconstrained — pure single-objective BO.
+                                    items:
+                                      type: object
+                                      description: |-
+                                        SLA constraint applied to BO scoring or grid filtering.
+
+                                        A trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.
+                                        Phase 2 wires this into ``BayesianSearchPlanner`` for soft-penalty BO
+                                        scoring and into ``write_search_history`` for lexicographic
+                                        feasibility-first best-result selection.
+
+                                        Lives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because
+                                        ``AdaptiveSearchConfig`` carries a ``list[SLAFilter]`` field; the inverse
+                                        location would force a circular import. Re-exported from
+                                        ``aiperf.search_recipes._base`` for ergonomic recipe authoring.
+
+                                        Example: enforce p95 TTFT under 200 ms via
+                                        ``SLAFilter(metric_tag="time_to_first_token", stat="p95", op="lt", threshold=200.0)``.
+                                      properties:
+                                        metricTag:
+                                          type: string
+                                          description: Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key
+                                            in RunResult.summary_metrics produced by the run.
+                                        stat:
+                                          type: string
+                                          description: Statistic on the metric to compare against the threshold.
+                                          enum: &id002
+                                          - avg
+                                          - p50
+                                          - p90
+                                          - p95
+                                          - p99
+                                          default: p95
+                                        op:
+                                          type: string
+                                          description: Comparison operator. Filter passes when stat(metric) op threshold is
+                                            true.
+                                          enum: &id003
+                                          - lt
+                                          - le
+                                          - gt
+                                          - ge
+                                        threshold:
+                                          type: number
+                                          description: Numeric threshold the metric statistic is compared against.
+                                      required: &id004
+                                      - metricTag
+                                      - op
+                                      - threshold
+                                  recipeName:
+                                    type: string
+                                    description: Name of the search recipe that produced this config, when expanded via --search-recipe.
+                                      Surfaced in search_history.json for post-run audit. None when AdaptiveSearchConfig was
+                                      built from explicit --search-* flags.
+                                required:
+                                - searchSpace
+                                - objectiveMetric
+                                - objectiveDirection
+                                - maxIterations
                               postProcess:
                                 type: object
-                                x-kubernetes-preserve-unknown-fields: true
-                                description: Optional PostProcessSpec emitted by a grid Search Recipe. Threads through to
-                                  BenchmarkPlan and is consumed by aggregate_sweep_and_export to produce a derived artifact
-                                  (e.g. a TTFT-vs-ISL curve fit). Typed Any to avoid a circular import with aiperf.search_recipes;
-                                  the field_validator below coerces dicts to PostProcessSpec at validation time.
+                                description: |-
+                                  Post-aggregation hook spec emitted by a search recipe.
+
+                                  Phase 1 declares the type only; Phase 3 wires it into
+                                  ``aggregate_sweep_and_export`` via a ``SEARCH_RECIPE_POST_PROCESS`` plugin
+                                  category.
+
+                                  Example: ``PostProcessSpec(handler="ttft_sla_curve", params={"sla_ms": 200},
+                                  output_filename="ttft_sla_curve.json")``.
+                                properties:
+                                  handler:
+                                    type: string
+                                    description: Registered post-process handler name. Looked up via the search_recipe_post_process
+                                      plugin category in Phase 3.
+                                  params:
+                                    type: object
+                                    description: Free-form parameters forwarded to the handler. Shape is handler-defined;
+                                      Any is intentional because handlers ingest dynamic recipe-derived inputs.
+                                    x-kubernetes-preserve-unknown-fields: true
+                                  outputFilename:
+                                    type: string
+                                    description: Filename (relative to ``sweep_aggregate/`` under the artifact dir) to write
+                                      the handler's output to. Must end in ``.json`` and contain no path separators -- the
+                                      hook joins it with ``sweep_aggregate/`` and refuses to escape that directory.
+                                required:
+                                - handler
+                                - outputFilename
                               slaFilters:
                                 type: array
                                 description: SLA filters threaded from a grid Search Recipe into SweepAnalyzer.compute. BO
                                   recipes carry SLA filters on AdaptiveSearchConfig.sla_filters instead; this field is the
-                                  grid carrier. Typed list[Any] to avoid a circular import with aiperf.config.adaptive_search;
-                                  the field_validator below coerces dict items to SLAFilter.
-                                items: {}
+                                  grid carrier.
+                                items:
+                                  type: object
+                                  description: |-
+                                    SLA constraint applied to BO scoring or grid filtering.
+
+                                    A trial is considered feasible iff ``stat(metric_tag) op threshold`` holds.
+                                    Phase 2 wires this into ``BayesianSearchPlanner`` for soft-penalty BO
+                                    scoring and into ``write_search_history`` for lexicographic
+                                    feasibility-first best-result selection.
+
+                                    Lives in ``aiperf.config`` rather than ``aiperf.search_recipes`` because
+                                    ``AdaptiveSearchConfig`` carries a ``list[SLAFilter]`` field; the inverse
+                                    location would force a circular import. Re-exported from
+                                    ``aiperf.search_recipes._base`` for ergonomic recipe authoring.
+
+                                    Example: enforce p95 TTFT under 200 ms via
+                                    ``SLAFilter(metric_tag="time_to_first_token", stat="p95", op="lt", threshold=200.0)``.
+                                  properties:
+                                    metricTag:
+                                      type: string
+                                      description: Metric tag to filter on, e.g. 'time_to_first_token'. Must match a key in
+                                        RunResult.summary_metrics produced by the run.
+                                    stat:
+                                      type: string
+                                      description: Statistic on the metric to compare against the threshold.
+                                      enum: *id002
+                                      default: p95
+                                    op:
+                                      type: string
+                                      description: Comparison operator. Filter passes when stat(metric) op threshold is true.
+                                      enum: *id003
+                                    threshold:
+                                      type: number
+                                      description: Numeric threshold the metric statistic is compared against.
+                                  required: *id004
                             x-kubernetes-validations:
                             - rule: '!has(self.convergenceMetric) || !has(self.mode) || self.mode != ''repeated'''
                               message: adaptive convergence (convergenceMetric) is incompatible with mode='repeated'; use
