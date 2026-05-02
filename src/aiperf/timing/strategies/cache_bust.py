@@ -34,6 +34,7 @@ def build_cache_bust_marker(
     recycle_pass: int,
     trajectory_index: int,
     trace_id: str,
+    *,
     target: CacheBustTarget,
 ) -> str | None:
     """Render the marker text for the given inputs and target position.

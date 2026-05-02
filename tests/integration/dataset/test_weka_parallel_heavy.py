@@ -62,12 +62,12 @@ pytestmark = [
 def _rng_init():
     """Each test starts with a deterministic global RNG seed so the
     PromptGenerator's derived rngs match across runs / processes."""
+    import contextlib
+
     from aiperf.common import random_generator as rng_mod
 
-    try:
+    with contextlib.suppress(Exception):
         rng_mod.reset()
-    except Exception:
-        pass
     rng_mod.init(0)
     yield
 

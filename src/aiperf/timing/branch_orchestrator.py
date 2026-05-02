@@ -327,7 +327,7 @@ class BranchOrchestrator:
             0,
             0,
             child_conversation_id,
-            self._cache_bust_target,
+            target=self._cache_bust_target,
         )
 
     async def dispatch_pre_session_branches(self) -> None:

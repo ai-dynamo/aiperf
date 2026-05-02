@@ -16,10 +16,10 @@ _RID_PATTERN = re.compile(r"\[rid:[0-9a-f]{12}\]")
 
 def test_marker_is_deterministic():
     a = build_cache_bust_marker(
-        "bench-1", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX
+        "bench-1", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )
     b = build_cache_bust_marker(
-        "bench-1", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX
+        "bench-1", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )
     assert a == b
 
@@ -34,53 +34,61 @@ def test_marker_is_deterministic():
     ],
 )
 def test_marker_contains_rid_token(target):
-    marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target)
+    marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target=target)
     assert _RID_PATTERN.search(marker) is not None
 
 
 def test_prefix_variants_have_trailing_newlines():
     for target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.FIRST_TURN_PREFIX):
-        marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target)
+        marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target=target)
         assert marker.endswith("\n\n")
         assert not marker.startswith("\n\n")
 
 
 def test_suffix_variants_have_leading_newlines():
     for target in (CacheBustTarget.SYSTEM_SUFFIX, CacheBustTarget.FIRST_TURN_SUFFIX):
-        marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target)
+        marker = build_cache_bust_marker("bench", 0, 0, "trace_a", target=target)
         assert marker.startswith("\n\n")
         assert not marker.endswith("\n\n")
 
 
 def test_marker_changes_per_input_dimension():
     base = build_cache_bust_marker(
-        "bench", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX
+        "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )
     assert (
-        build_cache_bust_marker("other", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX)
+        build_cache_bust_marker(
+            "other", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
+        )
         != base
     )
     assert (
-        build_cache_bust_marker("bench", 1, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX)
+        build_cache_bust_marker(
+            "bench", 1, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
+        )
         != base
     )
     assert (
-        build_cache_bust_marker("bench", 0, 1, "trace_a", CacheBustTarget.SYSTEM_PREFIX)
+        build_cache_bust_marker(
+            "bench", 0, 1, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
+        )
         != base
     )
     # trace_id is part of the digest tuple — changing it must change the digest.
     assert (
-        build_cache_bust_marker("bench", 0, 0, "trace_b", CacheBustTarget.SYSTEM_PREFIX)
+        build_cache_bust_marker(
+            "bench", 0, 0, "trace_b", target=CacheBustTarget.SYSTEM_PREFIX
+        )
         != base
     )
 
 
 def test_marker_position_does_not_change_digest():
     pre = build_cache_bust_marker(
-        "bench", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX
+        "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
     )
     suf = build_cache_bust_marker(
-        "bench", 0, 0, "trace_a", CacheBustTarget.SYSTEM_SUFFIX
+        "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_SUFFIX
     )
     digest_pre = _RID_PATTERN.search(pre).group()
     digest_suf = _RID_PATTERN.search(suf).group()
@@ -90,16 +98,16 @@ def test_marker_position_does_not_change_digest():
 def test_marker_position_does_not_change_digest_with_trace_id():
     """Same (bid, pass, lane, trace_id), different position -> same rid embedded."""
     pre = build_cache_bust_marker(
-        "bench", 3, 7, "trace_xyz", CacheBustTarget.SYSTEM_PREFIX
+        "bench", 3, 7, "trace_xyz", target=CacheBustTarget.SYSTEM_PREFIX
     )
     suf = build_cache_bust_marker(
-        "bench", 3, 7, "trace_xyz", CacheBustTarget.SYSTEM_SUFFIX
+        "bench", 3, 7, "trace_xyz", target=CacheBustTarget.SYSTEM_SUFFIX
     )
     first_pre = build_cache_bust_marker(
-        "bench", 3, 7, "trace_xyz", CacheBustTarget.FIRST_TURN_PREFIX
+        "bench", 3, 7, "trace_xyz", target=CacheBustTarget.FIRST_TURN_PREFIX
     )
     first_suf = build_cache_bust_marker(
-        "bench", 3, 7, "trace_xyz", CacheBustTarget.FIRST_TURN_SUFFIX
+        "bench", 3, 7, "trace_xyz", target=CacheBustTarget.FIRST_TURN_SUFFIX
     )
     digests = {
         _RID_PATTERN.search(pre).group(),
@@ -117,15 +125,20 @@ def test_marker_differs_when_only_trace_id_differs():
     landing on the same (recycle_pass, lane) tuple must produce distinct
     markers so submission compliance can rely on per-session uniqueness.
     """
-    a = build_cache_bust_marker("bench", 0, 0, "trace_a", CacheBustTarget.SYSTEM_PREFIX)
-    b = build_cache_bust_marker("bench", 0, 0, "trace_b", CacheBustTarget.SYSTEM_PREFIX)
+    a = build_cache_bust_marker(
+        "bench", 0, 0, "trace_a", target=CacheBustTarget.SYSTEM_PREFIX
+    )
+    b = build_cache_bust_marker(
+        "bench", 0, 0, "trace_b", target=CacheBustTarget.SYSTEM_PREFIX
+    )
     assert a != b
     assert _RID_PATTERN.search(a).group() != _RID_PATTERN.search(b).group()
 
 
 def test_target_none_returns_none():
     assert (
-        build_cache_bust_marker("bench", 0, 0, "trace_a", CacheBustTarget.NONE) is None
+        build_cache_bust_marker("bench", 0, 0, "trace_a", target=CacheBustTarget.NONE)
+        is None
     )
 
 

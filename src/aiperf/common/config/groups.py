@@ -14,6 +14,7 @@ class Groups:
     OUTPUT = Group.create_ordered("Output")
     TOKENIZER = Group.create_ordered("Tokenizer")
     LOAD_GENERATOR = Group.create_ordered("Load Generator")
+    SCENARIO = Group.create_ordered("Scenario")
     MULTI_RUN = Group.create_ordered("Multi-Run Confidence Reporting")
     PARAMETER_SWEEP = Group.create_ordered("Parameter Sweep")
     CONVERSATION_INPUT = Group.create_ordered("Conversation Input")

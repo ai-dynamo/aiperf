@@ -33,6 +33,7 @@ def _mk_user_config():
     uc.tokenizer.revision = None
     uc.tokenizer.name = "test-tok"
     uc.endpoint.model_names = ["claude-opus-4-5-20251101", "claude-haiku-4-5-20251001"]
+    uc.loadgen.inter_turn_delay_cap_seconds = None
     return uc
 
 
@@ -44,7 +45,11 @@ def test_weka_trace_end_to_end_validates_for_orchestrator_v1(monkeypatch):
     monkeypatch.setattr(
         loader, "synthesize_prompts_from_hash_ids", lambda rs: {r.key: "p" for r in rs}
     )
-    loader.prompt_generator = MagicMock()
+    pg = MagicMock()
+    pg._corpus_size = 10000
+    pg._tokenized_corpus = list(range(10000))
+    pg.tokenizer.decode = lambda tokens: f"decoded-{len(tokens)}"
+    loader.prompt_generator = pg
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False
     loader._tokenizer_revision = None

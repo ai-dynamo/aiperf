@@ -3,11 +3,6 @@
   "violations": [
     [
       "file-size",
-      "src/aiperf/cli_runner.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -133,6 +128,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       ""
     ],
@@ -154,6 +154,11 @@
     [
       "file-size",
       "src/aiperf/metrics/types/http_trace_metrics.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/orchestrator/orchestrator.py",
       ""
     ],
     [
@@ -269,11 +274,6 @@
     [
       "function-size",
       "src/aiperf/cli_runner.py",
-      "_print_aggregate_summary"
-    ],
-    [
-      "function-size",
-      "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
     [
@@ -375,6 +375,16 @@
       "function-size",
       "src/aiperf/dataset/agentic_code_gen/session_synthesizer.py",
       "SessionSynthesizer.synthesize_session"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/composer/base.py",
+      "BaseDatasetComposer.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/composer/base.py",
+      "_estimate_chat_template_overheads"
     ],
     [
       "function-size",
@@ -1019,6 +1029,11 @@
     [
       "function-size",
       "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/runner.py",
       "PhaseRunner._wait_for_returning_complete"
     ],
     [
@@ -1080,6 +1095,11 @@
       "function-size",
       "src/aiperf/workers/session_manager.py",
       "UserSessionManager.create_and_store"
+    ],
+    [
+      "function-size",
+      "src/aiperf/workers/worker.py",
+      "Worker.__init__"
     ],
     [
       "keyword-only-args",

@@ -1153,7 +1153,7 @@ class UserConfig(BaseConfig):
             "invariants raise ScenarioLockError at startup unless "
             "--unsafe-override is also passed.",
         ),
-        CLIParameter(name=("--scenario",)),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
     ] = None
 
     unsafe_override: Annotated[
@@ -1164,7 +1164,7 @@ class UserConfig(BaseConfig):
             "submission_valid=false in the aggregate output. No-op without "
             "--scenario.",
         ),
-        CLIParameter(name=("--unsafe-override",)),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
     ] = False
 
     _scenario_outcome: Any = PrivateAttr(default=None)

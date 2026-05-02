@@ -289,6 +289,9 @@ async def test_mooncake_trace_payload_mode_now_skips_inputs_json_end_to_end(
         custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
         dataset=dataset,
     )
+    # _configure_dataset is mocked out, so set the source-payload flag
+    # it would normally compute before _preformat_payloads ran.
+    mgr._all_turns_source_loaded_payloads = True
 
     with patch.object(
         mgr, "_generate_inputs_json_file", new_callable=AsyncMock

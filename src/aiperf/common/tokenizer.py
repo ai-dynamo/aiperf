@@ -137,6 +137,28 @@ def _find_hf_cache_aliases(name: str) -> list[Path]:
     ]
 
 
+def _snapshot_has_tokenizer_files(snapshot_dir: Path) -> bool:
+    """Check if a snapshot directory has the minimum tokenizer files needed.
+
+    A partial cache directory (created by an interrupted ``hf_hub_download``)
+    can leave the model dir + snapshot subdir present but empty. Treat such
+    a directory as *not* cached so the loader retries the download instead
+    of failing offline-mode-style with a confusing ``LocalEntryNotFoundError``.
+
+    Required: at least one of ``tokenizer.json``, ``tokenizer.model``,
+    ``vocab.json``, or ``tokenizer_config.json`` must be present.
+    """
+    if not snapshot_dir.is_dir():
+        return False
+    required_any = (
+        "tokenizer.json",
+        "tokenizer.model",
+        "vocab.json",
+        "tokenizer_config.json",
+    )
+    return any((snapshot_dir / fname).exists() for fname in required_any)
+
+
 def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
     """Check if a specific revision snapshot exists in an HF model cache directory.
 
@@ -149,9 +171,9 @@ def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
     refs_file = model_dir / "refs" / revision
     if refs_file.is_file():
         commit_hash = refs_file.read_text().strip()
-        return (snapshots_dir / commit_hash).is_dir()
+        return _snapshot_has_tokenizer_files(snapshots_dir / commit_hash)
     # Direct commit hash
-    return (snapshots_dir / revision).is_dir()
+    return _snapshot_has_tokenizer_files(snapshots_dir / revision)
 
 
 def _is_hf_cached(name: str, revision: str | None = None) -> bool:
@@ -163,6 +185,10 @@ def _is_hf_cached(name: str, revision: str | None = None) -> bool:
 
     When *revision* is given, also verifies that the specific revision snapshot
     is present — a model directory from a different revision is not sufficient.
+
+    Always verifies that at least one tokenizer-related file is present in
+    the snapshot, so a partial cache from an interrupted download does not
+    incorrectly trigger offline-only loading.
     """
     from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -181,7 +207,20 @@ def _is_hf_cached(name: str, revision: str | None = None) -> bool:
         model_dir = aliases[0]
 
     if revision is None:
-        return True
+        # Default revision: verify the active "main" snapshot has real files.
+        snapshots_dir = model_dir / "snapshots"
+        refs_main = model_dir / "refs" / "main"
+        if refs_main.is_file():
+            commit_hash = refs_main.read_text().strip()
+            return _snapshot_has_tokenizer_files(snapshots_dir / commit_hash)
+        # No refs/main: accept any snapshot dir that has tokenizer files.
+        if not snapshots_dir.is_dir():
+            return False
+        return any(
+            _snapshot_has_tokenizer_files(snap)
+            for snap in snapshots_dir.iterdir()
+            if snap.is_dir()
+        )
     return _is_revision_snapshot_cached(model_dir, revision)
 
 

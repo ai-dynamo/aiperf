@@ -12,7 +12,6 @@ from aiperf.common.models import (
     ReasoningResponseData,
     RequestInfo,
     ToolCallResponseData,
-    Turn,
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint

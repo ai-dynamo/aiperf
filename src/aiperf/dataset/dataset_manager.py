@@ -112,6 +112,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
+        # Whether every turn carried a source-loaded raw_payload BEFORE
+        # _preformat_payloads ran. Used by the inputs.json skip decision so
+        # synthesized payloads (preformatted at runtime) still get exported.
+        self._all_turns_source_loaded_payloads: bool = False
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -166,17 +170,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         dataset_type = self.user_config.input.custom_dataset_type
         # Mooncake traces support multiple input modes (payload / messages /
         # input_length); only the `payload` mode produces pre-built raw_payload
-        # turns. `_infer_context_mode` permits mixed messages/payload sessions
-        # within one file, so we must verify every turn — sampling is unsafe.
-        # Runs once per PROFILE_CONFIGURE; O(N) is fine for non-hot-path code.
+        # turns. The flag captured before _preformat_payloads ran reflects
+        # source-loaded payloads only, not preformatted ones.
         is_mooncake_payload_mode = (
             dataset_type == CustomDatasetType.MOONCAKE_TRACE
-            and len(self.dataset) > 0
-            and all(
-                turn.raw_payload is not None
-                for conv in self.dataset.values()
-                for turn in conv.turns
-            )
+            and self._all_turns_source_loaded_payloads
         )
         if (
             dataset_type
@@ -618,6 +616,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
+
+        # Capture pre-preformat raw_payload state. Once _preformat_payloads
+        # runs, synthesized turns also gain raw_payload, which would falsely
+        # trip the "payloads are pre-built" inputs.json skip in the caller.
+        self._all_turns_source_loaded_payloads = bool(conversations) and all(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        )
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.user_config.endpoint.type

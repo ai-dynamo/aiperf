@@ -67,7 +67,9 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str | Path | None = None, user_config: UserConfig, **kwargs):
+    def __init__(
+        self, *, filename: str | Path | None = None, user_config: UserConfig, **kwargs
+    ):
         super().__init__(user_config=user_config, **kwargs)
         self.filename = Path(filename) if isinstance(filename, str) else filename
 

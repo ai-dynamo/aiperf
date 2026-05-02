@@ -90,7 +90,9 @@ def _mk_source(conversations: list[ConversationMetadata]):
 
     counter = {"n": 0}
 
-    def _start(parent_correlation_id, child_conversation_id, agent_depth, branch_mode):
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **_kw
+    ):
         counter["n"] += 1
         s = MagicMock()
         s.x_correlation_id = f"corr-{child_conversation_id}-{counter['n']}"
@@ -102,7 +104,7 @@ def _mk_source(conversations: list[ConversationMetadata]):
 
     cs.start_branch_child.side_effect = _start
 
-    def _start_pre(child_conversation_id):
+    def _start_pre(child_conversation_id, **_kw):
         counter["n"] += 1
         s = MagicMock()
         s.x_correlation_id = f"pre-{child_conversation_id}-{counter['n']}"
