@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 import aiohttp
+import httpx
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -214,6 +215,7 @@ async def try_claim_completion(
     claimed = await _submit_claim_patch(namespace, name, patch_ops)
     if claimed is True:
         _shutdown_sent.add(key)
+        await _post_dashboard_refresh()
         return True
     if claimed is False:
         # Lost the race on a 409/422: remember so subsequent ticks skip
@@ -258,6 +260,27 @@ def _build_claim_patch_ops(body: dict[str, Any]) -> list[dict[str, Any]]:
             "value": timestamp,
         },
     ]
+
+
+async def _post_dashboard_refresh() -> None:
+    """Fire-and-forget POST to the dashboard sidecar's /admin/refresh.
+
+    Called after a successful completion claim so the Plotly Dash view
+    picks up the new run on the PVC. Best-effort: failures (sidecar off,
+    dashboard disabled, port unreachable) are logged at debug and
+    swallowed -- refresh is not load-bearing.
+    """
+    from aiperf.operator.environment import OperatorEnvironment
+
+    port = OperatorEnvironment.DASHBOARD.PORT
+    if port <= 0:
+        return
+    url = f"http://localhost:{port}/admin/refresh"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as http_client:
+            await http_client.post(url)
+    except (httpx.HTTPError, OSError) as exc:
+        logger.debug("dashboard refresh skipped: %s", exc)
 
 
 async def _submit_claim_patch(
