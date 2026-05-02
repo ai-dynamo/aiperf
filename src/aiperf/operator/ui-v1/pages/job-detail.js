@@ -2,7 +2,6 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { openJobWs } from '../lib/job-ws.js';
-import { buildRunSelectorRows } from '../lib/run-selector.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
@@ -15,7 +14,7 @@ import { PodsBar } from '../components/pods-bar.js';
 import { LogsPane } from '../components/logs-pane.js';
 import { EventsPane } from '../components/events-pane.js';
 import { LatencyTimelineChart } from '../components/latency-timeline-chart.js';
-import { EpochSelector } from '../components/epoch-selector.js';
+import { RunPicker } from '../components/run-picker.js';
 import { NsPill, ModelPill } from '../components/pills.js';
 import { RelativeTime } from '../components/time.js';
 import { LoadingPanel, Spinner } from '../components/spinner.js';
@@ -1511,66 +1510,6 @@ function PerRecordAnalysis({ records }) {
 // The ns·model URL shape (with the spaced middle-dot) matches the
 // legacy ui exactly so deep-links shared between the two UIs resolve to
 // the same set of jobs.
-function formatRunSelectorTime(epochSeconds) {
-  if (epochSeconds == null || epochSeconds === 0) return '—';
-  return new Date(epochSeconds * 1000).toLocaleString([], {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-}
-
-function RunSelectorCard({ namespace, name, epochs, current, hasLive, isRunning }) {
-  const rows = buildRunSelectorRows({ namespace, name, epochs, current, hasLive, isRunning });
-  if (rows.length === 0) return null;
-  const epochCount = rows.filter(r => r.kind === 'epoch').length;
-  return html`
-    <div class="run-selector-card" data-testid="job-detail-run-selector">
-      <div class="run-selector-bar">
-        <span class="run-selector-bar-title">Runs</span>
-        ${epochCount > 0 && html`<span class="run-selector-bar-count">${epochCount}</span>`}
-        <div class="run-selector-pills" role="tablist">
-          ${rows.map(row => {
-            const isLive = row.kind === 'live';
-            const dotClass = isLive
-              ? (isRunning ? ' run-pill-dot--running' : ' run-pill-dot--idle')
-              : '';
-            const meta = isLive
-              ? null
-              : formatRunSelectorTime(row.mtimeEpoch);
-            const fileSuffix = isLive
-              ? null
-              : (row.fileCount != null ? ` · ${fmtInt(row.fileCount)} files` : '');
-            const title = isLive
-              ? (isRunning ? 'Live — streaming current-run metrics' : 'Latest persisted run')
-              : `Epoch ${row.label}${fileSuffix ?? ''}${row.isLatest ? ' (latest)' : ''}`;
-            return html`
-              <a
-                key=${row.kind + ':' + (row.epoch || 'live')}
-                href=${row.href}
-                onclick=${e => { e.preventDefault(); navigate(row.href.slice(1)); }}
-                class=${'run-pill'
-                  + (isLive ? ' run-pill--live' : '')
-                  + (row.selected ? ' run-pill--selected' : '')
-                  + (row.isLatest && !row.selected ? ' run-pill--latest' : '')}
-                data-testid=${isLive ? 'run-selector-live' : 'run-selector-epoch'}
-                role="tab"
-                aria-selected=${row.selected ? 'true' : 'false'}
-                title=${title}
-              >
-                ${isLive
-                  ? html`<span class=${'run-pill-dot' + dotClass}></span>`
-                  : null}
-                <span class="run-pill-label">${row.label}</span>
-                ${meta && html`<span class="run-pill-meta">${meta}</span>`}
-                ${row.isLatest && !isLive && html`<span class="run-pill-badge">latest</span>`}
-              </a>
-            `;
-          })}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function SimilarRunsLink({ namespace, model, currentName }) {
   if (!namespace || !model) return null;
   const all = jobsSignal.value ?? [];
@@ -2113,7 +2052,7 @@ export function JobDetail({ namespace, name, epoch }) {
                       ? html`<span style=${'font-size: var(--font-size-xs); color: ' + colors.error + '; opacity: 0.85'} title="Run finished but some workers failed — KPIs reflect surviving data.">Partially failed</span>`
                       : null
               }
-              <${EpochSelector} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
+              <${RunPicker} namespace=${namespace} name=${name} epochs=${epochs} current=${epoch} onPick=${pickEpoch} />
             </div>
             ${endpointUrl && html`
               <div class="text-dim" style="font-size: var(--font-size-sm); margin-top: var(--space-1); max-width: 100%; overflow: hidden">
@@ -2189,15 +2128,6 @@ export function JobDetail({ namespace, name, epoch }) {
           `}
         </div>
       </div>
-
-      <${RunSelectorCard}
-        namespace=${namespace}
-        name=${name}
-        epochs=${epochs}
-        current=${epoch}
-        hasLive=${true}
-        isRunning=${isRunning}
-      />
 
       <!-- Conditions -->
       ${conditions.length > 0 && html`

@@ -37,7 +37,11 @@ export const api = {
     return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}${q}`);
   },
 
-  /** List the persisted run epochs for a job */
+  /**
+   * List the persisted run epochs for a job. Each entry carries:
+   * { epoch, isLatest, mtimeEpoch, fileCount, status, startedAt, endedAt }
+   * where status is one of running/succeeded/failed/cancelled/unknown.
+   */
   getJobEpochs(ns, name) {
     return apiFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/epochs`);
   },
