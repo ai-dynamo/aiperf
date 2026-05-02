@@ -116,6 +116,8 @@ navigation:
       path: tutorials/multi-run-confidence.md
     - page: Parameter Sweeping
       path: tutorials/parameter-sweeping.md
+    - page: Bayesian Optimization
+      path: sweeping/bayesian-optimization.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
