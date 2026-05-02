@@ -437,3 +437,64 @@ unreachable, the `fetch` call fails and an `alert()` surfaces the error
 message. Verify the Results pod can talk to the Kubernetes API — the
 lifespan hook logs "kubernetes_asyncio client initialized for UI endpoints"
 when it can.
+
+---
+
+## Isolated Plotly Dashboard Sidecar (opt-in)
+
+The Plotly Dash plot-building runs in its own container in the operator
+Pod, behind the `dashboard.enabled` Helm value (default `false`). When
+enabled:
+
+- The operator Pod runs three containers: `aiperf-operator`,
+  `results-server`, and `dashboard`.
+- `results-server` reverse-proxies `/dashboard/*` to
+  `localhost:<dashboard.port>` so external callers still hit one URL
+  (the existing `results-server.port`, default 8081).
+- The SPA's "Plots ↗" top-nav link appears, opening `/dashboard/` in
+  a new tab. The link is gated by `/api/v1/config/features`'s
+  `dashboard_enabled` field so a misconfigured chart fails closed.
+- After every benchmark completion, the operator fires a
+  fire-and-forget `POST /admin/refresh` against the dashboard sidecar
+  so the next `/dashboard/` view sees the new run.
+
+### Memory budgeting
+
+By default the dashboard container has `requests: 1Gi` and **no
+memory limit** — it can burst to whatever the node has free. This
+matches the original in-process behaviour but isolates blast radius
+to a single container. To enforce a ceiling on shared clusters:
+
+```yaml
+dashboard:
+  enabled: true
+  resources:
+    limits:
+      memory: 4Gi
+```
+
+When the limit is exceeded, only the dashboard container is
+OOMKilled — `results-server` (API, jobs router, WS) and the operator
+keep running.
+
+### Disabling
+
+```bash
+helm upgrade ... --set dashboard.enabled=false
+```
+
+When off, the `/dashboard/*` route returns 503 with a friendly body
+and the SPA hides the "Plots ↗" link.
+
+### Smoke test
+
+1. `helm upgrade ... --set dashboard.enabled=true` — three containers
+   in the operator Pod; "Plots ↗" link visible in the SPA top-nav.
+2. Run a benchmark to completion. The operator log shows
+   `dashboard refresh skipped` (DEBUG) on success and the dashboard
+   log shows the rebuild. Click "Plots ↗" — the new run is in the
+   Dash app's run picker.
+3. `--set dashboard.enabled=false` — link gone; `/dashboard/` returns
+   503; dashboard container absent from the Pod.
+4. `--set dashboard.resources.limits.memory=512Mi` — cap enforced;
+   OOMKill of dashboard alone does not restart results-server or operator.

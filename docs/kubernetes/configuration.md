@@ -256,6 +256,19 @@ resultsServer:
     limits: { cpu: 500m, memory: 1Gi }
 ```
 
+### `dashboard`
+
+Optional Plotly Dash sidecar for the operator Pod. Default off.
+
+| Key                              | Default      | Description                                                                   |
+|----------------------------------|--------------|-------------------------------------------------------------------------------|
+| `dashboard.enabled`              | `false`      | Whether to add the dashboard container and surface the "Plots ↗" SPA link.   |
+| `dashboard.port`                 | `8082`       | Pod-local HTTP port. `results-server` reverse-proxies `/dashboard/*` here.    |
+| `dashboard.resources.requests`   | `cpu: 100m, memory: 1Gi` | Resource requests. Leave generous so the build has memory.        |
+| `dashboard.resources.limits`     | `{}`         | Empty by default = no limit. Set `memory:` to enforce a ceiling.             |
+
+See [`dashboard-ui.md`](dashboard-ui.md#isolated-plotly-dashboard-sidecar-opt-in) for the full architecture.
+
 ### Benchmark Namespace
 
 ```yaml
