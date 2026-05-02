@@ -99,6 +99,21 @@ def build_multi_run(user: UserConfig) -> dict[str, Any] | None:
     adaptive_search = _build_adaptive_search(lg)
     if adaptive_search is not None:
         out["adaptive_search"] = adaptive_search
+        # --search-* and --convergence-metric (trial-level adaptive early-stop)
+        # are conceptually orthogonal but their interaction wasn't designed:
+        # the BO orchestrator path silently ignores convergence_metric. Reject
+        # explicitly so users don't think trial-level convergence is doing
+        # anything during a BO run. Documented in docs/sweeping/bayesian-optimization.md.
+        if (
+            "convergence_metric" in lg.model_fields_set
+            and lg.convergence_metric is not None
+        ):
+            raise TypeError(
+                "--search-* (Bayesian Optimization) is mutually exclusive with "
+                "--convergence-metric (trial-level adaptive early-stop). The two "
+                "operate at different levels (outer-loop vs. inner-trial) and "
+                "their composition is undefined. Drop one of them."
+            )
     return out or None
 
 

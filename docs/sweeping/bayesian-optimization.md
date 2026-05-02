@@ -74,7 +74,7 @@ Multi-dim:
 
 The user-facing `objective_value` recorded in `search_history.json` per iteration is still the arithmetic mean across trials — the GP sees the per-trial spread; the trajectory log shows the summary.
 
-**Failed trials.** Skipped when extracting the objective. An iteration with zero successful trials writes a fallback loss to skopt (worst-seen + 10% margin, or a finite sentinel of 1e6 when there's no successful prior) and continues. A warning is logged.
+**Failed trials.** Skipped when extracting the objective. An iteration with zero successful trials writes a fallback loss to skopt — `worst-seen-loss + max(10%, 1.0 absolute)` when prior successes exist, else a finite sentinel of `1e6` — and continues. A warning is logged.
 
 **Mean of percentiles vs pooled percentiles.** When `--search-stat` is a percentile (`p50`/`p99`/...), the BO objective is the *expected per-trial percentile* (mean across trials), not the percentile of pooled samples across trials. These differ for skewed distributions: pooled-p99 over `N×requests` exposes more tail mass than `mean(per-trial p99)`. For BO finding the best config the choice doesn't change the optimum's location much; for SLO claims it does. Cite the bias/variance characterization in Nakayama 2014, *Confidence Intervals for Quantiles Using Sectioning* ([PDF](https://web.njit.edu/~marvin/papers/a19-nakayama.pdf)) and Glynn & Iglehart 1990 (DOI:[10.1287/moor.15.1.1](https://doi.org/10.1287/moor.15.1.1)) for the canonical results.
 
@@ -95,7 +95,7 @@ Plateau detection is **scale-free** — works for throughput (~1000) and latency
 `--search-*` is mutually exclusive with:
 - Magic-list flags that produce sweeps (`--concurrency 10,20,30`).
 - Explicit `sweep:` blocks in YAML.
-- `--convergence-metric` (adaptive trial-level early stop). Reason: the trial-level convergence semantics are orthogonal to outer-loop convergence; they need separate thought before composition.
+- `--convergence-metric` (adaptive trial-level early stop). Reason: the trial-level convergence semantics are orthogonal to outer-loop convergence; their composition is undefined. Rejected at the v1→v2 boundary in `_converter_optionals.build_multi_run`.
 
 `--search-*` is **not** mutually exclusive with the Kubernetes operator. Cluster-side adaptive search is supported via an `AIPerfSweep` CR with a `multi_run.adaptive_search` block — the controller pod instantiates the same `BayesianSearchPlanner` used in-process and drives the loop one `AIPerfJob` per iteration. See [Adaptive search on Kubernetes](../kubernetes/sweeps.md#adaptive-search-bayesian-optimization).
 

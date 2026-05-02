@@ -38,7 +38,8 @@ classDiagram
     }
     class MultiRunConfig {
         <<Pydantic; in-process AND K8s-side>>
-        +num_runs / trials: int
+        +num_runs: int  // in-process (le=10)
+        +trials: int    // K8s-side (le=20)
         +adaptive_search: AdaptiveSearchConfig | None
     }
     class BenchmarkPlan {
@@ -149,8 +150,11 @@ sequenceDiagram
         Orch->>Planner: tell(variation, results)
         Planner->>Planner: _extract_trial_objectives(results)<br/>→ list[float] (one per successful trial)
         alt all trials failed
-            Planner->>Planner: _failed_iteration_loss()<br/>(worst-seen+10% or 1e6 sentinel)
+            Planner->>Planner: _failed_iteration_loss()<br/>(worst-seen + max(10%, 1.0 abs)<br/>or 1e6 sentinel if no prior)
             Planner->>Skopt: opt.tell(x, fallback_loss)
+        else exactly one successful trial
+            Planner->>Planner: _objective_to_loss()
+            Planner->>Skopt: opt.tell(x, loss)<br/>(scalar form)
         else N≥2 successful trials
             Planner->>Planner: _objective_to_loss() per trial
             Planner->>Skopt: opt.tell([x]*N, [loss_1..loss_N])<br/>(Letham 2017: per-trial obs)
@@ -167,7 +171,7 @@ sequenceDiagram
 A few things this view makes explicit:
 
 - **Per-trial observations to the GP.** When N≥2 trials succeed, the planner calls `opt.tell([x]*N, [y_1..y_N])` instead of pre-averaging — skopt's GP estimates the noise term σ²ₙ from the within-point spread. Pre-averaging discards information the GP could use. (Letham et al. 2017, [arXiv:1706.07094](https://arxiv.org/abs/1706.07094).)
-- **Failed-iteration loss.** When zero trials succeed, the planner synthesizes a "worst-seen + 10% margin" loss (or a 1e6 sentinel if nothing has yet succeeded) so skopt's ask/tell pairing stays consistent and the GP kernel matrix doesn't see inf/nan.
+- **Failed-iteration loss.** When zero trials succeed, the planner synthesizes a `worst-seen-loss + max(10%, 1.0 absolute)` margin (or a `1e6` sentinel if nothing has yet succeeded) so skopt's ask/tell pairing stays consistent and the GP kernel matrix doesn't see inf/nan.
 - **Three convergence signals.** `is_converged()` checks max_iterations, then improvement-over-best patience, then coefficient-of-variation plateau. The first to fire wins; the reason is recorded in `search_history.json`.
 
 ## Config flow — CLI / YAML → execution
@@ -237,7 +241,7 @@ flowchart TB
 
 ## Notes on extension points
 
-- **Adding a new planner backend** (Optuna TPE, random-search baseline, etc.): subclass `SearchPlanner`, implement `ask`/`tell`/`is_converged`/`history`/`convergence_reason`. No orchestrator changes required. The `algorithm` field on `AdaptiveSearchConfig` is `Literal["bayes"]` today; promoting it to a `CaseInsensitiveStrEnum` and dispatching in `cli_runner._run_multi_benchmark` (or the cluster equivalent in `sweep_controller.main`) is the only wiring.
+- **Adding a new planner backend** (Optuna TPE, random-search baseline, etc.): subclass `SearchPlanner`, implement the four abstract methods (`ask`/`tell`/`is_converged`/`history`); optionally override `convergence_reason` (default returns `None`). No orchestrator changes required. The `algorithm` field on `AdaptiveSearchConfig` is `Literal["bayes"]` today; promoting it to a `CaseInsensitiveStrEnum` and dispatching in `cli_runner._run_multi_benchmark` (or the cluster equivalent in `sweep_controller.main`) is the only wiring.
 - **Adding a new executor backend**: subclass `RunExecutor`. Both `LocalSubprocessExecutor` and `K8sChildJobExecutor` already iterate one (variation, trial) at a time via `execute(BenchmarkRun)` — the seam is adaptive-shaped by construction.
 - **Replacing skopt.** The `BayesianSearchPlanner` boundary is the only skopt-aware code in the project (plus the `[bo]` extra in `pyproject.toml`). Swapping to BoTorch / Optuna is a single-file change with no API break, which is what unlocks the deferred upgrades documented under "What this implementation isn't" in the [user-facing BO doc](../sweeping/bayesian-optimization.md).
 

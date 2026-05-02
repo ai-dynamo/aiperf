@@ -192,3 +192,18 @@ def test_build_multi_run_propagates_initial_points_and_seed():
     out = build_multi_run(user)
     assert out["adaptive_search"]["n_initial_points"] == 3
     assert out["adaptive_search"]["random_seed"] == 42
+
+
+def test_build_multi_run_rejects_search_with_convergence_metric():
+    """--search-* (BO) and --convergence-metric (trial-level adaptive
+    early-stop) are mutually exclusive. The BO orchestrator path silently
+    ignores convergence_metric — explicit rejection avoids surprise."""
+    user = _user_with_loadgen(
+        search_space=["x:1,10:int"],
+        search_metric="m",
+        search_direction="maximize",
+        search_max_iterations=20,
+        convergence_metric="output_token_throughput",
+    )
+    with pytest.raises(TypeError, match="mutually exclusive with --convergence-metric"):
+        build_multi_run(user)
