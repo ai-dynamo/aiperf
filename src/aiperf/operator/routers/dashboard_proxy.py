@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 _FORWARD_REQUEST_HEADER_DROP = frozenset(
     {"host", "content-length", "connection", "transfer-encoding"}
 )
-_FORWARD_RESPONSE_HEADER_DROP = frozenset(
-    {"content-encoding", "transfer-encoding", "connection"}
-)
+_FORWARD_RESPONSE_HEADER_DROP = frozenset({"transfer-encoding", "connection"})
 
 
 def create_dashboard_proxy_router() -> APIRouter:
