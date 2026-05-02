@@ -156,6 +156,30 @@ resultsServer:
       cpu: 500m
       memory: 1Gi
 
+# dashboard is the optional Plotly Dash sidecar for the operator Pod.
+# When enabled, a third container is added that serves /dashboard/ —
+# the heavy plot-building runs there, isolated from results-server so
+# a memory blow-up cannot OOM-kill the API surface. results-server
+# reverse-proxies /dashboard/* to localhost:<dashboard.port>.
+dashboard:
+  # dashboard.enabled toggles the sidecar. Off by default.
+  enabled: false
+
+  # dashboard.port is the Pod-local HTTP port the dashboard listens on.
+  # Not exposed via the Service — the request path is:
+  #   client -> Ingress/PF -> results-server :8081 -> localhost:<port>
+  port: 8082
+
+  # dashboard.resources caps the dashboard container's CPU / memory.
+  # Default: 1Gi requested, no limit. Set resources.limits.memory to
+  # enforce a ceiling on shared clusters; the dashboard will be
+  # OOMKilled on its own without affecting the operator or results-server.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 1Gi
+    limits: {}
+
 # rbac controls RBAC resource creation.
 # A ClusterRole is required because the operator:
 # - Watches AIPerfJob CRDs across all namespaces (or a configured subset)
