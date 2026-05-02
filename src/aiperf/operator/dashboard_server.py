@@ -25,6 +25,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.wsgi import WSGIMiddleware
+from fastapi.responses import JSONResponse
 
 from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
 
@@ -98,6 +99,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         version="1.0.0",
     )
     app.state.results_dir = base_dir
+    app.state.dashboard_refresh_inflight = False
     proxy = _initial_dashboard_proxy()
     app.state.dashboard_proxy = proxy
     app.mount("/dashboard", WSGIMiddleware(proxy))
@@ -109,6 +111,23 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/admin/refresh")
+    async def refresh() -> JSONResponse:
+        if app.state.dashboard_refresh_inflight:
+            return JSONResponse(
+                status_code=200, content={"status": "already_rebuilding"}
+            )
+        app.state.dashboard_refresh_inflight = True
+
+        async def _refresh_task() -> None:
+            try:
+                await _build_and_swap(proxy, base_dir)
+            finally:
+                app.state.dashboard_refresh_inflight = False
+
+        asyncio.create_task(_refresh_task())
+        return JSONResponse(status_code=202, content={"status": "rebuilding"})
 
     return app
 
