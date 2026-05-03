@@ -191,6 +191,7 @@ _RECIPE_OVERRIDABLE_FIELDS: tuple[str, ...] = (
     "search_max_iterations",
     "search_initial_points",
     "search_random_seed",
+    "search_planner",
 )
 
 
@@ -334,4 +335,6 @@ def _build_adaptive_search(lg: Any) -> dict[str, Any] | None:
         ol_kwargs["n_initial_points"] = lg.search_initial_points
     if "search_random_seed" in search_set and lg.search_random_seed is not None:
         ol_kwargs["random_seed"] = lg.search_random_seed
+    if "search_planner" in search_set and lg.search_planner is not None:
+        ol_kwargs["planner"] = lg.search_planner
     return AdaptiveSearchConfig(**ol_kwargs).model_dump(mode="json")

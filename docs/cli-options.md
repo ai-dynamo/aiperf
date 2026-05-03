@@ -1047,14 +1047,8 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode`, `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
-| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
-| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+<br/>_Choices: [`ci_width`, `cv`, `distribution`]_
+<br/>_Default: `ci_width`_
 
 #### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
 
@@ -1101,6 +1095,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-planner`, `--search-planner` `<str>`
+
+Outer-loop search planner plugin. Default `bayesian` requires the `[bo]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+<br/>_Choices: [`bayesian`]_
 
 #### `--search-recipe`, `--search-recipe` `<str>`
 
@@ -1316,7 +1315,7 @@ Explore and validate AIPerf plugins
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -2335,14 +2334,8 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode`, `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
-| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
-| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+<br/>_Choices: [`ci_width`, `cv`, `distribution`]_
+<br/>_Default: `ci_width`_
 
 #### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
 
@@ -2389,6 +2382,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-planner`, `--search-planner` `<str>`
+
+Outer-loop search planner plugin. Default `bayesian` requires the `[bo]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+<br/>_Choices: [`bayesian`]_
 
 #### `--search-recipe`, `--search-recipe` `<str>`
 
@@ -3489,14 +3487,8 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode`, `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
-| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
-| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+<br/>_Choices: [`ci_width`, `cv`, `distribution`]_
+<br/>_Default: `ci_width`_
 
 #### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
 
@@ -3543,6 +3535,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-planner`, `--search-planner` `<str>`
+
+Outer-loop search planner plugin. Default `bayesian` requires the `[bo]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+<br/>_Choices: [`bayesian`]_
 
 #### `--search-recipe`, `--search-recipe` `<str>`
 
@@ -4658,14 +4655,8 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode`, `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
-| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
-| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+<br/>_Choices: [`ci_width`, `cv`, `distribution`]_
+<br/>_Default: `ci_width`_
 
 #### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
 
@@ -4712,6 +4703,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-planner`, `--search-planner` `<str>`
+
+Outer-loop search planner plugin. Default `bayesian` requires the `[bo]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+<br/>_Choices: [`bayesian`]_
 
 #### `--search-recipe`, `--search-recipe` `<str>`
 
@@ -5838,14 +5834,8 @@ Threshold for convergence detection. For ci_width mode: maximum CI width as a fr
 #### `--convergence-mode`, `--convergence-mode` `<str>`
 
 Statistical method for convergence detection. ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. cv: Stop when coefficient of variation (std/mean) is below threshold. distribution: Stop when KS test p-value indicates latest run matches prior runs (requires --export-level records or --export-level raw; rejected with --export-level summary). Only applies when --convergence-metric is set.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `ci_width` | _default_ | Stop when Student's t confidence interval width relative to mean is below threshold. |
-| `cv` |  | Stop when coefficient of variation (std/mean) is below threshold. |
-| `distribution` |  | Stop when KS test p-value indicates latest run matches prior runs. |
+<br/>_Choices: [`ci_width`, `cv`, `distribution`]_
+<br/>_Default: `ci_width`_
 
 #### `--parameter-sweep-cooldown-seconds`, `--parameter-sweep-cooldown-seconds` `<float>`
 
@@ -5892,6 +5882,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 #### `--search-random-seed`, `--search-random-seed` `<int>`
 
 Random seed for reproducible search trajectories. When unset, skopt uses non-deterministic randomness.
+
+#### `--search-planner`, `--search-planner` `<str>`
+
+Outer-loop search planner plugin. Default `bayesian` requires the `[bo]` extra. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
+<br/>_Choices: [`bayesian`]_
 
 #### `--search-recipe`, `--search-recipe` `<str>`
 

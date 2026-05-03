@@ -15,6 +15,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config._base import BaseConfig
+from aiperf.plugin.enums import SearchPlannerType
 
 __all__ = ["AdaptiveSearchConfig", "SLAFilter", "SearchSpaceDimension"]
 
@@ -97,6 +98,15 @@ class AdaptiveSearchConfig(BaseConfig):
     algorithm: Literal["bayes"] = Field(
         default="bayes",
         description="Search algorithm. v1 only supports Bayesian Optimization (`bayes`).",
+    )
+    planner: SearchPlannerType = Field(
+        default=SearchPlannerType.BAYESIAN,
+        description=(
+            "Outer-loop search planner plugin name. Defaults to `bayesian` "
+            "(scikit-optimize-backed). Third-party planners registered under "
+            "the `search_planner` plugin category are valid here. Selected "
+            "via `--search-planner` on the CLI."
+        ),
     )
     search_space: list[SearchSpaceDimension] = Field(
         description="Dimensions to optimize over. Must be non-empty.",

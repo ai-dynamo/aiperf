@@ -23,7 +23,11 @@ from aiperf.common.enums import ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.parsing import parse_int_or_int_list
-from aiperf.plugin.enums import ArrivalPattern, ConvergenceCriterionType
+from aiperf.plugin.enums import (
+    ArrivalPattern,
+    ConvergenceCriterionType,
+    SearchPlannerType,
+)
 
 
 class LoadGeneratorConfig(BaseConfig):
@@ -701,6 +705,23 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--search-random-seed",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_planner: Annotated[
+        SearchPlannerType | None,
+        Field(
+            default=None,
+            description=(
+                "Outer-loop search planner plugin. Default `bayesian` requires "
+                "the `[bo]` extra. Third-party planners registered under the "
+                "`search_planner` plugin category are accepted here. Only "
+                "applies when --search-space is set."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-planner",),
             group=Groups.MULTI_RUN,
         ),
     ] = None
