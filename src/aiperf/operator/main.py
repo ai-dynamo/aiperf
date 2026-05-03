@@ -37,10 +37,14 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
     AIPERF_PLURAL,
     AIPERF_VERSION,
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
 )
 from aiperf.operator import runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
+from aiperf.operator.handlers import jobset_terminal as jobset_terminal_handler
 from aiperf.operator.handlers import pod_restarts as pod_restarts_handler
 from aiperf.operator.metrics import start_metrics_server, track_handler
 from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
@@ -199,6 +203,31 @@ async def on_pod_container_status_change(
         namespace=namespace,
         name=name,
         threshold=OperatorEnvironment.POD_RESTART_THRESHOLD,
+    )
+
+
+@kopf.on.field(
+    JOBSET_GROUP,
+    JOBSET_VERSION,
+    JOBSET_PLURAL,
+    field="status.conditions",
+)
+@track_handler("on_jobset_conditions")
+async def on_jobset_conditions(
+    old: list[dict[str, Any]] | None,
+    new: list[dict[str, Any]] | None,
+    namespace: str,
+    name: str,
+    **_: Any,
+) -> None:
+    """Detect a JobSet terminal-success flip immediately rather than waiting for the next monitor tick.
+
+    Failure-condition recovery stays on the monitor-timer path; this handler only
+    annotates the parent AIPerfJob on success, which makes kopf dispatch the
+    existing ``on_benchmark_complete`` handler.
+    """
+    await jobset_terminal_handler.handle_jobset_conditions(
+        old=old, new=new, namespace=namespace, jobset_name=name
     )
 
 
