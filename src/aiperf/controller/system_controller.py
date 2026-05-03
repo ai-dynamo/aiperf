@@ -28,6 +28,7 @@ from aiperf.common.enums import (
     CommandType,
     MessageType,
     ServiceRegistrationStatus,
+    SystemState,
     WorkerStartupState,
 )
 from aiperf.common.environment import Environment
@@ -59,6 +60,7 @@ from aiperf.common.messages import (
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
     ResultsExportedMessage,
+    SystemStateChangedMessage,
     WorkerPodStateMessage,
     WorkerStatusSummaryMessage,
 )
@@ -253,6 +255,7 @@ class SystemController(
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
         self._results_exported = False
+        self._system_state: SystemState = SystemState.INITIALIZING
         self._exporter_manager: ExporterManager | None = None
         self._memory_tracker = MemoryTracker()
 
@@ -490,14 +493,41 @@ class SystemController(
             )
         self.info(f"Preparing {total_services} services ({types_summary})")
 
+    async def _set_system_state(self, state: SystemState) -> None:
+        """Advance the controller's outer-lifecycle ``SystemState`` and notify
+        subscribers via the message bus.
+
+        Idempotent: a no-op (no log line, no publish) when ``state`` already
+        matches ``self._system_state``. This lets callers re-stamp the same
+        state without flooding the bus or duplicating log lines.
+
+        Side effects on a real transition:
+          * Logs ``"System state: <prev> -> <next>"`` at info level.
+          * Updates ``self._system_state``.
+          * Publishes a ``SystemStateChangedMessage`` carrying the new state.
+            The ProgressRouter subscribes to this and surfaces it on
+            ``/api/progress`` so the operator can mirror it onto the
+            ``AIPerfJob.status.subPhase`` CR field.
+        """
+        if state == self._system_state:
+            return
+        self.info(f"System state: {self._system_state} -> {state}")
+        self._system_state = state
+        await self.publish(
+            SystemStateChangedMessage(
+                service_id=self.service_id,
+                state=state,
+            )
+        )
+
     async def _configure_all_services_and_start_profiling(self) -> None:
         """Drive configure -> pod-health -> worker-ready -> profile-start sequence."""
-        self.info("AIPerf System is CONFIGURING")
+        await self._set_system_state(SystemState.CONFIGURING)
         async with self.try_operation_or_stop("Configure Services"):
             await self._wait_for_all_configured(
                 timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
             )
-        self.info("AIPerf System is CONFIGURED")
+        await self._set_system_state(SystemState.READY)
         self._auto_configure = False
         self.service_manager.activate_heartbeat_monitoring()
 
@@ -518,7 +548,7 @@ class SystemController(
 
         self.info("Post-configure startup flow: sending PROFILE_START to all services")
         await self._start_profiling_all_services()
-        self.info("AIPerf System is PROFILING")
+        await self._set_system_state(SystemState.PROFILING)
 
         # Watch for pod failure threshold breach during profiling
         self._pod_failure_watcher_task = asyncio.create_task(
@@ -1022,6 +1052,7 @@ class SystemController(
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_relay(self, message: Command) -> None:
         """Relay PROFILE_COMPLETE from RecordsManager to GPU telemetry and server metrics services."""
+        await self._set_system_state(SystemState.PROCESSING)
         target_types = [
             ServiceType.GPU_TELEMETRY_MANAGER,
             ServiceType.SERVER_METRICS_MANAGER,
@@ -1228,6 +1259,7 @@ class SystemController(
             if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
                 self._shutdown_triggered = True
                 should_shutdown = True
+                await self._set_system_state(SystemState.STOPPING)
                 self.info("All results received, initiating shutdown")
             else:
                 if not telemetry_ready_for_shutdown:
@@ -1379,6 +1411,7 @@ class SystemController(
     @on_stop
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
+        await self._set_system_state(SystemState.SHUTDOWN)
         # Check if we're in Kubernetes mode with API enabled
         is_k8s_mode = self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         keep_api_running = is_k8s_mode and self.run.cfg.runtime.api_port

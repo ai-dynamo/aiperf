@@ -399,6 +399,7 @@ class TestKubernetesMode:
                 service_id="test_controller",
             )
             controller.stop = AsyncMock()
+            controller.publish = AsyncMock()
             return controller, mock_proxy
 
     def test_kubernetes_mode_requires_group_managers_not_direct_children(

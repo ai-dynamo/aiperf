@@ -123,6 +123,7 @@ class MessageType(CaseInsensitiveStrEnum):
     RESULTS_EXPORTED = "results_exported"
     SERVICE_ERROR = "service_error"
     STATUS = "status"
+    SYSTEM_STATE_CHANGED = "system_state_changed"
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
     WORKER_GROUP_STATS = "worker_group_stats"

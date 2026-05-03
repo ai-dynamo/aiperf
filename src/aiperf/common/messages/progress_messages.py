@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
-from aiperf.common.enums import MessageType
+from aiperf.common.enums import MessageType, SystemState
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import PhaseRecordsStats, WorkerProcessingStats
 from aiperf.common.models.export_models import TelemetryExportData
@@ -56,6 +56,22 @@ class BenchmarkCompleteMessage(
     """Benchmark completion signal."""
 
     was_cancelled: bool = False
+
+
+class SystemStateChangedMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.SYSTEM_STATE_CHANGED.value
+):
+    """Published by the SystemController whenever its outer-lifecycle
+    ``SystemState`` advances (e.g. CONFIGURING -> READY -> PROFILING ->
+    PROCESSING -> STOPPING -> SHUTDOWN).
+
+    Subscribers (notably the ProgressRouter that fronts ``/api/progress``)
+    mirror the new value so external tooling — operator, dashboard,
+    ``kubectl get aiperfjob`` — can observe the controller's view of where
+    the run is, distinct from the operator's outer ``phase`` field.
+    """
+
+    state: SystemState
 
 
 class ResultsExportedMessage(

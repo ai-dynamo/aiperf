@@ -69,6 +69,10 @@ def system_controller(
         )
         # Mock the stop method to avoid actual shutdown
         controller.stop = AsyncMock()
+        # Stub the bus publish — _set_system_state and other handlers fan out
+        # via publish, but the controller fixture isn't started so pub_client
+        # is unset. Tests that want to assert on publish overwrite this.
+        controller.publish = AsyncMock()
         return controller
 
 
