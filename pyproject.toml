@@ -64,6 +64,7 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
   "zstandard>=0.25.0",
+  "crick~=0.0.8",
 ]
 
 # CLI Entrypoints

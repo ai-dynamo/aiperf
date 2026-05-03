@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
 
@@ -21,6 +21,22 @@ from aiperf.common.types import MetricTagT
 if TYPE_CHECKING:
     from aiperf.metrics.base_metric import BaseMetric
     from aiperf.metrics.metric_registry import MetricRegistry
+
+
+@runtime_checkable
+class MetricAggregator(Protocol):
+    """Run-level aggregator that produces a :class:`MetricResult`.
+
+    Implemented by :class:`MetricArray` (exact, ``np.ndarray``-backed) and
+    :class:`aiperf.metrics.list_metric_aggregation.TDigestListMetricAggregator`
+    (bounded-memory t-digest sketch). Both maintain an exact running ``sum``
+    so derived-sum metrics work uniformly across them.
+    """
+
+    @property
+    def sum(self) -> int | float: ...
+
+    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult: ...
 
 
 MetricDictValueTypeVarT = TypeVar(
