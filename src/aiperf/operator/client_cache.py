@@ -209,6 +209,13 @@ async def try_claim_completion(
     # handler itself) already claimed this job.
     if is_completion_claimed(body):
         _shutdown_sent.add(key)
+        # A peer (this operator's prior run, an HA replica, or the
+        # controller-pod's own annotation write) already claimed completion
+        # before this caller's body snapshot was taken. Count as a race-loss
+        # so operators can graph duplicate-completion attempts.
+        from aiperf.operator.metrics import COMPLETION_CLAIM_RACES
+
+        COMPLETION_CLAIM_RACES.inc()
         return False
 
     patch_ops = _build_claim_patch_ops(body)
@@ -221,6 +228,9 @@ async def try_claim_completion(
         # Lost the race on a 409/422: remember so subsequent ticks skip
         # the API call. ``None`` means an unexpected error — don't cache.
         _shutdown_sent.add(key)
+        from aiperf.operator.metrics import COMPLETION_CLAIM_RACES
+
+        COMPLETION_CLAIM_RACES.inc()
     return False
 
 
