@@ -15,7 +15,10 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+
+_logger = AIPerfLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -156,12 +159,29 @@ class DynamicConcurrencyLimit:
 
         If there is outstanding debt (from a limit decrease), this release is
         absorbed by the debt instead of freeing a slot for other acquirers.
+
+        If neither debt nor an in-flight slot is available to release (the pool
+        is already at full capacity), the call is a no-op and emits a warning.
+        This guards against double-release / release-without-acquire bugs that
+        would otherwise inflate the pool above its configured limit, since
+        asyncio.Semaphore has no upper bound on its value.
         """
         self.stats.release_count += 1
         if self._debt > 0:
             self._debt -= 1
-        else:
-            self._semaphore.release()
+            return
+        if self._semaphore._value >= self._current_limit:
+            # No in-flight slot to release — refusing would silently corrupt
+            # the limit. Surface it instead.
+            _logger.warning(
+                "Spurious release on DynamicConcurrencyLimit (limit=%d, "
+                "available=%d, debt=0): no in-flight slot to release. "
+                "Refusing to inflate pool.",
+                self._current_limit,
+                self._semaphore._value,
+            )
+            return
+        self._semaphore.release()
 
     def try_acquire(self) -> bool:
         """Try to acquire a concurrency slot without blocking.
@@ -203,6 +223,17 @@ class GlobalPhaseConcurrencyLimiter:
         of in-flight requests from previous phases. This layered approach
         ensures new phases respect their limits while allowing old phases
         to complete gracefully.
+
+    Cross-phase global pool:
+        The global limit is **shared** across all configured phases — each
+        configure_for_phase(phase, limit) call resets the global pool size to
+        `limit`. With multiple phases configured (e.g. WARMUP + PROFILING)
+        the most-recent configure wins. This is by design: phases are meant
+        to run sequentially, with the previous phase draining before the next
+        starts. release_stuck_slots(phase) frees only that phase's per-phase
+        slots, but its global slots also go back to the shared pool. Code
+        that runs phases concurrently would see them contend for the shared
+        global capacity.
     """
 
     def __init__(self) -> None:
@@ -388,11 +419,13 @@ class GlobalPhaseConcurrencyLimiter:
 
 
 class ConcurrencyManager:
-    """Manager for session and prefill concurrency limits.
+    """Manager for session, request, and prefill concurrency limits.
 
-    Supports two independent concurrency dimensions:
+    Supports three independent concurrency dimensions:
     - Session concurrency: Limits concurrent sessions (conversations). A slot is
       acquired on first turn and released on final turn or phase cleanup.
+    - Request concurrency: Limits concurrent request streams (prefill + decode).
+      A slot is acquired on every turn and released when the credit is returned.
     - Prefill concurrency: Limits requests waiting for first token (prefill phase).
       A slot is acquired on every turn and released when TTFT is received.
 
@@ -403,10 +436,11 @@ class ConcurrencyManager:
     def __init__(self) -> None:
         """Initialize the concurrency manager.
 
-        Note: By default, both session and prefill concurrency limiting is disabled.
+        Note: By default, session, request, and prefill concurrency limiting is disabled.
         They will be enabled or disabled based on the phase config.
         """
         self._session_limiter = GlobalPhaseConcurrencyLimiter()
+        self._request_limiter = GlobalPhaseConcurrencyLimiter()
         self._prefill_limiter = GlobalPhaseConcurrencyLimiter()
 
     def configure_for_phase(
@@ -414,12 +448,13 @@ class ConcurrencyManager:
         phase: CreditPhase,
         concurrency: int | None,
         prefill_concurrency: int | None,
+        request_concurrency: int | None = None,
     ) -> None:
         """Configure concurrency limits for a new phase.
 
-        Must be called before acquiring slots for a phase. Configures both
-        session and prefill limiters unconditionally - each limiter internally
-        enables/disables based on whether the limit is None.
+        Must be called before acquiring slots for a phase. Configures all
+        limiters unconditionally - each limiter internally enables/disables
+        based on whether the limit is None.
 
         Args:
             phase: The phase to configure
@@ -427,8 +462,11 @@ class ConcurrencyManager:
                 If None, session concurrency limiting is disabled globally.
             prefill_concurrency: Maximum concurrent prefill slots for this phase.
                 If None, prefill concurrency limiting is disabled globally.
+            request_concurrency: Maximum concurrent request slots for this phase.
+                If None, request concurrency limiting is disabled globally.
         """
         self._session_limiter.configure_for_phase(phase, concurrency)
+        self._request_limiter.configure_for_phase(phase, request_concurrency)
         self._prefill_limiter.configure_for_phase(phase, prefill_concurrency)
 
     def session_slot_available(self, phase: CreditPhase) -> bool:
@@ -493,6 +531,63 @@ class ConcurrencyManager:
         if self._session_limiter.enabled:
             self._session_limiter.release(phase)
 
+    def request_slot_available(self, phase: CreditPhase) -> bool:
+        """Check if a request slot is available without blocking.
+
+        Returns True when concurrency limiting is disabled (no limit configured).
+        """
+        if not self._request_limiter.enabled:
+            return True
+        return self._request_limiter.slot_available(phase)
+
+    async def acquire_request_slot(
+        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+    ) -> bool:
+        """Acquire a request concurrency slot.
+
+        Request slots limit total concurrent request streams (prefill + decode).
+        Released when the credit is returned.
+
+        Args:
+            phase: The credit phase to acquire the slot for.
+            can_proceed_fn: Callback that returns True if the operation should proceed.
+
+        Returns:
+            True if slot was acquired and can_proceed_fn returned True, False otherwise.
+        """
+        if not self._request_limiter.enabled:
+            return can_proceed_fn()
+        return await self._request_limiter.acquire(phase, can_proceed_fn)
+
+    def try_acquire_request_slot(
+        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+    ) -> bool:
+        """Try to acquire a request concurrency slot without blocking.
+
+        Args:
+            phase: The credit phase to acquire the slot for.
+            can_proceed_fn: Callback that returns True if the operation should proceed.
+
+        Returns:
+            True if slot was acquired, False if no slot available or
+            can_proceed_fn returned False.
+        """
+        if not self._request_limiter.enabled:
+            return can_proceed_fn()
+        return self._request_limiter.try_acquire(phase, can_proceed_fn)
+
+    def release_request_slot(self, phase: CreditPhase) -> None:
+        """Release a request concurrency slot.
+
+        Called when a credit is returned (every return). No-op if request
+        concurrency is disabled.
+
+        Args:
+            phase: The credit phase to release the slot for.
+        """
+        if self._request_limiter.enabled:
+            self._request_limiter.release(phase)
+
     async def acquire_prefill_slot(
         self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
     ) -> bool:
@@ -550,7 +645,7 @@ class ConcurrencyManager:
         if self._prefill_limiter.enabled:
             self._prefill_limiter.release(phase)
 
-    def release_stuck_slots(self, phase: CreditPhase) -> tuple[int, int]:
+    def release_stuck_slots(self, phase: CreditPhase) -> tuple[int, int, int]:
         """Release all stuck slots for a phase during force-completion.
 
         Called when cancel drain timeout expires and credits will never return.
@@ -560,7 +655,7 @@ class ConcurrencyManager:
             phase: The phase to release stuck slots for.
 
         Returns:
-            Tuple of (session_slots_released, prefill_slots_released)
+            Tuple of (session_slots_released, request_slots_released, prefill_slots_released)
         """
         session_released = 0
         if self._session_limiter.enabled:
@@ -568,13 +663,19 @@ class ConcurrencyManager:
             for _ in range(session_released):
                 self._session_limiter.release(phase)
 
+        request_released = 0
+        if self._request_limiter.enabled:
+            request_released = self._request_limiter.get_held_slots(phase)
+            for _ in range(request_released):
+                self._request_limiter.release(phase)
+
         prefill_released = 0
         if self._prefill_limiter.enabled:
             prefill_released = self._prefill_limiter.get_held_slots(phase)
             for _ in range(prefill_released):
                 self._prefill_limiter.release(phase)
 
-        return session_released, prefill_released
+        return session_released, request_released, prefill_released
 
     def get_session_stats(
         self, phase: CreditPhase | None = None
@@ -605,6 +706,19 @@ class ConcurrencyManager:
         self._session_limiter._global_limit.set_limit(limit)
         if phase in self._session_limiter._phase_limits:
             self._session_limiter._phase_limits[phase].set_limit(limit)
+
+    def set_request_limit(self, phase: CreditPhase, limit: int) -> None:
+        """Set request concurrency limit for both global and phase.
+
+        Args:
+            phase: The phase whose limit should be adjusted along with global.
+            limit: The new concurrency limit.
+        """
+        if not self._request_limiter.enabled:
+            return
+        self._request_limiter._global_limit.set_limit(limit)
+        if phase in self._request_limiter._phase_limits:
+            self._request_limiter._phase_limits[phase].set_limit(limit)
 
     def set_prefill_limit(self, phase: CreditPhase, limit: int) -> None:
         """Set prefill concurrency limit for both global and phase.

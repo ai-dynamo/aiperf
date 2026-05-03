@@ -120,6 +120,13 @@ class CreditPhaseConfig(AIPerfBaseModel):
         "This is the max number of requests that can be waiting for the first token at once. "
         "If None, the prefill concurrency is unlimited.",
     )
+    request_concurrency: int | None = Field(
+        default=None,
+        gt=0,
+        description="The max number of concurrent request streams (prefill + decode). "
+        "Acquired every turn, released on credit return. "
+        "If None, request concurrency is unlimited.",
+    )
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
     )
@@ -161,6 +168,12 @@ class CreditPhaseConfig(AIPerfBaseModel):
         gt=0,
         description="Duration in seconds to ramp prefill concurrency from 1 to target. "
         "If None, prefill concurrency starts at target immediately.",
+    )
+    request_concurrency_ramp_duration_sec: float | None = Field(
+        default=None,
+        gt=0,
+        description="Duration in seconds to ramp request concurrency from 1 to target. "
+        "If None, request concurrency starts at target immediately.",
     )
     request_rate_ramp_duration_sec: float | None = Field(
         default=None,
@@ -210,6 +223,9 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     prefill_concurrency = (
         loadgen.warmup_prefill_concurrency or loadgen.prefill_concurrency
     )
+    request_concurrency = (
+        loadgen.warmup_request_concurrency or loadgen.request_concurrency
+    )
     if request_rate is None or arrival_pattern is None:
         arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
         if concurrency is None and prefill_concurrency is None:
@@ -225,6 +241,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
         expected_num_sessions=loadgen.warmup_num_sessions,
         concurrency=concurrency,
         prefill_concurrency=prefill_concurrency,
+        request_concurrency=request_concurrency,
         request_rate=request_rate,
         arrival_pattern=arrival_pattern,
         arrival_smoothness=loadgen.arrival_smoothness,
@@ -232,6 +249,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
         grace_period_sec=loadgen.warmup_grace_period if loadgen.warmup_grace_period is not None else float('inf'),
         concurrency_ramp_duration_sec=loadgen.warmup_concurrency_ramp_duration or loadgen.concurrency_ramp_duration,
         prefill_concurrency_ramp_duration_sec=loadgen.warmup_prefill_concurrency_ramp_duration or loadgen.prefill_concurrency_ramp_duration,
+        request_concurrency_ramp_duration_sec=loadgen.warmup_request_concurrency_ramp_duration or loadgen.request_concurrency_ramp_duration,
         request_rate_ramp_duration_sec=loadgen.warmup_request_rate_ramp_duration or loadgen.request_rate_ramp_duration,
     )  # fmt: skip
 
@@ -255,6 +273,7 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         expected_num_sessions=input.conversation.num,
         concurrency=loadgen.concurrency,
         prefill_concurrency=loadgen.prefill_concurrency,
+        request_concurrency=loadgen.request_concurrency,
         request_rate=loadgen.request_rate or loadgen.user_centric_rate,
         arrival_pattern=loadgen.arrival_pattern,
         arrival_smoothness=loadgen.arrival_smoothness,
@@ -262,6 +281,7 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         num_users=loadgen.num_users,
         concurrency_ramp_duration_sec=loadgen.concurrency_ramp_duration,
         prefill_concurrency_ramp_duration_sec=loadgen.prefill_concurrency_ramp_duration,
+        request_concurrency_ramp_duration_sec=loadgen.request_concurrency_ramp_duration,
         request_rate_ramp_duration_sec=loadgen.request_rate_ramp_duration,
         # Fixed schedule config
         auto_offset_timestamps=input.fixed_schedule_auto_offset,

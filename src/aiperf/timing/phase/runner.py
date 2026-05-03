@@ -225,6 +225,7 @@ class PhaseRunner(TaskManagerMixin):
                 self._config.phase,
                 self._config.concurrency,
                 self._config.prefill_concurrency,
+                self._config.request_concurrency,
             )
 
             await strategy.setup_phase()
@@ -313,45 +314,24 @@ class PhaseRunner(TaskManagerMixin):
         self._rampers = []
         config = self._config
 
-        # Session concurrency ramper (stepped mode)
-        if config.concurrency_ramp_duration_sec and config.concurrency:
-            self.info(
-                f"Starting session concurrency ramp: 1 → {config.concurrency} "
-                f"over {config.concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = RampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.concurrency,
-                duration_sec=config.concurrency_ramp_duration_sec,
-            )
-
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_session_limit(
-                    config.phase, int(limit)
-                )
-
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
-
-        # Prefill concurrency ramper (stepped mode)
-        if config.prefill_concurrency_ramp_duration_sec and config.prefill_concurrency:
-            self.info(
-                f"Starting prefill concurrency ramp: 1 → {config.prefill_concurrency} "
-                f"over {config.prefill_concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = RampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.prefill_concurrency,
-                duration_sec=config.prefill_concurrency_ramp_duration_sec,
-            )
-
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_prefill_limit(
-                    config.phase, int(limit)
-                )
-
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
+        self._add_concurrency_ramper(
+            "session",
+            config.concurrency,
+            config.concurrency_ramp_duration_sec,
+            self._concurrency_manager.set_session_limit,
+        )
+        self._add_concurrency_ramper(
+            "prefill",
+            config.prefill_concurrency,
+            config.prefill_concurrency_ramp_duration_sec,
+            self._concurrency_manager.set_prefill_limit,
+        )
+        self._add_concurrency_ramper(
+            "request",
+            config.request_concurrency,
+            config.request_concurrency_ramp_duration_sec,
+            self._concurrency_manager.set_request_limit,
+        )
 
         # Request rate ramper (continuous mode via update_interval)
         if config.request_rate_ramp_duration_sec and config.request_rate:
@@ -381,6 +361,32 @@ class PhaseRunner(TaskManagerMixin):
                     f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
                     "Request rate will be fixed at the target value."
                 )
+
+    def _add_concurrency_ramper(
+        self,
+        label: str,
+        target: int | None,
+        duration_sec: float | None,
+        limit_setter: Callable[[CreditPhase, int], None],
+    ) -> None:
+        """Append a stepped LINEAR ramper from 1 → target if both target and duration are set."""
+        if not (duration_sec and target):
+            return
+        phase = self._config.phase
+        self.info(
+            f"Starting {label} concurrency ramp: 1 → {target} over {duration_sec}s"
+        )
+        ramp_config = RampConfig(
+            ramp_type=RampType.LINEAR,
+            start=1,
+            target=target,
+            duration_sec=duration_sec,
+        )
+
+        def setter(limit: float) -> None:
+            return limit_setter(phase, int(limit))
+
+        self._rampers.append(Ramper(setter=setter, config=ramp_config))
 
     def _format_phase_started(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase start."""
@@ -546,13 +552,13 @@ class PhaseRunner(TaskManagerMixin):
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
-        session_released, prefill_released = (
+        session_released, request_released, prefill_released = (
             self._concurrency_manager.release_stuck_slots(self._config.phase)
         )
-        if session_released or prefill_released:
+        if session_released or request_released or prefill_released:
             self.warning(
                 f"Released stuck slots for phase {self._config.phase}: "
-                f"session={session_released}, prefill={prefill_released}"
+                f"session={session_released}, request={request_released}, prefill={prefill_released}"
             )
 
     async def _wait_for_event_with_timeout(

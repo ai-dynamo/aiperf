@@ -69,11 +69,17 @@ class TestDynamicConcurrencyLimit:
         lim.release()
         assert lim.effective_slots == 1
 
-    def test_release_without_acquire(self) -> None:
+    def test_release_without_acquire_is_noop(self) -> None:
+        """Spurious release on a full pool is refused, not absorbed.
+
+        Previously this inflated the pool above its configured limit because
+        asyncio.Semaphore has no upper bound; release() now guards against
+        callers that double-release or release without a matching acquire.
+        """
         lim = DynamicConcurrencyLimit()
         lim.set_limit(10)
         lim.release()
-        assert lim.effective_slots == 11
+        assert lim.effective_slots == 10
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("acq,dec,inc,exp_debt,exp_slots", [(50, 25, 60, 0, 10), (50, 25, 35, 15, 0), (50, 25, 50, 0, 0)])  # fmt: skip
@@ -432,19 +438,56 @@ class TestConcurrencyManager:
         m.release_prefill_slot(P)
 
     @pytest.mark.asyncio
+    async def test_acquire_request_slot_disabled_calls_check(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None)
+        called = False
+
+        def chk() -> bool:
+            nonlocal called
+            called = True
+            return True
+
+        assert await m.acquire_request_slot(P, chk) is True and called
+
+    @pytest.mark.asyncio
+    async def test_acquire_request_slot_enabled(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=5)
+        assert await m.acquire_request_slot(P, lambda: True) is True
+
+    def test_release_request_slot_disabled_noop(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None)
+        m.release_request_slot(P)
+
+    @pytest.mark.asyncio
+    async def test_request_limiter_blocks_at_limit(self) -> None:
+        """Acquiring up to the limit succeeds non-blocking; further try_acquire fails until release."""
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=2)
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+        m.release_request_slot(P)
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+
+    @pytest.mark.asyncio
     async def test_release_stuck_slots_returns_counts(self) -> None:
         m = ConcurrencyManager()
-        m.configure_for_phase(P, 10, 5)
+        m.configure_for_phase(P, 10, 5, request_concurrency=4)
         for _ in range(3):
             await m.acquire_session_slot(P, lambda: True)
         for _ in range(2):
+            await m.acquire_request_slot(P, lambda: True)
+        for _ in range(2):
             await m.acquire_prefill_slot(P, lambda: True)
-        assert m.release_stuck_slots(P) == (3, 2)
+        assert m.release_stuck_slots(P) == (3, 2, 2)
 
     def test_release_stuck_slots_disabled_returns_zero(self) -> None:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
-        assert m.release_stuck_slots(P) == (0, 0)
+        assert m.release_stuck_slots(P) == (0, 0, 0)
 
     def test_get_session_stats_disabled_returns_none(self) -> None:
         m = ConcurrencyManager()
@@ -487,6 +530,165 @@ class TestConcurrencyManager:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
         m.set_prefill_limit(P, 10)
+
+
+class TestRequestConcurrencyAdversarial:
+    """Adversarial tests for the request concurrency dimension.
+
+    Cover concurrent races, slot leaks under stop-condition rejection,
+    interaction with the other two dimensions (most-restrictive wins),
+    phase isolation in stuck-slot release, and capacity recovery.
+    """
+
+    @pytest.mark.asyncio
+    async def test_blocking_acquires_never_exceed_limit(self) -> None:
+        """N coroutines racing for K<N slots: at any moment, at most K hold a slot."""
+        LIMIT, RACERS = 3, 10
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=LIMIT)
+
+        in_flight = 0
+        max_in_flight = 0
+        gate = asyncio.Event()
+
+        async def racer() -> None:
+            nonlocal in_flight, max_in_flight
+            await m.acquire_request_slot(P, lambda: True)
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await gate.wait()
+            in_flight -= 1
+            m.release_request_slot(P)
+
+        tasks = [asyncio.create_task(racer()) for _ in range(RACERS)]
+        # Give the first wave time to acquire and block on the gate
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert in_flight == LIMIT
+        assert max_in_flight == LIMIT
+        # Releasing the gate lets each finisher hand off to a waiter
+        gate.set()
+        await asyncio.gather(*tasks)
+        assert in_flight == 0
+        assert max_in_flight == LIMIT  # never exceeded across the whole run
+
+    @pytest.mark.asyncio
+    async def test_stop_condition_after_acquire_releases_slot(self) -> None:
+        """can_proceed_fn returning False post-acquire must NOT leak a slot."""
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=1)
+
+        # First call returns True (let the acquire complete the global step),
+        # second call returns False (rejecting after the phase step) — the
+        # limiter must release everything it took.
+        toggle = iter([True, False])
+        assert await m.acquire_request_slot(P, lambda: next(toggle)) is False
+
+        # If the slot leaked, this acquire would block forever; it must succeed.
+        assert (
+            await asyncio.wait_for(m.acquire_request_slot(P, lambda: True), timeout=0.5)
+            is True
+        )
+        m.release_request_slot(P)
+
+    @pytest.mark.asyncio
+    async def test_most_restrictive_dimension_wins(self) -> None:
+        """With session=10, request=2, prefill=10 — only 2 turns can be in flight."""
+        m = ConcurrencyManager()
+        m.configure_for_phase(
+            P, concurrency=10, prefill_concurrency=10, request_concurrency=2
+        )
+
+        async def issue_turn() -> bool:
+            if not await m.acquire_session_slot(P, lambda: True):
+                return False
+            if not await m.acquire_request_slot(P, lambda: True):
+                m.release_session_slot(P)
+                return False
+            if not await m.acquire_prefill_slot(P, lambda: True):
+                m.release_request_slot(P)
+                m.release_session_slot(P)
+                return False
+            return True
+
+        # Two turns can land immediately; the third must block on request limit.
+        assert await issue_turn()
+        assert await issue_turn()
+        third = asyncio.create_task(issue_turn())
+        await asyncio.sleep(0.05)
+        assert not third.done(), "third turn should be blocked on request limit"
+
+        # Releasing one request slot unblocks exactly one waiter.
+        m.release_request_slot(P)
+        assert await asyncio.wait_for(third, timeout=0.5)
+
+    @pytest.mark.asyncio
+    async def test_release_stuck_slots_restores_capacity(self) -> None:
+        """After stuck-slot release, the limiter accepts the full original limit again."""
+        LIMIT = 4
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=LIMIT)
+
+        # Fill to the limit, then "lose" the slots (simulating credits that never return).
+        for _ in range(LIMIT):
+            await m.acquire_request_slot(P, lambda: True)
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+
+        released = m.release_stuck_slots(P)
+        assert released == (0, LIMIT, 0)
+
+        # Capacity restored — should accept LIMIT new acquires immediately.
+        for i in range(LIMIT):
+            assert m.try_acquire_request_slot(P, lambda: True) is True, f"slot {i}"
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+
+    @pytest.mark.asyncio
+    async def test_release_stuck_slots_phase_scoped(self) -> None:
+        """release_stuck_slots(WARMUP) frees only WARMUP-held phase slots.
+
+        Note: the global limit is intentionally shared across phases (the last
+        configure_for_phase resets it), so this test only stays within the
+        shared budget. The semantic we verify is: phase-scoped slot accounting
+        — release_stuck_slots(W) does not pop a slot from the PROFILING phase
+        semaphore, only the WARMUP one.
+        """
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, request_concurrency=2)
+        m.configure_for_phase(P, None, None, request_concurrency=2)
+
+        # 1 in W, 1 in P — total 2, fits the (now P-set) global cap of 2.
+        await m.acquire_request_slot(W, lambda: True)
+        await m.acquire_request_slot(P, lambda: True)
+
+        # Release WARMUP only — frees its phase slot AND its global slot.
+        assert m.release_stuck_slots(W) == (0, 1, 0)
+
+        # PROFILING's held slot is untouched: it still holds 1.
+        assert m.try_acquire_request_slot(P, lambda: True) is True  # 2nd P slot
+        # And now the (shared) global is full again.
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+
+    @pytest.mark.asyncio
+    async def test_extra_release_is_refused_not_inflated(self) -> None:
+        """A double-release must NOT inflate the pool above its configured limit.
+
+        asyncio.Semaphore has no upper bound, so DynamicConcurrencyLimit.release()
+        explicitly guards against spurious releases; the third release here is
+        a no-op (and emits a warning) rather than freeing a phantom slot.
+        """
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, request_concurrency=2)
+
+        await m.acquire_request_slot(P, lambda: True)
+        await m.acquire_request_slot(P, lambda: True)
+        m.release_request_slot(P)
+        m.release_request_slot(P)
+        m.release_request_slot(P)  # spurious — pool already at full capacity
+
+        # Configured limit is 2 → exactly two slots should be acquirable.
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is False
 
 
 class TestConcurrencyStats:

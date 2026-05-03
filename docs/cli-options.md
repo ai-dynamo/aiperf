@@ -720,13 +720,18 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `30.0`_
 
-#### `--concurrency` `<str>`
+#### `--concurrency`, `--session-concurrency` `<str>`
 
-Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.
+Number of concurrent sessions (conversations) to maintain. A slot is held from a session's first turn until its final turn completes — for single-turn datasets this equals concurrent requests; for multi-turn datasets it caps active conversations. Pair with `--request-concurrency` to additionally cap simultaneous in-flight requests across sessions, or with `--request-rate` to control issuance rate. Accepts a single value or comma-separated list (e.g. `10,20,30`) for parameter sweep.
 
 #### `--prefill-concurrency` `<int>`
 
 Max concurrent requests waiting for first token (prefill phase). Limits how many requests can be in the prefill/prompt-processing stage simultaneously.
+<br/>_Constraints: ≥ 1_
+
+#### `--request-concurrency` `<int>`
+
+Max concurrent request streams (prefill + decode) across all sessions. Acquired every turn, released on credit return. Independent of `--concurrency` (session) — pair them to keep many sessions alive while capping in-flight requests, e.g. `--session-concurrency 100 --request-concurrency 10`. If not set, request concurrency is unlimited.
 <br/>_Constraints: ≥ 1_
 
 #### `--request-rate` `<float>`
@@ -775,6 +780,11 @@ The concurrency value to use for the warmup phase. If not set, it will use the `
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
 <br/>_Constraints: ≥ 1_
 
+#### `--warmup-request-concurrency` `<int>`
+
+The request concurrency value to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+<br/>_Constraints: ≥ 1_
+
 #### `--warmup-request-rate` `<float>`
 
 The request rate to use for the warmup phase. If not set, it will use the `--request-rate` value.
@@ -820,6 +830,11 @@ Duration in seconds to ramp session concurrency from 1 to target. Useful for gra
 Duration in seconds to ramp prefill concurrency from 1 to target.
 <br/>_Constraints: > 0_
 
+#### `--request-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp request concurrency from 1 to target.
+<br/>_Constraints: > 0_
+
 #### `--warmup-concurrency-ramp-duration` `<float>`
 
 Duration in seconds to ramp warmup session concurrency from 1 to target. If not set, uses `--concurrency-ramp-duration` value.
@@ -828,6 +843,11 @@ Duration in seconds to ramp warmup session concurrency from 1 to target. If not 
 #### `--warmup-prefill-concurrency-ramp-duration` `<float>`
 
 Duration in seconds to ramp warmup prefill concurrency from 1 to target. If not set, uses `--prefill-concurrency-ramp-duration` value.
+<br/>_Constraints: > 0_
+
+#### `--warmup-request-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp warmup request concurrency from 1 to target. If not set, uses `--request-concurrency-ramp-duration` value.
 <br/>_Constraints: > 0_
 
 #### `--request-rate-ramp-duration` `<float>`

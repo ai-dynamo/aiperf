@@ -5,7 +5,7 @@
 Handles credit issuance with concurrency control and stop condition checking.
 
 Key responsibilities:
-- Acquire concurrency slots (session + prefill)
+- Acquire concurrency slots (session + request + prefill)
 - Check stop conditions after slot acquisition
 - Atomic credit numbering via progress tracker
 - Create and send Credit to router
@@ -34,7 +34,7 @@ class CreditIssuer:
     """Issues credits with concurrency control and stop condition checking.
 
     Single point of contact for credit issuance operations:
-    - Acquire concurrency slots (session on first turn, prefill on every turn)
+    - Acquire concurrency slots (session → request → prefill)
     - Check stop conditions AFTER slot acquisition (prevents races)
     - Atomic credit numbering via progress tracker
     - Create and send Credit to router
@@ -42,8 +42,9 @@ class CreditIssuer:
 
     Concurrency contract:
     - Session slot: Acquired on first turn only
-    - Prefill slot: Acquired on every turn
-    - Slots are released on failure to maintain symmetry
+    - Request slot: Acquired on every turn, released on credit return
+    - Prefill slot: Acquired on every turn, released on TTFT (or return on failure)
+    - Slots are released symmetrically on failure
 
     Used by timing strategies to issue credits without knowing about
     concurrency or routing internals.
@@ -102,16 +103,17 @@ class CreditIssuer:
 
         Note:
             For first turns (turn_index == 0), acquires session slot first.
-            For all turns, acquires prefill slot.
+            For all turns, acquires request and prefill slots.
             Slots are released automatically on failure.
 
         Flow:
             1. Acquire session slot (first turn only)
-            2. Acquire prefill slot (all turns)
-            3. Atomic numbering via increment_sent
-            4. Calculate cancellation delay
-            5. Create and send Credit
-            6. If final credit: freeze counts + set event
+            2. Acquire request slot (all turns)
+            3. Acquire prefill slot (all turns)
+            4. Atomic numbering via increment_sent
+            5. Calculate cancellation delay
+            6. Create and send Credit
+            7. If final credit: freeze counts + set event
         """
         is_first_turn = turn.turn_index == 0
 
@@ -133,13 +135,21 @@ class CreditIssuer:
             if not acquired:
                 return False
 
+        # Request concurrency: one slot per request stream, released on credit return.
+        acquired = await self._concurrency_manager.acquire_request_slot(
+            self._phase, can_proceed_fn
+        )
+        if not acquired:
+            if is_first_turn:
+                self._concurrency_manager.release_session_slot(self._phase)
+            return False
+
         # Prefill concurrency: one slot per request, released when TTFT arrives.
-        # Limits concurrent prompt processing which is the GPU-intensive phase.
         acquired = await self._concurrency_manager.acquire_prefill_slot(
             self._phase, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
+            self._concurrency_manager.release_request_slot(self._phase)
             if is_first_turn:
                 self._concurrency_manager.release_session_slot(self._phase)
             return False
@@ -181,11 +191,19 @@ class CreditIssuer:
             if not acquired:
                 return None  # No slot - credit not issued
 
+        acquired = self._concurrency_manager.try_acquire_request_slot(
+            self._phase, can_proceed_fn
+        )
+        if not acquired:
+            if is_first_turn:
+                self._concurrency_manager.release_session_slot(self._phase)
+            return None  # No slot - credit not issued
+
         acquired = self._concurrency_manager.try_acquire_prefill_slot(
             self._phase, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
+            self._concurrency_manager.release_request_slot(self._phase)
             if is_first_turn:
                 self._concurrency_manager.release_session_slot(self._phase)
             return None  # No slot - credit not issued

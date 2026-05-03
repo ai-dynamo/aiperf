@@ -198,6 +198,7 @@ class CreditCallbackHandler:
 
         Slot release rules:
         - Session slot: Released when conversation ends (final turn)
+        - Request slot: Released on every return
         - Prefill slot: Released if TTFT never arrived (error/cancellation path)
         - On final return: Cleanup in-flight sessions
 
@@ -224,6 +225,9 @@ class CreditCallbackHandler:
                 )
                 for _ in range(in_flight):
                     concurrency.release_session_slot(phase)
+
+        # Release request slot unconditionally (every return)
+        concurrency.release_request_slot(phase)
 
         # Prefill slot is normally released on TTFT. If the request failed or was
         # cancelled before first token, we release here to prevent slot leaks.

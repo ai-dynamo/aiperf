@@ -44,8 +44,10 @@ def mock_concurrency():
     """Mock concurrency manager."""
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
+    mock.acquire_request_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
     mock.release_session_slot = MagicMock()
+    mock.release_request_slot = MagicMock()
     return mock
 
 
@@ -205,14 +207,33 @@ class TestSlotAcquisitionFailures:
         result = await credit_issuer.issue_credit(turn)
 
         assert result is False
+        mock_concurrency.acquire_request_slot.assert_not_called()
         mock_concurrency.acquire_prefill_slot.assert_not_called()
         mock_router.send_credit.assert_not_called()
 
-    async def test_first_turn_releases_session_slot_when_prefill_fails(
+    async def test_first_turn_releases_session_slot_when_request_slot_fails(
         self, credit_issuer, mock_concurrency, mock_router
     ):
-        """First turn should release session slot if prefill acquisition fails."""
+        """First turn should release session slot if request slot acquisition fails."""
         mock_concurrency.acquire_session_slot.return_value = True
+        mock_concurrency.acquire_request_slot.return_value = False
+        turn = make_turn(turn_index=0)
+
+        result = await credit_issuer.issue_credit(turn)
+
+        assert result is False
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.acquire_prefill_slot.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_first_turn_releases_session_and_request_slot_when_prefill_fails(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        """First turn should release session and request slots if prefill acquisition fails."""
+        mock_concurrency.acquire_session_slot.return_value = True
+        mock_concurrency.acquire_request_slot.return_value = True
         mock_concurrency.acquire_prefill_slot.return_value = False
         turn = make_turn(turn_index=0)
 
@@ -220,6 +241,9 @@ class TestSlotAcquisitionFailures:
 
         assert result is False
         mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_request_slot.assert_called_once_with(
             CreditPhase.PROFILING
         )
         mock_router.send_credit.assert_not_called()
@@ -236,6 +260,9 @@ class TestSlotAcquisitionFailures:
         assert result is False
         mock_concurrency.acquire_session_slot.assert_not_called()
         mock_concurrency.release_session_slot.assert_not_called()
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
         mock_router.send_credit.assert_not_called()
 
 

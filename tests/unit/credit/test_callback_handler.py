@@ -26,6 +26,7 @@ def mock_concurrency():
     """Mock concurrency manager."""
     mock = MagicMock()
     mock.release_session_slot = MagicMock()
+    mock.release_request_slot = MagicMock()
     mock.release_prefill_slot = MagicMock()
     return mock
 
@@ -208,6 +209,54 @@ class TestCreditReturnBasicFlow:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_concurrency.release_session_slot.assert_not_called()
+
+
+# =============================================================================
+# Test: Credit Return - Request Slot Release
+# =============================================================================
+
+
+class TestCreditReturnRequestSlotRelease:
+    """Tests for request slot release in credit returns."""
+
+    async def test_request_slot_released_on_every_return_non_final(
+        self, registered_handler, mock_concurrency
+    ):
+        """Request slot is released on every credit return, not just final turn."""
+        credit = make_credit(turn_index=0, num_turns=3)  # Non-final
+        credit_return = make_credit_return(credit)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_request_slot_released_on_final_turn(
+        self, registered_handler, mock_concurrency
+    ):
+        """Request slot is released on final turn alongside session slot."""
+        credit = make_credit(turn_index=2, num_turns=3)  # Final turn
+        credit_return = make_credit_return(credit)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_request_slot_released_on_cancelled_return(
+        self, registered_handler, mock_concurrency
+    ):
+        """Request slot is released even when the credit was cancelled."""
+        credit = make_credit(turn_index=0, num_turns=3)
+        credit_return = make_credit_return(credit, cancelled=True)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
 
 
 # =============================================================================
