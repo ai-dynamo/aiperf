@@ -47,8 +47,6 @@ class InputConfig(BaseConfig):
     A configuration class for defining input related settings.
     """
 
-    _CLI_GROUP = Groups.INPUT
-
     @model_validator(mode="before")
     @classmethod
     def initialize_rng(cls, data: dict) -> dict:
@@ -171,7 +169,7 @@ class InputConfig(BaseConfig):
                 "--extra-inputs",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
     ] = InputDefaults.EXTRA
@@ -191,7 +189,7 @@ class InputConfig(BaseConfig):
                 "-H",  # GenAI-Perf
             ),
             consume_multiple=True,
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.HEADERS
 
@@ -207,7 +205,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--input-file",  # GenAI-Perf,
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.FILE
 
@@ -221,7 +219,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--fixed-schedule",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.FIXED_SCHEDULE
 
@@ -234,7 +232,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-auto-offset",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET
 
@@ -249,7 +247,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-start-offset",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_START_OFFSET
 
@@ -263,7 +261,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--fixed-schedule-end-offset",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
@@ -277,7 +275,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--public-dataset"),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.PUBLIC_DATASET
 
@@ -290,7 +288,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--hf-subset",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = None
 
@@ -307,7 +305,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--custom-dataset-type"),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.CUSTOM_DATASET_TYPE
 
@@ -322,7 +320,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = None
 
@@ -337,7 +335,7 @@ class InputConfig(BaseConfig):
             name=(
                 "--random-seed",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.RANDOM_SEED
 
@@ -358,7 +356,7 @@ class InputConfig(BaseConfig):
         BeforeValidator(parse_str_as_numeric_dict),
         CLIParameter(
             name=("--goodput",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.GOODPUT
 

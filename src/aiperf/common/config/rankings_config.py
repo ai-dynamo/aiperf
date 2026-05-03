@@ -16,8 +16,6 @@ class RankingsPassagesConfig(BaseConfig):
     A configuration class for defining rankings passages related settings.
     """
 
-    _CLI_GROUP = Groups.RANKINGS
-
     mean: Annotated[
         int,
         Field(
@@ -28,7 +26,7 @@ class RankingsPassagesConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-passages-mean",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.PASSAGES_MEAN
 
@@ -41,7 +39,7 @@ class RankingsPassagesConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-passages-stddev",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.PASSAGES_STDDEV
 
@@ -55,7 +53,7 @@ class RankingsPassagesConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-passages-prompt-token-mean",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.PASSAGES_PROMPT_TOKEN_MEAN
 
@@ -69,7 +67,7 @@ class RankingsPassagesConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-passages-prompt-token-stddev",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.PASSAGES_PROMPT_TOKEN_STDDEV
 
@@ -78,8 +76,6 @@ class RankingsQueryConfig(BaseConfig):
     """
     A configuration class for defining rankings query related settings.
     """
-
-    _CLI_GROUP = Groups.RANKINGS
 
     prompt_token_mean: Annotated[
         int,
@@ -90,7 +86,7 @@ class RankingsQueryConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-query-prompt-token-mean",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.QUERY_PROMPT_TOKEN_MEAN
 
@@ -104,7 +100,7 @@ class RankingsQueryConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--rankings-query-prompt-token-stddev",),
-            group=_CLI_GROUP,
+            group=Groups.RANKINGS,
         ),
     ] = RankingsDefaults.QUERY_PROMPT_TOKEN_STDDEV
 
@@ -113,8 +109,6 @@ class RankingsConfig(BaseConfig):
     """
     A configuration class for defining rankings related settings.
     """
-
-    _CLI_GROUP = Groups.RANKINGS
 
     passages: RankingsPassagesConfig = RankingsPassagesConfig()
     query: RankingsQueryConfig = RankingsQueryConfig()
