@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 25 plugin categories organized by function:
+AIPerf supports 37 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -136,6 +136,15 @@ AIPerf supports 25 plugin categories organized by function:
 | `stream_exporter` | `StreamExporterType` | Streaming record export (e.g. JSONL files) |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
+
+### Orchestrator Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `convergence_criterion` | `ConvergenceCriterionType` | Statistical convergence detection across repeated runs (CI-width / CV / distribution / third-party). Selected via `--convergence-mode <name>`. |
+| `search_planner` | `SearchPlannerType` | Adaptive outer-loop search planners (Bayesian today; future Optuna, Nevergrad). Selected via `--search-planner <name>`; pairs with `--search-recipe`. |
+| `search_recipe` | `SearchRecipeType` | Named search-space presets that compile to either an `AdaptiveSearchConfig` (BO) or a sweep grid. Selected via `--search-recipe <name>`. |
+| `search_recipe_post_process` | `SearchRecipePostProcessType` | Post-process handlers that emit derived artifacts (curves, knee points) into `sweep_aggregate/` after sweep aggregation. |
 
 ### Accuracy Categories
 

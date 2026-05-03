@@ -204,6 +204,17 @@ Hard rules for adding new config fields:
 3. CLI-flag placement on v1: fits an existing nested class (Endpoint/Input/LoadGen/Output/Tokenizer/Accuracy)? Add it there. Doesn't fit? Add as a top-level field on `UserConfig`. NEVER add new nested classes to v1.
 4. NO validators on v1 classes — ever. New validation goes on `AIPerfConfig` (cross-field validators) or in the v1→v2 converter (input-shape coercion).
 
+## Orchestrator Plugin Categories
+
+Convergence criteria and search planners are plugin-registered:
+
+- **`convergence_criterion`** — `CIWidthConvergence` / `CVConvergence` / `DistributionConvergence` are registered in `plugins.yaml` under the `convergence_criterion` category. `_cli_runner_helpers._build_convergence_criterion(plan)` is a one-liner over `plugins.get_class(PluginType.CONVERGENCE_CRITERION, plan.convergence_mode).from_plan(plan)`. Each criterion subclass owns its `from_plan(plan)` factory because constructor signatures differ. Third-party criteria ship as wheels with setuptools entry points and override built-ins via priority.
+- **`search_planner`** — `BayesianSearchPlanner` is registered under the `search_planner` category. `_cli_runner_helpers._build_search_planner(plan)` dispatches via `plugins.get_class(PluginType.SEARCH_PLANNER, plan.adaptive_search.planner)(plan.configs[0], plan.adaptive_search)`. Both the in-process (`cli_runner.py`) and cluster-side (`sweep_controller/main.py`) paths use the same helper. The `[bo]` extra remains for shipping the built-in skopt-backed planner without forcing skopt on every install — third-party wheels can ship their own planners with their own dep trees.
+- **Typed metadata** — Every plugin entry's metadata is validated against the category's `metadata_class` Pydantic model and accessed via the per-category helper in `src/aiperf/plugin/metadata.py` (e.g. `get_convergence_criterion_metadata("ci_width") -> ConvergenceCriterionMetadata`) or the generic `get_typed_metadata(category, name)`. **Do not access `entry.metadata[...]` as a dict** — always use the typed accessor.
+- **Never instantiate** `BayesianSearchPlanner(...)` / `CIWidthConvergence(...)` / `CVConvergence(...)` / `DistributionConvergence(...)` directly outside the registered plugin entries themselves and the convergence module's internal tests. Production code dispatches via the registry.
+
+The convergence/orchestrator metadata schemas live in `src/aiperf/plugin/schema/_orchestrator_schemas.py` (re-exported from `schemas.py`) to keep `schemas.py` under the 500-line ergonomics ceiling.
+
 ## Pre-Commit Checklist
 
 1. Review diff: all lines required?
