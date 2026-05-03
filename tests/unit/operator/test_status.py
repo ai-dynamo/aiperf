@@ -973,7 +973,9 @@ class TestStatusBuilder:
         }
         assert mock_patch.status["resultsPath"] == "/data/results/job-123"
         assert mock_patch.status["completionTime"] == "2026-01-15T11:00:00Z"
-        assert len(mock_patch.status["conditions"]) == 4
+        # 4 explicit conditions + Complete=True + Failed=False derived from
+        # (phase=Completed + ResultsAvailable=True) by finalize().
+        assert len(mock_patch.status["conditions"]) == 6
 
 
 class TestStatusBuilderErrorWorkflow:
@@ -994,7 +996,9 @@ class TestStatusBuilderErrorWorkflow:
 
         assert mock_patch.status["phase"] == "Failed"
         assert mock_patch.status["error"] == "Connection refused to endpoint"
-        assert len(mock_patch.status["conditions"]) == 1
+        # 1 explicit (EndpointReachable=False) + Failed=True + Complete=False
+        # derived by finalize() from phase=Failed.
+        assert len(mock_patch.status["conditions"]) == 3
 
     def test_cancelled_phase(self) -> None:
         """Test setting cancelled phase."""
@@ -1294,3 +1298,313 @@ class TestStatusBuilderObservedGenerationAdversarial:
         sb = StatusBuilder(patch, {})
         sb.set_observed_generation(int(bool_input))
         assert patch.status["observedGeneration"] == expected
+
+
+# =============================================================================
+# Tests for Complete / Failed terminal conditions (batchv1.Job convention)
+# =============================================================================
+
+
+def _conditions_by_type(
+    conditions: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Index a status.conditions list by its ``type`` field for lookup."""
+    return {c["type"]: c for c in conditions}
+
+
+class TestTerminalConditionsCompleteFailed:
+    """Tests for the ``Complete`` / ``Failed`` conditions derived in
+    ``StatusBuilder.finalize()`` from ``phase`` + ``ResultsAvailable``.
+
+    These mirror the ``batchv1.Job`` convention so ``kubectl wait
+    --for=condition=Complete aiperfjob/<name>`` works identically to a
+    Job. Mutual exclusivity is enforced — setting one to True writes the
+    other to False in the same tick. Cancellation writes both False.
+    """
+
+    def test_complete_and_failed_enum_values(self) -> None:
+        """The two new condition types serialize to their canonical k8s names."""
+        assert ConditionType.COMPLETE == "Complete"
+        assert ConditionType.COMPLETE.value == "Complete"
+        assert ConditionType.FAILED == "Failed"
+        assert ConditionType.FAILED.value == "Failed"
+
+    def test_running_phase_does_not_set_terminal_conditions(self) -> None:
+        """A non-terminal reconcile (phase=Running) must NOT latch terminal
+        conditions — kubectl-wait would unblock prematurely."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.RUNNING)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "Results stored"
+        )
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status.get("conditions", []))
+        assert "Complete" not in by_type
+        assert "Failed" not in by_type
+
+    def test_completed_phase_with_results_available_sets_complete_true(self) -> None:
+        """phase=Completed AND ResultsAvailable=True → Complete=True, Failed=False."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.COMPLETED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "Stored"
+        )
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Complete"]["status"] == "True"
+        assert by_type["Complete"]["reason"] == "ResultsStored"
+        assert by_type["Failed"]["status"] == "False"
+        assert by_type["Failed"]["reason"] == "JobCompleted"
+
+    def test_completed_phase_without_results_available_does_not_latch(self) -> None:
+        """phase=Completed but ResultsAvailable not yet True → don't latch.
+
+        This protects against the artifact-fetch window where ``phase``
+        flips before results are on disk; the operator should retry and
+        write Complete=True only on the next finalize after fetch succeeds.
+        """
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.COMPLETED)
+        # Note: no ResultsAvailable=True
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status.get("conditions", []))
+        assert "Complete" not in by_type
+        assert "Failed" not in by_type
+
+    def test_failed_phase_sets_failed_true(self) -> None:
+        """phase=Failed → Failed=True, Complete=False (regardless of ResultsAvailable)."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.FAILED)
+        sb.set_error("Endpoint unreachable")
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Failed"]["status"] == "True"
+        assert by_type["Failed"]["reason"] == "JobFailed"
+        # The error message is surfaced into the condition message.
+        assert by_type["Failed"]["message"] == "Endpoint unreachable"
+        assert by_type["Complete"]["status"] == "False"
+
+    def test_failed_phase_with_no_error_message_uses_default(self) -> None:
+        """phase=Failed without ``status.error`` set falls back to a default
+        message rather than serializing an empty string."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.FAILED)
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Failed"]["message"] == "Job failed"
+
+    def test_failed_phase_with_results_available_still_sets_failed(self) -> None:
+        """A Failed job that managed to upload partial results still latches
+        Failed=True — ResultsAvailable does NOT promote it to Complete."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.FAILED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "partial"
+        )
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Failed"]["status"] == "True"
+        assert by_type["Complete"]["status"] == "False"
+
+    def test_cancelled_phase_clears_both(self) -> None:
+        """phase=Cancelled → both Complete and Failed are False.
+
+        Matches batchv1.Job semantics where user-initiated cancellation is
+        not a Failed event. ``kubectl wait --for=condition=Complete`` blocks
+        forever on a cancelled job (which is correct — cancellation is the
+        user's responsibility to observe via ``phase=Cancelled``)."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.CANCELLED)
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Complete"]["status"] == "False"
+        assert by_type["Complete"]["reason"] == "JobCancelled"
+        assert by_type["Failed"]["status"] == "False"
+        assert by_type["Failed"]["reason"] == "JobCancelled"
+
+    def test_cancelled_phase_with_results_available_still_clears(self) -> None:
+        """A cancelled run that flushed results before tear-down still
+        clears both terminals — cancellation overrides the success path."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.CANCELLED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "stored before cancel"
+        )
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status["conditions"])
+        assert by_type["Complete"]["status"] == "False"
+        assert by_type["Failed"]["status"] == "False"
+
+    def test_no_phase_in_patch_skips_derivation(self) -> None:
+        """A reconcile that doesn't write phase (e.g. a workers-only update)
+        must NOT touch terminal conditions — only the next phase-setting
+        tick gets to derive them."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_workers(ready=5, total=5)
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status.get("conditions", []))
+        assert "Complete" not in by_type
+        assert "Failed" not in by_type
+
+    @pytest.mark.parametrize(
+        "phase,results_available,expect_complete,expect_failed",
+        [
+            param(Phase.RUNNING, True, None, None, id="running_results_avail_unset"),
+            param(Phase.RUNNING, False, None, None, id="running_no_results_unset"),
+            param(Phase.COMPLETED, True, "True", "False", id="completed_with_results"),
+            param(Phase.COMPLETED, False, None, None, id="completed_without_results"),
+            param(Phase.FAILED, True, "False", "True", id="failed_with_results"),
+            param(Phase.FAILED, False, "False", "True", id="failed_without_results"),
+            param(Phase.CANCELLED, True, "False", "False", id="cancelled_with_results"),
+            param(Phase.CANCELLED, False, "False", "False", id="cancelled_no_results"),
+        ],
+    )  # fmt: skip
+    def test_terminal_condition_matrix(
+        self,
+        phase: Phase,
+        results_available: bool,
+        expect_complete: str | None,
+        expect_failed: str | None,
+    ) -> None:
+        """Pin the full (phase × ResultsAvailable) → (Complete, Failed)
+        matrix. None means "condition not present on the status."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(phase)
+        if results_available:
+            sb.conditions.set_true(
+                ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
+            )
+        sb.finalize()
+
+        by_type = _conditions_by_type(mock_patch.status.get("conditions", []))
+
+        if expect_complete is None:
+            assert "Complete" not in by_type
+        else:
+            assert by_type["Complete"]["status"] == expect_complete
+
+        if expect_failed is None:
+            assert "Failed" not in by_type
+        else:
+            assert by_type["Failed"]["status"] == expect_failed
+
+    def test_finalize_idempotent_on_repeated_calls(self) -> None:
+        """Calling finalize() twice with the same patch state yields the
+        same condition list. The second call must not double-add or
+        change values."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.COMPLETED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
+        )
+        sb.finalize()
+        first_snapshot = sorted(
+            (c["type"], c["status"]) for c in mock_patch.status["conditions"]
+        )
+
+        sb.finalize()
+        second_snapshot = sorted(
+            (c["type"], c["status"]) for c in mock_patch.status["conditions"]
+        )
+
+        assert first_snapshot == second_snapshot
+        # No duplicates.
+        types = [c["type"] for c in mock_patch.status["conditions"]]
+        assert len(types) == len(set(types))
+
+    def test_complete_last_transition_time_stable_across_finalize_calls(self) -> None:
+        """The lastTransitionTime on Complete is stamped on the FIRST
+        transition to True, then preserved on subsequent finalize calls
+        (matching the existing ConditionManager invariant)."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.COMPLETED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
+        )
+
+        with patch(
+            "aiperf.operator.status.format_timestamp",
+            return_value="2026-05-03T10:00:00Z",
+        ):
+            sb.finalize()
+        first_time = _conditions_by_type(mock_patch.status["conditions"])[
+            "Complete"
+        ]["lastTransitionTime"]
+        assert first_time == "2026-05-03T10:00:00Z"
+
+        # A later finalize with no status change must NOT advance the time.
+        with patch(
+            "aiperf.operator.status.format_timestamp",
+            return_value="2026-05-03T11:00:00Z",
+        ):
+            sb.finalize()
+        second_time = _conditions_by_type(mock_patch.status["conditions"])[
+            "Complete"
+        ]["lastTransitionTime"]
+        assert second_time == first_time
+
+    def test_terminal_transition_from_completed_to_failed_flips_both(self) -> None:
+        """Pathological but possible: phase=Completed (with results) writes
+        Complete=True, then a subsequent reconcile sets phase=Failed. The
+        new finalize must flip Complete→False and Failed→True."""
+        mock_patch = MagicMock()
+        mock_patch.status = {}
+        sb = StatusBuilder(mock_patch)
+        sb.set_phase(Phase.COMPLETED)
+        sb.conditions.set_true(
+            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
+        )
+        sb.finalize()
+        assert (
+            _conditions_by_type(mock_patch.status["conditions"])["Complete"][
+                "status"
+            ]
+            == "True"
+        )
+
+        # Reuse the existing conditions on a fresh patch (simulates the
+        # next reconcile reading status from the server).
+        existing = {"conditions": list(mock_patch.status["conditions"])}
+        next_patch = MagicMock()
+        next_patch.status = {}
+        sb2 = StatusBuilder(next_patch, existing)
+        sb2.set_phase(Phase.FAILED)
+        sb2.set_error("post-completion sanity check failed")
+        sb2.finalize()
+
+        by_type = _conditions_by_type(next_patch.status["conditions"])
+        assert by_type["Failed"]["status"] == "True"
+        assert by_type["Complete"]["status"] == "False"

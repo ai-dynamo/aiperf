@@ -65,8 +65,10 @@ async def test_handle_completion_without_result_files_marks_failed() -> None:
         )
 
     assert patch_obj.status["phase"] == Phase.FAILED
-    assert patch_obj.status["conditions"][-1]["type"] == "ResultsAvailable"
-    assert patch_obj.status["conditions"][-1]["status"] == "False"
+    # Lookup by type — finalize() appends derived Complete/Failed conditions
+    # after handler-set ones, so positional indexing is brittle.
+    by_type = {c["type"]: c for c in patch_obj.status["conditions"]}
+    assert by_type["ResultsAvailable"]["status"] == "False"
 
 
 @pytest.mark.asyncio

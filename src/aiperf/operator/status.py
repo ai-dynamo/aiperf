@@ -85,6 +85,20 @@ class ConditionType(CaseInsensitiveStrEnum):
     can alert on degraded-but-passing cluster conditions without scraping
     kubectl events."""
 
+    COMPLETE = "Complete"
+    """Set to True when the job has finished successfully and results are
+    available. Mirrors the ``batchv1.Job`` Complete condition convention so
+    ``kubectl wait --for=condition=Complete aiperfjob/<name>`` works
+    identically to a Job. Mutually exclusive with ``Failed``."""
+
+    FAILED = "Failed"
+    """Set to True when the job terminated unexpectedly (controller crash,
+    preflight reject, JobSet failure, etc.). Mirrors the ``batchv1.Job``
+    Failed condition. Mutually exclusive with ``Complete``. NOTE: a
+    user-cancelled job sets neither Complete nor Failed — ``phase=Cancelled``
+    + no terminal condition is the cancel signal, matching ``batchv1.Job``
+    which does not consider cancellation a Failed event."""
+
 
 class ConditionManager:
     """Manages the conditions list for AIPerfJob status.
@@ -356,7 +370,66 @@ class StatusBuilder:
         return self._patch.status.get("phase")
 
     def finalize(self) -> None:
-        """Apply changed conditions to the patch. Call this last."""
+        """Apply changed conditions to the patch. Call this last.
+
+        Derives the k8s-conventional ``Complete`` and ``Failed`` conditions
+        from existing state (``phase`` + ``ResultsAvailable``) before
+        flushing. These are mutually exclusive and only set on terminal
+        phases — ``Cancelled`` clears both, so ``kubectl wait
+        --for=condition=Complete`` blocks until the job either succeeds
+        or is explicitly failed (matching ``batchv1.Job`` semantics).
+        """
+        self._derive_terminal_conditions()
         conditions_list = self._conditions.to_list()
         if conditions_list and self._conditions.dirty:
             self._patch.status["conditions"] = conditions_list
+
+    def _derive_terminal_conditions(self) -> None:
+        """Stamp ``Complete`` / ``Failed`` from current phase + ResultsAvailable.
+
+        Skips when the patch hasn't set ``phase`` this tick (so non-terminal
+        reconciles don't latch a terminal condition). On ``Completed``,
+        only stamps ``Complete=True`` once ``ResultsAvailable=True`` — this
+        protects against premature latching during the artifact-fetch window
+        when ``phase`` flips before results are on disk.
+        """
+        phase = self._patch.status.get("phase")
+        if phase is None:
+            return
+        if phase == str(Phase.COMPLETED):
+            if self._conditions.is_condition_true(ConditionType.RESULTS_AVAILABLE):
+                self._conditions.set_true(
+                    ConditionType.COMPLETE,
+                    "ResultsStored",
+                    "Job completed and results stored",
+                )
+                self._conditions.set_false(
+                    ConditionType.FAILED,
+                    "JobCompleted",
+                    "Job completed successfully",
+                )
+        elif phase == str(Phase.FAILED):
+            self._conditions.set_true(
+                ConditionType.FAILED,
+                "JobFailed",
+                self._patch.status.get("error") or "Job failed",
+            )
+            self._conditions.set_false(
+                ConditionType.COMPLETE,
+                "JobFailed",
+                "Job failed",
+            )
+        elif phase == str(Phase.CANCELLED):
+            # Cancellation clears both — neither Complete nor Failed,
+            # matching batchv1.Job which does not treat user-cancellation
+            # as a Failed event.
+            self._conditions.set_false(
+                ConditionType.COMPLETE,
+                "JobCancelled",
+                "Job cancelled by user",
+            )
+            self._conditions.set_false(
+                ConditionType.FAILED,
+                "JobCancelled",
+                "Job cancelled by user",
+            )
