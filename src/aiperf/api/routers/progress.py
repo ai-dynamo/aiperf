@@ -19,10 +19,14 @@ from starlette.requests import HTTPConnection
 from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.pod_state_rpc import query_controller_pod_states
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.enums import CreditPhase, MessageType
+from aiperf.common.enums import CreditPhase, MessageType, SystemState
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_message
-from aiperf.common.messages import ResultsExportedMessage, WorkerPodStateMessage
+from aiperf.common.messages import (
+    ResultsExportedMessage,
+    SystemStateChangedMessage,
+    WorkerPodStateMessage,
+)
 from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.mixins.progress_tracker_mixin import (
     CombinedPhaseStats,
@@ -114,6 +118,11 @@ class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
         # gates JobProgress.is_complete on this so sub-second benchmarks don't
         # let the kopf-timer monitor claim completion mid-export.
         self._results_exported: bool = False
+        # Mirrors SystemController's outer-lifecycle SystemState. Updated via
+        # SYSTEM_STATE_CHANGED bus messages so the API sidecar (which lives in
+        # a separate container) can surface controller-side state on
+        # /api/progress without an in-process controller handle.
+        self._system_state: SystemState = SystemState.INITIALIZING
 
     def get_router(self) -> APIRouter:
         return progress_router
@@ -122,6 +131,13 @@ class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
     async def _on_results_exported(self, _message: ResultsExportedMessage) -> None:
         """Record that the controller has finished writing artifacts to disk."""
         self._results_exported = True
+
+    @on_message(MessageType.SYSTEM_STATE_CHANGED)
+    async def _on_system_state_changed(
+        self, message: SystemStateChangedMessage
+    ) -> None:
+        """Record the controller's most-recent outer-lifecycle SystemState."""
+        self._system_state = message.state
 
     @background_task(interval=_JOBSET_PATCH_INTERVAL, immediate=False)
     async def _patch_jobset_progress(self) -> None:
@@ -236,4 +252,5 @@ async def get_progress(
         phases=component._progress_tracker._phases,
         workers=await _get_controller_workers(conn),
         results_exported=component._results_exported,
+        system_state=component._system_state,
     )

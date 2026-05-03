@@ -10,7 +10,7 @@ client. Retry tunables (max retries, backoff, multiplier) live on
 
 from pydantic import Field
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, SystemState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import AIPerfBaseModel
 
@@ -87,6 +87,16 @@ class JobProgress(AIPerfBaseModel):
             "is_requests_complete && is_records_complete flip True before "
             "ExporterManager.export_data() returns, so the kopf monitor would "
             "claim completion mid-export and fetch a partial artifact tree."
+        ),
+    )
+    system_state: SystemState = Field(
+        default=SystemState.INITIALIZING,
+        description=(
+            "Controller-side outer-lifecycle state. Distinct from the "
+            "AIPerfJob top-level `phase` (which is the operator's view); "
+            "this is the controller's view of where it is in the "
+            "configure → ready → profiling → processing → stopping flow. "
+            "Operator mirrors this to status.subPhase."
         ),
     )
     error: str | None = Field(

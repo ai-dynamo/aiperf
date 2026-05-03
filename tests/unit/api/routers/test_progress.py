@@ -13,7 +13,8 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.progress import ProgressRouter
-from aiperf.common.messages import WorkerPodStateMessage
+from aiperf.common.enums import SystemState
+from aiperf.common.messages import SystemStateChangedMessage, WorkerPodStateMessage
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.config import AIPerfConfig
 from aiperf.controller.system_controller import (
@@ -278,6 +279,54 @@ class TestProgressEndpoint:
         )
 
         assert aggregate.degraded_pods == 1
+
+
+class TestProgressRouterSystemState:
+    """Tests for SYSTEM_STATE_CHANGED handling and system_state on /api/progress."""
+
+    def test_default_system_state_is_initializing(
+        self, progress_router: ProgressRouter
+    ) -> None:
+        assert progress_router._system_state == SystemState.INITIALIZING
+
+    @pytest.mark.asyncio
+    async def test_on_system_state_changed_updates_attribute(
+        self, progress_router: ProgressRouter
+    ) -> None:
+        await progress_router._on_system_state_changed(
+            SystemStateChangedMessage(
+                service_id="system_controller",
+                state=SystemState.PROFILING,
+            )
+        )
+        assert progress_router._system_state == SystemState.PROFILING
+
+    def test_progress_response_initializes_system_state_initializing(
+        self, progress_client: TestClient
+    ) -> None:
+        data = progress_client.get("/api/progress").json()
+        assert data["system_state"] == SystemState.INITIALIZING.value
+
+    def test_progress_response_reflects_latest_system_state(
+        self, progress_client: TestClient, progress_router: ProgressRouter
+    ) -> None:
+        import asyncio
+
+        async def feed() -> None:
+            for state in (
+                SystemState.CONFIGURING,
+                SystemState.READY,
+                SystemState.PROFILING,
+            ):
+                await progress_router._on_system_state_changed(
+                    SystemStateChangedMessage(
+                        service_id="system_controller", state=state
+                    )
+                )
+
+        asyncio.get_event_loop().run_until_complete(feed())
+        data = progress_client.get("/api/progress").json()
+        assert data["system_state"] == SystemState.PROFILING.value
 
 
 @pytest.mark.asyncio

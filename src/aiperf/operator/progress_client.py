@@ -18,7 +18,7 @@ from urllib.parse import quote
 import aiohttp
 from pydantic import ValidationError
 
-from aiperf.common.enums import CreditPhase, WorkerStartupState
+from aiperf.common.enums import CreditPhase, SystemState, WorkerStartupState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import WorkerStats
 from aiperf.kubernetes.environment import K8sEnvironment
@@ -278,6 +278,15 @@ class ProgressClient:
             logger.warning(f"Falling back to default aggregate worker status: {e}")
             workers = ControllerAggregateWorkerStatus()
 
+        # Older controllers omit `system_state` entirely; future controllers
+        # may emit values this version doesn't yet know. Both cases must
+        # degrade to INITIALIZING rather than raise — the operator keeps
+        # working against mixed-version controllers.
+        try:
+            system_state = SystemState(data.get("system_state", "initializing"))
+        except ValueError:
+            system_state = SystemState.INITIALIZING
+
         return JobProgress(
             phases=phases,
             workers=workers,
@@ -287,6 +296,7 @@ class ProgressClient:
             # whole point of this field is that we don't trust pre-fix
             # controllers to be race-free for sub-second benchmarks.
             results_exported=bool(data.get("results_exported", False)),
+            system_state=system_state,
         )
 
     async def get_worker_startup_states(

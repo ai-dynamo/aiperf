@@ -12,7 +12,7 @@ import pytest
 import zstandard as zstd
 from pytest import param
 
-from aiperf.common.enums import WorkerStartupState
+from aiperf.common.enums import SystemState, WorkerStartupState
 from aiperf.operator.progress_client import (
     RETRYABLE_STATUS_CODES,
     JobProgress,
@@ -583,6 +583,28 @@ class TestProgressClientParseResponse:
             {"phases": {}, "results_exported": True}
         )
         assert progress.results_exported is True
+
+    def test_parse_system_state_present(self) -> None:
+        """Test system_state is parsed when controller sends it."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {"phases": {}, "system_state": "profiling"}
+        )
+        assert progress.system_state == SystemState.PROFILING
+
+    def test_parse_system_state_missing_defaults_to_initializing(self) -> None:
+        """Older controllers omit system_state — fall back to INITIALIZING."""
+        client = ProgressClient()
+        progress = client._parse_progress_response({"phases": {}})
+        assert progress.system_state == SystemState.INITIALIZING
+
+    def test_parse_system_state_invalid_falls_back_silently(self) -> None:
+        """Future/garbled system_state values must not raise; fall back to INITIALIZING."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {"phases": {}, "system_state": "bogus"}
+        )
+        assert progress.system_state == SystemState.INITIALIZING
 
 
 class TestProgressClientCheckHealth:

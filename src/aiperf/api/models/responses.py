@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from aiperf.common.enums import CaseInsensitiveStrEnum, CreditPhase
+from aiperf.common.enums import CaseInsensitiveStrEnum, CreditPhase, SystemState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import AIPerfBaseModel, WorkerGroupStats
 from aiperf.common.models.record_models import ProcessRecordsResult
@@ -39,6 +39,16 @@ class ProgressResponse(AIPerfBaseModel):
             "benchmarks cannot let the kopf-timer monitor claim completion "
             "while the exporter is still flushing — without the gate the "
             "operator races the controller and surfaces ``Phase.Failed``."
+        ),
+    )
+    system_state: SystemState = Field(
+        default=SystemState.INITIALIZING,
+        description=(
+            "Controller-side outer-lifecycle state. Distinct from the "
+            "AIPerfJob top-level `phase` (which is the operator's view); "
+            "this is the controller's view of where it is in the "
+            "configure → ready → profiling → processing → stopping flow. "
+            "Operator mirrors this to status.subPhase."
         ),
     )
 
