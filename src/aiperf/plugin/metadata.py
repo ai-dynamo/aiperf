@@ -16,6 +16,7 @@ from aiperf.plugin.schema.schemas import (
     EndpointMetadata,
     PlotMetadata,
     PublicDatasetLoaderMetadata,
+    SearchPlannerMetadata,
     ServiceMetadata,
     TransportMetadata,
 )
@@ -145,6 +146,20 @@ def get_convergence_criterion_metadata(name: str) -> ConvergenceCriterionMetadat
     )
 
 
+def get_search_planner_metadata(name: str) -> SearchPlannerMetadata:
+    """Get typed metadata for a search planner plugin.
+
+    Args:
+        name: Search planner plugin name (e.g., 'bayesian').
+
+    Returns:
+        Validated SearchPlannerMetadata instance.
+    """
+    return _get_entry("search_planner", name).get_typed_metadata(
+        SearchPlannerMetadata
+    )
+
+
 def is_trace_dataset(name: str) -> bool:
     """Check if a custom dataset loader is a trace-format dataset.
 
@@ -165,6 +180,7 @@ _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "service": ServiceMetadata,
     "custom_dataset_loader": CustomDatasetLoaderMetadata,
     "convergence_criterion": ConvergenceCriterionMetadata,
+    "search_planner": SearchPlannerMetadata,
 }
 
 

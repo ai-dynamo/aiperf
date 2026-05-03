@@ -8,9 +8,10 @@ from aiperf.orchestrator.convergence import (
     DistributionConvergence,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import ConvergenceCriterionType, PluginType
+from aiperf.plugin.enums import ConvergenceCriterionType, PluginType, SearchPlannerType
 from aiperf.plugin.metadata import (
     get_convergence_criterion_metadata,
+    get_search_planner_metadata,
     get_typed_metadata,
 )
 from aiperf.plugin.schema.schemas import (
@@ -80,3 +81,28 @@ def test_convergence_criterion_metadata_via_generic_helper():
     assert isinstance(md, ConvergenceCriterionMetadata)
     assert md.requires_confidence_level is True
     assert md.requires_jsonl_export is False
+
+
+def test_search_planner_plugin_lookup_by_name():
+    """The bayesian planner is reachable via plugins.get_class without importing skopt."""
+    from aiperf.orchestrator.search_planner.bayesian import BayesianSearchPlanner
+
+    assert plugins.get_class(PluginType.SEARCH_PLANNER, "bayesian") is BayesianSearchPlanner
+    assert SearchPlannerType.BAYESIAN == "bayesian"
+
+
+def test_search_planner_metadata_typed_access():
+    """SearchPlannerMetadata is reachable via the per-category typed helper."""
+    md = get_search_planner_metadata("bayesian")
+    assert isinstance(md, SearchPlannerMetadata)
+    assert md.requires_extras == ["bo"]
+    assert md.supports_continuous is True
+    assert md.supports_discrete is True
+    assert md.requires_initial_samples == 5
+
+
+def test_search_planner_metadata_via_generic_helper():
+    """get_typed_metadata dispatches via _CATEGORY_METADATA_CLASSES for search_planner."""
+    md = get_typed_metadata(PluginType.SEARCH_PLANNER, "bayesian")
+    assert isinstance(md, SearchPlannerMetadata)
+    assert md.compatible_objective_directions == ["maximize", "minimize"]

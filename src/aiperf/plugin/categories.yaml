@@ -395,3 +395,15 @@ convergence_criterion:
     consumption) via metadata so the CLI can validate `--convergence-*` flags
     before importing scipy/statsmodels. Selected via `--convergence-mode <name>`.
     One-to-one mapping per benchmark run.
+
+search_planner:
+  protocol: aiperf.orchestrator.search_planner.base:SearchPlanner
+  metadata_class: aiperf.plugin.schema.schemas:SearchPlannerMetadata
+  enum: SearchPlannerType
+  description: |
+    Search planners drive the adaptive outer loop, proposing the next variation
+    via `ask()` and absorbing observed metrics via `tell()`. Each declares
+    dimension-type and objective-direction support via metadata so the CLI can
+    validate `--search-space` shape before importing the planner's heavy
+    soft-dep tree (skopt, optuna, etc.). Selected via `--search-planner <name>`.
+    One-to-one mapping per benchmark run.

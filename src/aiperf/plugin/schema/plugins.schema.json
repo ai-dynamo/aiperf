@@ -297,6 +297,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/ConvergenceCriterionPlugin"
       }
+    },
+    "search_planner": {
+      "title": "Search Planner Plugins",
+      "type": "object",
+      "description": "Search planners drive the adaptive outer loop, proposing the next variation\nvia `ask()` and absorbing observed metrics via `tell()`. Each declares\ndimension-type and objective-direction support via metadata so the CLI can\nvalidate `--search-space` shape before importing the planner's heavy\nsoft-dep tree (skopt, optuna, etc.). Selected via `--search-planner <name>`.\nOne-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SearchPlannerPlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -2081,6 +2089,89 @@
       ],
       "title": "Convergence Criterion Plugin",
       "description": "Convergence criteria decide when benchmark metrics have stabilized across\nrepeated runs and the adaptive trial loop can stop. Each criterion declares\nits statistical assumptions (min samples, confidence-level usage, JSONL\nconsumption) via metadata so the CLI can validate `--convergence-*` flags\nbefore importing scipy/statsmodels. Selected via `--convergence-mode <name>`.\nOne-to-one mapping per benchmark run."
+    },
+    "SearchPlannerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for search planner plugins.\n\nDeclares dimension-type and objective-direction support so the CLI/config\nlayer can validate `--search-space` shape against the chosen planner\nbefore the planner (and its heavy soft-dep imports) is loaded.\n\nReferenced by: categories.yaml search_planner.metadata_class\nUsed in: plugins.yaml search_planner entries",
+          "properties": {
+            "supports_continuous": {
+              "description": "Whether the planner accepts Real-valued search-space dimensions.",
+              "title": "Supports Continuous",
+              "type": "boolean"
+            },
+            "supports_discrete": {
+              "description": "Whether the planner accepts Integer-valued search-space dimensions.",
+              "title": "Supports Discrete",
+              "type": "boolean"
+            },
+            "supports_categorical": {
+              "default": false,
+              "description": "Whether the planner accepts Categorical search-space dimensions.",
+              "title": "Supports Categorical",
+              "type": "boolean"
+            },
+            "requires_initial_samples": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Minimum number of initial random/Sobol samples required before the planner's model is fit. None when the planner has no warm-up phase.",
+              "title": "Requires Initial Samples"
+            },
+            "compatible_objective_directions": {
+              "description": "Objective directions the planner can optimize. Lower-case strings.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Compatible Objective Directions",
+              "type": "array"
+            },
+            "requires_extras": {
+              "description": "Names of pyproject.toml extras (e.g. ['bo']) required to install this planner's heavy dependencies. Informational; the planner class itself owns the ImportError surface.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Requires Extras",
+              "type": "array"
+            }
+          },
+          "required": [
+            "supports_continuous",
+            "supports_discrete"
+          ],
+          "title": "SearchPlannerMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Search Planner Plugin",
+      "description": "Search planners drive the adaptive outer loop, proposing the next variation\nvia `ask()` and absorbing observed metrics via `tell()`. Each declares\ndimension-type and objective-direction support via metadata so the CLI can\nvalidate `--search-space` shape before importing the planner's heavy\nsoft-dep tree (skopt, optuna, etc.). Selected via `--search-planner <name>`.\nOne-to-one mapping per benchmark run."
     }
   }
 }
