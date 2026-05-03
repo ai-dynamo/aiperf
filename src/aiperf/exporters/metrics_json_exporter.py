@@ -42,7 +42,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             str: Complete JSON content with all sections formatted and ready to write
         """
         # Use helper method to prepare metrics
-        prepared_json_metrics = self._prepare_metrics_for_json(self._results.records)
+        prepared_json_metrics = self._prepare_metrics_for_json(
+            self._results.records or []
+        )
 
         start_time = (
             datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)
@@ -73,6 +75,19 @@ class MetricsJsonExporter(MetricsBaseExporter):
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)
+
+        # Multi-turn TTFT trend: per-``turn_index`` MetricResult dict from
+        # ``MetricsAccumulator.summarize()``. Surfaced as a top-level
+        # ``multi_turn_ttft_trend`` key keyed by turn-index string so the
+        # JSON shape is dict[str, JsonMetricResult] — distinguishable from
+        # the flat per-tag percentile dicts at the same level. Only populated
+        # when records carry ``turn_index`` metadata. ``getattr`` because
+        # test doubles may not declare the attribute.
+        trend = getattr(self._results, "multi_turn_ttft_trend", None)
+        if trend:
+            export_data.multi_turn_ttft_trend = {
+                str(turn): mr.to_json_result() for turn, mr in sorted(trend.items())
+            }
 
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",

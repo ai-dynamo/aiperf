@@ -38,7 +38,6 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -358,23 +357,30 @@ def setup_mock_registry_sequences(
     return valid_tags, error_tags
 
 
-def create_results_processor_with_metrics(
-    config: AIPerfConfig, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
+def create_accumulator_with_metrics(config: AIPerfConfig, *metrics: type[BaseMetric]):
+    """Create a MetricsAccumulator with pre-configured metrics.
+
+    Adapts the metrics-accumulator branch fixture to k8s's
+    ``MetricsAccumulator(run=...)`` constructor (no more ``user_config``).
 
     Args:
-        config: AIPerfConfig for the processor
+        config: AIPerfConfig (wrapped into BenchmarkRun internally)
         metrics: list of metric classes
 
     Returns:
-        Configured MetricResultsProcessor instance
+        Configured MetricsAccumulator instance
     """
+    from aiperf.metrics.accumulator import MetricsAccumulator
 
-    processor = MetricResultsProcessor(_make_run(config))
-    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
-    return processor
+    accumulator = MetricsAccumulator(run=_make_run(config))
+    accumulator._tags_to_types = {metric.tag: metric.type for metric in metrics}
+    accumulator._metric_classes = {metric.tag: metric for metric in metrics}
+    accumulator._aggregation_kinds = {
+        metric.tag: metric.aggregation_kind
+        for metric in metrics
+        if hasattr(metric, "aggregation_kind")
+    }
+    return accumulator
 
 
 @pytest.fixture
@@ -390,14 +396,16 @@ def mock_metric_registry(monkeypatch):
     mock_registry.get_instance.return_value = Mock()
     mock_registry.all_classes.return_value = []
     mock_registry.all_tags.return_value = []
+    # to_display_unit() short-circuits to identity when get_class raises;
+    # otherwise it would try to call .unit.convert_to() on a Mock and
+    # poison computed metric stats with Mock objects.
+    mock_registry.get_class.side_effect = KeyError
 
     monkeypatch.setattr("aiperf.metrics.metric_registry.MetricRegistry", mock_registry)
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
-    )
+    monkeypatch.setattr("aiperf.metrics.accumulator.MetricRegistry", mock_registry)
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 
     return mock_registry

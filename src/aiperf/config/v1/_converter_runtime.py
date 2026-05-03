@@ -67,6 +67,28 @@ def _build_cli_command() -> str:
     )
 
 
+def _propagate_set_fields(
+    artifacts: dict[str, Any], output: Any, mapping: dict[str, str]
+) -> None:
+    """Copy each output.<src> into artifacts[<dst>] when src is in model_fields_set."""
+    out_set = output.model_fields_set
+    for src, dst in mapping.items():
+        if src in out_set:
+            artifacts[dst] = getattr(output, src)
+
+
+def _propagate_steady_state(artifacts: dict[str, Any], output: Any) -> None:
+    """Propagate explicitly-set v1 SteadyStateConfig fields into the artifacts dict."""
+    if "steady_state" not in output.model_fields_set:
+        return
+    ss = output.steady_state
+    ss_set = ss.model_fields_set
+    if ss_set:
+        artifacts["steady_state"] = {
+            field_name: getattr(ss, field_name) for field_name in ss_set
+        }
+
+
 def build_artifacts(user: UserConfig) -> dict[str, Any]:
     """Build the artifacts dict for AIPerfConfig from a v1 UserConfig.
 
@@ -84,17 +106,19 @@ def build_artifacts(user: UserConfig) -> dict[str, Any]:
     if output is None:
         return artifacts
 
+    _propagate_set_fields(
+        artifacts,
+        output,
+        {
+            "artifact_directory": "dir",
+            "export_http_trace": "trace",
+            "export_per_chunk_data": "per_chunk_data",
+            "show_trace_timing": "show_trace_timing",
+        },
+    )
     out_set = output.model_fields_set
-    if "artifact_directory" in out_set:
-        artifacts["dir"] = output.artifact_directory
     if "slice_duration" in out_set and output.slice_duration is not None:
         artifacts["slice_duration"] = output.slice_duration
-    if "export_http_trace" in out_set:
-        artifacts["trace"] = output.export_http_trace
-    if "export_per_chunk_data" in out_set:
-        artifacts["per_chunk_data"] = output.export_per_chunk_data
-    if "show_trace_timing" in out_set:
-        artifacts["show_trace_timing"] = output.show_trace_timing
     # v1's RECORDS/RAW levels also produce a per-record CSV; v2's records
     # default is ["jsonl"] alone, so emit the explicit list to add csv.
     if output.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
@@ -107,7 +131,48 @@ def build_artifacts(user: UserConfig) -> dict[str, Any]:
     if "profile_export_prefix" in out_set and output.profile_export_prefix:
         artifacts["prefix"] = Path(output.profile_export_prefix).stem
 
+    _propagate_steady_state(artifacts, output)
+
     return artifacts
+
+
+def validate_steady_state(user: UserConfig) -> None:
+    """Cross-field validation + implicit-enable for v1 ``OutputConfig.steady_state``.
+
+    Ported from origin/main's ``UserConfig.validate_steady_state_options``
+    model-validator. Lives on the converter (per the v1 hard rule that
+    AIPerfConfig is the single validation gate; the converter is the
+    allowed location for input-shape coercion that depends on v1 attrs).
+
+    Rules:
+      1. ``--steady-state-start-pct`` and ``--steady-state-end-pct`` must be
+         used together — providing one without the other raises.
+      2. ``start_pct`` must be strictly less than ``end_pct``.
+      3. Setting both percentages implicitly enables steady-state
+         (mutates ``user.output.steady_state.enabled = True``).
+    """
+    output = user.output
+    if output is None:
+        return
+    ss = output.steady_state
+    has_start = ss.start_pct is not None
+    has_end = ss.end_pct is not None
+
+    if has_start != has_end:
+        raise ValueError(
+            "--steady-state-start-pct and --steady-state-end-pct must be used together. "
+            "Provide both or neither."
+        )
+
+    if has_start and has_end and ss.start_pct >= ss.end_pct:
+        raise ValueError(
+            f"--steady-state-start-pct ({ss.start_pct}) must be less than "
+            f"--steady-state-end-pct ({ss.end_pct})."
+        )
+
+    # If manual percentages are provided, implicitly enable steady-state.
+    if has_start and has_end and not ss.enabled:
+        ss.enabled = True
 
 
 def _apply_runtime_basics(runtime_dict: dict[str, Any], service: ServiceConfig) -> None:

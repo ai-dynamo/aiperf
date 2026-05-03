@@ -228,6 +228,6 @@ class RecordExportCSVProcessor(BaseMetricsProcessor, BufferedCSVWriterMixin):
     async def finalize(self) -> None:
         """Flush the CSV writer at end-of-run.
 
-        See RecordExportResultsProcessor.finalize for the race this closes.
+        See RecordExportJSONLWriter.finalize for the race this closes.
         """
         await self._csv_close_file()

@@ -109,6 +109,7 @@ class MessageType(CaseInsensitiveStrEnum):
     METRIC_RECORDS = "metric_records"
     PARSED_INFERENCE_RESULTS = "parsed_inference_results"
     PROCESSING_STATS = "processing_stats"
+    PROCESS_ALL_RESULTS = "process_all_results"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"

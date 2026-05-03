@@ -27,6 +27,7 @@ from aiperf.common.enums import (
 )
 from aiperf.config._base import BaseConfig
 from aiperf.config.phases import _normalize_duration
+from aiperf.config.steady_state import SteadyStateConfig
 from aiperf.config.user_files import UserFile
 from aiperf.plugin.enums import GPUTelemetryCollectorType
 
@@ -164,6 +165,16 @@ class ArtifactsConfig(BaseConfig):
         ),
     ]
 
+    steady_state: Annotated[
+        SteadyStateConfig,
+        Field(
+            default_factory=SteadyStateConfig,
+            description="Steady-state detection and windowed metric computation. "
+            "When enabled, AIPerf detects the steady-state region of a benchmark run "
+            "and reports windowed metrics that exclude ramp-up and ramp-down periods.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_artifacts(self) -> ArtifactsConfig:
         """Validate artifact configuration."""
@@ -212,6 +223,21 @@ class ArtifactsConfig(BaseConfig):
     def profile_export_timeslices_json_file(self) -> Path:
         """Get the path for the timeslices JSON export file."""
         return self.dir / f"profile_export_{self.prefix}_timeslices.json"
+
+    @property
+    def profile_export_steady_state_csv_file(self) -> Path:
+        """Get the path for the steady-state windowed metrics CSV file."""
+        return self.dir / f"profile_export_{self.prefix}_steady_state.csv"
+
+    @property
+    def profile_export_steady_state_json_file(self) -> Path:
+        """Get the path for the steady-state windowed metrics JSON file."""
+        return self.dir / f"profile_export_{self.prefix}_steady_state.json"
+
+    @property
+    def profile_export_energy_efficiency_json_file(self) -> Path:
+        """Get the path for the energy efficiency metrics JSON file."""
+        return self.dir / f"profile_export_{self.prefix}_energy_efficiency.json"
 
     @property
     def profile_export_records_csv_file(self) -> Path:

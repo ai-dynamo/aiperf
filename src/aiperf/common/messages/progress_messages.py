@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import PhaseRecordsStats, WorkerProcessingStats
+from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
+
+if TYPE_CHECKING:
+    pass
 
 
 class RecordsProcessingStatsMessage(
@@ -68,3 +74,24 @@ class ResultsExportedMessage(
     """
 
     was_cancelled: bool = False
+
+
+class ProcessAllResultsMessage(
+    BaseServiceMessage, kw_only=True, tag=MessageType.PROCESS_ALL_RESULTS.value
+):
+    """Unified message carrying all accumulator results from RecordsManager to SystemController.
+
+    The optional summary payloads (steady-state, energy efficiency) and the
+    ``exported_artifacts`` map are typed as ``Any`` to keep this foundation
+    module out of the ``aiperf.analysis`` / ``aiperf.exporters`` /
+    ``aiperf.post_processors`` import graph; producers/consumers cast to the
+    concrete types they own (``SteadyStateSummary``,
+    ``EnergyEfficiencySummary``, ``dict[str, FileExportInfo]``).
+    """
+
+    results: ProcessRecordsResult
+    telemetry_results: TelemetryExportData | None = None
+    server_metrics_results: ServerMetricsResults | None = None
+    steady_state_results: Any = None
+    energy_efficiency_results: Any = None
+    exported_artifacts: dict[str, Any] = msgspec.field(default_factory=dict)

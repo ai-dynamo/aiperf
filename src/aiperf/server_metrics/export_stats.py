@@ -26,10 +26,14 @@ from aiperf.server_metrics._histogram_stats import (
     _compute_histogram_stats,
     _compute_histogram_timeslices,
 )
-from aiperf.server_metrics._timeslice_boundaries import _compute_timeslice_boundaries
+from aiperf.server_metrics._timeslice_boundaries import (
+    TimesliceBoundaries,
+    _compute_timeslice_boundaries,
+)
 from aiperf.server_metrics.storage import HistogramTimeSeries, ScalarTimeSeries
 
 __all__ = [
+    "TimesliceBoundaries",
     "_compute_counter_stats",
     "_compute_counter_timeslices",
     "_compute_gauge_stats",

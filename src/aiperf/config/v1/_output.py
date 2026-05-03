@@ -15,6 +15,7 @@ from aiperf.common.enums import ExportLevel
 from aiperf.config._base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.defaults import OutputDefaults
+from aiperf.config.steady_state import SteadyStateConfig
 
 
 class OutputConfig(BaseConfig):
@@ -121,3 +122,11 @@ class OutputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = OutputDefaults.SHOW_TRACE_TIMING
+
+    steady_state: Annotated[
+        SteadyStateConfig,
+        Field(
+            default_factory=SteadyStateConfig,
+            description="Steady-state windowing configuration",
+        ),
+    ]

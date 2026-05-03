@@ -36,7 +36,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import AIPerfConfig
 from aiperf.config.benchmark import BenchmarkPlan
 from aiperf.config.loader import build_benchmark_plan
-from aiperf.config.sweep import SweepVariation, expand_sweep
+from aiperf.config.sweep import expand_sweep
 from aiperf.orchestrator.aggregation.sweep import (
     DEFAULT_PARETO_OBJECTIVES,
     ParameterCombination,
@@ -45,7 +45,6 @@ from aiperf.orchestrator.aggregation.sweep import (
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
-
 
 # =============================================================================
 # Test Helpers
@@ -149,7 +148,9 @@ class TestProperty1PBT:
     """
 
     @given(concurrency=_concurrency_lists_unique)
-    @settings(deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_concurrency_list_preserves_order_and_values(
         self, concurrency: list[int]
     ) -> None:
@@ -162,7 +163,9 @@ class TestProperty1PBT:
         assert actual == concurrency
 
     @given(concurrency=_concurrency_lists_unique)
-    @settings(deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_each_variation_carries_its_swept_value(
         self, concurrency: list[int]
     ) -> None:
@@ -192,7 +195,9 @@ class TestProperty2PBT:
         invalid_value=st.integers(max_value=0),
         data=st.data(),
     )
-    @settings(deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_rejects_invalid_concurrency_in_sweep(
         self, valid_values: list[int], invalid_value: int, data: Any
     ) -> None:
@@ -203,18 +208,20 @@ class TestProperty2PBT:
         ``BenchmarkConfig.model_validate`` rejects it.
         """
         position = data.draw(st.integers(min_value=0, max_value=len(valid_values)))
-        test_values = valid_values[:position] + [invalid_value] + valid_values[position:]
+        test_values = (
+            valid_values[:position] + [invalid_value] + valid_values[position:]
+        )
 
         # Building the config object is allowed (sweep.variables is a
         # dict[str, list[Any]]); the rejection happens at plan-build time
         # when the per-variation BenchmarkConfig is validated.
         cfg = _make_config(test_values)
-        with pytest.raises(Exception):  # noqa: BLE001 - pydantic ValidationError surfaces here
+        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError surfaces here
             build_benchmark_plan(cfg)
 
     def test_rejects_zero_scalar_concurrency(self) -> None:
         """Scalar concurrency=0 fails AIPerfConfig validation directly."""
-        with pytest.raises(Exception):  # noqa: BLE001 - pydantic ValidationError
+        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError
             _make_config(0)
 
 
@@ -231,7 +238,9 @@ class TestProperty3DuplicateValuesPBT:
     """
 
     @given(concurrency=_concurrency_lists_with_duplicates)
-    @settings(deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_duplicates_create_one_variation_per_occurrence(
         self, concurrency: list[int]
     ) -> None:
@@ -271,7 +280,9 @@ class TestProperty11SeedDerivationPBT:
         concurrency=_concurrency_lists_unique,
         base_seed=st.integers(min_value=0, max_value=10_000),
     )
-    @settings(deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_seed_derivation_is_reproducible(
         self, concurrency: list[int], base_seed: int
     ) -> None:
@@ -292,7 +303,9 @@ class TestProperty11SeedDerivationPBT:
         concurrency=_concurrency_lists_unique,
         base_seed=st.integers(min_value=0, max_value=10_000),
     )
-    @settings(deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=50, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_same_seed_mode_uses_identical_seed(
         self, concurrency: list[int], base_seed: int
     ) -> None:
@@ -377,7 +390,9 @@ class TestProperty13ParetoPBT:
             max_size=10,
         )
     )
-    @settings(deadline=None, max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=100, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_pareto_optimal_correctness(
         self, metrics: list[tuple[float, float]]
     ) -> None:
@@ -496,7 +511,10 @@ class TestPropertyExecutionOrderPBT:
     @settings(
         deadline=None,
         max_examples=15,
-        suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.function_scoped_fixture,
+        ],
     )
     def test_pbt_repeated_mode_is_trial_outer_variation_inner(
         self, n_variations: int, n_trials: int, tmp_path: Path
@@ -524,7 +542,10 @@ class TestPropertyExecutionOrderPBT:
     @settings(
         deadline=None,
         max_examples=15,
-        suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+        suppress_health_check=[
+            HealthCheck.too_slow,
+            HealthCheck.function_scoped_fixture,
+        ],
     )
     def test_pbt_independent_mode_is_variation_outer_trial_inner(
         self, n_variations: int, n_trials: int, tmp_path: Path
@@ -560,7 +581,9 @@ class TestGroupResultsByVariationPBT:
     """
 
     @given(concurrency=_concurrency_lists_unique)
-    @settings(deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=25, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_group_results_preserves_first_seen_order_one_trial(
         self, concurrency: list[int]
     ) -> None:
@@ -585,7 +608,9 @@ class TestGroupResultsByVariationPBT:
         concurrency=_concurrency_lists_unique,
         n_trials=st.integers(min_value=1, max_value=4),
     )
-    @settings(deadline=None, max_examples=20, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        deadline=None, max_examples=20, suppress_health_check=[HealthCheck.too_slow]
+    )
     def test_pbt_group_results_collects_all_trials_per_variation(
         self, concurrency: list[int], n_trials: int
     ) -> None:

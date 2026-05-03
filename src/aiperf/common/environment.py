@@ -19,6 +19,7 @@ Structure:
     Environment.RECORD.*         - Record processing
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
+    Environment.STEADY_STATE.*   - Steady-state detection
     Environment.TIMING.*         - Timing manager settings
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
@@ -59,6 +60,7 @@ from aiperf.common._env_data import (
     _GPUSettings,
     _MetricsSettings,
     _ServerMetricsSettings,
+    _SteadyStateSettings,
     _UISettings,
 )
 from aiperf.common._env_network import (
@@ -154,6 +156,10 @@ class _Environment(BaseSettings):
     SERVICE: _ServiceSettings = Field(
         default_factory=_ServiceSettings,
         description="Service lifecycle and communication settings",
+    )
+    STEADY_STATE: _SteadyStateSettings = Field(
+        default_factory=_SteadyStateSettings,
+        description="Steady-state detection settings",
     )
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,

@@ -13,8 +13,8 @@ from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.record_export_csv_processor import (
     RecordExportCSVProcessor,
 )
-from aiperf.post_processors.record_export_results_processor import (
-    RecordExportResultsProcessor,
+from aiperf.post_processors.record_export_jsonl_writer import (
+    RecordExportJSONLWriter,
 )
 from tests.unit.post_processors.conftest import _make_run
 
@@ -118,7 +118,7 @@ class TestJSONLProcessorFormatGating:
 
     def test_jsonl_enabled_when_format_selected(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["jsonl"])
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="test",
             run=_make_run(config),
         )
@@ -127,7 +127,7 @@ class TestJSONLProcessorFormatGating:
     def test_jsonl_disabled_when_format_not_selected(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["csv"])
         with pytest.raises(PostProcessorDisabled, match="jsonl"):
-            RecordExportResultsProcessor(
+            RecordExportJSONLWriter(
                 service_id="test",
                 run=_make_run(config),
             )
@@ -135,7 +135,7 @@ class TestJSONLProcessorFormatGating:
     def test_jsonl_disabled_when_records_false(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=False)
         with pytest.raises(PostProcessorDisabled):
-            RecordExportResultsProcessor(
+            RecordExportJSONLWriter(
                 service_id="test",
                 run=_make_run(config),
             )
@@ -150,7 +150,7 @@ class TestBothProcessorsFormatGating:
             service_id="test-csv",
             run=_make_run(config),
         )
-        jsonl_proc = RecordExportResultsProcessor(
+        jsonl_proc = RecordExportJSONLWriter(
             service_id="test-jsonl",
             run=_make_run(config),
         )

@@ -132,7 +132,8 @@ AIPerf supports 25 plugin categories organized by function:
 | Category | Enum | Description |
 |----------|------|-------------|
 | `record_processor` | `RecordProcessorType` | Per-record metric computation |
-| `results_processor` | `ResultsProcessorType` | Aggregated results computation |
+| `accumulator` | `AccumulatorType` | Record ingestion, time-range queries, and summarization |
+| `stream_exporter` | `StreamExporterType` | Streaming record export (e.g. JSONL files) |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
 

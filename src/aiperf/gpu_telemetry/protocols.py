@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import SummaryContext
     from aiperf.common.models import (
         ErrorDetailsCount,
         MetricResult,
@@ -88,7 +92,20 @@ class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
     Extends GPUTelemetryProcessorProtocol to provide result export, realtime telemetry, and summarization
     capabilities. Implementations should accumulate DCGM metrics, compute aggregated statistics per GPU,
     and support dynamic dashboard enablement for realtime monitoring.
+
+    Also conforms to ``AccumulatorProtocol`` (``process_record`` /
+    ``query_time_range`` / ``summarize`` / ``export_results``) so the GPU
+    telemetry accumulator can sit in the unified accumulators map alongside
+    ``MetricsAccumulator`` and ``ServerMetricsAccumulator``.
     """
+
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """``AccumulatorProtocol`` alias for ``process_telemetry_record``."""
+        ...
+
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        ...
 
     def export_results(
         self,
@@ -116,7 +133,9 @@ class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
         at startup.
         """
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(
+        self, ctx: SummaryContext | None = None
+    ) -> list[MetricResult] | Any:
         """Generate MetricResult list with hierarchical tags for telemetry data.
 
         Returns:

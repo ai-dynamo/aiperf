@@ -197,7 +197,7 @@ class TestTDigestListMetricAggregator:
 
     def test_protocol_runtime_isinstance(self) -> None:
         """Aggregator should satisfy ``MetricSeriesProtocol`` so
-        ``isinstance`` dispatch in ``MetricResultsProcessor`` and
+        ``isinstance`` dispatch in ``MetricsAccumulator`` and
         ``DerivedSumMetric`` accepts both this and ``MetricArray``."""
         digest_agg = TDigestListMetricAggregator()
         array_agg = MetricArray()

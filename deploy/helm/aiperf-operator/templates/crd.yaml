@@ -378,6 +378,45 @@ spec:
                           required:
                           - path
                           - content
+                      steadyState:
+                        type: object
+                        description: Steady-state detection and windowed metric computation. When enabled, AIPerf detects
+                          the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and
+                          ramp-down periods.
+                        properties:
+                          enabled:
+                            type: boolean
+                            description: Enable steady-state metric computation. When enabled, AIPerf detects the steady-state
+                              region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+                            default: false
+                          startPct:
+                            type: number
+                            minimum: 0.0
+                            exclusiveMaximum: true
+                            maximum: 100.0
+                            description: 'Manual override: start of steady-state window as a percentage of total benchmark
+                              duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.'
+                          endPct:
+                            type: number
+                            maximum: 100.0
+                            exclusiveMinimum: true
+                            minimum: 0.0
+                            description: 'Manual override: end of steady-state window as a percentage of total benchmark duration.
+                              Must be used together with --steady-state-start-pct. Overrides automatic detection.'
+                          minWindowPct:
+                            type: number
+                            description: Minimum steady-state window size as a percentage of total benchmark duration. If
+                              the detected window is smaller than this, AIPerf falls back to the full duration.
+                            default: 10.0
+                            maximum: 100.0
+                            exclusiveMinimum: true
+                            minimum: 0.0
+                          bootstrapIterations:
+                            type: integer
+                            exclusiveMinimum: true
+                            minimum: 0
+                            description: Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+
+                              to enable. Increases summarize time proportionally.
                     x-kubernetes-validations:
                     - rule: '!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId'
                       message: artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already keyed

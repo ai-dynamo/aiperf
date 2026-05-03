@@ -155,6 +155,16 @@ class TimesliceData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     timeslice_index: int
+    start_ns: int | None = Field(
+        default=None, description="Timeslice start timestamp in nanoseconds"
+    )
+    end_ns: int | None = Field(
+        default=None, description="Timeslice end timestamp in nanoseconds"
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices. None for complete (omitted in JSON for space efficiency).",
+    )
 
 
 class TimesliceCollectionExportData(AIPerfBaseModel):

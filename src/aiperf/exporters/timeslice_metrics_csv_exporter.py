@@ -59,14 +59,22 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write header with 5 columns
-        writer.writerow(["Timeslice", "Metric", "Unit", "Stat", "Value"])
+        # Write header
+        writer.writerow(
+            ["Timeslice", "Start_NS", "End_NS", "Metric", "Unit", "Stat", "Value"]
+        )
+
+        windows = self._results.timeslice_windows or {}
 
         # Process each timeslice in sorted order
         for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
             metric_results_list = self._results.timeslice_metric_results[
                 timeslice_index
             ]
+
+            window = windows.get(timeslice_index)
+            start_ns = window.start_ns if window else ""
+            end_ns = window.end_ns if window else ""
 
             # Convert to display units and filter exportable metrics
             prepared_metrics = self._prepare_metrics(metric_results_list)
@@ -83,6 +91,8 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
                         writer.writerow(
                             [
                                 timeslice_index,
+                                start_ns,
+                                end_ns,
                                 metric_name,
                                 unit,
                                 stat,

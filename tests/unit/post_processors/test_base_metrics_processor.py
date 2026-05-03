@@ -278,6 +278,7 @@ class TestBaseMetricsProcessor:
 
         GoodReqCountClass = type("GoodReqCountClass", (), {})
         GoodReqCountClass.set_slos = Mock()
+        mock_metric_registry.get_class.side_effect = None
         mock_metric_registry.get_class.return_value = GoodReqCountClass
 
         def _get_instance(tag):
@@ -310,6 +311,7 @@ class TestBaseMetricsProcessor:
             def set_slos(cls, _):
                 raise ValueError("Unknown metric tag(s) in --goodput: unknown_metric")
 
+        mock_metric_registry.get_class.side_effect = None
         mock_metric_registry.get_class.return_value = GoodReqCountInvalidSLO
 
         with pytest.raises(RuntimeError, match="Invalid --goodput:"):
@@ -329,6 +331,7 @@ class TestBaseMetricsProcessor:
             GOOD_REQUEST_COUNT_TAG
         ]
         GoodReqCountClass = type("GoodReqCountClass", (), {"set_slos": Mock()})
+        mock_metric_registry.get_class.side_effect = None
         mock_metric_registry.get_class.return_value = GoodReqCountClass
 
         with pytest.raises(RuntimeError, match="not applicable"):

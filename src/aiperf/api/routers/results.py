@@ -23,7 +23,7 @@ from aiperf.common.compression import (
 )
 from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.defaults import OutputDefaults
@@ -59,10 +59,8 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
     def get_router(self) -> APIRouter:
         return results_router
 
-    @on_message(MessageType.PROCESS_RECORDS_RESULT)
-    async def _on_process_records_result(
-        self, message: ProcessRecordsResultMessage
-    ) -> None:
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results(self, message: ProcessAllResultsMessage) -> None:
         self._final_results = message.results
 
     @on_message(MessageType.BENCHMARK_COMPLETE)

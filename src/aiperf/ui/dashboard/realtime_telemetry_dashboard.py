@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from contextlib import suppress
+from typing import NamedTuple
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -14,6 +17,16 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.models.record_models import MetricResult
 from aiperf.config import BenchmarkRun
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
+
+
+class GpuInfo(NamedTuple):
+    """Parsed GPU identification from a telemetry metric header/tag."""
+
+    endpoint: str
+    gpu_index: int
+    gpu_uuid: str
+    model_name: str
+
 
 _logger = AIPerfLogger(__name__)
 
@@ -216,7 +229,7 @@ class SingleNodeView(VerticalScroll):
         dcgm_and_gpu = tag.split("_dcgm_")[1]
         return dcgm_and_gpu.replace("_gpu", "_")
 
-    def _extract_gpu_info(self, metric: MetricResult) -> tuple[str, int, str, str]:
+    def _extract_gpu_info(self, metric: MetricResult) -> GpuInfo:
         """Extract endpoint, GPU index, UUID, and model name from metric.
 
         Header format: "GPU Power Usage | localhost:9401 | GPU 0 | NVIDIA RTX 6000..."
@@ -236,7 +249,7 @@ class SingleNodeView(VerticalScroll):
         tag_parts = metric.tag.split("_")
         gpu_uuid = tag_parts[-1] if tag_parts else "unknown"
 
-        return endpoint, gpu_index, gpu_uuid, model_name
+        return GpuInfo(endpoint, gpu_index, gpu_uuid, model_name)
 
 
 class RealtimeTelemetryDashboard(Container, MaximizableWidget):

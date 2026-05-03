@@ -20,6 +20,7 @@ from aiperf.common.messages.inference_messages import (
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
     BenchmarkCompleteMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
@@ -71,6 +72,7 @@ __all__ = [
     "InferenceResultsMessage",
     "MemoryReportMessage",
     "Message",
+    "ProcessAllResultsMessage",
     "ProcessRecordsResultMessage",
     "ProcessServerMetricsResultMessage",
     "ProcessTelemetryResultMessage",

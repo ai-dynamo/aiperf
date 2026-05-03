@@ -492,6 +492,10 @@
           },
           "title": "Userfiles",
           "type": "array"
+        },
+        "steadyState": {
+          "$ref": "#/$defs/SteadyStateConfig",
+          "description": "Steady-state detection and windowed metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods."
         }
       },
       "title": "ArtifactsConfig",
@@ -5501,6 +5505,122 @@
       ],
       "title": "ServiceRunType",
       "type": "string"
+    },
+    "SteadyStateConfig": {
+      "description": "Configuration for steady-state detection and windowed metric computation.\n\nWhen enabled, AIPerf detects the steady-state region of a benchmark run by\nanalyzing concurrency curves, then re-computes metrics only over that window.\nThis excludes ramp-up and ramp-down artifacts from the results.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "startPct": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.",
+          "title": "Startpct",
+          "x-jinja2-supported": true
+        },
+        "endPct": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 100.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.",
+          "title": "Endpct",
+          "x-jinja2-supported": true
+        },
+        "minWindowPct": {
+          "default": 10.0,
+          "description": "Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.",
+          "title": "Minwindowpct",
+          "oneOf": [
+            {
+              "default": 10.0,
+              "description": "Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.",
+              "exclusiveMinimum": 0.0,
+              "maximum": 100.0,
+              "title": "Minwindowpct",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "bootstrapIterations": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.",
+          "title": "Bootstrapiterations",
+          "x-jinja2-supported": true
+        }
+      },
+      "title": "SteadyStateConfig",
+      "type": "object"
     },
     "SweepMode": {
       "description": "Execution order for sweep + confidence composition.\n\nREPEATED: for trial in trials: for value in values\n    All values tested per trial before moving to next trial.\n    Path: base_dir/profile_runs/trial_0001/concurrency_10/\n\nINDEPENDENT: for value in values: for trial in trials\n    All trials completed per value before moving to next value.\n    Path: base_dir/concurrency_10/profile_runs/trial_0001/",

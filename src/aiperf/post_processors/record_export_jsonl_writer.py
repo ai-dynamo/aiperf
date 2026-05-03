@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 
 
-class RecordExportResultsProcessor(
+class RecordExportJSONLWriter(
     BaseMetricsProcessor, BufferedJSONLWriterMixin[MetricRecordInfo]
 ):
     """Exports per-record metrics to JSONL with display unit conversion and filtering."""
@@ -36,7 +36,7 @@ class RecordExportResultsProcessor(
         raw_enabled = artifacts.raw
         if not records_enabled and not raw_enabled:
             raise PostProcessorDisabled(
-                "Record export results processor is disabled (artifacts.records is not enabled)"
+                "Record export JSONL writer is disabled (artifacts.records is not enabled)"
             )
         if (
             isinstance(artifacts.records, list)
@@ -75,7 +75,7 @@ class RecordExportResultsProcessor(
         if self.export_per_chunk_data:
             self.info("Per-chunk data export enabled (artifacts.per_chunk_data)")
 
-    async def process_result(self, record_data: MetricRecordsData) -> None:
+    async def process_record(self, record_data: MetricRecordsData) -> None:
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
             display_metrics = metric_dict.to_display_dict(
@@ -113,6 +113,14 @@ class RecordExportResultsProcessor(
 
         except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write record metrics: {e}")
+
+    # ``RecordExportJSONLWriter`` is dual-registered in ``plugins.yaml`` as
+    # both ``results_processor`` (legacy ``ResultsProcessorProtocol``) and
+    # ``stream_exporter`` (new ``StreamExporterProtocol``). The two protocols
+    # use different method names — ``process_result`` vs ``process_record`` —
+    # for the same single-arg ``MetricRecordsData`` input. Aliasing keeps both
+    # records-manager dispatch paths working with one implementation.
+    process_result = process_record
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""

@@ -233,6 +233,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Configure the tokenizers."""
         await self._configure_for_profiling()
 
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _profile_complete_command(
+        self,
+        message: Command,  # noqa: ARG002
+    ) -> None:
+        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+
+        RecordsManager sends PROFILE_COMPLETE after all records are processed
+        but before exporting/aggregating results. Stopping children here ensures
+        buffered writers flush to disk before the RawRecordAggregator reads them.
+        """
+        for child in self._children:
+            await child.stop()
+
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Return the model's tokenizer.
 

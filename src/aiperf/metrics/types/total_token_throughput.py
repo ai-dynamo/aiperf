@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
-from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -46,12 +45,5 @@ class TotalTokenThroughputMetric(BaseDerivedMetric[float]):
         total_output_tokens = metric_results.get_or_raise(
             TotalOutputSequenceLengthMetric
         )
-        benchmark_duration_converted = metric_results.get_converted_or_raise(
-            BenchmarkDurationMetric,
-            self.unit.time_unit,  # type: ignore
-        )
-        if benchmark_duration_converted == 0:
-            raise NoMetricValue(
-                "Benchmark duration is zero, cannot calculate total token throughput metric"
-            )
-        return (total_input_tokens + total_output_tokens) / benchmark_duration_converted  # type: ignore
+        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        return (total_input_tokens + total_output_tokens) / duration  # type: ignore

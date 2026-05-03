@@ -29,7 +29,11 @@ from aiperf.config.v1._converter_optionals import (
     expand_search_recipe,
 )
 from aiperf.config.v1._converter_profiling import build_profiling
-from aiperf.config.v1._converter_runtime import build_artifacts, build_logging_runtime
+from aiperf.config.v1._converter_runtime import (
+    build_artifacts,
+    build_logging_runtime,
+    validate_steady_state,
+)
 from aiperf.config.v1._converter_telemetry import (
     build_gpu_telemetry,
     build_server_metrics,
@@ -189,6 +193,8 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
     non-empty result.
     """
     from aiperf.config.config import AIPerfConfig
+
+    validate_steady_state(user)
 
     # Expanding the recipe up-front lets _assemble_optional and
     # _apply_recipe_sweep_variables share one ``recipe.expand()`` call instead

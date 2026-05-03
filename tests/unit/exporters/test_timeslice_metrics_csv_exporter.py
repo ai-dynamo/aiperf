@@ -12,6 +12,7 @@ import pytest
 
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult
+from aiperf.common.models.metric_result_models import TimesliceWindow
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.exporters.timeslice_metrics_csv_exporter import TimesliceMetricsCsvExporter
@@ -83,12 +84,24 @@ def sample_timeslice_metric_results():
 
 
 @pytest.fixture
-def mock_results_with_timeslices(sample_timeslice_metric_results):
+def sample_timeslice_windows():
+    """Create sample timeslice windows matching the metric results fixture."""
+    return {
+        0: TimesliceWindow(start_ns=1_000_000_000, end_ns=2_000_000_000),
+        1: TimesliceWindow(start_ns=2_000_000_000, end_ns=3_000_000_000),
+    }
+
+
+@pytest.fixture
+def mock_results_with_timeslices(
+    sample_timeslice_metric_results, sample_timeslice_windows
+):
     """Create mock results with timeslice data."""
 
     class MockResultsWithTimeslices:
         def __init__(self):
             self.timeslice_metric_results = sample_timeslice_metric_results
+            self.timeslice_windows = sample_timeslice_windows
             self.records = []
             self.start_ns = None
             self.end_ns = None
@@ -106,6 +119,7 @@ def mock_results_without_timeslices():
     class MockResultsNoTimeslices:
         def __init__(self):
             self.timeslice_metric_results = None
+            self.timeslice_windows = None
             self.records = []
             self.start_ns = None
             self.end_ns = None
@@ -226,10 +240,18 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             rows = list(reader)
 
             # Check header
-            assert rows[0] == ["Timeslice", "Metric", "Unit", "Stat", "Value"]
+            assert rows[0] == [
+                "Timeslice",
+                "Start_NS",
+                "End_NS",
+                "Metric",
+                "Unit",
+                "Stat",
+                "Value",
+            ]
 
             # Check first data row has correct format
-            assert len(rows[1]) == 5
+            assert len(rows[1]) == 7
             assert rows[1][0].isdigit()  # Timeslice index
 
     def test_generate_content_includes_all_timeslices(self, mock_user_config):
@@ -250,6 +272,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -291,6 +314,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -342,6 +366,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -367,7 +392,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             rows = list(reader)
 
             # Get all stat names
-            stat_names = [row[3] for row in rows[1:]]
+            stat_names = [row[5] for row in rows[1:]]
 
             # Should have rows for all non-None stats
             expected_stats = ["avg", "min", "max", "p50", "p90", "p95", "p99", "std"]
@@ -396,6 +421,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -421,7 +447,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             rows = list(reader)
 
             # Get all stat names
-            stat_names = [row[3] for row in rows[1:]]
+            stat_names = [row[5] for row in rows[1:]]
 
             # Should not include p50 or p95
             assert "p50" not in stat_names
@@ -445,6 +471,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -469,7 +496,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             reader = csv.reader(lines)
             rows = list(reader)
 
-            assert rows[1][1] == "Time to First Token"
+            assert rows[1][3] == "Time to First Token"
 
     def test_generate_content_includes_unit(self, mock_user_config):
         """Verify unit column contains unit value."""
@@ -480,6 +507,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -504,7 +532,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             reader = csv.reader(lines)
             rows = list(reader)
 
-            assert rows[1][2] == "ms"
+            assert rows[1][4] == "ms"
 
     def test_generate_content_empty_unit_for_unitless_metrics(self, mock_user_config):
         """Verify unit column is empty for unitless metrics."""
@@ -515,6 +543,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -539,7 +568,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
             reader = csv.reader(lines)
             rows = list(reader)
 
-            assert rows[1][2] == ""
+            assert rows[1][4] == ""
 
 
 class TestTimesliceMetricsCsvExporterFormatNumber:
@@ -606,7 +635,15 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 rows = list(reader)
 
             assert len(rows) > 1
-            assert rows[0] == ["Timeslice", "Metric", "Unit", "Stat", "Value"]
+            assert rows[0] == [
+                "Timeslice",
+                "Start_NS",
+                "End_NS",
+                "Metric",
+                "Unit",
+                "Stat",
+                "Value",
+            ]
 
     @pytest.mark.asyncio
     async def test_export_with_multiple_timeslices(self, mock_user_config):
@@ -637,6 +674,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -674,6 +712,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -700,4 +739,81 @@ class TestTimesliceMetricsCsvExporterIntegration:
 
             # Should have only header
             assert len(rows) == 1
-            assert rows[0] == ["Timeslice", "Metric", "Unit", "Stat", "Value"]
+            assert rows[0] == [
+                "Timeslice",
+                "Start_NS",
+                "End_NS",
+                "Metric",
+                "Unit",
+                "Stat",
+                "Value",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_export_includes_start_ns_end_ns_columns(
+        self, mock_results_with_timeslices, mock_user_config
+    ):
+        """Verify Start_NS and End_NS columns contain window timestamps."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mock_user_config.artifacts.dir = Path(temp_dir)
+
+            config = ExporterConfig(
+                results=mock_results_with_timeslices,
+                config=mock_user_config,
+                telemetry_results=None,
+            )
+
+            exporter = TimesliceMetricsCsvExporter(config)
+            content = exporter._generate_content()
+
+            lines = content.strip().split("\n")
+            reader = csv.reader(lines)
+            rows = list(reader)
+
+            # First data row should have Start_NS and End_NS from timeslice 0
+            assert rows[1][1] == "1000000000"
+            assert rows[1][2] == "2000000000"
+
+            # Find a row from timeslice 1
+            ts1_rows = [r for r in rows[1:] if r[0] == "1"]
+            assert len(ts1_rows) > 0
+            assert ts1_rows[0][1] == "2000000000"
+            assert ts1_rows[0][2] == "3000000000"
+
+    @pytest.mark.asyncio
+    async def test_export_empty_start_ns_end_ns_when_no_windows(self, mock_user_config):
+        """Verify Start_NS/End_NS columns are empty when timeslice_windows is None."""
+        timeslice_results = {
+            0: [MetricResult(tag="metric", header="Metric", unit="ms", avg=1.0)],
+        }
+
+        class MockResults:
+            def __init__(self):
+                self.timeslice_metric_results = timeslice_results
+                self.timeslice_windows = None
+                self.records = []
+                self.start_ns = None
+                self.end_ns = None
+                self.has_results = True
+                self.was_cancelled = False
+                self.error_summary = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mock_user_config.artifacts.dir = Path(temp_dir)
+
+            config = ExporterConfig(
+                results=MockResults(),
+                config=mock_user_config,
+                telemetry_results=None,
+            )
+
+            exporter = TimesliceMetricsCsvExporter(config)
+            content = exporter._generate_content()
+
+            lines = content.strip().split("\n")
+            reader = csv.reader(lines)
+            rows = list(reader)
+
+            # Start_NS and End_NS columns should be empty strings when no windows
+            assert rows[1][1] == ""
+            assert rows[1][2] == ""

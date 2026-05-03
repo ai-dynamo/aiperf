@@ -21,6 +21,7 @@ from aiperf.common.models.metric_result_models import (
     MetricValue,
     ProcessRecordsResult,
     ProfileResults,
+    TimesliceWindow,
 )
 from aiperf.common.models.parsed_response_models import (
     BaseResponseData,
@@ -74,6 +75,7 @@ __all__ = [
     "SSEMessage",
     "TextResponse",
     "TextResponseData",
+    "TimesliceWindow",
     "TokenCounts",
     "ToolCallResponseData",
     "Turn",

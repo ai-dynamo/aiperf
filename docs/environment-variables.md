@@ -40,6 +40,7 @@ Root environment configuration with nested subsystem settings. This is a singlet
 | `AIPERF_RECORD` | — | — | Record processing and export settings |
 | `AIPERF_SERVER_METRICS` | — | — | Server metrics collection settings |
 | `AIPERF_SERVICE` | — | — | Service lifecycle and communication settings |
+| `AIPERF_STEADY_STATE` | — | — | Steady-state detection settings |
 | `AIPERF_TIMING` | — | — | Timing manager settings |
 | `AIPERF_UI` | — | — | User interface and dashboard settings |
 | `AIPERF_WORKER` | — | — | Worker management and scaling settings |
@@ -177,6 +178,7 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
 | `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
+| `AIPERF_METRICS_LIST_BACKEND` | `'ragged'` | — | Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (≤0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint. |
 
 ## OPERATORMONITOR
 
@@ -278,6 +280,15 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
 | `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
 | `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
+
+## STEADYSTATE
+
+Steady-state detection configuration. Controls the automatic ramp detection algorithm parameters. CLI flags (``--steady-state``, ``--steady-state-start-pct``, etc.) take precedence over these environment variables.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_STEADY_STATE_BOOTSTRAP_ITERATIONS` | `None` | > 0 | Number of bootstrap iterations for boundary confidence intervals. None disables bootstrap. |
+| `AIPERF_STEADY_STATE_MIN_WINDOW_PCT` | `10.0` | > 0.0, ≤ 100.0 | Minimum steady-state window size as percentage of total duration; below this, falls back to full range |
 
 ## SWEEPCONTROLLER
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import ConsoleExporterDisabled
+from aiperf.common.exceptions import ConsoleExporterDisabled, MetricTypeError
 from aiperf.common.models import MetricResult
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -26,8 +26,10 @@ class ConsoleExperimentalMetricsExporter(ConsoleMetricsExporter):
             )
 
     def _should_show(self, record: MetricResult) -> bool:
-        metric_class = MetricRegistry.get_class(record.tag)
-        # Only show experimental metrics
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return False
         return metric_class.has_flags(MetricFlags.EXPERIMENTAL)
 
     def _get_title(self) -> str:

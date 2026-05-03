@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+from collections.abc import Iterable
 from datetime import datetime
 
 from rich.console import Console, RenderableType
 from rich.table import Table
 
 from aiperf.common.enums import MetricFlags
+from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -39,7 +41,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         console.file.flush()
 
     def get_renderable(
-        self, records: list[MetricResult], console: Console
+        self, records: Iterable[MetricResult], console: Console
     ) -> RenderableType:
         table = Table(title=self._get_title())
         table.add_column("Metric", justify="right", style="cyan")
@@ -48,20 +50,31 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._construct_table(table, records)
         return table
 
-    def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
+    def _construct_table(self, table: Table, records: Iterable[MetricResult]) -> None:
         # Records are already in display units from summarize()
         sorted_records = sorted(
             records,
-            key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
+            key=lambda x: self._display_order(x.tag),
         )
         for record in sorted_records:
             if not self._should_show(record):
                 continue
             table.add_row(*self._format_row(record))
 
+    @staticmethod
+    def _display_order(tag: str) -> int:
+        """Return the display order for a metric tag, defaulting to last for unregistered tags."""
+        try:
+            return MetricRegistry.get_class(tag).display_order or sys.maxsize
+        except MetricTypeError:
+            return sys.maxsize
+
     def _should_show(self, record: MetricResult) -> bool:
-        # Only show metrics that are not error-only or hidden
-        metric_class = MetricRegistry.get_class(record.tag)
+        """Only show metrics that are not error-only or hidden."""
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return True
         return metric_class.missing_flags(
             MetricFlags.ERROR_ONLY
             | MetricFlags.NO_CONSOLE

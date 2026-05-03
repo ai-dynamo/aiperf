@@ -269,6 +269,32 @@ navigation:
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
+  - page: "Research-Grade Algorithms: Gap Analysis"
+    path: dev/gap-analysis-research-grade-algorithms.md
+  - page: "Proposal: Statistical Foundations"
+    path: dev/proposal-statistical-foundations.md
+  - page: "Proposal: Confidence Intervals"
+    path: dev/proposal-confidence-intervals.md
+  - page: "Proposal: Coordinated Omission & Latency Decomposition"
+    path: dev/proposal-coordinated-omission-and-latency-decomposition.md
+  - page: "Proposal: Advanced Analysis"
+    path: dev/proposal-advanced-analysis.md
+  - page: "Research: Client/Server Latency Correlation"
+    path: dev/research-client-server-latency-correlation.md
+  - page: "Research: GPU Utilization × Throughput"
+    path: dev/research-gpu-utilization-throughput-correlation.md
+  - page: "Research: KV-Cache × Latency"
+    path: dev/research-kv-cache-latency-correlation.md
+  - page: "Research: Power × Thermal × Performance"
+    path: dev/research-power-thermal-performance-correlation.md
+  - page: "Research: Prefill/Decode Interference"
+    path: dev/research-prefill-decode-interference-correlation.md
+  - page: "Research: Queue Depth × Scheduling"
+    path: dev/research-queue-depth-scheduling-correlation.md
+  - page: "Research: SLO Compliance × Multi-Signal"
+    path: dev/research-slo-compliance-multi-signal-correlation.md
+  - page: "Research: Token Throughput Discrepancy"
+    path: dev/research-token-throughput-discrepancy-correlation.md
 
 - section: Troubleshooting
   collapsed: true

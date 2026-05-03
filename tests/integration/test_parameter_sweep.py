@@ -30,7 +30,6 @@ from pytest import param
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
-
 # Parameter key in sweep-aggregate JSON: HEAD's expand_sweep keys per-cell
 # stats by the dotted-path variation key (NOT main's bare ``concurrency``);
 # this drops directly into ``per_combination_metrics[*].parameters`` and
@@ -462,9 +461,7 @@ class TestParameterSweep:
 
         per_combo = sweep_data["per_combination_metrics"]
         assert isinstance(per_combo, list)
-        assert len(per_combo) == 2, (
-            f"expected 2 swept variations; got {len(per_combo)}"
-        )
+        assert len(per_combo) == 2, f"expected 2 swept variations; got {len(per_combo)}"
 
         epsilon = 1e-9
         required_metric_fields = (
@@ -818,7 +815,11 @@ class TestParameterSweep:
                     )
                 assert metric["min"] - 1e-9 <= metric["mean"] <= metric["max"] + 1e-9
                 assert metric["std"] >= 0.0
-                assert metric["ci_low"] - 1e-9 <= metric["mean"] <= metric["ci_high"] + 1e-9
+                assert (
+                    metric["ci_low"] - 1e-9
+                    <= metric["mean"]
+                    <= metric["ci_high"] + 1e-9
+                )
 
         # Sweep aggregate must still be present alongside.
         sweep_json = (

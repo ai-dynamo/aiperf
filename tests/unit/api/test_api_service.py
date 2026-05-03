@@ -871,8 +871,8 @@ class TestFinalResultsMixin:
     async def test_on_process_records_result_stores_results(
         self, mock_fastapi_service: FastAPIService
     ) -> None:
-        """Test that ProcessRecordsResultMessage stores results."""
-        from aiperf.common.messages import ProcessRecordsResultMessage
+        """Test that ProcessAllResultsMessage stores results."""
+        from aiperf.common.messages import ProcessAllResultsMessage
 
         # Initial state
         assert mock_fastapi_service._routers["results"]._final_results is None
@@ -880,13 +880,9 @@ class TestFinalResultsMixin:
 
         # Simulate receiving the message
         result = make_process_records_result(completed=200)
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
 
-        await mock_fastapi_service._routers["results"]._on_process_records_result(
-            message
-        )
+        await mock_fastapi_service._routers["results"]._on_process_all_results(message)
 
         assert mock_fastapi_service._routers["results"]._final_results is not None
         assert (
@@ -903,16 +899,14 @@ class TestFinalResultsMixin:
         self, mock_fastapi_service: FastAPIService
     ) -> None:
         """Test that subsequent messages replace previous results."""
-        from aiperf.common.messages import ProcessRecordsResultMessage
+        from aiperf.common.messages import ProcessAllResultsMessage
 
         # First message
         first_result = make_process_records_result(completed=100)
-        message1 = ProcessRecordsResultMessage(
+        message1 = ProcessAllResultsMessage(
             service_id="records_manager", results=first_result
         )
-        await mock_fastapi_service._routers["results"]._on_process_records_result(
-            message1
-        )
+        await mock_fastapi_service._routers["results"]._on_process_all_results(message1)
         assert (
             mock_fastapi_service._routers["results"]._final_results.results.completed
             == 100
@@ -920,12 +914,10 @@ class TestFinalResultsMixin:
 
         # Second message (replaces first)
         second_result = make_process_records_result(completed=200)
-        message2 = ProcessRecordsResultMessage(
+        message2 = ProcessAllResultsMessage(
             service_id="records_manager", results=second_result
         )
-        await mock_fastapi_service._routers["results"]._on_process_records_result(
-            message2
-        )
+        await mock_fastapi_service._routers["results"]._on_process_all_results(message2)
         assert (
             mock_fastapi_service._routers["results"]._final_results.results.completed
             == 200
@@ -948,18 +940,14 @@ class TestFinalResultsMixin:
         was_cancelled: bool,
     ) -> None:
         """Test message handling with various completion and cancellation states."""
-        from aiperf.common.messages import ProcessRecordsResultMessage
+        from aiperf.common.messages import ProcessAllResultsMessage
 
         result = make_process_records_result(
             completed=completed, was_cancelled=was_cancelled
         )
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
 
-        await mock_fastapi_service._routers["results"]._on_process_records_result(
-            message
-        )
+        await mock_fastapi_service._routers["results"]._on_process_all_results(message)
 
         assert (
             mock_fastapi_service._routers["results"]._final_results.results.completed

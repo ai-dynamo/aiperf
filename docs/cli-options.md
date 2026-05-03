@@ -823,6 +823,32 @@ Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exp
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
 
+#### `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br/>_Flag (no value required)_
+
+#### `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+<br/>_Constraints: ≥ 0.0, &lt; 100.0_
+
+#### `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+
+#### `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+<br/>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
+<br/>_Constraints: > 0_
+
 ### Tokenizer
 
 #### `--tokenizer`, `--tokenizer` `<str>`
@@ -1290,7 +1316,7 @@ Explore and validate AIPerf plugins
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -2084,6 +2110,32 @@ Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exp
 
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
+
+#### `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br/>_Flag (no value required)_
+
+#### `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+<br/>_Constraints: ≥ 0.0, &lt; 100.0_
+
+#### `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+
+#### `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+<br/>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
+<br/>_Constraints: > 0_
 
 ### Tokenizer
 
@@ -3212,6 +3264,32 @@ Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exp
 
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
+
+#### `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br/>_Flag (no value required)_
+
+#### `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+<br/>_Constraints: ≥ 0.0, &lt; 100.0_
+
+#### `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+
+#### `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+<br/>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
+<br/>_Constraints: > 0_
 
 ### Tokenizer
 
@@ -4355,6 +4433,32 @@ Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exp
 
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
+
+#### `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br/>_Flag (no value required)_
+
+#### `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+<br/>_Constraints: ≥ 0.0, &lt; 100.0_
+
+#### `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+
+#### `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+<br/>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
+<br/>_Constraints: > 0_
 
 ### Tokenizer
 
@@ -5509,6 +5613,32 @@ Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exp
 
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br/>_Flag (no value required)_
+
+#### `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`, `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br/>_Flag (no value required)_
+
+#### `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct`, `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+<br/>_Constraints: ≥ 0.0, &lt; 100.0_
+
+#### `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct`, `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+
+#### `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct`, `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br/>_Constraints: > 0.0, ≤ 100.0_
+<br/>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations`, `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
+<br/>_Constraints: > 0_
 
 ### Tokenizer
 

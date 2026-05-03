@@ -6,10 +6,11 @@ import asyncio
 import contextlib
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import orjson
 
+from aiperf.analysis.energy_analyzer import compute_energy_efficiency_from_summaries
 from aiperf.cli_utils import (
     print_developer_mode_warning,
     warn_osl_without_ignore_eos,
@@ -22,19 +23,6 @@ from aiperf.common.control_structs import (
     CommandResponse,
     ControllerBoundMessage,
 )
-from aiperf.config.zmq import ZMQDualBindConfig
-
-if TYPE_CHECKING:
-    from aiperf.common.models import ProfileResults
-    from aiperf.config import BenchmarkRun
-
-
-def profile_results_have_successes(results: ProfileResults | None) -> bool:
-    if results is None:
-        return False
-    return any(record.tag == "request_count" for record in results.records or [])
-
-
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -66,6 +54,7 @@ from aiperf.common.memory_tracker import (
 )
 from aiperf.common.messages import (
     BenchmarkCompleteMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -82,6 +71,7 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
+from aiperf.config.zmq import ZMQDualBindConfig
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_controller_commands import SystemControllerCommandMixin
@@ -98,11 +88,24 @@ from aiperf.controller.system_controller_raw_records import (
 )
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
+
+if TYPE_CHECKING:
+    from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
+    from aiperf.common.models import ProfileResults
+    from aiperf.config import BenchmarkRun
+    from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
+
+
+def profile_results_have_successes(results: ProfileResults | None) -> bool:
+    if results is None:
+        return False
+    return any(record.tag == "request_count" for record in results.records or [])
 
 
 class SystemController(
@@ -240,6 +243,9 @@ class SystemController(
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
+        self._steady_state_results: SteadyStateSummary | None = None
+        self._energy_efficiency_results: EnergyEfficiencySummary | None = None
+        self._exported_artifacts: dict[str, FileExportInfo] = {}
         self._profile_results_received = False
         self._should_wait_for_telemetry = False
         self._should_wait_for_server_metrics = False
@@ -1030,6 +1036,39 @@ class SystemController(
                 CommandType.PROFILE_COMPLETE, target_ids, timeout=10.0
             )
 
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results_message(
+        self, message: ProcessAllResultsMessage
+    ) -> None:
+        """Capture analyzer outputs (steady-state, energy) and exported file infos.
+
+        Supplements the per-stream PROCESS_RECORDS_RESULT / PROCESS_TELEMETRY_RESULT /
+        PROCESS_SERVER_METRICS_RESULT handlers — those still own the shutdown trigger.
+        This handler exists purely so the new analyzer summaries (typed Any on the
+        wire to keep the foundation message module out of the analyzer import
+        graph) and the exported artifact map land on the controller alongside the
+        legacy fields, ready for ExporterManager and CLI output.
+        """
+        self.trace_or_debug(
+            lambda: f"Received unified results message: {message}",
+            lambda: (
+                f"Received unified results: "
+                f"steady_state={'yes' if message.steady_state_results else 'no'}, "
+                f"energy={'yes' if message.energy_efficiency_results else 'no'}, "
+                f"artifacts={len(message.exported_artifacts)}"
+            ),
+        )
+        if message.steady_state_results is not None:
+            self._steady_state_results = message.steady_state_results
+        if message.energy_efficiency_results is not None:
+            self._energy_efficiency_results = message.energy_efficiency_results
+        if message.exported_artifacts:
+            # Cast at the boundary: ProcessAllResultsMessage types this dict[str, Any]
+            # to keep the messages module independent of FileExportInfo's import graph.
+            self._exported_artifacts = cast(
+                "dict[str, FileExportInfo]", message.exported_artifacts
+            )
+
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
         self, message: ProcessRecordsResultMessage
@@ -1523,6 +1562,25 @@ class SystemController(
 
         self._force_exit(1 if self._exit_errors else 0)
 
+    def _compute_cross_input_analyzers(self) -> None:
+        """Compute cross-input analyzer summaries from already-published payloads.
+
+        Single-input analyzers (steady-state) ran records-manager-side and
+        arrived via ``ProcessAllResultsMessage``; cross-input analysis runs
+        here because the underlying accumulators live in separate processes.
+        See ``docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md``.
+        """
+        if (
+            self.run.cfg.gpu_telemetry_disabled
+            or self._energy_efficiency_results is not None
+        ):
+            return
+        profile = self._profile_results.results if self._profile_results else None
+        self._energy_efficiency_results = compute_energy_efficiency_from_summaries(
+            telemetry=self._telemetry_results,
+            profile_results=profile,
+        )
+
     async def _export_results_data(self) -> None:
         """Write result files (CSV, JSON, Parquet) to the artifacts directory.
 
@@ -1556,11 +1614,15 @@ class SystemController(
 
             write_processing_marker(self.run.cfg.artifacts.artifact_directory)
 
+        self._compute_cross_input_analyzers()
+
         self._exporter_manager = ExporterManager(
             results=self._profile_results.results,
             config=self.run.cfg,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
+            steady_state_results=self._steady_state_results,
+            energy_efficiency_results=self._energy_efficiency_results,
         )
         await self._exporter_manager.export_data()
         if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:

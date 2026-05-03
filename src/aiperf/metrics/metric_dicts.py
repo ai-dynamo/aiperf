@@ -3,10 +3,12 @@
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     MetricDictValueTypeT,
+    MetricTimeUnit,
     MetricType,
     MetricUnitT,
     MetricValueTypeT,
@@ -27,7 +29,61 @@ MetricDictValueTypeVarT = TypeVar(
     "MetricDictValueTypeVarT", bound="MetricValueTypeT | MetricDictValueTypeT"
 )
 
+_PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99], dtype=np.float64)
+
 _logger = AIPerfLogger(__name__)
+
+
+def metric_result_from_array(
+    tag: MetricTagT,
+    header: str,
+    unit: str,
+    clean: NDArray[np.float64],
+    arr_sum: float,
+    *,
+    ddof: int = 0,
+) -> MetricResult:
+    """Compute MetricResult directly from a clean (no-NaN) numpy array.
+
+    Sorts `clean` in-place (safe — callers always pass a fresh copy from fancy indexing).
+    Extracts min/max from sorted endpoints, avg from arr_sum / n, std from np.std.
+    Vectorized linear interpolation for 9 percentiles.
+
+    Args:
+        ddof: Delta degrees of freedom for std. 0 = population (inference metrics),
+              1 = sample with Bessel's correction (telemetry time-series).
+    """
+    n = len(clean)
+    clean.sort()  # in-place sort
+
+    virtual_idx = _PERCENTILE_QS / 100.0 * (n - 1)
+    lo = virtual_idx.astype(int)
+    hi = np.minimum(lo + 1, n - 1)
+    frac = virtual_idx - lo
+    pcts = clean[lo] + frac * (clean[hi] - clean[lo])
+
+    std = float(np.std(clean, ddof=ddof)) if n > ddof else 0.0
+
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        min=clean[0],
+        max=clean[-1],
+        avg=arr_sum / n,
+        sum=arr_sum,
+        std=std,
+        p1=pcts[0],
+        p5=pcts[1],
+        p10=pcts[2],
+        p25=pcts[3],
+        p50=pcts[4],
+        p75=pcts[5],
+        p90=pcts[6],
+        p95=pcts[7],
+        p99=pcts[8],
+        count=n,
+    )
 
 
 class BaseMetricDict(
@@ -128,6 +184,31 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     - The most recent value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """
+
+    def __init__(self, *args: ..., **kwargs: ...) -> None:
+        super().__init__(*args, **kwargs)
+        self.window_start_ns: int | None = None
+        self.window_end_ns: int | None = None
+
+    def observation_duration(self, target_unit: MetricUnitT) -> float:
+        """Return the observation duration converted to *target_unit*.
+
+        If explicit window bounds are set, uses (window_end_ns - window_start_ns).
+        Otherwise falls back to BenchmarkDurationMetric.
+        Raises NoMetricValue when the duration is zero.
+        """
+        from aiperf.metrics.types.benchmark_duration_metric import (
+            BenchmarkDurationMetric,
+        )
+
+        if self.window_start_ns is not None and self.window_end_ns is not None:
+            duration_ns = self.window_end_ns - self.window_start_ns
+            duration = MetricTimeUnit.NANOSECONDS.convert_to(target_unit, duration_ns)
+        else:
+            duration = self.get_converted_or_raise(BenchmarkDurationMetric, target_unit)
+        if duration == 0:
+            raise NoMetricValue("Observation duration is zero")
+        return duration
 
     def get_converted_or_raise(
         self, metric: type["BaseMetric"], other_unit: MetricUnitT

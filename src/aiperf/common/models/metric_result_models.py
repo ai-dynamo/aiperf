@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, NamedTuple
 
 from pydantic import ConfigDict
 
@@ -89,6 +89,20 @@ class MetricValue:
     """The display unit label (e.g. 'ms', 'tokens/s')."""
 
 
+class TimesliceWindow(NamedTuple):
+    """Per-timeslice temporal boundaries.
+
+    ``is_complete`` is ``None`` for fully-closed windows (space-efficient
+    default matching ``BaseTimeslice``) and ``False`` for the trailing
+    partial window when the benchmark stopped before the next slice
+    boundary.
+    """
+
+    start_ns: int
+    end_ns: int
+    is_complete: bool | None = None
+
+
 @dataclass(slots=True, kw_only=True)
 class ProfileResults:
     """The results of a profile run.
@@ -111,6 +125,12 @@ class ProfileResults:
     end_ns: int
     records: list[MetricResult] | None = None
     timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = None
+    timeslice_windows: dict[TimeSliceT, TimesliceWindow] | None = None
+    multi_turn_ttft_trend: dict[int, MetricResult] | None = None
+    """Per-``turn_index`` TTFT distribution across all conversations.
+    Surfaces KV-cache effectiveness — turn N+1 should drop below turn N.
+    Populated by ``MetricsAccumulator.summarize()`` only when records have
+    ``turn_index`` metadata; ``None`` for single-turn workloads."""
     total_expected: int | None = None
     was_cancelled: bool = False
     error_summary: list[ErrorDetailsCount] = field(default_factory=list)

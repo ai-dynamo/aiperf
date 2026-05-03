@@ -709,15 +709,8 @@ record_processor:
 # One-to-many mapping: multiple processors can be loaded simultaneously.
 # =============================================================================
 results_processor:
-  metric_results:
-    class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
-    description: |
-      Results processor that computes metrics from MetricType.DERIVED and
-      aggregates results from all record processors. Final stage of metrics
-      pipeline. Always loaded.
-
   record_export:
-    class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
+    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
     description: |
       Record export processor that writes per-record metrics to JSONL files with
       display unit conversion and filtering. Enabled when export_level is RECORDS.
@@ -727,13 +720,6 @@ results_processor:
     description: |
       Record export processor that writes per-record metrics to CSV files with
       flat column layout. Enabled when export_level is RECORDS or RAW.
-
-  timeslice:
-    class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
-    description: |
-      Timeslice results processor that computes metrics for user-configurable
-      time slices, enabling time-series analysis of benchmark performance.
-      Enabled when timeslice config is set.
 
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
@@ -779,6 +765,100 @@ server_metrics_processor:
     description: |
       Server metrics JSONL writer that exports per-record server metrics data to
       JSONL files in slim format.
+
+# =============================================================================
+# Accumulators
+# =============================================================================
+# Accumulators ingest records, support time-range queries, and produce summaries.
+# Primary data stores in the records pipeline.
+# One-to-many mapping: multiple accumulators loaded simultaneously.
+# =============================================================================
+accumulator:
+  gpu_telemetry:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  metric_results:
+    class: aiperf.metrics.accumulator:MetricsAccumulator
+    description: |
+      Numpy-backed metrics accumulator that ingests inference metric records,
+      stores per-tag time series with timestamps, and produces summaries with
+      optional timeslicing. Always loaded.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
+# Stream Exporters
+# =============================================================================
+# Stream exporters write each record to an external sink (e.g. JSONL files)
+# as it arrives. Finalized after all records are processed.
+# One-to-many mapping: multiple exporters loaded simultaneously.
+# =============================================================================
+stream_exporter:
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  record_export:
+    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
+    description: |
+      Record export JSONL writer that writes per-record metrics to JSONL files with
+      display unit conversion and filtering. Enabled when export_level is RECORDS.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
+# Analyzers
+# =============================================================================
+# Analyzers derive results from accumulators at summarization time.
+# No record ingestion. One-to-many: multiple analyzers loaded simultaneously.
+# =============================================================================
+analyzer:
+  steady_state:
+    class: aiperf.post_processors.steady_state_analyzer:SteadyStateAnalyzer
+    description: |
+      Steady-state detection and windowed metric computation. Reads columnar
+      arrays from MetricsAccumulator, detects ramp-up/ramp-down phases, and
+      computes metrics over the stable window. Enabled via --steady-state flag.
+
+  accuracy_results:
+    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
+    description: |
+      Accuracy results processor that aggregates grading results and computes
+      summary accuracy metrics. Self-disables when accuracy mode is off.
+
+# =============================================================================
+# Artifact Publishers
+# =============================================================================
+# Artifact publishers upload exported benchmark files to remote storage backends.
+# One-to-many mapping: multiple publishers can be loaded simultaneously.
+# =============================================================================
+# artifact_publisher:
 
 # =============================================================================
 # Data Exporters
@@ -834,6 +914,25 @@ data_exporter:
     description: |
       JSON exporter for timeslice metrics. Exports time-series metric data to JSON
       format for temporal analysis and visualization.
+
+  steady_state_csv:
+    class: aiperf.exporters.steady_state_csv_exporter:SteadyStateCsvExporter
+    description: |
+      CSV exporter for steady-state windowed metrics. Exports metrics computed over
+      the detected or user-specified steady-state window to CSV format.
+
+  steady_state_json:
+    class: aiperf.exporters.steady_state_json_exporter:SteadyStateJsonExporter
+    description: |
+      JSON exporter for steady-state windowed metrics. Exports metrics computed over
+      the detected or user-specified steady-state window to JSON format.
+
+  energy_efficiency_json:
+    class: aiperf.exporters.energy_json_exporter:EnergyJsonExporter
+    description: |
+      JSON exporter for energy efficiency metrics. Exports energy-per-token,
+      tokens-per-joule, performance-per-watt, and related metrics to JSON format.
+      Self-disables when GPU telemetry is unavailable.
 
   accuracy_csv:
     class: aiperf.accuracy.accuracy_data_exporter:AccuracyDataExporter
@@ -903,6 +1002,19 @@ console_exporter:
       Console exporter for output sequence length mismatch warnings. Alerts when
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
+
+  steady_state:
+    class: aiperf.exporters.console_steady_state_exporter:ConsoleSteadyStateExporter
+    description: |
+      Console exporter for steady-state windowed metrics. Displays a separate table
+      with metrics computed over the detected or user-specified steady-state window.
+
+  energy_efficiency:
+    class: aiperf.exporters.console_energy_exporter:ConsoleEnergyExporter
+    description: |
+      Console exporter for energy efficiency metrics. Displays energy-per-token,
+      tokens-per-joule, performance-per-watt, and related metrics as a Rich table.
+      Self-disables when GPU telemetry is unavailable.
 
   accuracy:
     class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter

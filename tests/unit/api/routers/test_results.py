@@ -13,7 +13,7 @@ from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.config import BenchmarkRun
@@ -487,10 +487,8 @@ class TestFinalResultsHandler:
         assert results_router._benchmark_complete is False
 
         result = make_process_records_result(completed=200)
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
-        await results_router._on_process_records_result(message)
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
+        await results_router._on_process_all_results(message)
 
         assert results_router._final_results is not None
         assert results_router._final_results.results.completed == 200
@@ -501,17 +499,17 @@ class TestFinalResultsHandler:
         self, results_router: ResultsRouter
     ) -> None:
         first_result = make_process_records_result(completed=100)
-        message1 = ProcessRecordsResultMessage(
+        message1 = ProcessAllResultsMessage(
             service_id="records_manager", results=first_result
         )
-        await results_router._on_process_records_result(message1)
+        await results_router._on_process_all_results(message1)
         assert results_router._final_results.results.completed == 100
 
         second_result = make_process_records_result(completed=200)
-        message2 = ProcessRecordsResultMessage(
+        message2 = ProcessAllResultsMessage(
             service_id="records_manager", results=second_result
         )
-        await results_router._on_process_records_result(message2)
+        await results_router._on_process_all_results(message2)
         assert results_router._final_results.results.completed == 200
 
     @pytest.mark.parametrize(
@@ -533,11 +531,34 @@ class TestFinalResultsHandler:
         result = make_process_records_result(
             completed=completed, was_cancelled=was_cancelled
         )
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
-        await results_router._on_process_records_result(message)
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
+        await results_router._on_process_all_results(message)
 
         assert results_router._final_results.results.completed == completed
         assert results_router._final_results.results.was_cancelled == was_cancelled
         assert results_router._benchmark_complete is False
+
+    @pytest.mark.asyncio
+    async def test_on_process_all_results_accepts_optional_summary_payloads(
+        self, results_router: ResultsRouter
+    ) -> None:
+        """ProcessAllResultsMessage carries telemetry/server/steady/energy/exported_artifacts fields.
+
+        The router only stores ``results`` today, but the message contract must
+        accept the additional payloads so the unified path stays a single hop.
+        """
+        result = make_process_records_result(completed=42)
+        message = ProcessAllResultsMessage(
+            service_id="records_manager",
+            results=result,
+            telemetry_results=None,
+            server_metrics_results=None,
+            steady_state_results=None,
+            energy_efficiency_results=None,
+            exported_artifacts={},
+        )
+
+        await results_router._on_process_all_results(message)
+
+        assert results_router._final_results is not None
+        assert results_router._final_results.results.completed == 42

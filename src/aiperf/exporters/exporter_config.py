@@ -12,7 +12,9 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 
 if TYPE_CHECKING:
+    from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
     from aiperf.config import BenchmarkConfig
+    from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
 @dataclass(slots=True)
@@ -30,6 +32,12 @@ class ExporterConfig:
 
     server_metrics_results: ServerMetricsResults | None = None
     """Server-side metrics results, if collected."""
+
+    steady_state_results: SteadyStateSummary | None = None
+    """Steady-state windowed metrics results, if computed."""
+
+    energy_efficiency_results: EnergyEfficiencySummary | None = None
+    """Energy efficiency metrics results, if computed."""
 
 
 @dataclass(slots=True)

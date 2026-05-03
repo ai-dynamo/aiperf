@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aiperf.common.enums import MetricFlags
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
 from aiperf.common.models import (
     ErrorDetails,
     MetricResult,
@@ -17,9 +17,20 @@ from aiperf.common.models import (
     ProfileResults,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import (
+    AccumulatorType,
+    AnalyzerType,
+    PluginType,
+    StreamExporterType,
+)
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import (
+        AccumulatorProtocol,
+        AnalyzerProtocol,
+        StreamExporterProtocol,
+        SummaryContext,
+    )
     from aiperf.config import BenchmarkRun
     from aiperf.post_processors.protocols import ResultsProcessorProtocol
     from aiperf.records.error_tracker import ErrorTracker
@@ -146,6 +157,7 @@ def build_process_records_result(
     tracker: RecordsTracker,
     error_tracker: ErrorTracker,
     cancelled: bool,
+    multi_turn_ttft_trend: dict[int, MetricResult] | None = None,
 ) -> ProcessRecordsResult:
     """Assemble the final ``ProcessRecordsResult`` from bucketed summarize output."""
     start_ns, end_ns = tracker.get_results_time_window()
@@ -156,6 +168,7 @@ def build_process_records_result(
         results=ProfileResults(
             records=records_results,
             timeslice_metric_results=timeslice_metric_results,
+            multi_turn_ttft_trend=multi_turn_ttft_trend,
             completed=len(records_results),
             start_ns=start_ns or time.time_ns(),
             end_ns=end_ns or time.time_ns(),
@@ -164,3 +177,172 @@ def build_process_records_result(
         ),
         errors=error_results,
     )
+
+
+def load_accumulators(
+    host: _LoaderHost,
+) -> dict[AccumulatorType, AccumulatorProtocol]:
+    """Instantiate all enabled ``ACCUMULATOR`` plugins for ``host``.
+
+    Mirrors :func:`load_results_processors` but for the new accumulator plugin
+    category introduced by the metrics-accumulator branch. K8s keeps the legacy
+    ``RESULTS_PROCESSOR`` pipeline running in parallel; both populate from the
+    same record stream so analyzers (steady-state, energy efficiency) have a
+    columnar source while the existing exporters keep working unchanged.
+
+    One disabled / failed accumulator must not abort the records manager;
+    ``PluginDisabled`` is the explicit opt-out path, anything else is logged
+    via ``host.error`` and skipped.
+    """
+    accumulators: dict[AccumulatorType, AccumulatorProtocol] = {}
+    for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+        try:
+            AccumulatorClass = plugins.get_class(PluginType.ACCUMULATOR, entry.name)
+            accumulator = AccumulatorClass(
+                service_id=host.service_id,
+                run=host.run,
+                pub_client=host.pub_client,
+            )
+            host.attach_child_lifecycle(accumulator)
+            accumulators[AccumulatorType(entry.name)] = accumulator
+            host.debug(
+                f"Created accumulator: {entry.name}: {accumulator.__class__.__name__}"
+            )
+        except PluginDisabled:
+            host.debug(f"Accumulator {entry.name} is disabled and will not be used")
+        except Exception as e:  # noqa: BLE001 - one bad accumulator must not abort the records manager
+            host.error(f"Failed to create accumulator {entry.name}: {e}")
+    return accumulators
+
+
+def load_stream_exporters(
+    host: _LoaderHost,
+) -> dict[StreamExporterType, StreamExporterProtocol]:
+    """Instantiate all enabled ``STREAM_EXPORTER`` plugins for ``host``.
+
+    Stream exporters write each record to an external sink (JSONL, etc.) as
+    it arrives; they are flushed via :meth:`StreamExporterProtocol.finalize`
+    after all records are processed. Same disable/error policy as
+    :func:`load_accumulators`.
+    """
+    exporters: dict[StreamExporterType, StreamExporterProtocol] = {}
+    for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+        try:
+            ExporterClass = plugins.get_class(PluginType.STREAM_EXPORTER, entry.name)
+            exporter = ExporterClass(
+                service_id=host.service_id,
+                run=host.run,
+                pub_client=host.pub_client,
+            )
+            host.attach_child_lifecycle(exporter)
+            exporters[StreamExporterType(entry.name)] = exporter
+            host.debug(
+                f"Created stream exporter: {entry.name}: {exporter.__class__.__name__}"
+            )
+        except PluginDisabled:
+            host.debug(f"Stream exporter {entry.name} is disabled and will not be used")
+        except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the records manager
+            host.error(f"Failed to create stream exporter {entry.name}: {e}")
+    return exporters
+
+
+def load_analyzers(
+    host: _LoaderHost,
+) -> dict[AnalyzerType, AnalyzerProtocol]:
+    """Instantiate all enabled ``ANALYZER`` plugins for ``host``.
+
+    Analyzers do not ingest records — they read from already-populated
+    accumulators in :class:`SummaryContext` at summarize time. Disabled
+    analyzers (e.g. ``SteadyStateAnalyzer`` when ``--steady-state`` is off)
+    raise ``PluginDisabled`` from their constructor and are silently skipped.
+
+    Cross-input analyzers (e.g. energy efficiency, which needs both GPU
+    telemetry and inference records) are NOT loaded here — they run
+    controller-side as plain functions because their accumulator dependencies
+    live in separate processes. See
+    ``docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md``.
+    """
+    analyzers: dict[AnalyzerType, AnalyzerProtocol] = {}
+    for entry in plugins.iter_entries(PluginType.ANALYZER):
+        try:
+            AnalyzerClass = plugins.get_class(PluginType.ANALYZER, entry.name)
+            # Analyzers in the source branch take ``user_config: UserConfig``;
+            # accumulators take ``run: BenchmarkRun``. Pass both as kwargs so
+            # whichever signature the analyzer ports to (sibling work) keeps
+            # working — ``**kwargs: Any`` swallows the unused argument.
+            analyzer = AnalyzerClass(
+                run=host.run,
+                user_config=getattr(host, "user_config", None),
+            )
+            analyzers[AnalyzerType(entry.name)] = analyzer
+            host.debug(f"Created analyzer: {entry.name}: {analyzer.__class__.__name__}")
+        except PluginDisabled:
+            host.debug(f"Analyzer {entry.name} is disabled and will not be used")
+        except Exception as e:  # noqa: BLE001 - one bad analyzer must not abort the records manager
+            host.error(f"Failed to create analyzer {entry.name}: {e}")
+    return analyzers
+
+
+def accumulators_for_record_type(
+    accumulators: dict[AccumulatorType, AccumulatorProtocol],
+    record_type: str,
+) -> list[AccumulatorProtocol]:
+    """Return accumulators whose plugin metadata declares ``record_type``."""
+    matched: list[AccumulatorProtocol] = []
+    for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if record_type not in record_types:
+            continue
+        acc_type = AccumulatorType(entry.name)
+        if acc_type in accumulators:
+            matched.append(accumulators[acc_type])
+    return matched
+
+
+def stream_exporters_for_record_type(
+    exporters: dict[StreamExporterType, StreamExporterProtocol],
+    record_type: str,
+) -> list[StreamExporterProtocol]:
+    """Return stream exporters whose plugin metadata declares ``record_type``."""
+    matched: list[StreamExporterProtocol] = []
+    for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if record_type not in record_types:
+            continue
+        exp_type = StreamExporterType(entry.name)
+        if exp_type in exporters:
+            matched.append(exporters[exp_type])
+    return matched
+
+
+async def compute_analyzer_outputs(
+    analyzers: dict[AnalyzerType, AnalyzerProtocol],
+    summary_ctx: SummaryContext,
+    *,
+    log_error: Any | None = None,
+    log_debug: Any | None = None,
+) -> dict[AnalyzerType, Any]:
+    """Run analyzers in dependency order, threading outputs through ``summary_ctx``.
+
+    Each analyzer's result is recorded under ``summary_ctx.accumulator_outputs``
+    keyed by ``str(analyzer_name)`` so downstream analyzers (e.g. energy
+    efficiency depending on metric_results) can read it via
+    :meth:`SummaryContext.get_output`.
+
+    Disabled analyzers (``PluginDisabled``) are silently skipped; any other
+    exception is logged via ``log_error`` (if provided) and the analyzer is
+    omitted from the returned dict. A bad analyzer never aborts the rest.
+    """
+    outputs: dict[AnalyzerType, Any] = {}
+    for analyzer_name, analyzer in analyzers.items():
+        try:
+            result = await analyzer.summarize(summary_ctx)
+            outputs[analyzer_name] = result
+            summary_ctx.accumulator_outputs[str(analyzer_name)] = result
+        except PluginDisabled as e:
+            if log_debug is not None:
+                log_debug(f"Analyzer {analyzer_name} disabled: {e}")
+        except Exception as e:  # noqa: BLE001 - one bad analyzer must not abort the rest
+            if log_error is not None:
+                log_error(f"Analyzer {analyzer_name} failed: {e!r}")
+    return outputs

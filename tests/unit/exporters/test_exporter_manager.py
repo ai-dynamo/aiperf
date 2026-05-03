@@ -31,6 +31,7 @@ class TestExporterManager:
         mock_instance = MagicMock()
         mock_instance.export = AsyncMock()
         mock_class = MagicMock(return_value=mock_instance)
+        mock_class.__name__ = "MockExporter"
 
         # Create a mock PluginEntry for iter_all
         mock_entry = MagicMock()
@@ -98,6 +99,32 @@ class TestExporterManager:
         ):
             mock_class.assert_called_once()
             assert mock_instance.export.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_export_passes_steady_state_and_energy_results(
+        self, sample_records, config
+    ):
+        """ExporterConfig sees the steady_state and energy_efficiency results we pass in."""
+        sentinel_steady = MagicMock(name="SteadyStateSummary")
+        sentinel_energy = MagicMock(name="EnergyEfficiencySummary")
+
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=sample_records,
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+                was_cancelled=False,
+                error_summary=[],
+            ),
+            config=config,
+            telemetry_results=None,
+            steady_state_results=sentinel_steady,
+            energy_efficiency_results=sentinel_energy,
+        )
+
+        assert manager._exporter_config.steady_state_results is sentinel_steady
+        assert manager._exporter_config.energy_efficiency_results is sentinel_energy
 
 
 class TestConsoleExportToFile:
