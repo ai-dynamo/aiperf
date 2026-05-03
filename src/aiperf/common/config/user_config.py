@@ -418,19 +418,28 @@ class UserConfig(BaseConfig):
         return False
 
     def _count_dataset_entries(self) -> int:
-        """Count the number of valid entries in a custom dataset file.
+        """Count the number of valid entries in a custom dataset file or directory.
+
+        For directories, recursively counts non-empty lines across all .jsonl files.
 
         Returns:
-            int: Number of non-empty lines in the file
+            int: Number of non-empty lines
         """
         if not self.input.file:
             return 0
 
+        path = self.input.file
         try:
-            with open(self.input.file) as f:
+            if path.is_dir():
+                count = 0
+                for jsonl_file in path.rglob("*.jsonl"):
+                    with open(jsonl_file) as f:
+                        count += sum(1 for line in f if line.strip())
+                return count
+            with open(path) as f:
                 return sum(1 for line in f if line.strip())
         except (OSError, FileNotFoundError) as e:
-            _logger.error(f"Cannot read dataset file {self.input.file}: {e}")
+            _logger.error(f"Cannot read dataset file {path}: {e}")
             return 0
 
     endpoint: Annotated[

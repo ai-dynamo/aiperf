@@ -31,6 +31,8 @@ navigation:
       path: tutorials/vision.md
     - page: Profile Audio Language Models with AIPerf
       path: tutorials/audio.md
+    - page: Profile ASR Models with AIPerf
+      path: tutorials/asr.md
     - page: Profile Embedding Models with AIPerf
       path: tutorials/embeddings.md
     - page: Profile Ranking Models with AIPerf
@@ -78,6 +80,8 @@ navigation:
       path: tutorials/bailian-trace.md
     - page: Profile with BurstGPT Traces
       path: tutorials/burst-gpt-trace.md
+    - page: Replay SageMaker Data Capture Traces
+      path: tutorials/sagemaker-data-capture.md
     - page: Multi-Turn Conversations
       path: tutorials/multi-turn.md
     - page: Sequence Length Distributions for Advanced Benchmarking
@@ -145,6 +149,12 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+
+- section: Accuracy
+  collapsed: true
+  contents:
+  - page: Accuracy Benchmarking
+    path: accuracy/accuracy-benchmarking.md
 
 - section: Reference
   collapsed: true

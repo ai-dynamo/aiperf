@@ -107,3 +107,59 @@ class TestTiktokenImportError:
             pytest.raises(TokenizerError, match="tiktoken is required"),
         ):
             Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)
+
+
+class TestIsFakeModelName:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param("mock-model", id="mock-prefix"),
+            pytest.param("mock-llama", id="mock-prefix-suffix"),
+            pytest.param("test-model", id="test-model-substring"),
+            pytest.param("fake-model", id="fake-prefix"),
+            pytest.param("fake-llama-3", id="fake-prefix-with-suffix"),
+            pytest.param("dummy", id="exact-dummy"),
+            pytest.param("placeholder", id="exact-placeholder"),
+            pytest.param("example", id="exact-example"),
+            pytest.param("sample", id="exact-sample"),
+            pytest.param("test", id="exact-test"),
+            pytest.param("mock", id="exact-mock"),
+            pytest.param("fake", id="exact-fake"),
+            pytest.param("MOCK_MODEL", id="upper-with-underscore"),
+            pytest.param("Test-Model-v2", id="title-case-suffix"),
+            pytest.param("Test_Model_v2", id="underscore-normalize"),
+            pytest.param("my-model", id="my-model"),
+            pytest.param("your-model", id="your-model"),
+            pytest.param("model-name", id="model-name"),
+            pytest.param("model-id", id="model-id"),
+            pytest.param("llama-test-model", id="test-model-as-suffix"),
+            pytest.param("llama-mock", id="-mock-suffix"),
+        ],
+    )  # fmt: skip
+    def test_returns_true_for_placeholder_names(self, name: str) -> None:
+        from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
+        assert is_fake_model_name(name) is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param("Qwen/Qwen3-0.6B", id="hf-org-repo"),
+            pytest.param("meta-llama/Llama-3-test-finetune", id="hf-with-test-in-suffix"),
+            pytest.param("./mock-model", id="relative-dot-path"),
+            pytest.param("../mock-model", id="parent-relative-path"),
+            pytest.param("~/mock-model", id="home-path"),
+            pytest.param("/abs/path/to/model", id="absolute-path"),
+            pytest.param("C:\\models\\mock", id="windows-path"),
+            pytest.param("gpt2", id="gpt2"),
+            pytest.param("bert-base-uncased", id="bert"),
+            pytest.param("Llama-3-8B-Instruct", id="real-llama"),
+            pytest.param("", id="empty-string"),
+            pytest.param("testing-real-models", id="testing-prefix-no-token"),
+            pytest.param("contestant", id="contains-test-but-no-marker"),
+        ],
+    )  # fmt: skip
+    def test_returns_false_for_real_or_path_like(self, name: str) -> None:
+        from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
+        assert is_fake_model_name(name) is False

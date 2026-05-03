@@ -145,7 +145,7 @@ Audio files are generated as synthetic Gaussian noise:
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --model Qwen/Qwen2.5-Omni-3B \
   --url localhost:8000 \
   --endpoint-type chat \
   --audio-length-mean 5.0 \

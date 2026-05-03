@@ -40,6 +40,9 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Video Metrics](#video-metrics)
     - [Video Inference Time](#video-inference-time)
     - [Video Peak Memory](#video-peak-memory)
+  - [Audio Metrics](#audio-metrics)
+    - [Audio Duration](#audio-duration)
+    - [Inverse Real-Time Factor (RTFx)](#inverse-real-time-factor-rtfx)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
@@ -557,6 +560,39 @@ video_peak_memory = response.data.peak_memory_mb
 **Notes:**
 - Value comes from the server, not computed by AIPerf.
 - Unit is megabytes.
+
+---
+
+## Audio Metrics
+
+> [!NOTE]
+> Metrics in this section require an audio input on the request (e.g., ASR datasets such as LibriSpeech, GigaSpeech, AMI, VoxPopuli). They are not computed for text-only or non-audio requests.
+
+### Audio Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Per-request input audio duration in seconds. Hidden from the console summary; available in JSON / CSV record exports for characterizing dataset shape and verifying RTFx calculations.
+
+**Notes:**
+- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech).
+- Aggregate stats (avg, p50, p99) are computed automatically.
+
+### Inverse Real-Time Factor (RTFx)
+
+**Type:** [Record Metric](#record-metrics)
+
+The ratio of input audio duration to request latency. The standard ASR throughput metric, used by the HuggingFace Open ASR Leaderboard, NVIDIA Riva, and NVIDIA NeMo.
+
+**Formula:**
+```python
+rtfx = audio_duration_seconds / request_latency_seconds
+```
+
+**Notes:**
+- Higher is better. A value of 10 means the server transcribed audio 10× faster than real-time playback.
+- RTFx < 1 means the server is slower than real-time and not suitable for live transcription.
+- Requires `audio_duration` and `request_latency` metrics to be computed first.
 
 ---
 
