@@ -1034,6 +1034,9 @@ async def monitor_progress(
                 key=key,
                 sb=sb,
             )
+        generation = body.get("metadata", {}).get("generation")
+        if generation is not None:
+            sb.set_observed_generation(int(generation))
     except (
         ApiException,
         aiohttp.ClientError,

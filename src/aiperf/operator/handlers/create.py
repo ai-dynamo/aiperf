@@ -334,6 +334,9 @@ def _finalize_success(
     total_workers: int,
 ) -> dict[str, Any]:
     """Record success conditions/events and finalize the status patch."""
+    generation = body.get("metadata", {}).get("generation")
+    if generation is not None:
+        status.set_observed_generation(int(generation))
     status.conditions.set_true(
         ConditionType.RESOURCES_CREATED,
         "ResourcesCreated",

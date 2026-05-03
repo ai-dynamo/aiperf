@@ -1085,3 +1085,37 @@ def test_status_builder_set_run_epoch_writes_int() -> None:
     assert result is sb
     assert patch.status["runEpoch"] == 1714069323
     assert isinstance(patch.status["runEpoch"], int)
+
+
+class TestStatusBuilderObservedGeneration:
+    """Tests for ``StatusBuilder.set_observed_generation``."""
+
+    def test_set_observed_generation_writes_to_patch(self) -> None:
+        """Stamping observedGeneration writes the int to patch.status."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(7)
+        assert patch.status["observedGeneration"] == 7
+
+    def test_set_observed_generation_returns_self_for_chaining(self) -> None:
+        """The setter returns the builder so calls chain like other setters."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        result = sb.set_observed_generation(3)
+        assert result is sb
+
+    def test_set_observed_generation_overwrites_prior_value(self) -> None:
+        """Writing a higher generation overwrites a previously stamped lower one."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {"observedGeneration": 4}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(9)
+        assert patch.status["observedGeneration"] == 9

@@ -336,6 +336,18 @@ class StatusBuilder:
         self._patch.status["summary"] = summary
         return self
 
+    def set_observed_generation(self, generation: int) -> StatusBuilder:
+        """Stamp ``status.observedGeneration`` so kubectl-wait and GitOps tooling
+        can detect that the operator has acknowledged a spec edit.
+
+        Following the upstream Kubernetes convention, this should only be
+        called after a successful reconcile path — never on the early-exit
+        or error paths, otherwise observers will think a still-failing spec
+        was accepted.
+        """
+        self._patch.status["observedGeneration"] = generation
+        return self
+
     def get_phase(self) -> str | None:
         """Return the phase currently set in the patch, or None."""
         return self._patch.status.get("phase")

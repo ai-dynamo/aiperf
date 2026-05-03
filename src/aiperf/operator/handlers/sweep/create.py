@@ -83,6 +83,9 @@ async def handle(
             f"{jobset_name}-controller-0-0.{jobset_name}.{namespace}.svc.cluster.local"
         ),
     }
+    generation = body.get("metadata", {}).get("generation")
+    if generation is not None:
+        patch.status["observedGeneration"] = int(generation)
     logger.info(
         f"AIPerfSweep {namespace}/{name} created: {n_variations} variations, "
         f"max {max_total_runs} total runs"

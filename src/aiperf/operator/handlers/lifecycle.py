@@ -123,6 +123,9 @@ async def on_cancel(
 
     await close_progress_client(job_key(namespace, job_id))
     sb.set_phase(Phase.CANCELLED).set_completion_time()
+    generation = body.get("metadata", {}).get("generation")
+    if generation is not None:
+        sb.set_observed_generation(int(generation))
     sb.finalize()
     events.cancelled(body, job_id)
 
@@ -183,6 +186,9 @@ async def on_benchmark_complete(
     )
 
     sb = StatusBuilder(patch, status)
+    generation = body.get("metadata", {}).get("generation")
+    if generation is not None:
+        sb.set_observed_generation(int(generation))
     await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
 
     host = controller_dns_name(jobset_name, namespace)
