@@ -693,21 +693,28 @@ class ProgressClient:
         """Download response to file, with optional on-disk zstd compression.
 
         When COMPRESS_ON_DISK is enabled:
-        - zstd-encoded responses are saved directly as .zst (no decompression)
+        - ``.json`` aggregate exports are always kept raw on disk so they're
+          greppable / cat-able / json.tool-able without a zstd round-trip
+        - zstd-encoded responses for other extensions are saved directly as
+          .zst (no decompression)
         - gzip/identity responses are decompressed then re-compressed as .zst
         When disabled, behaves as before (decompress to raw files).
+
+        Parquet artifacts already use their own columnar compression and are
+        not wrapped in an outer .zst container.
         """
         from aiperf.operator.environment import OperatorEnvironment
 
         compress_on_disk = OperatorEnvironment.RESULTS.COMPRESS_ON_DISK
+        keep_raw = dest_path.suffix == ".json"
 
-        if compress_on_disk and content_encoding == "zstd":
+        if compress_on_disk and not keep_raw and content_encoding == "zstd":
             # Save zstd bytes directly — zero processing cost
             await save_zstd_passthrough(response, dest_path)
             return
 
         decompressor = make_decompressor(content_encoding)
-        if compress_on_disk:
+        if compress_on_disk and not keep_raw:
             await save_transcoded_zstd(response, dest_path, decompressor)
         else:
             await save_decompressed(response, dest_path, decompressor)
