@@ -137,11 +137,18 @@ def add_run_idx_to_figure(fig: go.Figure, df: pd.DataFrame) -> go.Figure:
     if "run_idx" not in df.columns or df.empty:
         return fig
 
-    # Identify metric columns (exclude metadata)
+    metadata_cols = {
+        "model",
+        "concurrency",
+        "run_idx",
+        "run_name",
+        "experiment_type",
+        "experiment_group",
+    }
     metric_cols = [
         c
         for c in df.columns
-        if c not in ["model", "concurrency", "run_idx", "run_name"]
+        if c not in metadata_cols and pd.api.types.is_numeric_dtype(df[c])
     ]
 
     if len(metric_cols) < 2:
