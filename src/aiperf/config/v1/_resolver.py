@@ -90,18 +90,47 @@ def build_v1_overrides(
     """
     from aiperf.config.v1._converter_optionals import (
         build_accuracy,
-        build_multi_run,
         build_tokenizer,
-        expand_search_recipe,
     )
     from aiperf.config.v1._converter_runtime import build_logging_runtime
 
     out: dict[str, Any] = {}
     _apply_endpoint_overrides(out, user)
     _apply_input_overrides(out, user)
+    _apply_recipe_and_multirun(out, user)
+    _apply_artifacts_overrides(out, user)
+    _apply_optional_section(out, "tokenizer", build_tokenizer(user))
+    _apply_optional_section(out, "accuracy", build_accuracy(user))
 
-    # Recipes drive multi_run / sweep / sla_filters; reuse the converter path
-    # so YAML+CLI emits the same shape as CLI-only.
+    if service is not None:
+        # Service-level CLI flags (--ui, --log-level, --verbose, ZMQ knobs)
+        # land on RuntimeConfig / LoggingConfig in v2. build_logging_runtime
+        # already gates on service.model_fields_set, so YAML defaults stay
+        # intact when the user didn't pass these flags.
+        logging_dict, runtime_dict = build_logging_runtime(user, service)
+        _apply_optional_section(out, "logging", logging_dict)
+        _apply_optional_section(out, "runtime", runtime_dict)
+
+    return out
+
+
+def _apply_optional_section(
+    out: dict[str, Any], key: str, value: dict[str, Any] | None
+) -> None:
+    """Set ``out[key] = value`` only when value is non-empty, mirroring the
+    converter's policy of omitting empty subsections."""
+    if value:
+        out[key] = value
+
+
+def _apply_recipe_and_multirun(out: dict[str, Any], user: UserConfig) -> None:
+    """Recipes drive multi_run / sweep / sla_filters; reuse the converter
+    path so YAML+CLI emits the same shape as CLI-only."""
+    from aiperf.config.v1._converter_optionals import (
+        build_multi_run,
+        expand_search_recipe,
+    )
+
     recipe_output = expand_search_recipe(user)
     if recipe_output is not None:
         sweep_vars = recipe_output.get("sweep_variables")
@@ -111,25 +140,24 @@ def build_v1_overrides(
     if multi_run:
         out["multi_run"] = multi_run
 
-    tokenizer = build_tokenizer(user)
-    if tokenizer:
-        out["tokenizer"] = tokenizer
-    accuracy = build_accuracy(user)
-    if accuracy:
-        out["accuracy"] = accuracy
 
-    if service is not None:
-        # Service-level CLI flags (--ui, --log-level, --verbose, ZMQ knobs)
-        # land on RuntimeConfig / LoggingConfig in v2. build_logging_runtime
-        # already gates on service.model_fields_set, so YAML defaults stay
-        # intact when the user didn't pass these flags.
-        logging_dict, runtime_dict = build_logging_runtime(user, service)
-        if logging_dict:
-            out["logging"] = logging_dict
-        if runtime_dict:
-            out["runtime"] = runtime_dict
+def _apply_artifacts_overrides(out: dict[str, Any], user: UserConfig) -> None:
+    """Map ``--artifact-dir`` and friends to the v2 ``artifacts`` block.
 
-    return out
+    ``build_artifacts`` always synthesizes ``cli_command`` from sys.argv even
+    when no --output flag was passed; we only emit the block when the user
+    actually set an OutputConfig field, so a YAML ``artifacts.dir`` stays
+    untouched on a plain ``aiperf profile -f base.yaml`` invocation.
+    """
+    from aiperf.config.v1._converter_runtime import build_artifacts
+
+    if user.output is None or not user.output.model_fields_set:
+        return
+    artifacts = build_artifacts(user)
+    # Drop the auto-synthesised cli_command when only it would land --
+    # leaves the YAML's value alone for users who pin it.
+    if set(artifacts.keys()) - {"cli_command"}:
+        out["artifacts"] = artifacts
 
 
 def _apply_endpoint_overrides(out: dict[str, Any], user: UserConfig) -> None:
