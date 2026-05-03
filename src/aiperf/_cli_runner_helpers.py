@@ -138,6 +138,30 @@ def _build_convergence_criterion(plan: BenchmarkPlan):  # noqa: ANN202
     return criterion_cls.from_plan(plan)
 
 
+def _build_search_planner(plan: BenchmarkPlan):  # noqa: ANN202
+    """Build the outer-loop SearchPlanner for adaptive search.
+
+    Returns None when ``plan.is_adaptive_search`` is False. Dispatches via the
+    plugin registry so third-party planners (registered in plugins.yaml under
+    the `search_planner` category) are reachable through the same code path
+    as the built-in `bayesian` planner.
+
+    The planner class is responsible for raising a clear ImportError if its
+    soft-dep tree is unavailable (e.g. BayesianSearchPlanner directs users to
+    `pip install aiperf[bo]`).
+    """
+    if not plan.is_adaptive_search:
+        return None
+
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    planner_cls = plugins.get_class(
+        PluginType.SEARCH_PLANNER, str(plan.adaptive_search.planner)
+    )
+    return planner_cls(plan.configs[0], plan.adaptive_search)
+
+
 async def aggregate_and_export(
     results: list,
     plan: BenchmarkPlan,

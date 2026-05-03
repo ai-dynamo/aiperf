@@ -406,17 +406,12 @@ async def main() -> int:
         )
 
         orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
-        search_planner = None
-        if plan.is_adaptive_search:
-            from aiperf.orchestrator.search_planner.bayesian import (
-                BayesianSearchPlanner,
-            )
+        from aiperf._cli_runner_helpers import _build_search_planner
 
-            search_planner = BayesianSearchPlanner(
-                plan.configs[0], plan.adaptive_search
-            )
+        search_planner = _build_search_planner(plan)
+        if search_planner is not None:
             logger.info(
-                f"Cluster-side adaptive search active: "
+                f"Cluster-side adaptive search active: planner={plan.adaptive_search.planner}, "
                 f"max_iterations={plan.adaptive_search.max_iterations}, "
                 f"objective={plan.adaptive_search.objective_metric}:"
                 f"{plan.adaptive_search.objective_stat}:"

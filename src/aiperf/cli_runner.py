@@ -429,13 +429,13 @@ def _run_multi_benchmark(plan: BenchmarkPlan) -> None:
 
     executor = LocalSubprocessExecutor(base_dir=base_dir)
 
-    search_planner = None
-    if plan.is_adaptive_search:
-        from aiperf.orchestrator.search_planner.bayesian import BayesianSearchPlanner
+    from aiperf._cli_runner_helpers import _build_search_planner
 
-        search_planner = BayesianSearchPlanner(plan.configs[0], plan.adaptive_search)
+    search_planner = _build_search_planner(plan)
+    if search_planner is not None:
         logger.info(
-            f"Bayesian outer loop active: max_iterations={plan.adaptive_search.max_iterations}, "
+            f"Adaptive search active: planner={plan.adaptive_search.planner}, "
+            f"max_iterations={plan.adaptive_search.max_iterations}, "
             f"search-space={[d.path for d in plan.adaptive_search.search_space]}, "
             f"objective={plan.adaptive_search.objective_metric}:"
             f"{plan.adaptive_search.objective_stat}:{plan.adaptive_search.objective_direction}"
