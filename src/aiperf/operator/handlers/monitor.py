@@ -119,7 +119,15 @@ def _apply_controller_progress_status(
     The terminal-phase clear (``currentPhase=None`` once the CR reaches
     Completed/Failed/Cancelled) is performed by ``handle_completion`` and
     the failure paths in ``monitor.py`` itself — not here.
+
+    ``status.subPhase`` mirrors the controller's ``SystemState`` (the outer
+    lifecycle: initializing → configuring → ready → profiling → processing
+    → stopping → shutdown). Distinct from ``currentPhase`` (the inner
+    benchmark stage: warmup / profiling / processing). ``set_phase`` clears
+    ``subPhase`` on terminal transitions for the same reason it clears
+    ``currentPhase`` — neither label is meaningful after the job ends.
     """
+    patch.status["subPhase"] = str(progress.system_state)
     sb.set_worker_aggregate_status(progress.workers.model_dump())
 
     if not progress.current_phase:

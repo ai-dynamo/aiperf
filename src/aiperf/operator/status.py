@@ -275,14 +275,17 @@ class StatusBuilder:
 
         Side effect: when transitioning to a terminal phase (Completed,
         Failed, Cancelled), also clears ``status.currentPhase`` (the
-        kubectl ``STAGE`` print column). Without this clear, the column
-        would keep showing the last benchmark stage (``profiling`` /
-        ``processing``) after the job has terminated, which is misleading
-        — STAGE is only meaningful while the job is in flight.
+        kubectl ``STAGE`` print column) and ``status.subPhase`` (the
+        controller's outer ``SystemState``). Without this clear, both
+        columns would keep showing their last in-flight values
+        (``profiling`` / ``processing``, ``stopping`` / ``shutdown``)
+        after the job has terminated, which is misleading — neither
+        label is meaningful once the CR reaches a terminal phase.
         """
         self._patch.status["phase"] = str(phase)
         if phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
             self._patch.status["currentPhase"] = None
+            self._patch.status["subPhase"] = None
         return self
 
     def set_error(self, error: str) -> StatusBuilder:

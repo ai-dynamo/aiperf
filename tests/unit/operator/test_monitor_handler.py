@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest import param
 
+from aiperf.common.enums.lifecycle_enums import SystemState
 from aiperf.operator.handlers.monitor import (
     _apply_controller_progress_status,
     _classify_jobset_failure,
@@ -318,10 +319,12 @@ class TestApplyControllerProgressStatus:
         current_phase: str | None,
         workers: dict[str, int] | None = None,
         is_complete: bool = False,
+        system_state: SystemState = SystemState.PROFILING,
     ) -> MagicMock:
         p = MagicMock()
         p.current_phase = current_phase
         p.is_complete = is_complete
+        p.system_state = system_state
         p.workers = MagicMock()
         p.workers.model_dump = MagicMock(
             return_value=workers if workers is not None else {"ready": 1, "total": 1}
@@ -410,3 +413,69 @@ class TestApplyControllerProgressStatus:
         _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
 
         assert patch.status["currentPhase"] == "warmup"
+
+    def test_stamps_subphase_from_system_state(self) -> None:
+        """Verify ``status.subPhase`` mirrors the controller's ``system_state``.
+
+        ``subPhase`` is the outer-lifecycle label (initializing → configuring →
+        ready → profiling → processing → stopping → shutdown) — distinct from
+        ``currentPhase`` (the inner benchmark stage). It is stamped on every
+        invocation so kubectl observers can see the controller advance through
+        startup before the workload ever begins.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(
+            current_phase="profiling", system_state=SystemState.PROFILING
+        )
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["subPhase"] == "profiling"
+
+    @pytest.mark.parametrize(
+        "system_state,expected",
+        [
+            param(SystemState.INITIALIZING, "initializing", id="initializing"),
+            param(SystemState.CONFIGURING, "configuring", id="configuring"),
+            param(SystemState.READY, "ready", id="ready"),
+            param(SystemState.PROFILING, "profiling", id="profiling"),
+            param(SystemState.PROCESSING, "processing", id="processing"),
+            param(SystemState.STOPPING, "stopping", id="stopping"),
+            param(SystemState.SHUTDOWN, "shutdown", id="shutdown"),
+        ],
+    )  # fmt: skip
+    def test_subphase_maps_every_system_state_value(
+        self, system_state: SystemState, expected: str
+    ) -> None:
+        """Every SystemState serializes to its lowercase enum value on the CR.
+
+        The CRD enum constraint (`crd.yaml status.properties.subPhase`) is
+        keyed on these exact strings; a drift between Python enum values and
+        CRD enum entries would cause the apiserver to reject the patch.
+        """
+        sb, patch = _make_status_builder()
+        # current_phase is required to exercise the subPhase stamp before the
+        # early return; pass any non-empty value.
+        progress = self._progress(current_phase="profiling", system_state=system_state)
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
+
+        assert patch.status["subPhase"] == expected
+
+    def test_subphase_stamped_even_when_current_phase_empty(self) -> None:
+        """``subPhase`` is stamped before the empty-current_phase early return.
+
+        The controller advances ``system_state`` through CONFIGURING and READY
+        long before any ``CreditPhase`` is active. We must not gate the
+        ``subPhase`` write behind the controller having a phase.
+        """
+        sb, patch = _make_status_builder()
+        progress = self._progress(
+            current_phase=None, system_state=SystemState.CONFIGURING
+        )
+
+        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
+
+        assert patch.status["subPhase"] == "configuring"
+        # Confirms we still hit the early-return after the stamp.
+        assert "currentPhase" not in patch.status

@@ -691,6 +691,43 @@ class TestStatusBuilder:
         # Untouched — only terminal transitions clear the stage label.
         assert mock_patch.status["currentPhase"] == "warmup"
 
+    def test_set_phase_terminal_clears_sub_phase(self) -> None:
+        """Verify terminal phases clear ``status.subPhase``.
+
+        ``subPhase`` mirrors the controller's outer ``SystemState`` while the
+        job is in flight. After the job terminates the controller pod is
+        about to be torn down, so the last seen value (typically
+        ``stopping`` / ``shutdown``) is no longer meaningful and must not
+        linger in kubectl output.
+        """
+        for terminal in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
+            mock_patch = MagicMock()
+            mock_patch.status = {"subPhase": "profiling"}
+
+            builder = StatusBuilder(mock_patch)
+            builder.set_phase(terminal)
+
+            assert mock_patch.status["phase"] == str(terminal)
+            # None signals merge-patch removal of the field on the API server.
+            assert mock_patch.status["subPhase"] is None
+
+    def test_set_phase_non_terminal_preserves_sub_phase(self) -> None:
+        """Verify non-terminal phases leave ``subPhase`` untouched.
+
+        While the job is in flight, the operator must not stomp the
+        controller-authored ``subPhase`` — the controller is the source of
+        truth for outer-lifecycle progress, and the next monitor tick will
+        refresh it from ``progress.system_state``.
+        """
+        mock_patch = MagicMock()
+        mock_patch.status = {"subPhase": "configuring"}
+
+        builder = StatusBuilder(mock_patch)
+        builder.set_phase(Phase.RUNNING)
+
+        assert mock_patch.status["phase"] == "Running"
+        assert mock_patch.status["subPhase"] == "configuring"
+
     def test_set_error(self) -> None:
         """Test set_error updates patch status."""
         mock_patch = MagicMock()
