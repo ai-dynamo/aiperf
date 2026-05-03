@@ -87,6 +87,9 @@ spec:
         - name: health
           containerPort: 8080
           protocol: TCP
+        - name: metrics
+          containerPort: {{ .Values.operator.metrics.port }}
+          protocol: TCP
         env:
         - name: PYTHONUNBUFFERED
           value: "1"
@@ -102,6 +105,8 @@ spec:
           value: {{ .Values.operator.env.jobTimeoutSeconds | quote }}
         - name: AIPERF_POD_RESTART_THRESHOLD
           value: {{ .Values.operator.env.podRestartThreshold | quote }}
+        - name: AIPERF_METRICS_PORT
+          value: {{ .Values.operator.metrics.port | quote }}
         - name: AIPERF_RESULTS_TTL_DAYS
           value: {{ .Values.operator.env.resultsTtlDays | quote }}
         - name: AIPERF_RESULTS_MAX_RETRIES

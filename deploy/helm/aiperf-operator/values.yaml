@@ -98,6 +98,12 @@ operator:
     # resultsCompressOnDisk stores downloaded result files as zstd on the PVC
     resultsCompressOnDisk: "true"
 
+  # operator.metrics configures the Prometheus /metrics endpoint exposed by
+  # the kopf operator process (separate from the FastAPI results-server
+  # sidecar). Set port to 0 to disable.
+  metrics:
+    port: 9090
+
   # operator.watchNamespaces limits which namespaces the operator watches
   # for AIPerfJob CRs. Empty list (default) watches all namespaces (kopf's
   # `--all-namespaces` flag). Non-empty list passes `--namespace=<ns>` for

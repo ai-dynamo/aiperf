@@ -41,6 +41,7 @@ from aiperf.kubernetes.cr_refs import (
 from aiperf.operator import runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
+from aiperf.operator.metrics import start_metrics_server, track_handler
 from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
 from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
@@ -55,9 +56,11 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     """Configure operator settings."""
     settings.persistence.finalizer = f"{AIPERF_GROUP}/finalizer"
     settings.posting.level = logging.INFO
+    start_metrics_server(OperatorEnvironment.METRICS_PORT)
 
 
 @kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL)
+@track_handler("on_create")
 async def on_create(
     body: dict[str, Any],
     spec: dict[str, Any],
@@ -74,6 +77,7 @@ async def on_create(
 
 
 @kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL)
+@track_handler("on_delete")
 async def on_delete(
     name: str, namespace: str, status: dict[str, Any], **_: Any
 ) -> None:
@@ -82,6 +86,7 @@ async def on_delete(
 
 
 @kopf.on.update(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="spec.cancel")
+@track_handler("on_cancel")
 async def on_cancel(
     body: dict[str, Any],
     spec: dict[str, Any],
@@ -103,6 +108,7 @@ async def on_cancel(
     AIPERF_PLURAL,
     annotations={Annotations.BENCHMARK_COMPLETE: "true"},
 )
+@track_handler("on_benchmark_complete")
 async def on_benchmark_complete(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -118,6 +124,7 @@ async def on_benchmark_complete(
 
 
 @kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+@track_handler("on_aiperfsweep_create")
 async def on_aiperfsweep_create(
     body: dict[str, Any],
     spec: dict[str, Any],
@@ -133,6 +140,7 @@ async def on_aiperfsweep_create(
 
 
 @kopf.on.update(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, field="spec.cancel")
+@track_handler("on_aiperfsweep_cancel")
 async def on_aiperfsweep_cancel(
     body: dict[str, Any],
     spec: dict[str, Any],
@@ -148,6 +156,7 @@ async def on_aiperfsweep_cancel(
 
 
 @kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")
+@track_handler("on_aiperfjob_phase_transition")
 async def on_aiperfjob_phase_transition(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -165,6 +174,7 @@ async def on_aiperfjob_phase_transition(
 
 
 @kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+@track_handler("on_aiperfsweep_delete")
 async def on_aiperfsweep_delete(name: str, namespace: str, **_: Any) -> None:
     """On AIPerfSweep deletion, request cooperative cancellation of any running children.
 
@@ -184,6 +194,7 @@ async def on_aiperfsweep_delete(name: str, namespace: str, **_: Any) -> None:
     initial_delay=3600.0,
     idle=3600.0,
 )
+@track_handler("cleanup_old_sweeps")
 async def cleanup_old_sweeps(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -204,6 +215,7 @@ async def cleanup_old_sweeps(
     interval=OperatorEnvironment.MONITOR.INTERVAL,
     initial_delay=OperatorEnvironment.MONITOR.INITIAL_DELAY,
 )
+@track_handler("monitor_progress")
 async def monitor_progress(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -227,6 +239,7 @@ async def monitor_progress(
     initial_delay=3600.0,
     idle=3600.0,
 )
+@track_handler("cleanup_old_results")
 async def cleanup_old_results(
     body: dict[str, Any],
     status: dict[str, Any],

@@ -234,6 +234,15 @@ class _OperatorEnvironment(BaseSettings):
         le=100,
         description="Pod restart count before emitting a warning event",
     )
+    METRICS_PORT: int = Field(
+        default=9090,
+        ge=0,
+        le=65535,
+        description=(
+            "Port for the Prometheus /metrics endpoint exposed by the kopf "
+            "operator process. Set to 0 to disable. Scraped by ServiceMonitor."
+        ),
+    )
     ENDPOINT_CHECK_TIMEOUT: float = Field(
         default=10.0,
         gt=0,

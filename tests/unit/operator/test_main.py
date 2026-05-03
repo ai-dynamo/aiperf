@@ -594,7 +594,8 @@ class TestConfigure:
     def test_sets_finalizer(self) -> None:
         """Verify configures kopf finalizer."""
         settings = kopf.OperatorSettings()
-        configure(settings)
+        with mock_patch("aiperf.operator.main.start_metrics_server"):
+            configure(settings)
 
         assert settings.persistence.finalizer == "aiperf.nvidia.com/finalizer"
 
@@ -603,7 +604,8 @@ class TestConfigure:
         import logging
 
         settings = kopf.OperatorSettings()
-        configure(settings)
+        with mock_patch("aiperf.operator.main.start_metrics_server"):
+            configure(settings)
 
         assert settings.posting.level == logging.INFO
 
