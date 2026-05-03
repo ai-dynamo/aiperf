@@ -214,6 +214,8 @@ class TestInheritance:
             records_per_second=8.0,
             records_progress_percent=41.0,
             sending_complete=False,
+            is_requests_complete=False,
+            is_records_complete=False,
             timeout_triggered=False,
             was_cancelled=False,
         )

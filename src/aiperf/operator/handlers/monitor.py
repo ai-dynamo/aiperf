@@ -1414,7 +1414,9 @@ def _build_phase_progress(stats: CombinedPhaseStats) -> PhaseProgress | None:
         records_error=stats.error_records,
         records_per_second=round(stats.records_per_second or 0, 2),
         records_progress_percent=round(stats.records_progress_percent or 0, 1),
-        sending_complete=stats.is_requests_complete,
+        sending_complete=stats.is_sending_complete,
+        is_requests_complete=stats.is_requests_complete,
+        is_records_complete=stats.is_records_complete,
         timeout_triggered=stats.timeout_triggered,
         was_cancelled=stats.was_cancelled,
         requests_eta_seconds=round(stats.requests_eta_sec)

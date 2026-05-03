@@ -678,6 +678,83 @@ class TestBuildPhaseProgress:
         assert result.expected_duration_seconds == 60.0
         assert result.elapsed_time_seconds == 2.0
 
+    @pytest.mark.parametrize(
+        "sent_end_ns,requests_end_ns,records_end_ns,sending,reqs,recs",
+        [
+            param(None, None, None, False, False, False, id="none-set"),
+            param(123, None, None, True, False, False, id="sent-only"),
+            param(None, 123, None, False, True, False, id="requests-only"),
+            param(None, None, 123, False, False, True, id="records-only"),
+            param(123, 124, None, True, True, False, id="sent-and-requests"),
+            param(123, None, 124, True, False, True, id="sent-and-records"),
+            param(None, 123, 124, False, True, True, id="requests-and-records"),
+            param(123, 124, 125, True, True, True, id="all-set"),
+        ],
+    )  # fmt: skip
+    def test_phase_completion_booleans_real_dataclass(
+        self,
+        sent_end_ns: int | None,
+        requests_end_ns: int | None,
+        records_end_ns: int | None,
+        sending: bool,
+        reqs: bool,
+        recs: bool,
+    ) -> None:
+        """Verify sending_complete / is_requests_complete / is_records_complete
+        flow from CombinedPhaseStats *_end_ns fields through PhaseProgress.
+
+        Built against the real CombinedPhaseStats dataclass (not MagicMock) to
+        catch the property-vs-field wiring discovered during the audit:
+        `sending_complete` must read `is_sending_complete` (sent_end_ns set),
+        not `is_requests_complete` (requests_end_ns set).
+        """
+        stats = CombinedPhaseStats(
+            phase="profiling",
+            start_ns=1_000_000_000,
+            last_update_ns=2_000_000_000,
+            sent_end_ns=sent_end_ns,
+            requests_end_ns=requests_end_ns,
+            records_end_ns=records_end_ns,
+            total_expected_requests=10,
+            requests_sent=5,
+            requests_completed=5,
+        )
+
+        result = _build_phase_progress(stats)
+
+        assert result is not None
+        assert result.sending_complete is sending
+        assert result.is_requests_complete is reqs
+        assert result.is_records_complete is recs
+
+    def test_sending_complete_bug_regression(self) -> None:
+        """Regression: sending_complete used to read from is_requests_complete,
+        so it falsely reported False while the credit issuer had already
+        finished dispatching but responses were still in flight.
+
+        With sent_end_ns set and requests_end_ns=None, sending_complete must
+        be True (we are done sending) even though is_requests_complete is False
+        (we are not yet done receiving).
+        """
+        stats = CombinedPhaseStats(
+            phase="profiling",
+            start_ns=1_000_000_000,
+            last_update_ns=2_000_000_000,
+            sent_end_ns=1_500_000_000,
+            requests_end_ns=None,
+            records_end_ns=None,
+            total_expected_requests=10,
+            requests_sent=10,
+            requests_completed=7,
+        )
+
+        result = _build_phase_progress(stats)
+
+        assert result is not None
+        assert result.sending_complete is True
+        assert result.is_requests_complete is False
+        assert result.is_records_complete is False
+
     @staticmethod
     def _create_mock_stats(
         total: int = 100,
@@ -713,6 +790,8 @@ class TestBuildPhaseProgress:
         stats.records_per_second = requests_per_second
         stats.records_progress_percent = progress_percent
         stats.is_requests_complete = completed >= total
+        stats.is_sending_complete = sent >= total
+        stats.is_records_complete = completed >= total
         stats.timeout_triggered = False
         stats.was_cancelled = False
         stats.requests_eta_sec = requests_eta_sec

@@ -131,6 +131,19 @@ class PhaseProgress(K8sCamelModel):
     sending_complete: bool = Field(
         description="Whether all requests have been dispatched"
     )
+    is_requests_complete: bool = Field(
+        description=(
+            "True once all expected requests have completed for this phase "
+            "(`requests_end_ns` set on CombinedPhaseStats — last response "
+            "received). Useful for `kubectl wait` and dashboards."
+        ),
+    )
+    is_records_complete: bool = Field(
+        description=(
+            "True once the record processor has aggregated all records for "
+            "this phase (`records_end_ns` set on CombinedPhaseStats)."
+        ),
+    )
     timeout_triggered: bool = Field(
         description="Whether the phase ended due to a timeout"
     )
