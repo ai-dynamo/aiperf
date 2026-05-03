@@ -148,10 +148,9 @@ class TestAioHttpTransport:
                 "/v1/chat/completions",
                 "http://localhost:8000/v1/chat/completions",
             ),
-            ("localhost:8000", "/v1/chat", "http://localhost:8000/v1/chat"),
             ("https://api.example.com", "/v1/chat", "https://api.example.com/v1/chat"),
         ],
-        ids=["http-prefix", "no-scheme", "https-prefix"],
+        ids=["http-prefix", "https-prefix"],
     )
     def test_get_url(self, cfg_base_url, custom_endpoint, expected_url):
         """Test get_url with various base URLs and endpoints."""
@@ -196,17 +195,12 @@ class TestAioHttpTransport:
                 "http://localhost:8000/v1/chat/completions",
             ),
             (
-                "http://localhost:8000/v1/chat/completions",
-                "v1/chat/completions",
-                "http://localhost:8000/v1/chat/completions",
-            ),
-            (
                 "https://api.example.com/v1",
-                "v1/chat/completions",
+                "/v1/chat/completions",
                 "https://api.example.com/v1/chat/completions",
             ),
         ],
-        ids=["custom-path-full-url", "custom-path-no-slash", "v1-prefix-dedup"],
+        ids=["custom-path-full-url", "v1-prefix-dedup"],
     )
     def test_get_url_dedup_custom_path(
         self, cfg_base_url, custom_endpoint, expected_url

@@ -18,7 +18,7 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],
     "endpoint": {
         "type": "chat",
-        "urls": ["mock://localhost:8000"],
+        "urls": ["http://localhost:8000"],
         "streaming": True,
     },
     "datasets": [
@@ -37,7 +37,7 @@ _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
 
 def _make_config(
     endpoint_type: EndpointType = EndpointType.CHAT,
-    base_url: str = "mock://localhost:8000",
+    base_url: str = "http://localhost:8000",
     streaming: bool = True,
     model_name: str = "test-model",
 ) -> BenchmarkConfig:
@@ -57,7 +57,7 @@ def _make_config(
 
 def _make_run(
     endpoint_type: EndpointType = EndpointType.CHAT,
-    base_url: str = "mock://localhost:8000",
+    base_url: str = "http://localhost:8000",
     streaming: bool = True,
     model_name: str = "test-model",
 ) -> BenchmarkRun:
