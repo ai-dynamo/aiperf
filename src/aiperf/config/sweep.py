@@ -287,12 +287,23 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
     like ``phases.profilling.rate`` (extra 'l') would otherwise create a
     new phase missing required fields and surface as a confusing downstream
     error.
+
+    Special case for ``phases.profiling.<X>``: search recipes hard-code that
+    path because the v1 -> v2 converter emits a phase named ``profiling``,
+    but YAML configs that use the flat-shorthand form (``phases: {type: ..,
+    concurrency: ..}``) end up with a phase named ``default``. When the
+    segment is ``profiling`` and no phase by that name exists, fall back to
+    the unique non-warmup phase (if exactly one exists) -- the convention is
+    that there's a single load-generating phase per benchmark, and that's
+    what ``profiling`` semantically means here.
     """
     keys = path.split(".")
     current: Any = data
-    for key in keys[:-1]:
+    for i, key in enumerate(keys[:-1]):
         if isinstance(current, list) and _is_named_dict_list(current):
-            match = _find_named(current, key)
+            match = _find_phase_or_recipe_alias(
+                current, key, parent_key=keys[i - 1] if i > 0 else ""
+            )
             if match is None:
                 names = [item.get("name") for item in current]
                 raise ValueError(
@@ -306,7 +317,9 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
         current = current[key]
     last = keys[-1]
     if isinstance(current, list) and _is_named_dict_list(current):
-        match = _find_named(current, last)
+        match = _find_phase_or_recipe_alias(
+            current, last, parent_key=keys[-2] if len(keys) >= 2 else ""
+        )
         if match is None:
             names = [item.get("name") for item in current]
             raise ValueError(
@@ -316,6 +329,27 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
         match[last] = value
     else:
         current[last] = value
+
+
+def _find_phase_or_recipe_alias(
+    items: list[dict[str, Any]], name: str, *, parent_key: str
+) -> dict[str, Any] | None:
+    """Resolve `_find_named` with a `phases.profiling` recipe-friendly fallback.
+
+    When ``name`` is ``profiling`` and the parent segment is ``phases`` and
+    no phase by that name exists, return the unique non-warmup phase if one
+    exists; otherwise return None (caller raises with the existing-names
+    list, same as a plain miss).
+    """
+    direct = _find_named(items, name)
+    if direct is not None:
+        return direct
+    if name != "profiling" or parent_key != "phases":
+        return None
+    candidates = [item for item in items if item.get("name") != "warmup"]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def _find_named(items: list[dict[str, Any]], name: str) -> dict[str, Any] | None:

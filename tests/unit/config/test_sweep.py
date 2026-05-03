@@ -395,6 +395,43 @@ class TestSetNestedValueStrictNamedList:
         warm = next(p for p in data["phases"] if p["name"] == "warmup")
         assert warm["concurrency"] == 2
 
+    def test_set_nested_value_phases_profiling_falls_back_to_default(self):
+        """`phases.profiling.X` resolves to the unique non-warmup phase when
+        no phase by that name exists.
+
+        Regression: search recipes hard-code ``phases.profiling.concurrency``
+        because the v1 -> v2 converter emits a phase named ``profiling``, but
+        YAML configs that use the flat-shorthand form (``phases: {type: ...,
+        concurrency: ...}``) end up with a phase named ``default``. Without
+        the recipe-friendly fallback, ``aiperf profile -f base.yaml
+        --search-recipe X`` failed with ``no entry named 'profiling' found
+        (existing: ['default'])``.
+        """
+        data = {
+            "phases": [
+                {"name": "warmup", "concurrency": 1},
+                {"name": "default", "type": "concurrency", "concurrency": 8},
+            ]
+        }
+        _set_nested_value(data, "phases.profiling.concurrency", 64)
+        # The single non-warmup phase (named "default") got the override.
+        default_phase = next(p for p in data["phases"] if p["name"] == "default")
+        assert default_phase["concurrency"] == 64
+        warm = next(p for p in data["phases"] if p["name"] == "warmup")
+        assert warm["concurrency"] == 1
+
+    def test_set_nested_value_phases_profiling_ambiguous_falls_through(self):
+        """When MULTIPLE non-warmup phases exist, the fallback is unsafe and
+        the strict ValueError fires unchanged (better to error than guess)."""
+        data = {
+            "phases": [
+                {"name": "stage1", "concurrency": 1},
+                {"name": "stage2", "concurrency": 2},
+            ]
+        }
+        with pytest.raises(ValueError, match=r"no entry named 'profiling'"):
+            _set_nested_value(data, "phases.profiling.concurrency", 64)
+
     def test_expand_sweep_grid_typo_named_path_errors_at_expand_time(self):
         """A grid-sweep typo'd named-list path errors at `expand_sweep` time
         (not silently in a downstream stage)."""

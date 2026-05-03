@@ -51,19 +51,21 @@ def profile(
 
     with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
         from aiperf.config.loader import build_benchmark_plan
-        from aiperf.config.v1.converter import convert_user_to_aiperf
+        from aiperf.config.v1._resolver import resolve_config
 
         if service_config is None:
             service_config = ServiceConfig()
 
+        # `resolve_config` handles both paths: CLI-only (no config_file) and
+        # YAML+CLI merge (where YAML is the base and explicitly-set CLI flags
+        # like --search-recipe / --ttft-sla-ms / --ui overlay on top). The
+        # prior `if config_file is not None: load_benchmark_plan` branch had
+        # YAML hard-override CLI, which broke `aiperf profile -f base.yaml
+        # --search-recipe X --ttft-sla-ms 200` because the recipe never
+        # reached the converter.
         config_file = user_config.config_file
-        if config_file is not None:
-            from aiperf.config.loader import load_benchmark_plan
-
-            plan = load_benchmark_plan(config_file)
-        else:
-            config = convert_user_to_aiperf(user_config, service_config)
-            plan = build_benchmark_plan(config)
+        config = resolve_config(user_config, service_config, config_file)
+        plan = build_benchmark_plan(config)
 
     with exit_on_error(
         title="Error Running AIPerf System",

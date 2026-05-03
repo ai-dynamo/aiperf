@@ -295,10 +295,16 @@ class EndpointConfig(BaseConfig):
         if not isinstance(data, dict):
             return data
 
-        # url → urls (singular to plural)
-        if "url" in data and "urls" not in data:
+        # url → urls (singular to plural). Both keys can be present after a
+        # YAML+CLI deep-merge (resolve_config) where the YAML used the
+        # singular shorthand and a CLI flag overlaid the plural form: in that
+        # case the CLI wins and we drop the YAML shorthand. Without this,
+        # AIPerfConfig.endpoint.model_validate fails with `url: Extra inputs
+        # are not permitted` because both keys reach the validator.
+        if "url" in data:
             url = data.pop("url")
-            data["urls"] = [url] if isinstance(url, str) else url
+            if "urls" not in data:
+                data["urls"] = [url] if isinstance(url, str) else url
 
         # Auto-detect template type
         if "template" in data and data["template"] is not None and "type" not in data:
