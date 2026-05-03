@@ -46,10 +46,10 @@ from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
 from aiperf.operator.handlers import jobset_terminal as jobset_terminal_handler
 from aiperf.operator.handlers import pod_restarts as pod_restarts_handler
-from aiperf.operator.metrics import start_metrics_server, track_handler
 from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
 from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
+from aiperf.operator.metrics import start_metrics_server, track_handler
 
 AIPERF_SWEEPS_PLURAL = "aiperfsweeps"
 
@@ -186,6 +186,7 @@ async def on_aiperfjob_phase_transition(
 )
 @track_handler("on_pod_container_status_change")
 async def on_pod_container_status_change(
+    *,
     old: list[dict[str, Any]] | None,
     new: list[dict[str, Any]] | None,
     body: dict[str, Any],

@@ -53,7 +53,9 @@ COMPLETION_CLAIM_RACES = Counter(
 )
 
 
-def track_handler(name: str) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
+def track_handler(
+    name: str,
+) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
     """Decorator that records duration and outcome for an async kopf handler."""
 
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
@@ -63,11 +65,18 @@ def track_handler(name: str) -> Callable[[Callable[..., Awaitable[T]]], Callable
             outcome = "success"
             try:
                 return await func(*args, **kwargs)
-            except Exception:
+            except BaseException:
+                # BaseException (not Exception) so asyncio.CancelledError,
+                # KeyboardInterrupt, SystemExit also account as "error" before
+                # propagating. CancelledError is a BaseException in Python
+                # 3.8+, and silently classifying handler cancellation as
+                # "success" would hide stuck-handler / shutdown problems.
                 outcome = "error"
                 raise
             finally:
-                HANDLER_DURATION.labels(handler=name).observe(time.perf_counter() - start)
+                HANDLER_DURATION.labels(handler=name).observe(
+                    time.perf_counter() - start
+                )
                 HANDLER_TOTAL.labels(handler=name, outcome=outcome).inc()
 
         return wrapper

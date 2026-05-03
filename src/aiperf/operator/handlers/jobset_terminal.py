@@ -27,8 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 def _has_completed_condition(conditions: list[dict[str, Any]] | None) -> bool:
-    """Return True if any condition is ``type=Completed status=True``."""
+    """Return True if any condition is ``type=Completed status=True``.
+
+    Defensive against non-dict entries (None / strings / numbers) that can
+    appear if a malformed JobSet status leaks through the apiserver — kopf
+    delivers the conditions list as-is, so we cannot assume well-formedness.
+    """
     for cond in conditions or []:
+        if not isinstance(cond, dict):
+            continue
         if cond.get("type") == "Completed" and cond.get("status") == "True":
             return True
     return False
