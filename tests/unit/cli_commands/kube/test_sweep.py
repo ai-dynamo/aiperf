@@ -12,6 +12,7 @@ import pytest
 from pytest import param
 
 from aiperf.cli_commands.kube import sweep as sweep_cmd
+from aiperf.config.v1 import UserConfig
 
 
 def _kube_options_mock() -> MagicMock:
@@ -342,6 +343,203 @@ spec: {}
             convergence_max_runs=10,
             convergence_threshold=0.05,
         )
+
+
+# ---------------------------------------------------------------------------
+# CLI override merge / canonicalization adversarial tests
+# ---------------------------------------------------------------------------
+
+
+def _bare_config(tmp_path: Path) -> Path:
+    """Minimal long-form YAML; no recipe / sweep / multi_run preset."""
+    p = tmp_path / "bare.yaml"
+    p.write_text(
+        """
+models: [m]
+endpoint: {urls: [http://x], type: chat, streaming: true}
+datasets: [{name: main, type: synthetic, prompts: {isl: 64, osl: 32}}]
+phases:
+  - {name: profiling, type: concurrency, requests: 30, concurrency: 8}
+"""
+    )
+    return p
+
+
+def test_build_sweep_cr_dict_user_config_recipe_lands_adaptive_search(
+    tmp_path: Path,
+) -> None:
+    """``--search-recipe max-throughput-ttft-sla --ttft-sla-ms 200`` paired
+    with --config must populate spec.multiRun.adaptiveSearch (the bug fix
+    everything in this round was for) -- and the round-trip canonicalization
+    must surface the camelCase alias the K8s apiserver requires.
+    """
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"streaming": True},
+            "loadgen": {
+                "search_recipe": "max-throughput-ttft-sla",
+                "ttft_sla_ms": 200.0,
+            },
+        }
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=_bare_config(tmp_path),
+        kube_options=_kube_options_mock(),
+        user_config=user,
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    mr = cr["spec"]["multiRun"]
+    # camelCase alias survives the by_alias round-trip; the apiserver rejects
+    # snake_case `adaptive_search` even though the local validator accepts it.
+    assert "adaptiveSearch" in mr or "adaptive_search" in mr
+    ad = mr.get("adaptiveSearch") or mr.get("adaptive_search")
+    assert ad["recipeName"] == "max-throughput-ttft-sla" or (
+        ad.get("recipe_name") == "max-throughput-ttft-sla"
+    )
+    sla = ad.get("slaFilters") or ad.get("sla_filters") or []
+    assert len(sla) == 1
+    assert sla[0].get("threshold") == 200.0
+
+
+def test_build_sweep_cr_dict_grid_recipe_lifts_to_spec_sweep(tmp_path: Path) -> None:
+    """Grid recipes (concurrency-ramp, prefill-ttft-curve, decode-itl-curve)
+    emit a sweep block that must hoist to ``spec.sweep`` -- not stay buried
+    in ``spec.template.spec.benchmark``."""
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"streaming": True},
+            "loadgen": {"search_recipe": "concurrency-ramp"},
+        }
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=_bare_config(tmp_path),
+        kube_options=_kube_options_mock(),
+        user_config=user,
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    assert "sweep" in cr["spec"], "recipe-driven sweep must hoist to spec.sweep"
+    assert "phases.profiling.concurrency" in cr["spec"]["sweep"]["variables"]
+    bench = cr["spec"]["template"]["spec"]["benchmark"]
+    assert "sweep" not in bench, "sweep must NOT be embedded in benchmark"
+
+
+def test_build_sweep_cr_dict_filters_grid_only_multirun_keys(tmp_path: Path) -> None:
+    """Grid recipes' ``post_process`` and ``sla_filters`` are in-process-only
+    (the K8s MultiRunConfig is `extra=forbid` and has no controller-side
+    consumer for them yet). They must be stripped before bubbling up to
+    ``spec.multiRun``, otherwise the apiserver rejects the CR."""
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"streaming": True},
+            "loadgen": {
+                "search_recipe": "concurrency-ramp",
+                "degradation_threshold": 0.20,
+            },
+        }
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=_bare_config(tmp_path),
+        kube_options=_kube_options_mock(),
+        user_config=user,
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    mr = cr["spec"].get("multiRun", {}) or {}
+    # post_process / sla_filters must NOT be at the multi_run level.
+    assert "postProcess" not in mr
+    assert "post_process" not in mr
+    assert "slaFilters" not in mr
+    assert "sla_filters" not in mr
+
+
+def test_build_sweep_cr_dict_yaml_sweep_wins_over_recipe(tmp_path: Path) -> None:
+    """When the YAML already declares a sweep block AND the user passes a
+    grid recipe, the YAML wins (recipe overrides only fill in absent
+    blocks). This keeps the user's hand-written sweep stable and avoids
+    silently swapping their variables for the recipe's defaults."""
+    config_file = tmp_path / "yaml-sweep.yaml"
+    config_file.write_text(
+        """
+models: [m]
+endpoint: {urls: [http://x], type: chat, streaming: true}
+datasets: [{name: main, type: synthetic, prompts: {isl: 64, osl: 32}}]
+phases:
+  - {name: profiling, type: concurrency, requests: 30, concurrency: 8}
+sweep:
+  type: grid
+  variables:
+    random_seed: [1, 2, 3]
+"""
+    )
+    user = UserConfig.model_validate(
+        {
+            "endpoint": {"streaming": True},
+            "loadgen": {"search_recipe": "concurrency-ramp"},
+        }
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        user_config=user,
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    # User's YAML sweep variables survive; recipe's concurrency variables
+    # don't clobber them.
+    assert cr["spec"]["sweep"]["variables"] == {"random_seed": [1, 2, 3]}
+
+
+def test_build_sweep_cr_dict_no_user_config_keeps_yaml_intact(
+    tmp_path: Path,
+) -> None:
+    """When user_config is None (the legacy direct-call path used by some
+    older callers), the merge must be a no-op -- otherwise we'd start
+    silently emitting empty endpoint/models/etc blocks that clobber YAML."""
+    config_file = tmp_path / "yaml-only.yaml"
+    config_file.write_text(
+        """
+models: [yaml-only-model]
+endpoint: {urls: [http://yaml-only], type: chat}
+datasets: [{name: main, type: synthetic, prompts: {isl: 64, osl: 32}}]
+phases:
+  - {name: profiling, type: concurrency, requests: 30, concurrency: 8}
+sweep:
+  type: grid
+  variables: {random_seed: [1, 2]}
+"""
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options_mock(),
+        user_config=None,
+        multi_run_trials=None,
+        cooldown_seconds=0,
+        convergence_metric=None,
+        convergence_min_runs=3,
+        convergence_max_runs=10,
+        convergence_threshold=0.05,
+    )
+    bench = cr["spec"]["template"]["spec"]["benchmark"]
+    assert [m["name"] for m in bench["models"]["items"]] == ["yaml-only-model"]
+    assert cr["spec"]["sweep"]["variables"] == {"random_seed": [1, 2]}
 
 
 # =============================================================================
