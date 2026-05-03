@@ -10,7 +10,15 @@ container and cannot see the kopf process's in-memory state).
 Metrics:
     aiperf_operator_handler_duration_seconds{handler}      Histogram
     aiperf_operator_handler_total{handler, outcome}        Counter
+        outcome ∈ {success, retry, fatal, error}
+        - success: handler returned normally
+        - retry:   raised kopf.TemporaryError (kopf will retry)
+        - fatal:   raised kopf.PermanentError (kopf stops retrying)
+        - error:   any other exception, incl. CancelledError/KeyboardInterrupt/SystemExit
     aiperf_operator_completion_claim_races_total           Counter
+        Incremented each time try_claim_completion loses the race for a CR
+        (annotation already present, or apiserver returns 409/422 on the
+        atomic test-and-add patch).
 
 Usage:
     @track_handler("monitor_progress")
@@ -56,7 +64,21 @@ COMPLETION_CLAIM_RACES = Counter(
 def track_handler(
     name: str,
 ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
-    """Decorator that records duration and outcome for an async kopf handler."""
+    """Decorator that records duration and outcome for an async kopf handler.
+
+    Outcome classification:
+        - ``"success"``: handler returned normally.
+        - ``"retry"``: handler raised ``kopf.TemporaryError`` (kopf will
+          re-dispatch after the configured delay; not a real failure).
+        - ``"fatal"``: handler raised ``kopf.PermanentError`` (kopf stops
+          retrying; this CR is stuck and needs operator attention).
+        - ``"error"``: anything else, including ``asyncio.CancelledError``,
+          ``KeyboardInterrupt``, ``SystemExit`` (BaseException family). The
+          counter labels both retry and fatal separately so operators can
+          alert specifically on "stuck CR" without false positives from
+          transient apiserver hiccups.
+    """
+    import kopf
 
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @functools.wraps(func)
@@ -65,6 +87,12 @@ def track_handler(
             outcome = "success"
             try:
                 return await func(*args, **kwargs)
+            except kopf.TemporaryError:
+                outcome = "retry"
+                raise
+            except kopf.PermanentError:
+                outcome = "fatal"
+                raise
             except BaseException:
                 # BaseException (not Exception) so asyncio.CancelledError,
                 # KeyboardInterrupt, SystemExit also account as "error" before
