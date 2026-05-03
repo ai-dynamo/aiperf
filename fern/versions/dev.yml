@@ -166,6 +166,8 @@ navigation:
         path: ../pages-dev/reference/tokenizer-auto-detection.md
       - page: Conversation Context Mode
         path: ../pages-dev/reference/conversation-context-mode.md
+      - page: List-Metric Aggregation
+        path: ../pages-dev/reference/list-metric-aggregation.md
   - section: Server Metrics
     collapsed: true
     contents:
