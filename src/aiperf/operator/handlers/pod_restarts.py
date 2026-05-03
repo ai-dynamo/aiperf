@@ -108,35 +108,49 @@ async def handle_pod_restart(
     name: str,
     threshold: int,
 ) -> None:
-    """Inspect a Pod containerStatuses transition and emit a single event per (pod, restart-count)."""
+    """Inspect a Pod containerStatuses transition and emit a single event per (pod, restart-count).
+
+    Lookup-first ordering: we resolve the parent AIPerfJob CR BEFORE
+    pre-claiming dedup state. This avoids two leaks the previous order had:
+      1. Sweep-owned JobSets (lookup returns None) would still leave a
+         pre-claim entry under the jobset-name-keyed dict that no eviction
+         path ever cleaned up (sweep JobSets have no AIPerfJob, so
+         ``client_cache._close_unlocked`` never sees the matching job_id key).
+      2. Successful lookups migrated dedup state to the canonical job-id
+         key but left the original jobset-name-keyed entry orphaned, since
+         eviction is keyed by job_id.
+    Pre-claim atomicity (the round-1 dedup race fix) is preserved because
+    ``_claim_dedup_candidates`` does the in/add under a single coroutine
+    step with no await between membership-check and add.
+    """
     jobset_name = (meta.get("labels") or {}).get("jobset.sigs.k8s.io/jobset-name")
     if not jobset_name:
         return
 
-    # Pre-claim dedup keys BEFORE the apiserver lookup. Two concurrent fires
-    # for the same (pod, count) would both reach the await if the check
-    # happened after — both would emit. Pre-claim is atomic under asyncio
-    # because there is no await between `in` and `add`.
-    cache_key_for_jobset = job_key(namespace, jobset_name)
-    pre_warned = _warned_pod_restarts.setdefault(cache_key_for_jobset, set())
+    # Quick early-out: nothing in the new statuses is at-or-above threshold,
+    # so don't pay the apiserver round-trip for the AIPerfJob lookup.
+    if not _has_above_threshold(new, threshold=threshold):
+        return
+
+    aiperfjob_body = await _lookup_aiperfjob_body(namespace, jobset_name)
+    if aiperfjob_body is None:
+        return  # sweep-owned or already deleted; no pre-claim leaked
+
+    job_id = (aiperfjob_body.get("status") or {}).get("jobId") or jobset_name
+    real_key = job_key(namespace, job_id)
+    pre_warned = _warned_pod_restarts.setdefault(real_key, set())
     candidates = _claim_dedup_candidates(
         new, name=name, threshold=threshold, pre_warned=pre_warned
     )
     if not candidates:
         return
 
-    aiperfjob_body = await _lookup_aiperfjob_body(namespace, jobset_name)
-    if aiperfjob_body is None:
-        return
-
-    job_id = (aiperfjob_body.get("status") or {}).get("jobId") or jobset_name
-    real_key = job_key(namespace, job_id)
-    if real_key != cache_key_for_jobset:
-        # Migrate dedup state to the canonical job-id key so future fires
-        # share dedup entries.
-        warned = _warned_pod_restarts.setdefault(real_key, set())
-        for _cs, rc in candidates:
-            warned.add((name, rc))
-
     for cs, restart_count in candidates:
         events.pod_restarts(aiperfjob_body, name, restart_count, _extract_reason(cs))
+
+
+def _has_above_threshold(
+    statuses: list[dict[str, Any]] | None, *, threshold: int
+) -> bool:
+    """Return True if any containerStatus restartCount is at-or-above threshold."""
+    return any(int(cs.get("restartCount") or 0) >= threshold for cs in statuses or [])
