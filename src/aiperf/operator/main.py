@@ -178,27 +178,36 @@ async def on_aiperfjob_phase_transition(
     )
 
 
-@kopf.on.field(
+@kopf.on.event(
     "v1",
     "pods",
-    field="status.containerStatuses",
     labels={"jobset.sigs.k8s.io/jobset-name": kopf.PRESENT},
 )
 @track_handler("on_pod_container_status_change")
 async def on_pod_container_status_change(
     *,
-    old: list[dict[str, Any]] | None,
-    new: list[dict[str, Any]] | None,
+    event: dict[str, Any],
     body: dict[str, Any],
     meta: dict[str, Any],
     namespace: str,
     name: str,
     **_: Any,
 ) -> None:
-    """React to JobSet-labeled Pod restart counts; replaces the monitor-tick poll."""
+    """React to JobSet-labeled Pod restart counts; replaces the monitor-tick poll.
+
+    Uses ``@kopf.on.event`` rather than ``@kopf.on.field`` because field-watchers
+    require kopf to write a per-resource diff-base annotation (``pods: patch``
+    RBAC), which the operator does not have on benchmark namespaces. Event
+    handlers don't need that — kopf stores no state on the watched Pod.
+    Dedup via ``_warned_pod_restarts`` (in-process) handles "same restart count,
+    don't emit twice" without help from kopf.
+    """
+    if event.get("type") == "DELETED":
+        return
+    new = ((body.get("status") or {}).get("containerStatuses")) or []
     await pod_restarts_handler.handle_pod_restart(
-        old=old or [],
-        new=new or [],
+        old=[],
+        new=new,
         body=body,
         meta=meta,
         namespace=namespace,
