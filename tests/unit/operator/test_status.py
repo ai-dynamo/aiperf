@@ -1119,3 +1119,141 @@ class TestStatusBuilderObservedGeneration:
         sb = StatusBuilder(patch, {})
         sb.set_observed_generation(9)
         assert patch.status["observedGeneration"] == 9
+
+
+class TestStatusBuilderObservedGenerationAdversarial:
+    """Adversarial tests for ``StatusBuilder.set_observed_generation`` and the
+    call-site contract every caller of it shares.
+
+    Every call site in ``handlers/{create,lifecycle,monitor}.py`` and
+    ``handlers/sweep/create.py`` follows the SAME shape:
+
+        generation = body.get("metadata", {}).get("generation")
+        if generation is not None:
+            sb.set_observed_generation(int(generation))
+
+    Tests below pin both the unit-level method behavior AND the call-site
+    pattern's defensive properties (the ``if`` guard catches missing
+    metadata.generation; ``int(generation)`` accepts strings & bools).
+    """
+
+    def test_call_site_pattern_skips_when_metadata_missing(self) -> None:
+        """When body has no metadata, the call-site guard prevents the stamp.
+
+        kopf can deliver bodies during create-handler retries before the
+        apiserver has populated `metadata` fully; the guard keeps the
+        operator from KeyError-ing on a partially-formed body.
+        """
+        import kopf
+
+        body: dict[str, Any] = {}  # missing metadata entirely
+        sb = StatusBuilder(kopf.Patch(), {})
+
+        generation = body.get("metadata", {}).get("generation")
+        if generation is not None:
+            sb.set_observed_generation(int(generation))
+
+        assert "observedGeneration" not in sb._patch.status
+
+    def test_call_site_pattern_skips_when_generation_missing(self) -> None:
+        """metadata present but no generation key → still skipped.
+
+        Custom-resource creation events occasionally reach handlers before
+        generation is materialized in the body kopf passes us.
+        """
+        import kopf
+
+        body = {"metadata": {"name": "ajob"}}  # no generation
+        sb = StatusBuilder(kopf.Patch(), {})
+
+        generation = body.get("metadata", {}).get("generation")
+        if generation is not None:
+            sb.set_observed_generation(int(generation))
+
+        assert "observedGeneration" not in sb._patch.status
+
+    def test_set_observed_generation_with_string_input_is_coerced_at_call_site(
+        self,
+    ) -> None:
+        """Call sites wrap the value in ``int()`` so a stringly-typed
+        generation (e.g. from a CRD round-trip via JSON) lands as int."""
+        import kopf
+
+        body = {"metadata": {"generation": "7"}}  # stringified
+        sb = StatusBuilder(kopf.Patch(), {})
+
+        generation = body.get("metadata", {}).get("generation")
+        sb.set_observed_generation(int(generation))
+
+        assert sb._patch.status["observedGeneration"] == 7
+        assert isinstance(sb._patch.status["observedGeneration"], int)
+
+    def test_set_observed_generation_zero_is_stamped_verbatim(self) -> None:
+        """generation=0 isn't a real k8s value (apiserver starts at 1) but the
+        method must NOT silently skip it — defensive callers shouldn't have
+        to second-guess stamping. Pin the verbatim behavior."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(0)
+        assert patch.status["observedGeneration"] == 0
+
+    def test_set_observed_generation_negative_is_stamped_verbatim(self) -> None:
+        """A negative generation isn't valid in real k8s but the method
+        does no validation. Pin: stamp as-is, never crash."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(-1)
+        assert patch.status["observedGeneration"] == -1
+
+    def test_set_observed_generation_idempotent_same_value(self) -> None:
+        """Two stamps with the same value behave identically to one."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(5)
+        sb.set_observed_generation(5)
+        assert patch.status["observedGeneration"] == 5
+
+    def test_set_observed_generation_last_write_wins_in_one_tick(self) -> None:
+        """If a single tick stamps twice (e.g. lifecycle then monitor) the
+        last value lands — kopf flushes a single patch per handler return."""
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(7)
+        sb.set_observed_generation(8)
+        assert patch.status["observedGeneration"] == 8
+
+    @pytest.mark.parametrize(
+        "bool_input,expected",
+        [
+            param(True, 1, id="true_coerces_to_one"),
+            param(False, 0, id="false_coerces_to_zero"),
+        ],
+    )  # fmt: skip
+    def test_set_observed_generation_bool_coercion_is_surprising_but_pinned(
+        self, bool_input: bool, expected: int
+    ) -> None:
+        """``int(True) == 1`` is a Python quirk — neither caller currently
+        passes a bool, but if one ever did via ``int(generation)``, this
+        documents the behavior so the next reader doesn't get bitten.
+
+        If we ever WANT to reject bools we'd add isinstance check at the call site.
+        """
+        from unittest.mock import MagicMock
+
+        patch = MagicMock()
+        patch.status = {}
+        sb = StatusBuilder(patch, {})
+        sb.set_observed_generation(int(bool_input))
+        assert patch.status["observedGeneration"] == expected
