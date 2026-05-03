@@ -217,7 +217,9 @@ async def test_v1_pods_strip_click_switches_diagnostics_tab(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-@pytest.mark.skip(reason="Run manually (comment the skip) to refresh docs/media/images/api-dashboard-v2.png")
+@pytest.mark.skip(
+    reason="Run manually (comment the skip) to refresh docs/media/images/api-dashboard-v2.png"
+)
 async def test_capture_dashboard_screenshot_v1(
     live_operator_app, seeded_results_dir, fake_k8s_client, page
 ) -> None:

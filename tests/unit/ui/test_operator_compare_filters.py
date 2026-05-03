@@ -110,7 +110,16 @@ def test_extract_facets_counts_distinct_values_and_buckets_nulls() -> None:
     """
     out = _run_node(script)
     import json
+
     parsed = json.loads(out)
     assert dict(parsed["ns"]) == {"default": 2, "staging": 2, "bench": 1}
-    assert dict(parsed["model"]) == {"meta/llama-3": 3, "openai/gpt-oss": 1, "__none__": 1}
-    assert dict(parsed["endpoint"]) == {"/v1/chat": 3, "/v1/completions": 1, "__none__": 1}
+    assert dict(parsed["model"]) == {
+        "meta/llama-3": 3,
+        "openai/gpt-oss": 1,
+        "__none__": 1,
+    }
+    assert dict(parsed["endpoint"]) == {
+        "/v1/chat": 3,
+        "/v1/completions": 1,
+        "__none__": 1,
+    }

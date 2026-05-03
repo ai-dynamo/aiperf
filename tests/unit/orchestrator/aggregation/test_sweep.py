@@ -1060,7 +1060,11 @@ class TestSweepAnalyzer:
 
         per_combo = result["per_combination_metrics"]
         assert len(per_combo) == 3
-        assert [entry["parameters"]["concurrency"] for entry in per_combo] == [10, 20, 30]
+        assert [entry["parameters"]["concurrency"] for entry in per_combo] == [
+            10,
+            20,
+            30,
+        ]
 
         best = result["best_configurations"]
         assert best["best_throughput"]["parameters"] == {"concurrency": 20}

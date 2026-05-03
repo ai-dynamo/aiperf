@@ -256,9 +256,7 @@ async def test_aggregate_per_variation_skips_below_minimum_runs(tmp_path, logger
     written = await aggregate_per_variation_and_export([r], plan, tmp_path, logger)
     assert written == []
     # No aggregate dir should be created.
-    assert not (
-        tmp_path / "phases.profiling.concurrency=10" / "aggregate"
-    ).exists()
+    assert not (tmp_path / "phases.profiling.concurrency=10" / "aggregate").exists()
 
 
 @pytest.mark.asyncio
@@ -307,6 +305,7 @@ async def test_aggregate_per_variation_handles_partial_failures_per_cell(
 async def test_aggregate_sweep_logs_best_configurations(tmp_path, caplog):
     """aggregate_sweep_and_export echoes Best Configurations after writing exporters."""
     plan = _make_plan()
+
     # SweepAnalyzer keys best/pareto off ``request_throughput_avg`` (maximize)
     # and ``time_to_first_token_p99`` (minimize). Build results with those exact
     # metric names so the analyzer populates best_configurations + pareto.

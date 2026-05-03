@@ -1525,9 +1525,7 @@ class TestTerminalConditionsCompleteFailed:
         mock_patch.status = {}
         sb = StatusBuilder(mock_patch)
         sb.set_phase(Phase.COMPLETED)
-        sb.conditions.set_true(
-            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
-        )
+        sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok")
         sb.finalize()
         first_snapshot = sorted(
             (c["type"], c["status"]) for c in mock_patch.status["conditions"]
@@ -1551,18 +1549,16 @@ class TestTerminalConditionsCompleteFailed:
         mock_patch.status = {}
         sb = StatusBuilder(mock_patch)
         sb.set_phase(Phase.COMPLETED)
-        sb.conditions.set_true(
-            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
-        )
+        sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok")
 
         with patch(
             "aiperf.operator.status.format_timestamp",
             return_value="2026-05-03T10:00:00Z",
         ):
             sb.finalize()
-        first_time = _conditions_by_type(mock_patch.status["conditions"])[
-            "Complete"
-        ]["lastTransitionTime"]
+        first_time = _conditions_by_type(mock_patch.status["conditions"])["Complete"][
+            "lastTransitionTime"
+        ]
         assert first_time == "2026-05-03T10:00:00Z"
 
         # A later finalize with no status change must NOT advance the time.
@@ -1571,9 +1567,9 @@ class TestTerminalConditionsCompleteFailed:
             return_value="2026-05-03T11:00:00Z",
         ):
             sb.finalize()
-        second_time = _conditions_by_type(mock_patch.status["conditions"])[
-            "Complete"
-        ]["lastTransitionTime"]
+        second_time = _conditions_by_type(mock_patch.status["conditions"])["Complete"][
+            "lastTransitionTime"
+        ]
         assert second_time == first_time
 
     def test_terminal_transition_from_completed_to_failed_flips_both(self) -> None:
@@ -1584,14 +1580,10 @@ class TestTerminalConditionsCompleteFailed:
         mock_patch.status = {}
         sb = StatusBuilder(mock_patch)
         sb.set_phase(Phase.COMPLETED)
-        sb.conditions.set_true(
-            ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok"
-        )
+        sb.conditions.set_true(ConditionType.RESULTS_AVAILABLE, "ResultsStored", "ok")
         sb.finalize()
         assert (
-            _conditions_by_type(mock_patch.status["conditions"])["Complete"][
-                "status"
-            ]
+            _conditions_by_type(mock_patch.status["conditions"])["Complete"]["status"]
             == "True"
         )
 

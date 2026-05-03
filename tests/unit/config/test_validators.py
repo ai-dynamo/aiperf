@@ -120,7 +120,9 @@ def test_parameter_sweep_mode_with_single_concurrency_raises_error() -> None:
         _make(multi_run={"mode": "independent"})
 
 
-def test_parameter_sweep_cooldown_seconds_with_single_concurrency_raises_error() -> None:
+def test_parameter_sweep_cooldown_seconds_with_single_concurrency_raises_error() -> (
+    None
+):
     """`--parameter-sweep-cooldown-seconds` without a sweep is rejected."""
     with pytest.raises(
         ValueError, match="--parameter-sweep-cooldown-seconds only applies"

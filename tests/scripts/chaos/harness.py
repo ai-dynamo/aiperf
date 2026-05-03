@@ -189,9 +189,7 @@ def skip_case(name: str, why: str) -> Case:
 
 
 def verdict_for(expected: Expected, rc: int, text: str) -> str:
-    non_debug = "\n".join(
-        line for line in text.splitlines() if " DEBUG " not in line
-    )
+    non_debug = "\n".join(line for line in text.splitlines() if " DEBUG " not in line)
     crashed = any(marker in non_debug for marker in CRASH_MARKERS)
     if expected == "PASS_REQUIRED":
         return (

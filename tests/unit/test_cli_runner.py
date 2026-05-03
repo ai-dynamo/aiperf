@@ -726,7 +726,9 @@ class TestSummarizeAndExportFailedSweep:
         monkeypatch.setattr("aiperf.cli_runner.aggregate_sweep_and_export", _noop)
 
         test_logger = logging.getLogger("aiperf.cli_runner.summarize_test")
-        with caplog.at_level(logging.WARNING, logger="aiperf.cli_runner.summarize_test"):
+        with caplog.at_level(
+            logging.WARNING, logger="aiperf.cli_runner.summarize_test"
+        ):
             _summarize_and_export(
                 plan,
                 results,
@@ -736,9 +738,7 @@ class TestSummarizeAndExportFailedSweep:
                 logger=test_logger,
             )
 
-        warnings = [
-            r.message for r in caplog.records if r.levelno >= logging.WARNING
-        ]
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         # Sweep summary line uses bare "concurrency=20" form, not the label form.
         assert any(
             "Some sweep variations failed" in m

@@ -155,9 +155,7 @@ def get_search_planner_metadata(name: str) -> SearchPlannerMetadata:
     Returns:
         Validated SearchPlannerMetadata instance.
     """
-    return _get_entry("search_planner", name).get_typed_metadata(
-        SearchPlannerMetadata
-    )
+    return _get_entry("search_planner", name).get_typed_metadata(SearchPlannerMetadata)
 
 
 def is_trace_dataset(name: str) -> bool:

@@ -56,9 +56,7 @@ def test_convergence_criterion_plugin_lookup_by_name():
         plugins.get_class(PluginType.CONVERGENCE_CRITERION, "ci_width")
         is CIWidthConvergence
     )
-    assert (
-        plugins.get_class(PluginType.CONVERGENCE_CRITERION, "cv") is CVConvergence
-    )
+    assert plugins.get_class(PluginType.CONVERGENCE_CRITERION, "cv") is CVConvergence
     assert (
         plugins.get_class(PluginType.CONVERGENCE_CRITERION, "distribution")
         is DistributionConvergence
@@ -87,7 +85,10 @@ def test_search_planner_plugin_lookup_by_name():
     """The bayesian planner is reachable via plugins.get_class without importing skopt."""
     from aiperf.orchestrator.search_planner.bayesian import BayesianSearchPlanner
 
-    assert plugins.get_class(PluginType.SEARCH_PLANNER, "bayesian") is BayesianSearchPlanner
+    assert (
+        plugins.get_class(PluginType.SEARCH_PLANNER, "bayesian")
+        is BayesianSearchPlanner
+    )
     assert SearchPlannerType.BAYESIAN == "bayesian"
 
 

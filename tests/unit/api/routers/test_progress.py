@@ -590,7 +590,9 @@ async def test_patch_aiperfjob_annotations_uses_aiperfjob_crd_refs(
     assert kwargs["version"] == AIPERF_VERSION
     assert kwargs["plural"] == AIPERF_PLURAL
     assert kwargs["namespace"] == "ns"
-    assert kwargs["name"] == "job-1"  # NOT aiperf-job-1 — AIPerfJob name is the bare job_id
+    assert (
+        kwargs["name"] == "job-1"
+    )  # NOT aiperf-job-1 — AIPerfJob name is the bare job_id
     assert kwargs["body"] == {"metadata": {"annotations": {"k": "v"}}}
     assert kwargs["_content_type"] == "application/merge-patch+json"
 
@@ -623,7 +625,9 @@ class TestPatchJobsetProgressMirrorsBoth:
         import aiperf.api.routers.progress as progress_mod
 
         monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
-        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+        monkeypatch.setattr(
+            progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob
+        )
 
         await progress_router._patch_jobset_progress()
 
@@ -689,7 +693,9 @@ class TestPatchJobsetProgressMirrorsBoth:
         import aiperf.api.routers.progress as progress_mod
 
         monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
-        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+        monkeypatch.setattr(
+            progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob
+        )
 
         await progress_router._patch_jobset_progress()
         await progress_router._patch_jobset_progress()
@@ -720,7 +726,9 @@ class TestPatchJobsetProgressMirrorsBoth:
         import aiperf.api.routers.progress as progress_mod
 
         monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
-        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+        monkeypatch.setattr(
+            progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob
+        )
 
         await progress_router._patch_jobset_progress()
         # Same phases (none) but system_state transitions configuring -> ready.
