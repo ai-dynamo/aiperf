@@ -41,6 +41,7 @@ from aiperf.kubernetes.cr_refs import (
 from aiperf.operator import runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
+from aiperf.operator.handlers import pod_restarts as pod_restarts_handler
 from aiperf.operator.metrics import start_metrics_server, track_handler
 from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
 from aiperf.operator.handlers.sweep import create as sweep_create
@@ -170,6 +171,34 @@ async def on_aiperfjob_phase_transition(
     )
     await lifecycle.record_phase_transition(
         namespace=namespace, name=name, status=status
+    )
+
+
+@kopf.on.field(
+    "v1",
+    "pods",
+    field="status.containerStatuses",
+    labels={"jobset.sigs.k8s.io/jobset-name": kopf.PRESENT},
+)
+@track_handler("on_pod_container_status_change")
+async def on_pod_container_status_change(
+    old: list[dict[str, Any]] | None,
+    new: list[dict[str, Any]] | None,
+    body: dict[str, Any],
+    meta: dict[str, Any],
+    namespace: str,
+    name: str,
+    **_: Any,
+) -> None:
+    """React to JobSet-labeled Pod restart counts; replaces the monitor-tick poll."""
+    await pod_restarts_handler.handle_pod_restart(
+        old=old or [],
+        new=new or [],
+        body=body,
+        meta=meta,
+        namespace=namespace,
+        name=name,
+        threshold=OperatorEnvironment.POD_RESTART_THRESHOLD,
     )
 
 

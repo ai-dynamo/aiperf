@@ -33,7 +33,6 @@ from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
     _shutdown_sent,
-    _warned_pod_restarts,
     close_progress_client,
     get_or_create_progress_client,
     is_cancellation_requested,
@@ -592,9 +591,6 @@ async def _run_worker_and_progress_phase(
     ):
         sb.set_phase(Phase.INITIALIZING)
 
-    # Check for pod restarts (CrashLoopBackOff detection)
-    await _check_pod_restarts(api, body, namespace, jobset_name, key=key)
-
     if await _maybe_recover_terminated_controller(
         api,
         body,
@@ -1050,51 +1046,6 @@ async def monitor_progress(
         logger.exception(f"Unexpected error monitoring {namespace}/{name}")
         sb.finalize()
         raise
-
-
-async def _check_pod_restarts(
-    api: ApiClient,
-    body: dict[str, Any],
-    namespace: str,
-    jobset_name: str,
-    *,
-    key: str,
-) -> None:
-    """Check for excessive pod restarts and emit warning events (deduplicated)."""
-    try:
-        pod_list = await client.CoreV1Api(api).list_namespaced_pod(
-            namespace=namespace,
-            label_selector=f"jobset.sigs.k8s.io/jobset-name={jobset_name}",
-        )
-        pods = pod_list.items
-        warned = _warned_pod_restarts.setdefault(key, set())
-        for pod in pods:
-            pod_name = (pod.metadata.name if pod.metadata else "") or ""
-            container_statuses = (
-                (pod.status.container_statuses or []) if pod.status else []
-            )
-            init_statuses = (
-                (pod.status.init_container_statuses or []) if pod.status else []
-            )
-            all_statuses = list(container_statuses) + list(init_statuses)
-            for cs in all_statuses:
-                restart_count = cs.restart_count or 0
-                if restart_count < OperatorEnvironment.POD_RESTART_THRESHOLD:
-                    continue
-                dedup_key = (pod_name, restart_count)
-                if dedup_key in warned:
-                    continue
-                warned.add(dedup_key)
-                reason = "Unknown"
-                if cs.last_state and cs.last_state.terminated:
-                    reason = cs.last_state.terminated.reason or "Unknown"
-                if cs.state and cs.state.waiting:
-                    reason = cs.state.waiting.reason or reason
-                events.pod_restarts(body, pod_name, restart_count, reason)
-    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-        logger.warning(f"Failed to check pod restarts: {e}")
-    except Exception as e:  # noqa: BLE001 - best-effort event emission; restart-scan failure must not abort the monitor tick
-        logger.warning(f"Failed to check pod restarts: {e}")
 
 
 def _container_status_by_name(statuses: list[Any], name: str) -> Any | None:

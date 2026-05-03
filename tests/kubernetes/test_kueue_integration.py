@@ -372,10 +372,6 @@ class TestKueueOperatorFlow:
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
             ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
-            ),
         ):
             await monitor_progress(
                 body={},
@@ -422,10 +418,6 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
             ),
         ):
             await monitor_progress(
@@ -613,10 +605,6 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._fetch_progress",

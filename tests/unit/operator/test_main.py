@@ -1475,10 +1475,6 @@ class TestMonitorProgressAdvanced:
                 return_value=mock_client,
             ),
             mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
-            ),
-            mock_patch(
                 "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -1540,10 +1536,6 @@ class TestMonitorProgressAdvanced:
                 "aiperf.operator.handlers.monitor.get_or_create_progress_client",
                 new_callable=AsyncMock,
                 return_value=mock_client,
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
             ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
@@ -2506,210 +2498,6 @@ class TestProgressClientCache:
         assert "no-such-job" not in _progress_clients
 
 
-# =============================================================================
-# Test _check_pod_restarts
-# =============================================================================
-
-
-class TestCheckPodRestarts:
-    """Tests for _check_pod_restarts function."""
-
-    @pytest.fixture(autouse=True)
-    def _clear_warned_restarts(self):
-        """Clear pod restart dedup state between tests."""
-        from aiperf.operator.client_cache import _warned_pod_restarts
-
-        _warned_pod_restarts.clear()
-        yield
-        _warned_pod_restarts.clear()
-
-    @pytest.mark.asyncio
-    async def test_emits_event_for_high_restarts(self) -> None:
-        """Verify emits pod restart event when restarts exceed threshold."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        pod = _make_pod(
-            name="worker-0-0",
-            container_statuses_raw=[
-                {
-                    "restartCount": 5,
-                    "lastState": {"terminated": {"reason": "OOMKilled"}},
-                    "state": {},
-                }
-            ],
-        )
-
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
-        )
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
-        ):
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-        mock_event.assert_called_once_with({}, "worker-0-0", 5, "OOMKilled")
-
-    @pytest.mark.asyncio
-    async def test_no_event_below_threshold(self) -> None:
-        """Verify no event when restarts are below threshold."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        pod = _make_pod(
-            name="worker-0-0",
-            container_statuses_raw=[{"restartCount": 1, "state": {}, "lastState": {}}],
-        )
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
-        )
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
-        ):
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-        mock_event.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_uses_waiting_state_reason(self) -> None:
-        """Verify uses waiting state reason (CrashLoopBackOff) when available."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        pod = _make_pod(
-            name="worker-0-0",
-            container_statuses_raw=[
-                {
-                    "restartCount": 4,
-                    "lastState": {"terminated": {"reason": "Error"}},
-                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                }
-            ],
-        )
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
-        )
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
-        ):
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-        mock_event.assert_called_once_with({}, "worker-0-0", 4, "CrashLoopBackOff")
-
-    @pytest.mark.asyncio
-    async def test_handles_pod_list_exception(self) -> None:
-        """Verify exceptions during pod listing are handled gracefully."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(side_effect=Exception("API unavailable"))
-        )
-
-        with mock_patch(
-            "aiperf.operator.handlers.monitor.client.CoreV1Api",
-            return_value=mock_core,
-        ):
-            # Should not raise
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_events(self) -> None:
-        """Verify same (pod, restart_count) pair only emits event once."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        pod = _make_pod(
-            name="worker-0-0",
-            container_statuses_raw=[
-                {
-                    "restartCount": 5,
-                    "lastState": {"terminated": {"reason": "OOMKilled"}},
-                    "state": {},
-                }
-            ],
-        )
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(return_value=_V1PodList(items=[pod]))
-        )
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
-        ):
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-        mock_event.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_emits_new_event_when_restart_count_increases(self) -> None:
-        """Verify new event when restart count increases past previous value."""
-        from aiperf.operator.handlers.monitor import _check_pod_restarts
-
-        restart_counts = {"count": 5}
-
-        def _list_side_effect(*_, **__):
-            pod = _make_pod(
-                name="worker-0-0",
-                container_statuses_raw=[
-                    {
-                        "restartCount": restart_counts["count"],
-                        "lastState": {"terminated": {"reason": "OOMKilled"}},
-                        "state": {},
-                    }
-                ],
-            )
-            return _V1PodList(items=[pod])
-
-        mock_core = MagicMock(
-            list_namespaced_pod=AsyncMock(side_effect=_list_side_effect)
-        )
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            mock_patch("aiperf.operator.events.pod_restarts") as mock_event,
-        ):
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-            # Increase restart count
-            restart_counts["count"] = 10
-            await _check_pod_restarts(
-                AsyncMock(), {}, "default", "test-jobset", key="job-1"
-            )
-
-        assert mock_event.call_count == 2
-
-
 class TestRecoverTerminatedController:
     """Tests for terminated-controller salvage handling."""
 
@@ -3139,10 +2927,6 @@ class TestMonitorProgressTimeout:
                     delete_namespaced_custom_object=AsyncMock(return_value={}),
                 ),
             ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
-            ),
         ):
             await monitor_progress(
                 body=_FIXTURE_BODY,
@@ -3191,10 +2975,6 @@ class TestMonitorProgressTimeout:
                     ),
                     delete_namespaced_custom_object=AsyncMock(return_value={}),
                 ),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new_callable=AsyncMock,
             ),
         ):
             await monitor_progress(

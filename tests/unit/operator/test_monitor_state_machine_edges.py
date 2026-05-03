@@ -51,7 +51,6 @@ from aiperf.operator.client_cache import _reset_for_testing
 from aiperf.operator.handlers.monitor import (
     _apply_controller_progress_status,
     _check_job_timeout,
-    _check_pod_restarts,
     _fetch_jobset_or_reconcile,
     _fetch_progress,
     _handle_jobset_failed_condition,
@@ -700,119 +699,6 @@ class TestFetchJobsetOrReconcile:
 
 
 # =============================================================================
-# Pod-state aggregation edges
-# =============================================================================
-
-
-class _CState:
-    """Lightweight stand-in for V1ContainerState.* with state.terminated/waiting."""
-
-    def __init__(self, terminated: Any = None, waiting: Any = None) -> None:
-        self.terminated = terminated
-        self.waiting = waiting
-
-
-def _make_pod(*, name: str, restart_count: int, state: Any | None = None) -> Any:
-    cs = SimpleNamespace(
-        name="control-plane",
-        restart_count=restart_count,
-        state=state or _CState(),
-        last_state=_CState(),
-    )
-    return SimpleNamespace(
-        metadata=SimpleNamespace(name=name),
-        status=SimpleNamespace(
-            container_statuses=[cs],
-            init_container_statuses=None,
-        ),
-    )
-
-
-class TestPodRestartScan:
-    """Cover ``_check_pod_restarts``: threshold, dedup, transient errors."""
-
-    @pytest.mark.asyncio
-    async def test_emits_event_when_restart_count_at_threshold(self) -> None:
-        """Pod with restart_count >= POD_RESTART_THRESHOLD emits a warning event."""
-        api = MagicMock()
-        terminated = SimpleNamespace(reason="OOMKilled")
-        pod = _make_pod(name="ctrl-0", restart_count=10, state=_CState(waiting=None))
-        pod.status.container_statuses[0].last_state = _CState(terminated=terminated)
-        list_pods = AsyncMock(return_value=SimpleNamespace(items=[pod]))
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=MagicMock(list_namespaced_pod=list_pods),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.events.pod_restarts"
-            ) as mock_event,
-        ):
-            await _check_pod_restarts(api, _body(), "ns", "js", key="ns/j")
-
-        mock_event.assert_called_once()
-        # Subsequent calls with the same (pod, count) are deduplicated.
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=MagicMock(list_namespaced_pod=list_pods),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.events.pod_restarts"
-            ) as mock_event_again,
-        ):
-            await _check_pod_restarts(api, _body(), "ns", "js", key="ns/j")
-
-        mock_event_again.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_below_threshold_emits_no_event(self) -> None:
-        """A pod with one restart is normal; do not warn."""
-        api = MagicMock()
-        pod = _make_pod(name="ctrl-0", restart_count=1)
-        list_pods = AsyncMock(return_value=SimpleNamespace(items=[pod]))
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CoreV1Api",
-                return_value=MagicMock(list_namespaced_pod=list_pods),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.events.pod_restarts"
-            ) as mock_event,
-        ):
-            await _check_pod_restarts(api, _body(), "ns", "js", key="ns/j")
-
-        mock_event.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_transient_api_error_does_not_propagate(self) -> None:
-        """API failure during restart scan must not abort the monitor tick."""
-        api = MagicMock()
-        list_pods = AsyncMock(side_effect=ApiException(status=500))
-
-        with mock_patch(
-            "aiperf.operator.handlers.monitor.client.CoreV1Api",
-            return_value=MagicMock(list_namespaced_pod=list_pods),
-        ):
-            await _check_pod_restarts(api, _body(), "ns", "js", key="ns/j")
-
-    @pytest.mark.asyncio
-    async def test_unexpected_exception_does_not_propagate(self) -> None:
-        """Any non-API exception must also be swallowed (best-effort scan)."""
-        api = MagicMock()
-        list_pods = AsyncMock(side_effect=RuntimeError("kaboom"))
-
-        with mock_patch(
-            "aiperf.operator.handlers.monitor.client.CoreV1Api",
-            return_value=MagicMock(list_namespaced_pod=list_pods),
-        ):
-            # Must not raise — the monitor tick is the higher-level concern.
-            await _check_pod_restarts(api, _body(), "ns", "js", key="ns/j")
-
-
-# =============================================================================
 # Heartbeat / progress polling edges
 # =============================================================================
 
@@ -1264,10 +1150,6 @@ class TestWorkerAndProgressPhase:
 
         with (
             mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new=AsyncMock(),
-            ),
-            mock_patch(
                 "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
                 new=AsyncMock(return_value=True),
             ),
@@ -1309,10 +1191,6 @@ class TestWorkerAndProgressPhase:
         api = MagicMock()
 
         with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new=AsyncMock(),
-            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
                 new=AsyncMock(return_value=False),
@@ -1357,10 +1235,6 @@ class TestWorkerAndProgressPhase:
         api = MagicMock()
 
         with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor._check_pod_restarts",
-                new=AsyncMock(),
-            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
                 new=AsyncMock(return_value=False),
