@@ -294,9 +294,15 @@ def test_endpoint_form_data_only_on_video_generation():
 
 
 def test_endpoint_urls_must_be_valid_urls():
+    # CEL ``self.urls.all(u, isURL(u))`` won't compile against a typeless
+    # preserve-unknown field (recipes pass plain string URLs that the apiserver
+    # must accept without structural validation), so URL well-formedness is
+    # enforced at the Pydantic ``EndpointConfig`` validator instead. This test
+    # is the regression guard ensuring we do NOT bring the CEL rule back
+    # without first restructuring ``urls`` as a typed array.
     endpoint = _endpoint_node_aiperfjob()
     rules = {r["rule"] for r in endpoint.get("x-kubernetes-validations", [])}
-    assert "self.urls.all(u, isURL(u))" in rules
+    assert "self.urls.all(u, isURL(u))" not in rules
 
 
 # -----------------------------------------------------------------------------

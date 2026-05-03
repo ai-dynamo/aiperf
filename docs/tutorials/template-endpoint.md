@@ -222,7 +222,7 @@ models:
 
 endpoint:
   urls:
-    - ${INFERENCE_URL:http://localhost:8000/generate}
+    - http://localhost:8000/generate  # ${INFERENCE_URL:http://localhost:8000/generate}
   type: template
   streaming: true
   timeout: 120.0

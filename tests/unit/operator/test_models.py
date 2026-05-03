@@ -87,8 +87,9 @@ class TestMetricsSummary:
         assert "internal_diagnostic_xyz" not in result
 
     def test_from_metrics_does_not_shadow_with_e2e_variant(self) -> None:
-        """``e2e_output_token_throughput`` (not on allowlist) must not shadow
-        the canonical ``output_token_throughput`` aggregate metric.
+        """``e2e_output_token_throughput`` is on the summary allowlist (it has its
+        own UI panel) and must coexist with ``output_token_throughput`` without
+        either shadowing the other — distinct keys, distinct values.
         """
         metrics = {
             "metrics": {
@@ -97,8 +98,10 @@ class TestMetricsSummary:
             }
         }
         result = MetricsSummary.from_metrics(metrics).to_status_dict()
-        assert "e2e_output_token_throughput" not in result
         assert result["output_token_throughput"]["avg"] == 80105.4
+        assert result["e2e_output_token_throughput"]["avg"] == 83.5
+        assert result["output_token_throughput"]["unit"] == "tokens/sec"
+        assert result["e2e_output_token_throughput"]["unit"] == "tokens/sec/user"
 
     def test_from_metrics_derives_error_rate_and_total_requests(self) -> None:
         """``error_rate`` and ``total_requests`` are computed from raw counts."""

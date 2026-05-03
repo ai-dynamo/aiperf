@@ -106,6 +106,7 @@ spec:
         phases:
           - name: profiling
             type: poisson
+            rate: 1.0  # placeholder: overridden per-trial by --search-space below
             duration: 120
 ```
 
