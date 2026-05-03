@@ -93,6 +93,12 @@ class ProgressAnnotations:
     STATUS: str = "aiperf.nvidia.com/progress-status"
     """Human-readable status summary."""
 
+    SYSTEM_STATE: str = "aiperf.nvidia.com/system-state"
+    """Controller-side outer-lifecycle state (initializing/configuring/ready/
+    profiling/processing/stopping/shutdown). Mirror of status.subPhase, exposed
+    as an annotation so kubectl one-liner watchers can poll without parsing
+    status objects."""
+
 
 @dataclass(frozen=True)
 class Containers:

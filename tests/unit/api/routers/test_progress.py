@@ -455,3 +455,281 @@ class TestProgressEndpointControllerRPC:
         # Falls back to cache → 2 ready, 2 total from the seeded message.
         assert data["workers"]["ready"] == 2
         assert data["workers"]["total"] == 2
+
+
+class TestBuildProgressAnnotationsSystemState:
+    """`_build_progress_annotations` always emits the SYSTEM_STATE key."""
+
+    def test_includes_system_state_when_phases_empty(self) -> None:
+        from aiperf.api.routers.progress import _build_progress_annotations
+        from aiperf.kubernetes.constants import ProgressAnnotations
+
+        ann = _build_progress_annotations({}, SystemState.INITIALIZING)
+        assert ann[ProgressAnnotations.STATUS] == "initializing"
+        assert ann[ProgressAnnotations.SYSTEM_STATE] == "initializing"
+
+    def test_includes_system_state_when_phases_present(self) -> None:
+        from aiperf.api.routers.progress import _build_progress_annotations
+        from aiperf.kubernetes.constants import ProgressAnnotations
+
+        phases = {
+            "profiling": CombinedPhaseStats(
+                phase="profiling",
+                total_expected_requests=100,
+                requests_completed=25,
+                start_ns=1000,
+                last_update_ns=2000,
+            )
+        }
+        ann = _build_progress_annotations(phases, SystemState.PROFILING)
+        assert ann[ProgressAnnotations.PHASE] == "profiling"
+        assert ann[ProgressAnnotations.STATUS] == "running"
+        assert ann[ProgressAnnotations.SYSTEM_STATE] == "profiling"
+
+    @pytest.mark.parametrize(
+        "state, expected",
+        [
+            pytest.param(SystemState.INITIALIZING, "initializing", id="initializing"),
+            pytest.param(SystemState.CONFIGURING, "configuring", id="configuring"),
+            pytest.param(SystemState.READY, "ready", id="ready"),
+            pytest.param(SystemState.PROFILING, "profiling", id="profiling"),
+            pytest.param(SystemState.PROCESSING, "processing", id="processing"),
+            pytest.param(SystemState.STOPPING, "stopping", id="stopping"),
+            pytest.param(SystemState.SHUTDOWN, "shutdown", id="shutdown"),
+        ],
+    )  # fmt: skip
+    def test_system_state_value_propagates_to_annotation(
+        self, state: SystemState, expected: str
+    ) -> None:
+        from aiperf.api.routers.progress import _build_progress_annotations
+        from aiperf.kubernetes.constants import ProgressAnnotations
+
+        ann_empty = _build_progress_annotations({}, state)
+        assert ann_empty[ProgressAnnotations.SYSTEM_STATE] == expected
+
+        phases = {
+            "warmup": CombinedPhaseStats(
+                phase="warmup",
+                total_expected_requests=10,
+                requests_completed=5,
+                start_ns=1000,
+                last_update_ns=2000,
+            )
+        }
+        ann_phases = _build_progress_annotations(phases, state)
+        assert ann_phases[ProgressAnnotations.SYSTEM_STATE] == expected
+
+    def test_system_state_only_change_breaks_dedup_equality(self) -> None:
+        """Dedup gate must treat a system_state-only transition as a change.
+
+        If phases are unchanged but the controller transitions
+        configuring -> ready, the annotation dict must differ so
+        `_patch_jobset_progress` does not skip the patch.
+        """
+        from aiperf.api.routers.progress import _build_progress_annotations
+
+        phases = {
+            "profiling": CombinedPhaseStats(
+                phase="profiling",
+                total_expected_requests=100,
+                requests_completed=10,
+                start_ns=1000,
+                last_update_ns=2000,
+            )
+        }
+        before = _build_progress_annotations(phases, SystemState.CONFIGURING)
+        after = _build_progress_annotations(phases, SystemState.READY)
+        assert before != after
+
+
+@pytest.mark.asyncio
+async def test_patch_aiperfjob_annotations_uses_aiperfjob_crd_refs(
+    monkeypatch,
+) -> None:
+    """Verifies the AIPerfJob mirror patches the AIPerf CRD (not JobSet).
+
+    `name=job_id` must be passed verbatim — the AIPerfJob CR name equals
+    job_id, unlike the JobSet which is `aiperf-{job_id}`.
+    """
+    from contextlib import asynccontextmanager
+
+    import kubernetes_asyncio
+
+    custom = MagicMock()
+    custom.patch_namespaced_custom_object = AsyncMock()
+    monkeypatch.setattr(
+        kubernetes_asyncio,
+        "client",
+        SimpleNamespace(CustomObjectsApi=lambda _api: custom),
+        raising=False,
+    )
+
+    @asynccontextmanager
+    async def fake_k8s_client():
+        yield MagicMock(name="ApiClient")
+
+    import aiperf.kubernetes.client as kclient
+
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+
+    from aiperf.api.routers.progress import _patch_aiperfjob_annotations
+    from aiperf.kubernetes.cr_refs import (
+        AIPERF_GROUP,
+        AIPERF_PLURAL,
+        AIPERF_VERSION,
+    )
+
+    await _patch_aiperfjob_annotations(
+        job_id="job-1",
+        namespace="ns",
+        annotations={"k": "v"},
+    )
+
+    kwargs = custom.patch_namespaced_custom_object.call_args.kwargs
+    assert kwargs["group"] == AIPERF_GROUP
+    assert kwargs["version"] == AIPERF_VERSION
+    assert kwargs["plural"] == AIPERF_PLURAL
+    assert kwargs["namespace"] == "ns"
+    assert kwargs["name"] == "job-1"  # NOT aiperf-job-1 — AIPerfJob name is the bare job_id
+    assert kwargs["body"] == {"metadata": {"annotations": {"k": "v"}}}
+    assert kwargs["_content_type"] == "application/merge-patch+json"
+
+
+class TestPatchJobsetProgressMirrorsBoth:
+    """`_patch_jobset_progress` patches BOTH the JobSet AND AIPerfJob CR."""
+
+    @pytest.mark.asyncio
+    async def test_patches_both_jobset_and_aiperfjob_with_same_annotations(
+        self, monkeypatch, progress_router: ProgressRouter
+    ) -> None:
+        progress_router._k8s_job_id = "job-xyz"
+        progress_router._k8s_namespace = "ns-xyz"
+        progress_router._k8s_patching_enabled = True
+        progress_router._system_state = SystemState.READY
+
+        jobset_calls: list[dict] = []
+        aiperfjob_calls: list[dict] = []
+
+        async def fake_jobset(job_id, namespace, annotations):
+            jobset_calls.append(
+                {"job_id": job_id, "namespace": namespace, "annotations": annotations}
+            )
+
+        async def fake_aiperfjob(job_id, namespace, annotations):
+            aiperfjob_calls.append(
+                {"job_id": job_id, "namespace": namespace, "annotations": annotations}
+            )
+
+        import aiperf.api.routers.progress as progress_mod
+
+        monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
+        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+
+        await progress_router._patch_jobset_progress()
+
+        assert len(jobset_calls) == 1
+        assert len(aiperfjob_calls) == 1
+        assert jobset_calls[0]["annotations"] == aiperfjob_calls[0]["annotations"]
+        assert aiperfjob_calls[0]["job_id"] == "job-xyz"
+        assert aiperfjob_calls[0]["namespace"] == "ns-xyz"
+        # Annotations always carry SYSTEM_STATE.
+        from aiperf.kubernetes.constants import ProgressAnnotations
+
+        assert (
+            aiperfjob_calls[0]["annotations"][ProgressAnnotations.SYSTEM_STATE]
+            == "ready"
+        )
+
+    @pytest.mark.asyncio
+    async def test_aiperfjob_patch_failure_does_not_crash_loop(
+        self, monkeypatch, progress_router: ProgressRouter
+    ) -> None:
+        """AIPerfJob mirror is best-effort; failures must be swallowed."""
+        progress_router._k8s_job_id = "job-xyz"
+        progress_router._k8s_namespace = "ns-xyz"
+        progress_router._k8s_patching_enabled = True
+
+        async def ok_jobset(*_a, **_kw):
+            return None
+
+        async def boom_aiperfjob(*_a, **_kw):
+            raise RuntimeError("apiserver rejected patch")
+
+        import aiperf.api.routers.progress as progress_mod
+
+        monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", ok_jobset)
+        monkeypatch.setattr(
+            progress_mod, "_patch_aiperfjob_annotations", boom_aiperfjob
+        )
+
+        # Must not raise.
+        await progress_router._patch_jobset_progress()
+
+    @pytest.mark.asyncio
+    async def test_dedup_skips_when_system_state_and_phases_unchanged(
+        self, monkeypatch, progress_router: ProgressRouter
+    ) -> None:
+        """Two consecutive ticks with identical (phases, system_state) → 1 patch each."""
+        progress_router._k8s_job_id = "job-xyz"
+        progress_router._k8s_namespace = "ns-xyz"
+        progress_router._k8s_patching_enabled = True
+        progress_router._system_state = SystemState.PROFILING
+
+        jobset_calls = 0
+        aiperfjob_calls = 0
+
+        async def fake_jobset(*_a, **_kw):
+            nonlocal jobset_calls
+            jobset_calls += 1
+
+        async def fake_aiperfjob(*_a, **_kw):
+            nonlocal aiperfjob_calls
+            aiperfjob_calls += 1
+
+        import aiperf.api.routers.progress as progress_mod
+
+        monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
+        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+
+        await progress_router._patch_jobset_progress()
+        await progress_router._patch_jobset_progress()
+        # Second tick deduped (identical state) → only one JobSet patch total.
+        assert jobset_calls == 1
+        # AIPerfJob mirror is gated by the same dedup check.
+        assert aiperfjob_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_system_state_only_change_triggers_patch(
+        self, monkeypatch, progress_router: ProgressRouter
+    ) -> None:
+        """system_state changing while phases stay constant must trigger a patch."""
+        progress_router._k8s_job_id = "job-xyz"
+        progress_router._k8s_namespace = "ns-xyz"
+        progress_router._k8s_patching_enabled = True
+        progress_router._system_state = SystemState.CONFIGURING
+
+        jobset_calls: list[dict] = []
+        aiperfjob_calls: list[dict] = []
+
+        async def fake_jobset(job_id, namespace, annotations):
+            jobset_calls.append(dict(annotations))
+
+        async def fake_aiperfjob(job_id, namespace, annotations):
+            aiperfjob_calls.append(dict(annotations))
+
+        import aiperf.api.routers.progress as progress_mod
+
+        monkeypatch.setattr(progress_mod, "_patch_jobset_annotations", fake_jobset)
+        monkeypatch.setattr(progress_mod, "_patch_aiperfjob_annotations", fake_aiperfjob)
+
+        await progress_router._patch_jobset_progress()
+        # Same phases (none) but system_state transitions configuring -> ready.
+        progress_router._system_state = SystemState.READY
+        await progress_router._patch_jobset_progress()
+
+        from aiperf.kubernetes.constants import ProgressAnnotations
+
+        assert len(jobset_calls) == 2
+        assert len(aiperfjob_calls) == 2
+        assert jobset_calls[0][ProgressAnnotations.SYSTEM_STATE] == "configuring"
+        assert jobset_calls[1][ProgressAnnotations.SYSTEM_STATE] == "ready"

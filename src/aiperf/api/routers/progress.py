@@ -45,16 +45,20 @@ _JOBSET_PATCH_INTERVAL = 10.0
 
 def _build_progress_annotations(
     phases: dict[CreditPhase, CombinedPhaseStats],
+    system_state: SystemState,
 ) -> dict[str, str]:
     """Build annotation values from current progress state.
 
-    Returns a dict of annotation key -> value for patching onto the JobSet.
+    Returns a dict of annotation key -> value for patching onto the JobSet
+    and AIPerfJob CR. Always includes ``SYSTEM_STATE`` so observers can poll
+    controller-side outer-lifecycle state without parsing status objects.
     """
     from aiperf.kubernetes.constants import ProgressAnnotations
 
     if not phases:
         return {
             ProgressAnnotations.STATUS: "initializing",
+            ProgressAnnotations.SYSTEM_STATE: str(system_state),
         }
 
     # Use profiling phase if present, otherwise warmup
@@ -83,6 +87,7 @@ def _build_progress_annotations(
     annotations: dict[str, str] = {
         ProgressAnnotations.PHASE: phase_name,
         ProgressAnnotations.STATUS: status,
+        ProgressAnnotations.SYSTEM_STATE: str(system_state),
     }
 
     if pct is not None:
@@ -145,7 +150,10 @@ class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
         if not self._k8s_patching_enabled:
             return
 
-        annotations = _build_progress_annotations(self._progress_tracker._phases)
+        annotations = _build_progress_annotations(
+            self._progress_tracker._phases,
+            self._system_state,
+        )
 
         # Skip patch if annotations haven't changed
         if annotations == self._last_patched_annotations:
@@ -160,6 +168,19 @@ class ProgressRouter(PodStateTrackerMixin, ProgressTrackerMixin, BaseRouter):
             self._last_patched_annotations = annotations
         except Exception:  # noqa: BLE001 - periodic JobSet annotation patch is best-effort; k8s API flakes must not crash the background task
             self.debug("Failed to patch JobSet progress annotations")
+
+        # Mirror the same annotations onto the AIPerfJob CR so kubectl
+        # watchers can poll a single object instead of chasing JobSets.
+        # Best-effort: AIPerfJob patch failures must not crash the loop
+        # nor invalidate the JobSet patch above.
+        try:
+            await _patch_aiperfjob_annotations(
+                job_id=self._k8s_job_id,  # type: ignore[arg-type]
+                namespace=self._k8s_namespace,  # type: ignore[arg-type]
+                annotations=annotations,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; AIPerfJob patch must not crash the background task
+            self.debug("Failed to patch AIPerfJob progress annotations")
 
 
 async def _patch_jobset_annotations(
@@ -182,6 +203,34 @@ async def _patch_jobset_annotations(
             plural=JOBSET_PLURAL,
             namespace=namespace,
             name=jobset_name,
+            body={"metadata": {"annotations": annotations}},
+            _content_type="application/merge-patch+json",
+        )
+
+
+async def _patch_aiperfjob_annotations(
+    job_id: str,
+    namespace: str,
+    annotations: dict[str, str],
+) -> None:
+    """Patch annotations on the AIPerfJob CR for the given job.
+
+    Uses the same merge-patch + custom_objects path that
+    ``signal_benchmark_complete`` uses (RBAC verified on benchmark
+    namespaces — controller pods have aiperfjobs:patch).
+    """
+    from kubernetes_asyncio import client
+
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
+
+    async with k8s_client() as api:
+        await client.CustomObjectsApi(api).patch_namespaced_custom_object(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
             body={"metadata": {"annotations": annotations}},
             _content_type="application/merge-patch+json",
         )
