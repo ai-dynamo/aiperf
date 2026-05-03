@@ -280,7 +280,16 @@ def _build_sweep_cr_dict(
     # error messages, not a raw apiserver CRD validation 422.
     from aiperf.kubernetes.sweep_models import AIPerfSweepSpec
 
-    AIPerfSweepSpec.model_validate(spec)
+    # Round-trip through Pydantic with by_alias=True so snake_case keys from
+    # the v1 converter (e.g. `adaptive_search`) get serialised as the
+    # CRD-canonical camelCase (`adaptiveSearch`). Without this, the apiserver
+    # rejects with `strict decoding error: unknown field
+    # "spec.multiRun.adaptive_search"` even though our local validator (which
+    # has populate_by_name=True) accepts it.
+    spec = AIPerfSweepSpec.model_validate(spec).model_dump(
+        mode="json", by_alias=True, exclude_defaults=True, exclude_none=True
+    )
+    cr_dict["spec"] = spec
     return cr_dict
 
 

@@ -314,7 +314,9 @@ spec:
     assert [m["name"] for m in bench["models"]["items"]] == ["cr-model"]
     # sweep block hoisted out of benchmark to spec.sweep
     assert "sweep" not in bench
-    assert cr["spec"]["sweep"]["type"] == "grid"
+    # `type: grid` is the default and gets stripped by exclude_defaults; the
+    # variables map is the load-bearing carrier that survives the dump.
+    assert cr["spec"]["sweep"]["variables"] == {"random_seed": [1, 2]}
 
 
 def test_build_sweep_cr_dict_rejects_aiperfsweep_cr(tmp_path: Path) -> None:
