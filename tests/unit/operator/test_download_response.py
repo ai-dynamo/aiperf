@@ -117,21 +117,25 @@ class TestDownloadResponseCompressOff:
 
 
 class TestDownloadResponseCompressOn:
-    """Verify _download_response with COMPRESS_ON_DISK=True stores as .zst."""
+    """Verify _download_response with COMPRESS_ON_DISK=True stores .jsonl as .zst.
+
+    ``.json`` aggregate exports are kept raw on disk regardless of the toggle —
+    see ``TestDownloadResponseJsonStaysRaw`` for that contract.
+    """
 
     @pytest.mark.asyncio
     async def test_zstd_encoding_passthrough_to_zst(self, tmp_path: Path) -> None:
-        original = b'{"metric": "zstd_passthrough"}'
+        original = b'{"metric": "zstd_passthrough"}\n'
         compressed = _compress_zstd(original)
         response = FakeResponse([compressed])
-        dest = tmp_path / "metrics.json"
+        dest = tmp_path / "metrics.jsonl"
 
         client = ProgressClient()
         with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
             mock_env.RESULTS.COMPRESS_ON_DISK = True
             await client._download_response(response, dest, "zstd")
 
-        zst_path = tmp_path / "metrics.json.zst"
+        zst_path = tmp_path / "metrics.jsonl.zst"
         assert zst_path.exists()
         assert not dest.exists()
         # Verify the passthrough preserved valid zstd data
@@ -139,33 +143,33 @@ class TestDownloadResponseCompressOn:
 
     @pytest.mark.asyncio
     async def test_gzip_encoding_transcodes_to_zst(self, tmp_path: Path) -> None:
-        original = b'{"metric": "gzip_transcoded"}'
+        original = b'{"metric": "gzip_transcoded"}\n'
         compressed = gzip.compress(original)
         response = FakeResponse([compressed])
-        dest = tmp_path / "metrics.json"
+        dest = tmp_path / "metrics.jsonl"
 
         client = ProgressClient()
         with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
             mock_env.RESULTS.COMPRESS_ON_DISK = True
             await client._download_response(response, dest, "gzip")
 
-        zst_path = tmp_path / "metrics.json.zst"
+        zst_path = tmp_path / "metrics.jsonl.zst"
         assert zst_path.exists()
         assert not dest.exists()
         assert _decompress_zstd(zst_path.read_bytes()) == original
 
     @pytest.mark.asyncio
     async def test_identity_encoding_compresses_to_zst(self, tmp_path: Path) -> None:
-        original = b'{"metric": "identity_compressed"}'
+        original = b'{"metric": "identity_compressed"}\n'
         response = FakeResponse([original])
-        dest = tmp_path / "metrics.json"
+        dest = tmp_path / "metrics.jsonl"
 
         client = ProgressClient()
         with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
             mock_env.RESULTS.COMPRESS_ON_DISK = True
             await client._download_response(response, dest, "identity")
 
-        zst_path = tmp_path / "metrics.json.zst"
+        zst_path = tmp_path / "metrics.jsonl.zst"
         assert zst_path.exists()
         assert not dest.exists()
         assert _decompress_zstd(zst_path.read_bytes()) == original
@@ -209,14 +213,14 @@ class TestDownloadResponseEdgeCases:
     async def test_multi_chunk_identity_compress_on(self, tmp_path: Path) -> None:
         chunks = [b"chunk1", b"chunk2", b"chunk3"]
         response = FakeResponse(chunks)
-        dest = tmp_path / "multi.json"
+        dest = tmp_path / "multi.jsonl"
 
         client = ProgressClient()
         with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
             mock_env.RESULTS.COMPRESS_ON_DISK = True
             await client._download_response(response, dest, "identity")
 
-        zst_path = tmp_path / "multi.json.zst"
+        zst_path = tmp_path / "multi.jsonl.zst"
         assert zst_path.exists()
         assert _decompress_zstd(zst_path.read_bytes()) == b"chunk1chunk2chunk3"
 
@@ -231,14 +235,75 @@ class TestDownloadResponseEdgeCases:
             for i in range(0, len(compressed), chunk_size)
         ]
         response = FakeResponse(chunks)
-        dest = tmp_path / "large.json"
+        dest = tmp_path / "large.jsonl"
 
         client = ProgressClient()
         with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
             mock_env.RESULTS.COMPRESS_ON_DISK = True
             await client._download_response(response, dest, "zstd")
 
-        zst_path = tmp_path / "large.json.zst"
+        zst_path = tmp_path / "large.jsonl.zst"
         assert zst_path.exists()
         # Passthrough: bytes should be the same as the compressed input
         assert _decompress_zstd(zst_path.read_bytes()) == original
+
+
+# ============================================================
+# .json aggregate exports stay raw on disk regardless of toggle
+# ============================================================
+
+
+class TestDownloadResponseJsonStaysRaw:
+    """``.json`` destinations are kept raw even when COMPRESS_ON_DISK=True.
+
+    Aggregate JSON exports (profile_export_aiperf.json, inputs.json, ...) are
+    small and benefit far less from zstd than streaming jsonl artifacts;
+    keeping them raw preserves cat/jq/json.tool inspection of the PVC.
+    """
+
+    @pytest.mark.asyncio
+    async def test_identity_json_stays_raw(self, tmp_path: Path) -> None:
+        original = b'{"metric": "raw_identity"}'
+        response = FakeResponse([original])
+        dest = tmp_path / "profile_export_aiperf.json"
+
+        client = ProgressClient()
+        with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
+            mock_env.RESULTS.COMPRESS_ON_DISK = True
+            await client._download_response(response, dest, "identity")
+
+        assert dest.exists()
+        assert dest.read_bytes() == original
+        assert not (tmp_path / "profile_export_aiperf.json.zst").exists()
+
+    @pytest.mark.asyncio
+    async def test_gzip_json_decompresses_to_raw(self, tmp_path: Path) -> None:
+        original = b'{"metric": "raw_from_gzip"}'
+        compressed = gzip.compress(original)
+        response = FakeResponse([compressed])
+        dest = tmp_path / "inputs.json"
+
+        client = ProgressClient()
+        with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
+            mock_env.RESULTS.COMPRESS_ON_DISK = True
+            await client._download_response(response, dest, "gzip")
+
+        assert dest.exists()
+        assert dest.read_bytes() == original
+        assert not (tmp_path / "inputs.json.zst").exists()
+
+    @pytest.mark.asyncio
+    async def test_zstd_json_decompresses_to_raw(self, tmp_path: Path) -> None:
+        original = b'{"metric": "raw_from_zstd"}'
+        compressed = _compress_zstd(original)
+        response = FakeResponse([compressed])
+        dest = tmp_path / "analytics_summary.json"
+
+        client = ProgressClient()
+        with patch("aiperf.operator.environment.OperatorEnvironment") as mock_env:
+            mock_env.RESULTS.COMPRESS_ON_DISK = True
+            await client._download_response(response, dest, "zstd")
+
+        assert dest.exists()
+        assert dest.read_bytes() == original
+        assert not (tmp_path / "analytics_summary.json.zst").exists()
