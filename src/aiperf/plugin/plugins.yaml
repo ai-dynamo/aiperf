@@ -1981,7 +1981,7 @@ search_planner:
     class: aiperf.orchestrator.search_planner.bayesian:BayesianSearchPlanner
     description: |
       scikit-optimize-backed Gaussian-process Bayesian optimization. Requires
-      the `[bo]` extra (`uv pip install -e '.[bo]'`). Treats SLA filters as
+      the `\[bo]` extra (`uv pip install -e '.\[bo]'`). Treats SLA filters as
       soft penalties in the loss space; supports plateau detection and
       improvement-patience early stopping.
     metadata:
