@@ -56,3 +56,23 @@ def test_distribution_from_plan_uses_default_jsonl_when_none(plan):
     from aiperf.orchestrator.jsonl_loader import DEFAULT_JSONL_FILENAME
 
     assert crit._jsonl_filename == DEFAULT_JSONL_FILENAME
+
+
+def test_build_convergence_criterion_dispatches_via_plugin_registry(plan):
+    """`_build_convergence_criterion(plan)` returns the right criterion class for each mode.
+
+    Behavioral equivalence pin: verifies all three built-in modes resolve to
+    their corresponding criterion classes through the plugin registry. If a
+    third party registers a fourth criterion under `convergence_criterion`,
+    its name string passed via `plan.convergence_mode` will route the same way.
+    """
+    from aiperf._cli_runner_helpers import _build_convergence_criterion
+
+    plan.convergence_mode = "ci_width"
+    assert isinstance(_build_convergence_criterion(plan), CIWidthConvergence)
+
+    plan.convergence_mode = "cv"
+    assert isinstance(_build_convergence_criterion(plan), CVConvergence)
+
+    plan.convergence_mode = "distribution"
+    assert isinstance(_build_convergence_criterion(plan), DistributionConvergence)

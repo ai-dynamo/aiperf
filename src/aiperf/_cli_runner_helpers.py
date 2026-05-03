@@ -121,35 +121,20 @@ def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrate
 
 
 def _build_convergence_criterion(plan: BenchmarkPlan):  # noqa: ANN202
-    """Pick the convergence criterion matching ``plan.convergence_mode``."""
-    from aiperf.common.enums import ConvergenceMode
-    from aiperf.orchestrator.convergence import (
-        CIWidthConvergence,
-        CVConvergence,
-        DistributionConvergence,
-    )
+    """Pick the convergence criterion matching ``plan.convergence_mode``.
 
-    mode = plan.convergence_mode
-    threshold = plan.convergence_threshold
+    Dispatches via the plugin registry so third-party criteria (registered in
+    `plugins.yaml` under the `convergence_criterion` category) are reachable
+    through the same code path as the built-ins. Each criterion class owns the
+    mapping from BenchmarkPlan fields to its constructor via `from_plan`.
+    """
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
 
-    if mode == ConvergenceMode.CI_WIDTH:
-        return CIWidthConvergence(
-            metric=plan.convergence_metric,
-            stat=plan.convergence_stat,
-            threshold=threshold,
-            confidence_level=plan.confidence_level,
-        )
-    if mode == ConvergenceMode.CV:
-        return CVConvergence(
-            metric=plan.convergence_metric,
-            threshold=threshold,
-            stat=plan.convergence_stat,
-        )
-    return DistributionConvergence(
-        metric=plan.convergence_metric,
-        p_value_threshold=threshold,
-        jsonl_filename=plan.export_jsonl_file or "",
+    criterion_cls = plugins.get_class(
+        PluginType.CONVERGENCE_CRITERION, str(plan.convergence_mode)
     )
+    return criterion_cls.from_plan(plan)
 
 
 async def aggregate_and_export(
