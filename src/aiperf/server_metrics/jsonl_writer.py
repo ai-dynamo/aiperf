@@ -11,7 +11,6 @@ from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     SlimRecord,
 )
-from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -75,20 +74,6 @@ class ServerMetricsJSONLWriter(
         # Convert to slim format before writing to reduce file size
         slim_record = record.to_slim()
         await self.buffered_write(slim_record)
-
-    async def process_record(self, record: ServerMetricsRecord) -> None:
-        """``StreamExporterProtocol``-compatible alias for ``process_server_metrics_record``."""
-        await self.process_server_metrics_record(record)
-
-    async def finalize(self) -> None:
-        """Flush any buffered data (``StreamExporterProtocol``)."""
-        await self.flush_buffer()
-
-    def get_export_info(self) -> FileExportInfo:
-        """Return metadata about the JSONL file this exporter writes to."""
-        return FileExportInfo(
-            export_type="Server Metrics JSONL Export", file_path=self.output_file
-        )
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize result. Not used for this processor"""

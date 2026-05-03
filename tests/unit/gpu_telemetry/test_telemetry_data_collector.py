@@ -272,7 +272,6 @@ class TestHttpCommunication:
             # Mock successful response with sample data
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.text.return_value = sample_dcgm_data
             mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
@@ -345,7 +344,6 @@ class TestCollectionLifecycle:
             # Mock successful response
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.text.side_effect = faker.generate
             mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
@@ -409,7 +407,6 @@ class TestCollectionLifecycle:
         with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             # Use side_effect to generate different data each time to avoid deduplication
             mock_response.text.side_effect = faker.generate
             mock_response.raise_for_status = Mock(return_value=None)
@@ -601,7 +598,6 @@ class TestDataProcessingEdgeCases:
         with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.text.side_effect = faker.generate
             mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response
@@ -623,7 +619,6 @@ class TestDataProcessingEdgeCases:
         with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.headers = {"Content-Type": "text/plain; version=0.0.4"}
             mock_response.text.return_value = "# HELP comment\n# TYPE comment"
             mock_response.raise_for_status = Mock(return_value=None)
             mock_get.return_value.__aenter__.return_value = mock_response

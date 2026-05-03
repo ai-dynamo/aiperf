@@ -10,7 +10,7 @@ ignore_eos is not set or unsupported by the server.
 
 from typing import ClassVar
 
-from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.logging import AIPerfLogger
@@ -37,8 +37,9 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
     header = "Requested OSL"
     short_header = "Req OSL"
     unit = GenericMetricUnit.TOKENS
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.INTERNAL
-    console_group = MetricConsoleGroup.NONE
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL
+    )
     required_metrics = None
 
     def _parse_record(
@@ -53,13 +54,11 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
             NoMetricValue: If max_tokens is not set in the request.
         """
         request_info = record.request.request_info
-        if request_info is None:
-            raise NoMetricValue("Request info not available in record.")
+        if request_info is None or not request_info.turns:
+            raise NoMetricValue("Request info or turns not available in record.")
 
-        # ``request_info.turns`` is dropped before the ZMQ hop to the record
-        # processor (see ``inference_client._enrich_request_record``), so the
-        # last turn's ``max_tokens`` is hoisted onto ``RequestInfo`` itself.
-        max_tokens = request_info.max_tokens
+        # Get max_tokens from the last turn (the one that was sent)
+        max_tokens = request_info.turns[-1].max_tokens
         if max_tokens is None:
             raise NoMetricValue("max_tokens not set in request (--osl not used).")
 
@@ -91,8 +90,7 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     short_header = "OSL Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE
     required_metrics: ClassVar[set[str]] = {
         RequestedOSLMetric.tag,
         OutputSequenceLengthMetric.tag,
@@ -155,8 +153,11 @@ class OSLMismatchCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "OSL Mismatches"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
-    console_group = MetricConsoleGroup.NONE
+    flags = (
+        MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.NO_CONSOLE
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+    )
     required_metrics: ClassVar[set[str]] = {
         OSLMismatchDiffMetric.tag,
         RequestedOSLMetric.tag,

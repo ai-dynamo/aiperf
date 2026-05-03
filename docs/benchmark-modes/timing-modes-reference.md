@@ -17,7 +17,6 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 | `--concurrency` (alone) | Saturation/throughput testing | Send requests as fast as possible within concurrency limits |
 | `--fixed-schedule` | Trace replay | Replay requests at exact timestamps from dataset |
 | `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with consistent turn gaps |
-| selected by `--scenario` (e.g. `inferencex-agentx-mvp`) | Multi-turn agentic-trace replay | Trajectory-based warmup + steady-state with FIFO trace recycle, designed for agentic-coding traces (e.g. WEKA); the `agentic_replay` timing mode is locked in by the scenario, not by a direct flag |
 
 ### Option Priority
 
@@ -25,9 +24,8 @@ When multiple options are specified, AIPerf uses this priority:
 
 1. `--fixed-schedule` or mooncake_trace dataset → Timestamp-based scheduling
 2. `--user-centric-rate` → Per-user turn gap scheduling
-3. `--scenario inferencex-agentx-mvp` (or any scenario whose spec pins `timing_mode=agentic_replay`) → Trajectory-based multi-turn replay. The `agentic_replay` mode is not a user-selectable flag; it is locked in by the scenario validator.
-4. `--request-rate` → Rate-based scheduling with arrival patterns
-5. `--concurrency` only → Burst mode (as fast as possible within limits)
+3. `--request-rate` → Rate-based scheduling with arrival patterns
+4. `--concurrency` only → Burst mode (as fast as possible within limits)
 
 ---
 
@@ -224,33 +222,6 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 
 > **For complete KV cache benchmarking**, also configure shared system prompts and user context prompts. See the [User-Centric Timing Tutorial](../tutorials/user-centric-timing.md) for full configuration including `--shared-system-prompt-length`, `--user-context-prompt-length`, and other prompt options.
 
-### Using `agentic_replay` (Multi-Turn Agentic Replay, via `--scenario`)
-
-The `agentic_replay` timing mode is **not** user-selectable directly; it is
-locked in by passing a scenario whose spec pins it. Today the only built-in
-scenario that does so is `inferencex-agentx-mvp`.
-
-```bash
-# SemiAnalysis InferenceX AgentX-MVP rules locked in
-aiperf profile \
-    --scenario inferencex-agentx-mvp \
-    --url localhost:8000 \
-    --model your-model \
-    --endpoint-type chat \
-    --streaming \
-    --input-file path/to/kv-cache-tester/traces/ \
-    --concurrency 100 \
-    --benchmark-duration 900 \
-    --num-profile-runs 3 \
-    --cache-bust system_prefix
-```
-
-**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere in the first 70% of each conversation, and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded inter-turn delays (clamped — see `--inter-turn-delay-cap-seconds`). When a trajectory finishes its conversation, its trace ID is recycled FIFO-style and a fresh session starts from turn 0 of the next queued trace.
-
-**When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust system_prefix` (locked on by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
-
-**Tutorials:** [Weka Traces](../tutorials/weka-trace.md) for the underlying corpus; [InferenceX AgentX MVP](../tutorials/agentx-mvp.md) for the locked-rules submission flow.
-
 ---
 
 ## Common Validation Errors
@@ -366,8 +337,8 @@ aiperf profile \
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--session-turns-mean` | int | 1 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
-| `--session-turns-stddev` | int | 0 | Standard deviation of turns |
+| `--session-turns-mean` | float | 1.0 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
+| `--session-turns-stddev` | float | 0.0 | Standard deviation of turns |
 | `--dataset-sampling-strategy` | enum | shuffle | Dataset sampling: `sequential`, `shuffle` (not with `--fixed-schedule`) |
 
 ### Multi-URL Load Balancing

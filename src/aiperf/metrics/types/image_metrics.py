@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import (
-    GenericMetricUnit,
-    MetricConsoleGroup,
-    MetricFlags,
-    MetricOverTimeUnit,
-)
+from aiperf.common.enums import GenericMetricUnit, MetricFlags, MetricOverTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -20,19 +15,17 @@ class NumImagesMetric(BaseRecordMetric[int]):
     header = "Number of Images"
     short_header = "Num Images"
     unit = GenericMetricUnit.IMAGES
-    flags = MetricFlags.SUPPORTS_IMAGE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.SUPPORTS_IMAGE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> int:
-        """Read the image count from ``record.media_counts.images``.
-
-        ``InferenceResultParser`` computes this once per record via the
-        endpoint's single-pass ``extract_payload_inputs`` hook, so no
-        re-parsing of ``payload_bytes`` happens here.
-        """
-        num_images = record.media_counts.images
+        """Parse the number of images from the record by summing the number of images in each turn."""
+        num_images = sum(
+            len(image.contents)
+            for turn in record.request.turns
+            for image in turn.images
+        )
         if num_images == 0:
             raise NoMetricValue(
                 "Record must have at least one image in at least one turn."

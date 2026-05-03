@@ -3,7 +3,6 @@
 """Mixin for buffered JSONL writing with automatic flushing."""
 
 import asyncio
-import time
 from pathlib import Path
 from typing import Generic
 
@@ -11,7 +10,7 @@ import aiofiles
 import orjson
 
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import background_task, on_init, on_stop
+from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
@@ -36,7 +35,6 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self,
         output_file: Path,
         batch_size: int,
-        flush_interval: float = Environment.METRICS.EXPORT_FLUSH_INTERVAL,
         **kwargs,
     ):
         """Initialize the buffered JSONL writer.
@@ -44,10 +42,6 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             output_file: Path to the JSONL output file
             batch_size: Number of records to buffer before auto-flushing
-            flush_interval: Periodic flush interval (seconds) for the background
-                task that drains the in-memory buffer at low throughput. Default
-                is ``Environment.METRICS.EXPORT_FLUSH_INTERVAL`` so operators can
-                bound worst-case freshness without code changes.
             **kwargs: Additional arguments passed to parent class
         """
         super().__init__(**kwargs)
@@ -57,8 +51,6 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
         self._batch_size = batch_size
-        self._flush_interval = flush_interval
-        self._last_flush_monotonic = time.monotonic()
 
     @on_init
     async def _open_file(self) -> None:
@@ -113,16 +105,6 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         except Exception as e:
             self.error(f"Failed to write record: {e!r}")
 
-    async def flush_buffer(self) -> None:
-        """Flush the current internal buffer to disk.
-
-        Public counterpart to ``_flush_buffer``: swaps out the live buffer and
-        writes all pending records. Safe to call when the buffer is empty.
-        """
-        buffer_to_flush = self._buffer
-        self._buffer = []
-        await self._flush_buffer(buffer_to_flush)
-
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
 
@@ -148,24 +130,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 bulk_data = b"\n".join(buffer_to_flush) + b"\n"
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
-                self._last_flush_monotonic = time.monotonic()
             except Exception as e:
                 self.exception(f"Failed to flush buffer: {e!r}")
-
-    @background_task(interval=lambda self: self._flush_interval, immediate=False)
-    async def _flush_buffer_periodically(self) -> None:
-        """Flush buffered records on a time boundary even at low throughput.
-
-        Bounds worst-case freshness of the JSONL file when the in-memory batch
-        never reaches ``batch_size`` (e.g. very low arrival rate). The interval
-        is the per-instance ``flush_interval`` set in ``__init__``.
-        """
-        if not self._buffer:
-            return
-
-        buffer_to_flush = self._buffer
-        self._buffer = []
-        await self._flush_buffer(buffer_to_flush)
 
     @on_stop
     async def _close_file(self) -> None:

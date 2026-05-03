@@ -11,7 +11,6 @@ import pytest
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import MetricResult
-from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.export_models import JsonExportData
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
@@ -56,11 +55,10 @@ def mock_user_config():
 @pytest.fixture
 def mock_results(sample_records):
     class MockResults:
-        def __init__(self, metrics, branch_stats=None):
+        def __init__(self, metrics):
             self.metrics = metrics
             self.start_ns = None
             self.end_ns = None
-            self.branch_stats = branch_stats
 
         @property
         def records(self):
@@ -79,39 +77,6 @@ def mock_results(sample_records):
             return []
 
     return MockResults(sample_records)
-
-
-@pytest.fixture
-def mock_results_factory(sample_records):
-    """Factory to build MockResults with optional branch_stats."""
-
-    class MockResults:
-        def __init__(self, metrics, branch_stats=None):
-            self.metrics = metrics
-            self.start_ns = None
-            self.end_ns = None
-            self.branch_stats = branch_stats
-
-        @property
-        def records(self):
-            return self.metrics
-
-        @property
-        def has_results(self):
-            return bool(self.metrics)
-
-        @property
-        def was_cancelled(self):
-            return False
-
-        @property
-        def error_summary(self):
-            return []
-
-    def _make(branch_stats=None):
-        return MockResults(sample_records, branch_stats=branch_stats)
-
-    return _make
 
 
 class TestMetricsJsonExporter:
@@ -834,80 +799,3 @@ class TestMetricsJsonExporterTelemetry:
             endpoints = data["telemetry_data"]["endpoints"]
             gpu_summary = endpoints["localhost:9400"]["gpus"]["gpu_0"]
             assert gpu_summary["hostname"] == "test-hostname"
-
-
-class TestMetricsJsonExporterBranchStats:
-    """Verify ``branch_stats`` from ProfileResults round-trips into the JSON export."""
-
-    @pytest.mark.asyncio
-    async def test_json_export_includes_branch_stats_when_present(
-        self, mock_results_factory, mock_user_config
-    ):
-        """When ProfileResults.branch_stats is populated it must land in profile_export_aiperf.json."""
-        stats = BranchStats(
-            children_spawned=2,
-            children_completed=2,
-            children_errored=0,
-            parents_suspended=1,
-            parents_resumed=1,
-            parents_failed_due_to_child_error=0,
-        )
-        results = mock_results_factory(branch_stats=stats)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir)
-            mock_user_config.output.artifact_directory = output_dir
-
-            exporter_config = ExporterConfig(
-                results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
-                telemetry_results=None,
-            )
-
-            exporter = MetricsJsonExporter(exporter_config)
-            await exporter.export()
-
-            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
-            with open(expected_file) as f:
-                data = json.load(f)
-
-            assert "branch_stats" in data
-            assert data["branch_stats"]["children_spawned"] == 2
-            assert data["branch_stats"]["children_completed"] == 2
-            assert data["branch_stats"]["children_errored"] == 0
-            assert data["branch_stats"]["parents_suspended"] == 1
-            assert data["branch_stats"]["parents_resumed"] == 1
-            assert data["branch_stats"]["parents_failed_due_to_child_error"] == 0
-
-            # Ensure the serialized payload validates back into the typed export model.
-            parsed = JsonExportData.model_validate(data)
-            assert parsed.branch_stats == stats
-
-    @pytest.mark.asyncio
-    async def test_json_export_omits_branch_stats_when_none(
-        self, mock_results_factory, mock_user_config
-    ):
-        """Follows the existing optional-field convention (exclude_none=True) - omit the key entirely."""
-        results = mock_results_factory(branch_stats=None)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_dir = Path(temp_dir)
-            mock_user_config.output.artifact_directory = output_dir
-
-            exporter_config = ExporterConfig(
-                results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
-                telemetry_results=None,
-            )
-
-            exporter = MetricsJsonExporter(exporter_config)
-            await exporter.export()
-
-            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
-            with open(expected_file) as f:
-                data = json.load(f)
-
-            # Matches telemetry_data-style: either absent or explicitly null.
-            assert "branch_stats" not in data or data.get("branch_stats") is None

@@ -79,7 +79,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",
-  "hypothesis>=6.152.2",
+  "hypothesis>=6.0.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -161,7 +161,7 @@ markers = [
     "performance: marks tests as performance tests (deselected by default)",
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
     "stress: marks tests as stress tests that generate high load (deselected by default)",
-    "slow: marks tests as slow / memory-heavy (deselected by default; opt in with -m slow)",
+    "slow: marks tests as slow (>= 3s, run by default but can be skipped with -m 'not slow')",
     "component_integration: marks tests as component integration tests",
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
@@ -171,22 +171,18 @@ markers = [
 console_output_style = "progress"
 verbosity_assertions = 2
 # Show extra test summary info
-# Deselect performance, ffmpeg, stress, statistical, slow, component_integration, integration, server_unit, fern by default
-# To run them: pytest -m performance, pytest -m slow, pytest -m component_integration, etc.
+# Deselect performance, ffmpeg, and stress, and statistical, and component_integration, and integration, and server_unit tests by default
+# To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers --timeout=300 --timeout-method=thread -m 'not performance and not ffmpeg and not stress and not statistical and not slow and not component_integration and not integration and not server_unit and not fern'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore::RuntimeWarning:looptime",
     "ignore:There is no current event loop:DeprecationWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
     "ignore:unclosed file:ResourceWarning",
-    # sentencepiece 0.2.1 ships SWIG-generated bindings whose builtin types
-    # lack __module__; fixed upstream only when sentencepiece publishes a
-    # SWIG regen. Drop this filter when sentencepiece > 0.2.1 lands.
-    "ignore:builtin type Swig(PyObject|PyPacked|varlink) has no __module__ attribute:DeprecationWarning",
 ]
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html"
-ignore-words-list = "timeslice,timeslices,crate"
+ignore-words-list = "timeslice,timeslices"

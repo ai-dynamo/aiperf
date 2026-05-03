@@ -5,20 +5,15 @@ import pytest
 from pydantic import BaseModel, Field, SerializeAsAny
 
 from aiperf.common.enums import SSEFieldType
-from aiperf.common.models import (
-    MetricResult,
-    ProfileResults,
-    SSEMessage,
-    TimesliceResult,
-)
+from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
 from aiperf.common.models.export_models import JsonMetricResult
 
 
 class TestProfileResults:
     """Test cases for ProfileResults model."""
 
-    def test_profile_results_with_timeslices(self):
-        """Test ProfileResults can store timeslice results."""
+    def test_profile_results_with_timeslice_metric_results(self):
+        """Test ProfileResults can store timeslice metric results."""
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -27,37 +22,27 @@ class TestProfileResults:
             count=10,
         )
 
-        timeslices = [
-            TimesliceResult(
-                start_ns=1_000_000_000,
-                end_ns=2_000_000_000,
-                metric_results=[metric_result],
-            ),
-            TimesliceResult(
-                start_ns=2_000_000_000,
-                end_ns=3_000_000_000,
-                metric_results=[metric_result],
-            ),
-        ]
+        timeslice_results = {
+            0: [metric_result],
+            1: [metric_result],
+        }
 
         profile_results = ProfileResults(
             records=[metric_result],
-            timeslices=timeslices,
+            timeslice_metric_results=timeslice_results,
             completed=1,
             start_ns=1000000000,
             end_ns=2000000000,
         )
 
-        assert profile_results.timeslices is not None
-        assert len(profile_results.timeslices) == 2
-        assert profile_results.timeslices[0].start_ns == 1_000_000_000
-        assert profile_results.timeslices[0].end_ns == 2_000_000_000
-        assert profile_results.timeslices[0].is_complete is None
-        assert len(profile_results.timeslices[0].metric_results) == 1
-        assert len(profile_results.timeslices[1].metric_results) == 1
+        assert profile_results.timeslice_metric_results is not None
+        assert 0 in profile_results.timeslice_metric_results
+        assert 1 in profile_results.timeslice_metric_results
+        assert len(profile_results.timeslice_metric_results[0]) == 1
+        assert len(profile_results.timeslice_metric_results[1]) == 1
 
-    def test_profile_results_without_timeslices(self):
-        """Test ProfileResults works without timeslices."""
+    def test_profile_results_without_timeslice_metric_results(self):
+        """Test ProfileResults works without timeslice metric results."""
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -73,10 +58,10 @@ class TestProfileResults:
             end_ns=2000000000,
         )
 
-        assert profile_results.timeslices is None
+        assert profile_results.timeslice_metric_results is None
 
-    def test_profile_results_with_empty_timeslices_list(self):
-        """Test ProfileResults with empty timeslices list."""
+    def test_profile_results_with_empty_timeslice_dict(self):
+        """Test ProfileResults with empty timeslice results dict."""
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -87,14 +72,14 @@ class TestProfileResults:
 
         profile_results = ProfileResults(
             records=[metric_result],
-            timeslices=[],
+            timeslice_metric_results={},
             completed=1,
             start_ns=1000000000,
             end_ns=2000000000,
         )
 
-        assert profile_results.timeslices is not None
-        assert len(profile_results.timeslices) == 0
+        assert profile_results.timeslice_metric_results is not None
+        assert len(profile_results.timeslice_metric_results) == 0
 
     def test_profile_results_with_multiple_timeslices_and_metrics(self):
         """Test ProfileResults with multiple timeslices containing multiple metrics."""
@@ -114,37 +99,25 @@ class TestProfileResults:
             count=1,
         )
 
-        timeslices = [
-            TimesliceResult(
-                start_ns=i * 1_000_000_000,
-                end_ns=(i + 1) * 1_000_000_000,
-                metric_results=[latency_result, throughput_result],
-            )
-            for i in range(3)
-        ]
+        timeslice_results = {
+            0: [latency_result, throughput_result],
+            1: [latency_result, throughput_result],
+            2: [latency_result, throughput_result],
+        }
 
         profile_results = ProfileResults(
             records=[latency_result, throughput_result],
-            timeslices=timeslices,
+            timeslice_metric_results=timeslice_results,
             completed=2,
             start_ns=1000000000,
             end_ns=3000000000,
         )
 
-        assert profile_results.timeslices is not None
-        assert len(profile_results.timeslices) == 3
-        for ts in profile_results.timeslices:
-            assert len(ts.metric_results) == 2
-
-    def test_timeslice_result_partial_window(self):
-        """Test TimesliceResult flags partial trailing windows."""
-        ts = TimesliceResult(
-            start_ns=2_000_000_000,
-            end_ns=2_500_000_000,
-            is_complete=False,
-        )
-        assert ts.is_complete is False
-        assert ts.metric_results == {}
+        assert profile_results.timeslice_metric_results is not None
+        assert len(profile_results.timeslice_metric_results) == 3
+        for i in range(3):
+            assert i in profile_results.timeslice_metric_results
+            assert len(profile_results.timeslice_metric_results[i]) == 2
 
 
 class TestSSEMessageDataclass:

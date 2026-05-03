@@ -7,16 +7,8 @@ from typing import Any, ClassVar
 
 from pydantic import Field, field_validator
 
-from aiperf.common.enums import (
-    ConversationBranchMode,
-    ConversationContextMode,
-    MediaType,
-    MemoryMapFormat,
-)
-from aiperf.common.enums.enums import SubagentType
+from aiperf.common.enums import ConversationContextMode, MediaType
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.common.models.branch import ConversationBranchInfo
-from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
 
@@ -45,17 +37,13 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
-    format: MemoryMapFormat = Field(
-        default=MemoryMapFormat.CONVERSATION,
-        description="Storage format of the memory-mapped dataset files.",
-    )
     data_file_path: Path = Field(
         ...,
-        description="Path to the data file. Points to dataset.dat (local) or dataset.dat.zst (k8s).",
+        description="Path to the memory-mapped data file containing serialized conversations.",
     )
     index_file_path: Path = Field(
         ...,
-        description="Path to the index file. Points to index.dat (local) or index.dat.zst (k8s).",
+        description="Path to the memory-mapped index file for O(1) conversation lookups.",
     )
     conversation_count: int = Field(
         default=0,
@@ -63,15 +51,20 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
     total_size_bytes: int = Field(
         default=0,
-        description="Total uncompressed size of the data file in bytes.",
+        description="Total size of the data file in bytes.",
     )
-    compressed: bool = Field(
-        default=False,
-        description="Whether data/index files are zstd-compressed (k8s compress_only mode).",
+    # Pre-compressed files for Kubernetes HTTP transfer (optional)
+    compressed_data_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
+    )
+    compressed_index_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
     )
     compressed_size_bytes: int = Field(
         default=0,
-        description="Size of the compressed data file in bytes. 0 when not compressed.",
+        description="Total size of the compressed data file in bytes.",
     )
 
 
@@ -121,18 +114,6 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
     )
-    branch_ids: list[str] = Field(
-        default_factory=list,
-        description="Branch IDs triggered after this turn completes (DAG projection).",
-    )
-    has_forks: bool = Field(
-        default=False,
-        description="True if this turn triggers any FORK-mode branch. Stamped at load time.",
-    )
-    prerequisites: list[TurnPrerequisite] = Field(
-        default_factory=list,
-        description="Conditions gating dispatch of this turn (DAG projection).",
-    )
 
 
 class Turn(AIPerfBaseModel):
@@ -169,19 +150,6 @@ class Turn(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible tool definitions. "
         "When set alongside raw_messages, injected into the API payload.",
     )
-    reset_context: bool = Field(
-        default=False,
-        description=(
-            "When True, the endpoint formatter discards messages accumulated "
-            "from prior turns in this conversation before applying this turn's "
-            "raw_messages. Used by delta-encoded multi-turn conversations to "
-            "express a non-monotonic context change (e.g. weka's mid-segment "
-            "LCP cut, or any source that needs to rewrite an earlier prefix). "
-            "Has no effect when raw_messages is None or when the surrounding "
-            "Conversation.context_mode is a MESSAGE_ARRAY mode (each turn "
-            "already carries a self-contained array)."
-        ),
-    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
@@ -194,28 +162,6 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
-    raw_payload: dict[str, Any] | None = Field(
-        default=None,
-        description="Complete pre-built API request payload for verbatim replay. "
-        "When set, bypasses all endpoint payload construction (format_payload) "
-        "and sends this dict directly to the transport.",
-    )
-    extra_body: dict[str, Any] | None = Field(
-        default=None,
-        description="Non-native per-turn request-body fields (temperature, top_p, "
-        "seed, stop, vendor tunables like ignore_eos/min_tokens, ...). Merged "
-        "into the top level of the chat-completions payload at dispatch time, "
-        "matching the OpenAI SDK's extra_body convention.",
-    )
-    branch_ids: list[str] = Field(
-        default_factory=list,
-        description="Branch IDs triggered after this turn completes (DAG authoring).",
-    )
-    prerequisites: list[TurnPrerequisite] = Field(
-        default_factory=list,
-        description="Conditions gating dispatch of this turn (DAG authoring). "
-        "Attached to the gated turn; resolved against branch_ids declared on prior turns.",
-    )
     audio_duration_seconds: float | None = Field(
         default=None,
         description="Duration of the audio content in seconds. Used by ASR-specific "
@@ -227,8 +173,6 @@ class Turn(AIPerfBaseModel):
         return TurnMetadata(
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
-            branch_ids=self.branch_ids,
-            prerequisites=self.prerequisites,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -274,10 +218,6 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
-            raw_payload=self.raw_payload,
-            extra_body=self.extra_body,
-            branch_ids=list(self.branch_ids),
-            prerequisites=list(self.prerequisites),
             audio_duration_seconds=self.audio_duration_seconds,
         )
 
@@ -292,27 +232,6 @@ class ConversationMetadata(AIPerfBaseModel):
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
-    )
-    branches: list[ConversationBranchInfo] = Field(
-        default_factory=list,
-        description="Branch descriptors for this conversation (DAG projection).",
-    )
-    is_root: bool = Field(
-        default=True,
-        description="Whether this conversation is a DAG root (eligible for sampling). "
-        "Non-root DAG children are reachable only via branches from their parent.",
-    )
-    agent_depth: int = Field(
-        default=0,
-        description="DAG nesting level (0 = root). Populated by DAG loaders.",
-    )
-    subagent_type: SubagentType | None = Field(
-        default=None,
-        description="Optional sub-agent classification (EXPLORE/GENERAL/PLAN) for metrics/routing.",
-    )
-    parent_conversation_id: str | None = Field(
-        default=None,
-        description="For DAG children: the parent conversation ID.",
     )
     accuracy_ground_truth: str | None = Field(
         default=None,
@@ -420,27 +339,6 @@ class Conversation(AIPerfBaseModel):
         description="Optional per-conversation user context prepended to the first turn. "
         "Unique for each conversation when using --user-context-prompt-length.",
     )
-    branches: list[ConversationBranchInfo] = Field(
-        default_factory=list,
-        description="Branch descriptors for this conversation (DAG authoring).",
-    )
-    is_root: bool = Field(
-        default=True,
-        description="Whether this conversation is a DAG root (eligible for sampling). "
-        "Non-root DAG children are reachable only via branches from their parent.",
-    )
-    agent_depth: int = Field(
-        default=0,
-        description="DAG nesting level (0 = root). Populated by DAG loaders.",
-    )
-    subagent_type: SubagentType | None = Field(
-        default=None,
-        description="Optional sub-agent classification (EXPLORE/GENERAL/PLAN) for metrics/routing.",
-    )
-    parent_conversation_id: str | None = Field(
-        default=None,
-        description="For DAG children: the parent conversation ID.",
-    )
     accuracy_ground_truth: str | None = Field(
         default=None,
         description="Ground-truth answer for this conversation (accuracy mode only). "
@@ -456,47 +354,9 @@ class Conversation(AIPerfBaseModel):
 
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
-        branches_by_id = {b.branch_id: b for b in self.branches}
-        turn_metas: list[TurnMetadata] = []
-        for turn in self.turns:
-            triggered = [
-                branches_by_id[bid] for bid in turn.branch_ids if bid in branches_by_id
-            ]
-            has_forks = any(b.mode == ConversationBranchMode.FORK for b in triggered)
-            turn_metas.append(
-                TurnMetadata(
-                    timestamp_ms=turn.timestamp,
-                    delay_ms=turn.delay,
-                    branch_ids=turn.branch_ids,
-                    has_forks=has_forks,
-                )
-            )
         return ConversationMetadata(
             conversation_id=self.session_id,
-            turns=turn_metas,
-            branches=self.branches,
-            is_root=self.is_root,
-            agent_depth=self.agent_depth,
-            subagent_type=self.subagent_type,
-            parent_conversation_id=self.parent_conversation_id,
-            accuracy_ground_truth=self.accuracy_ground_truth,
-            accuracy_task=self.accuracy_task,
-        )
-
-    def to_metadata(self) -> "ConversationMetadata":
-        """Project this Conversation into its DatasetMetadata form.
-
-        Used by loaders to invoke validate_for_orchestrator_v1 without
-        round-tripping through DatasetManager.
-        """
-        return ConversationMetadata(
-            conversation_id=self.session_id,
-            turns=[t.metadata() for t in self.turns],
-            branches=list(self.branches),
-            is_root=self.is_root,
-            agent_depth=self.agent_depth,
-            subagent_type=self.subagent_type,
-            parent_conversation_id=self.parent_conversation_id,
+            turns=[turn.metadata() for turn in self.turns],
             accuracy_ground_truth=self.accuracy_ground_truth,
             accuracy_task=self.accuracy_task,
         )

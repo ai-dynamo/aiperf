@@ -3,104 +3,45 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
-from aiperf.common.enums import MediaType
 from aiperf.common.models import (
     InferenceServerResponse,
     ParsedResponse,
     ReasoningResponseData,
     RequestInfo,
     TextResponseData,
+    Turn,
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+
+_DEFAULT_ROLE: str = "user"
 
 
 class ResponsesEndpoint(BaseEndpoint):
     """OpenAI Responses API endpoint.
 
-    Message-array construction reuses the generic
-    ``BaseEndpoint.build_messages`` flow. Only the content-part type names
-    differ from chat (``input_text`` vs ``text``, ``input_image`` vs
-    ``image_url``), so we override those hooks and leave the iteration /
-    raw-messages pass-through skeleton alone.
-
-    The shared ``system_message`` lives on the top-level ``instructions``
-    field rather than inside the ``input`` array (Responses API contract),
-    and the per-conversation ``user_context_message`` is prepended as a
-    leading user item.
+    Supports multi-modal inputs (text, images, audio) and both
+    streaming and non-streaming responses.
     """
 
-    # Responses API content-part type names. ``BaseEndpoint.extract_payload_inputs``
-    # walks the payload once and dispatches every part against this map —
-    # text parts contribute to the tokenisable text list, media parts
-    # bump their respective counts.
-    PART_TYPES: ClassVar[dict[MediaType, set[str]]] = {
-        MediaType.TEXT: {"input_text"},
-        MediaType.IMAGE: {"input_image"},
-        MediaType.AUDIO: {"input_audio"},
-        # Responses API does not currently support video input.
-        MediaType.VIDEO: set(),
-    }
-
-    def extract_payload_inputs(self, payload: dict[str, Any]):
-        """Responses-API single-pass extraction.
-
-        Inherits the base-class walk (which dispatches content parts via
-        ``PART_TYPES``) and additionally prepends ``instructions`` — the
-        Responses-API equivalent of a system prompt that lives at the
-        top level of the payload rather than inside ``input``.
-        """
-        result = super().extract_payload_inputs(payload)
-        instructions = payload.get("instructions")
-        if isinstance(instructions, str):
-            result.texts.insert(0, instructions)
-            if result.messages is not None:
-                result.messages.insert(0, {"role": "system", "content": instructions})
-        return result
-
-    # --- Content-part hooks (override only the type names) -------------------
-
-    def _render_text_part(self, text: str) -> dict[str, Any]:
-        return {"type": "input_text", "text": text}
-
-    def _render_image_part(self, url_or_data_uri: str) -> dict[str, Any]:
-        # Responses API takes ``image_url`` as a plain string, not nested.
-        return {"type": "input_image", "image_url": url_or_data_uri}
-
-    def _render_audio_part(self, format_and_b64: str) -> dict[str, Any]:
-        if "," not in format_and_b64:
-            raise ValueError("Audio content must be in the format 'format,b64_audio'.")
-        fmt, b64 = format_and_b64.split(",", 1)
-        return {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}}
-
-    # NOTE: Responses API does not currently support video input.
-    # ``_render_video_part`` inherits the chat default and would only fire
-    # if a caller authored video turns against a Responses endpoint — the
-    # default output shape is structurally valid but the server will reject
-    # it. Leave the default so misuse surfaces loudly rather than silently.
-
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        """Format OpenAI Responses API request payload from RequestInfo."""
+        """Format OpenAI Responses API request payload from RequestInfo.
+
+        Args:
+            request_info: Request context including model endpoint, metadata, and turns
+
+        Returns:
+            OpenAI Responses API payload
+        """
         if not request_info.turns:
             raise ValueError("Responses endpoint requires at least one turn.")
 
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        # Responses API doesn't nest the system prompt into ``input``; it
-        # lives in top-level ``instructions``. The per-conversation
-        # ``user_context_message`` is prepended as a leading user item.
-        input_items: list[dict[str, Any]] = []
-        if request_info.user_context_message:
-            input_items.append(
-                {
-                    "role": self.DEFAULT_TURN_ROLE,
-                    "content": request_info.user_context_message,
-                }
-            )
-        input_items.extend(self.build_messages(turns))
+        input_items = self._create_input_items(turns, request_info.user_context_message)
 
         payload: dict[str, Any] = {
             "input": input_items,
@@ -130,6 +71,85 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def _create_input_items(
+        self,
+        turns: list[Turn],
+        user_context_message: str | None,
+    ) -> list[dict[str, Any]]:
+        """Create input items from turns for OpenAI Responses API.
+
+        Args:
+            turns: List of turns in the request
+            user_context_message: Optional per-conversation user context to prepend
+
+        Returns:
+            List of formatted input item dicts for OpenAI Responses API
+        """
+        items: list[dict[str, Any]] = []
+
+        if user_context_message:
+            items.append(
+                {
+                    "role": _DEFAULT_ROLE,
+                    "content": user_context_message,
+                }
+            )
+
+        for turn in turns:
+            item: dict[str, Any] = {
+                "role": turn.role or _DEFAULT_ROLE,
+            }
+            self._set_item_content(item, turn)
+            items.append(item)
+        return items
+
+    def _set_item_content(self, item: dict[str, Any], turn: Turn) -> None:
+        """Create input item content from turn for OpenAI Responses API."""
+        if (
+            len(turn.texts) == 1
+            and len(turn.texts[0].contents) == 1
+            and len(turn.images) == 0
+            and len(turn.audios) == 0
+            and len(turn.videos) == 0
+        ):
+            item["content"] = turn.texts[0].contents[0]
+            return
+
+        content: list[dict[str, Any]] = []
+
+        for text in turn.texts:
+            for c in text.contents:
+                if not c:
+                    continue
+                content.append({"type": "input_text", "text": c})
+
+        for image in turn.images:
+            for c in image.contents:
+                if not c:
+                    continue
+                content.append({"type": "input_image", "image_url": c})
+
+        for audio in turn.audios:
+            for c in audio.contents:
+                if not c:
+                    continue
+                if "," not in c:
+                    raise ValueError(
+                        "Audio content must be in the format 'format,b64_audio'."
+                    )
+                fmt, b64_audio = c.split(",", 1)
+                content.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": b64_audio,
+                            "format": fmt,
+                        },
+                    }
+                )
+
+        item["content"] = content
 
     def parse_response(
         self, response: InferenceServerResponse

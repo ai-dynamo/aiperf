@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
 from orjson import JSONDecodeError
-from pydantic import BeforeValidator, Field, PrivateAttr, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -117,12 +117,10 @@ class UserConfig(BaseConfig):
                 self.loadgen.request_count is None
                 and self.input.conversation.num is None
             ):
-                count = self._count_dataset_entries()
-                if count > 0:
-                    self.loadgen.request_count = count
-                    _logger.info(
-                        f"No request count value provided for fixed schedule mode, setting to dataset entry count: {count}"
-                    )
+                self.loadgen.request_count = self._count_dataset_entries()
+                _logger.info(
+                    f"No request count value provided for fixed schedule mode, setting to dataset entry count: {self.loadgen.request_count}"
+                )
         elif self._should_use_fixed_schedule_for_trace_dataset():
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             _logger.info(
@@ -132,12 +130,10 @@ class UserConfig(BaseConfig):
                 self.loadgen.request_count is None
                 and self.input.conversation.num is None
             ):
-                count = self._count_dataset_entries()
-                if count > 0:
-                    self.loadgen.request_count = count
-                    _logger.info(
-                        f"No request count value provided for trace dataset, setting to dataset entry count: {count}"
-                    )
+                self.loadgen.request_count = self._count_dataset_entries()
+                _logger.info(
+                    f"No request count value provided for trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
+                )
         elif self.loadgen.user_centric_rate is not None:
             # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
             # --user-centric-rate takes the QPS value directly
@@ -214,7 +210,6 @@ class UserConfig(BaseConfig):
                 )
             self._timing_mode = TimingMode.REQUEST_RATE
             self.loadgen.arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
-            self.loadgen.model_fields_set.discard("arrival_pattern")
 
         if (
             "arrival_pattern" not in self.loadgen.model_fields_set
@@ -397,9 +392,6 @@ class UserConfig(BaseConfig):
         Returns:
             True if fixed schedule should be enabled for this trace dataset.
         """
-        if self.input.disable_auto_fixed_schedule:
-            return False
-
         if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
             self.input.custom_dataset_type
         ):
@@ -428,32 +420,17 @@ class UserConfig(BaseConfig):
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file or directory.
 
-        For a JSONL/JSON file, counts non-empty lines. For a directory the
-        strategy depends on layout: top-level ``.json`` / ``.jsonl`` files
-        each count as one entry (weka_trace one-file-per-trace corpus); if
-        no top-level files match, recursively scans for ``.jsonl`` files and
-        counts non-empty lines (SageMaker date-partitioned capture). The exact
-        value is only a placeholder for fixed-schedule validation — the timing
-        manager later replaces ``total_expected_requests`` with
-        ``metadata.total_turn_count`` from the loaded dataset.
+        For directories, recursively counts non-empty lines across all .jsonl files.
 
         Returns:
-            int: Entry count, or 0 if the path is missing or unreadable.
+            int: Number of non-empty lines
         """
         if not self.input.file:
             return 0
 
-        path = Path(self.input.file)
+        path = self.input.file
         try:
             if path.is_dir():
-                top_level = sum(
-                    1
-                    for child in path.iterdir()
-                    if child.is_file() and child.suffix in (".json", ".jsonl")
-                )
-                if top_level > 0:
-                    return top_level
-                # No top-level files; recurse for nested layouts.
                 count = 0
                 for jsonl_file in path.rglob("*.jsonl"):
                     with open(jsonl_file) as f:
@@ -1141,84 +1118,5 @@ class UserConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_accuracy_config(self) -> Self:
         """Validate accuracy benchmarking configuration."""
-        # Stub: accuracy mode currently has no validation rules.
-        return self
-
-    scenario: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Lock all benchmark invariants for a named scenario "
-            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
-            "invariants raise ScenarioLockError at startup unless "
-            "--unsafe-override is also passed.",
-        ),
-        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
-    ] = None
-
-    unsafe_override: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Convert scenario lock errors to warnings; stamps "
-            "submission_valid=false in the aggregate output. No-op without "
-            "--scenario.",
-        ),
-        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
-    ] = False
-
-    _scenario_outcome: Any = PrivateAttr(default=None)
-
-    @model_validator(mode="after")
-    def _run_scenario_validator(self) -> Self:
-        """Run scenario invariant validation if --scenario was provided.
-
-        Lazy-imports validate_scenario to avoid circular imports between
-        aiperf.common.config and aiperf.common.scenario.
-        """
-        from aiperf.common.scenario.validator import (
-            _derive_timing_mode_explicit,
-            validate_scenario,
-        )
-
-        outcome = validate_scenario(
-            self,
-            timing_mode_explicit=_derive_timing_mode_explicit(self),
-        )
-        self._scenario_outcome = outcome
-        return self
-
-    @model_validator(mode="after")
-    def validate_cache_bust_compatibility(self) -> Self:
-        """Refuse cache-bust on incompatible timing modes / endpoint types.
-
-        Marker minting only fires in ``AgenticReplayStrategy`` and only the
-        chat / responses endpoint formatters consume the system message field
-        that hosts the marker. Any other combination silently drops the marker
-        and would produce a benchmark that looks normal but exercises no cache-
-        busting at all — refuse loudly at config validation. Runs after
-        ``_run_scenario_validator`` so a scenario-imposed timing_mode is
-        considered.
-        """
-        from aiperf.common.enums import CacheBustTarget
-
-        target = self.input.prompt.cache_bust.target
-        if target == CacheBustTarget.NONE:
-            return self
-
-        if self.timing_mode != TimingMode.AGENTIC_REPLAY:
-            raise ValueError(
-                f"--cache-bust requires --timing-mode agentic_replay; "
-                f"got {self.timing_mode}. Cache-bust marker minting is only "
-                f"implemented for agentic_replay."
-            )
-
-        allowed_endpoint_types = {EndpointType.CHAT, EndpointType.RESPONSES}
-        if self.endpoint.type not in allowed_endpoint_types:
-            raise ValueError(
-                f"--cache-bust requires --endpoint-type chat or responses; "
-                f"got {self.endpoint.type}. Other endpoint formatters do not "
-                f"consume the system message field."
-            )
-
+        # Stub: validation logic will be added when accuracy mode is implemented
         return self

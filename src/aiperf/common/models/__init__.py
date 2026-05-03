@@ -3,7 +3,6 @@
 
 from aiperf.common.models.auto_routed_model import AutoRoutedModel
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.common.models.branch import ConversationBranchInfo
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
     CreditPhaseStats,
@@ -53,18 +52,15 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
     BaseResponseData,
     BinaryResponse,
     EmbeddingResponseData,
-    ExtractedPayload,
     ImageDataItem,
     ImageResponseData,
     ImageRetrievalResponseData,
     InferenceServerResponse,
-    MediaCounts,
     MetricRecordInfo,
     MetricRecordMetadata,
     MetricResult,
@@ -77,14 +73,12 @@ from aiperf.common.models.record_models import (
     RankingsResponseData,
     RawRecordInfo,
     ReasoningResponseData,
-    RecordContext,
     RequestInfo,
     RequestRecord,
     SSEField,
     SSEMessage,
     TextResponse,
     TextResponseData,
-    TimesliceResult,
     TokenCounts,
     ToolCallResponseData,
     VideoResponseData,
@@ -157,7 +151,6 @@ __all__ = [
     "BinaryResponse",
     "CPUTimes",
     "Conversation",
-    "ConversationBranchInfo",
     "ConversationMetadata",
     "CounterMetricData",
     "CounterSeries",
@@ -174,7 +167,6 @@ __all__ = [
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
-    "ExtractedPayload",
     "GaugeMetricData",
     "GaugeSeries",
     "GaugeStats",
@@ -198,7 +190,6 @@ __all__ = [
     "JsonExportData",
     "JsonMetricResult",
     "Media",
-    "MediaCounts",
     "MemoryMapClientMetadata",
     "MetricFamily",
     "MetricRecordInfo",
@@ -222,7 +213,6 @@ __all__ = [
     "RankingsResponseData",
     "RawRecordInfo",
     "ReasoningResponseData",
-    "RecordContext",
     "RequestInfo",
     "RequestRecord",
     "SSEField",
@@ -249,13 +239,11 @@ __all__ = [
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",
-    "TimesliceResult",
     "TokenCounts",
     "ToolCallResponseData",
     "TraceDataExport",
     "Turn",
     "TurnMetadata",
-    "TurnPrerequisite",
     "Usage",
     "Video",
     "VideoResponseData",

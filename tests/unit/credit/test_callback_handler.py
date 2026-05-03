@@ -169,7 +169,6 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
-            is_child=False,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -184,7 +183,6 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
-            is_child=False,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -393,220 +391,9 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, is_child=False
+            credit.is_final_turn, cancelled
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()
         else:
             mock_concurrency.release_prefill_slot.assert_not_called()
-
-
-# =============================================================================
-# Test: DAG (sub-agent) guards
-# =============================================================================
-
-
-def make_dag_credit(
-    credit_id: int = 1,
-    conversation_id: str = "conv-child",
-    turn_index: int = 0,
-    num_turns: int = 1,
-    agent_depth: int = 1,
-    parent_correlation_id: str = "parent-corr",
-    phase: CreditPhase = CreditPhase.PROFILING,
-) -> Credit:
-    """Credit variant carrying DAG child fields."""
-    return Credit(
-        id=credit_id,
-        phase=phase,
-        conversation_id=conversation_id,
-        x_correlation_id=f"child-corr-{credit_id}",
-        turn_index=turn_index,
-        num_turns=num_turns,
-        issued_at_ns=time.time_ns(),
-        agent_depth=agent_depth,
-        parent_correlation_id=parent_correlation_id,
-    )
-
-
-@pytest.fixture
-def mock_orchestrator():
-    """Mock BranchOrchestrator with async hooks."""
-    mock = MagicMock()
-    mock.intercept = AsyncMock(return_value=False)
-    mock.on_child_leaf_reached = AsyncMock()
-    mock.on_child_errored = AsyncMock()
-    mock.has_pending_branch_work = MagicMock(return_value=False)
-    return mock
-
-
-@pytest.fixture
-def dag_handler(mock_concurrency, mock_orchestrator):
-    """CreditCallbackHandler with a BranchOrchestrator wired in."""
-    return CreditCallbackHandler(
-        mock_concurrency, branch_orchestrator=mock_orchestrator
-    )
-
-
-@pytest.fixture
-def registered_dag_handler(
-    dag_handler,
-    mock_progress,
-    mock_lifecycle,
-    mock_stop_checker,
-    mock_strategy,
-):
-    dag_handler.register_phase(
-        phase=CreditPhase.PROFILING,
-        progress=mock_progress,
-        lifecycle=mock_lifecycle,
-        stop_checker=mock_stop_checker,
-        strategy=mock_strategy,
-    )
-    return dag_handler
-
-
-class TestDagCallbackGuards:
-    """DAG-specific branches in ``on_credit_return``:
-
-    1. ``release_session_slot`` must skip when ``agent_depth > 0`` —
-       children inherit the root's slot and must not release a slot
-       they never acquired.
-    2. Strategy dispatch must still fire for children even when
-       ``can_send_any_turn`` is False — phase-level stop conditions
-       drive root sampling, not DAG continuation.
-    3. ``all_credits_returned_event`` must defer when the orchestrator
-       has pending branch work or the just-returned credit will spawn
-       more children.
-    4. Child final-turn returns must notify the orchestrator (leaf vs
-       errored) so join counters decrement.
-    """
-
-    async def test_child_final_turn_does_not_release_session_slot(
-        self, registered_dag_handler, mock_concurrency
-    ):
-        """agent_depth > 0 + is_final_turn → MUST NOT release_session_slot."""
-        credit = make_dag_credit(turn_index=0, num_turns=1, agent_depth=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_concurrency.release_session_slot.assert_not_called()
-
-    async def test_root_final_turn_still_releases_session_slot(
-        self, registered_dag_handler, mock_concurrency
-    ):
-        """Regression guard: the DAG guard must not leak into the root path."""
-        credit = make_credit(turn_index=0, num_turns=1)  # agent_depth == 0
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_concurrency.release_session_slot.assert_called_once_with(
-            CreditPhase.PROFILING
-        )
-
-    async def test_child_dispatch_bypasses_can_send_any_turn_guard(
-        self, registered_dag_handler, mock_stop_checker, mock_strategy
-    ):
-        """Children must continue even after phase sampling is complete."""
-        mock_stop_checker.can_send_any_turn = MagicMock(return_value=False)
-        credit = make_dag_credit(turn_index=0, num_turns=2, agent_depth=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_strategy.handle_credit_return.assert_called_once_with(credit)
-
-    async def test_root_dispatch_still_gated_by_can_send_any_turn(
-        self, registered_dag_handler, mock_stop_checker, mock_strategy
-    ):
-        """Regression guard: root strategy dispatch stays gated."""
-        mock_stop_checker.can_send_any_turn = MagicMock(return_value=False)
-        credit = make_credit(turn_index=0, num_turns=2)  # agent_depth == 0
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_strategy.handle_credit_return.assert_not_called()
-
-    async def test_all_credits_returned_deferred_when_orchestrator_has_pending_work(
-        self, registered_dag_handler, mock_progress, mock_orchestrator
-    ):
-        """When the orchestrator has pending branch work at final return,
-        all_credits_returned_event must NOT fire immediately."""
-        mock_progress.increment_returned = MagicMock(return_value=True)
-        mock_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
-        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
-
-        credit = make_credit(turn_index=0, num_turns=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        # Event must stay unset — DAG is still draining.
-        assert not mock_progress.all_credits_returned_event.is_set()
-
-    async def test_all_credits_returned_fires_after_dag_drains(
-        self, registered_dag_handler, mock_progress, mock_orchestrator
-    ):
-        """After intercept, if orchestrator reports no more pending work and
-        progress confirms all returned, the event fires via the post-intercept
-        re-check."""
-        mock_progress.increment_returned = MagicMock(return_value=True)
-        # First check: pending (defer). Second check (post-intercept): drained.
-        mock_orchestrator.has_pending_branch_work = MagicMock(side_effect=[True, False])
-        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
-
-        credit = make_credit(turn_index=0, num_turns=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        assert mock_progress.all_credits_returned_event.is_set()
-
-    async def test_child_leaf_reached_called_on_child_final_turn(
-        self, registered_dag_handler, mock_orchestrator
-    ):
-        """Successful child final-turn return → on_child_leaf_reached hook."""
-        credit = make_dag_credit(turn_index=0, num_turns=1, agent_depth=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_orchestrator.on_child_leaf_reached.assert_awaited_once_with(
-            credit.x_correlation_id
-        )
-        mock_orchestrator.on_child_errored.assert_not_awaited()
-
-    async def test_child_errored_called_when_credit_return_has_error(
-        self, registered_dag_handler, mock_orchestrator
-    ):
-        """Errored child final turn → on_child_errored hook."""
-        credit = make_dag_credit(turn_index=0, num_turns=1, agent_depth=1)
-        credit_return = CreditReturn(
-            credit=credit,
-            cancelled=False,
-            first_token_sent=False,
-            error="server 500",
-        )
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_orchestrator.on_child_errored.assert_awaited_once_with(
-            credit.x_correlation_id
-        )
-        mock_orchestrator.on_child_leaf_reached.assert_not_awaited()
-
-    async def test_non_final_child_turn_does_not_fire_leaf_hook(
-        self, registered_dag_handler, mock_orchestrator
-    ):
-        """Intermediate child turns shouldn't notify the orchestrator
-        about leaf-reached — only the final turn does."""
-        credit = make_dag_credit(turn_index=0, num_turns=3, agent_depth=1)
-        credit_return = make_credit_return(credit)
-
-        await registered_dag_handler.on_credit_return("worker-1", credit_return)
-
-        mock_orchestrator.on_child_leaf_reached.assert_not_awaited()
-        mock_orchestrator.on_child_errored.assert_not_awaited()

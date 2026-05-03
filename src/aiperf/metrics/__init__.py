@@ -14,8 +14,6 @@ from aiperf.metrics.metric_dicts import (
     MetricDictValueTypeVarT,
     MetricRecordDict,
     MetricResultsDict,
-    MetricSeriesProtocol,
-    metric_result_from_array,
 )
 from aiperf.metrics.metric_registry import MetricRegistry
 
@@ -32,7 +30,5 @@ __all__ = [
     "MetricRecordDict",
     "MetricRegistry",
     "MetricResultsDict",
-    "MetricSeriesProtocol",
     "RecordMetricT",
-    "metric_result_from_array",
 ]

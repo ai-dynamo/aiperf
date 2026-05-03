@@ -61,12 +61,27 @@ class ConsoleUsageDiscrepancyExporter(AIPerfLoggerMixin):
 
     def _get_discrepancy_metric(self) -> MetricResult | None:
         """Extract the discrepancy metric from results."""
-        return self._results.get(UsageDiscrepancyCountMetric.tag)
+        return next(
+            (
+                r
+                for r in self._results.records
+                if r.tag == UsageDiscrepancyCountMetric.tag
+            ),
+            None,
+        )
 
     def _get_total_records(self) -> int:
         """Get the total number of valid records from results."""
-        metric = self._results.get(RequestCountMetric.tag)
-        return int(metric.avg) if metric and metric.avg else 0
+        return int(
+            next(
+                (
+                    r.avg
+                    for r in self._results.records
+                    if r.tag == RequestCountMetric.tag
+                ),
+                0,
+            )
+        )
 
     def _create_warning_text(
         self, discrepancy_count: int, total_records: int, percentage: float

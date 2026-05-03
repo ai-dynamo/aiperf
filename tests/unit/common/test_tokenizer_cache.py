@@ -18,23 +18,10 @@ def hf_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _make_revision_snapshot(model_dir: Path, ref: str, commit_hash: str) -> None:
-    """Create a refs/<ref> file and the corresponding snapshots/<hash>/ directory.
-
-    Also drops a stub ``tokenizer.json`` into the snapshot so ``_is_hf_cached``
-    treats it as a real cache rather than a partial / interrupted download.
-    """
+    """Create a refs/<ref> file and the corresponding snapshots/<hash>/ directory."""
     (model_dir / "refs").mkdir(parents=True, exist_ok=True)
     (model_dir / "refs" / ref).write_text(commit_hash)
-    snapshot = model_dir / "snapshots" / commit_hash
-    snapshot.mkdir(parents=True, exist_ok=True)
-    (snapshot / "tokenizer.json").write_text("{}")
-
-
-def _make_model_with_tokenizer(model_dir: Path) -> None:
-    """Create a minimal HF cache directory shape with a stub tokenizer file
-    under refs/main → snapshots/<hash>/ so ``_is_hf_cached`` returns True.
-    """
-    _make_revision_snapshot(model_dir, "main", "abc123")
+    (model_dir / "snapshots" / commit_hash).mkdir(parents=True, exist_ok=True)
 
 
 class TestIsHfCached:
@@ -44,11 +31,11 @@ class TestIsHfCached:
         assert _is_hf_cached("some-model") is False
 
     def test_exact_match(self, hf_cache) -> None:
-        _make_model_with_tokenizer(hf_cache / "models--meta-llama--Llama-2-7b-hf")
+        (hf_cache / "models--meta-llama--Llama-2-7b-hf").mkdir()
         assert _is_hf_cached("meta-llama/Llama-2-7b-hf") is True
 
     def test_alias_match_case_insensitive(self, hf_cache) -> None:
-        _make_model_with_tokenizer(hf_cache / "models--openai-community--GPT2")
+        (hf_cache / "models--openai-community--GPT2").mkdir()
         assert _is_hf_cached("gpt2") is True
 
     def test_no_match(self, hf_cache) -> None:
@@ -99,27 +86,15 @@ class TestIsHfCached:
 
     def test_revision_as_direct_commit_hash_returns_true(self, hf_cache) -> None:
         model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
-        snap = model_dir / "snapshots" / "abc123"
-        snap.mkdir(parents=True)
-        (snap / "tokenizer.json").write_text("{}")
+        (model_dir / "snapshots" / "abc123").mkdir(parents=True)
         assert _is_hf_cached("meta-llama/Llama-2-7b-hf", revision="abc123") is True
 
-    def test_no_revision_returns_true_when_directory_has_tokenizer_files(
+    def test_no_revision_returns_true_when_only_directory_exists(
         self, hf_cache
     ) -> None:
-        # Default-revision (no revision arg) check: must find a snapshot with
-        # at least one tokenizer file under refs/main or any snapshot dir.
-        _make_model_with_tokenizer(hf_cache / "models--meta-llama--Llama-2-7b-hf")
-        assert _is_hf_cached("meta-llama/Llama-2-7b-hf") is True
-
-    def test_no_revision_returns_false_when_partial_cache_directory(
-        self, hf_cache
-    ) -> None:
-        # Partial / interrupted download: dir exists but no tokenizer files.
-        # Treat as not cached so the loader retries the download instead of
-        # falling back to local-only mode.
+        # Backward-compat: no revision arg → directory-only check
         (hf_cache / "models--meta-llama--Llama-2-7b-hf").mkdir()
-        assert _is_hf_cached("meta-llama/Llama-2-7b-hf") is False
+        assert _is_hf_cached("meta-llama/Llama-2-7b-hf") is True
 
 
 class TestFindCachedModelForAlias:

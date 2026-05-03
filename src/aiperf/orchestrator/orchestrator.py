@@ -23,7 +23,6 @@ from aiperf.orchestrator.strategies import (
 
 if TYPE_CHECKING:
     from aiperf.common.models.export_models import JsonMetricResult
-    from aiperf.orchestrator.aggregation.base import AggregateResult
 
 logger = logging.getLogger(__name__)
 
@@ -88,53 +87,9 @@ class MultiRunOrchestrator:
 
         aggregate = strategy.aggregate(results, base_config)
         if aggregate is not None:
-            self._stamp_scenario_submission_metadata(aggregate, results, base_config)
             strategy.export_aggregates(aggregate, self.base_dir)
 
         return results
-
-    @staticmethod
-    def _stamp_scenario_submission_metadata(
-        aggregate: "AggregateResult",
-        results: list[RunResult],
-        user_config: UserConfig,
-    ) -> None:
-        """Inject scenario-submission carrier keys onto ``aggregate.metadata``.
-
-        The ``AggregateConfidenceJsonExporter`` pops these underscore-prefixed
-        keys to compute ``submission_valid`` / ``submission_invalid_reasons``.
-        Stamped here after the strategy has produced ``aggregate`` and
-        before export.
-
-        No-op when ``user_config.scenario`` is None.
-        """
-        if user_config.scenario is None:
-            return
-
-        from aiperf.cli_runner import _sum_runtime_response_counts
-
-        successful_runs = [r for r in results if r.success]
-        total_responses, context_overflow_count = _sum_runtime_response_counts(
-            successful_runs
-        )
-
-        outcome = getattr(user_config, "_scenario_outcome", None)
-        if outcome is None:
-            submission_valid = True
-            submission_invalid_reasons: list[str] = []
-        else:
-            submission_valid = bool(getattr(outcome, "submission_valid", True))
-            submission_invalid_reasons = list(
-                getattr(outcome, "submission_invalid_reasons", []) or []
-            )
-
-        aggregate.metadata["_scenario_name"] = user_config.scenario
-        aggregate.metadata["_validator_submission_valid"] = submission_valid
-        aggregate.metadata["_validator_submission_invalid_reasons"] = (
-            submission_invalid_reasons
-        )
-        aggregate.metadata["_total_responses"] = total_responses
-        aggregate.metadata["_context_overflow_count"] = context_overflow_count
 
     def execute(
         self, base_config: UserConfig, strategy: ExecutionStrategy | None = None
@@ -470,25 +425,23 @@ class MultiRunOrchestrator:
             )
 
     def _extract_summary_metrics(
-        self, config: "UserConfig"
+        self, config: UserConfig
     ) -> dict[str, "JsonMetricResult"]:
         """Extract run-level summary statistics from artifacts.
 
-        Resolves the JSON file path from ``config.output.profile_export_json_file``
-        (honoring ``--profile-export-prefix``) rather than hardcoding the default
-        filename.
+        Reads the profile export JSON file resolved from run config
+        (`config.output.profile_export_json_file`) and extracts summary metrics,
+        preserving the full structure with units.
 
         Args:
-            config: UserConfig for the completed run; its ``output.profile_export_json_file``
-                points to the JSON SystemController wrote.
+            config: Benchmark configuration for this run (used to resolve the actual output path)
 
         Returns:
             Dict mapping metric name to JsonMetricResult
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        # Resolve the JSON file path from the config since --profile-export-prefix
-        # changes it.
+        # Resolve the JSON file path from the config since --profile-export-prefix changes it.
         json_file = config.output.profile_export_json_file
 
         if not json_file.exists():

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
+Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 9 services communicate via ZMQ message bus.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
@@ -26,7 +26,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
 - CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
-- YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
+- YAML plugin registry for extensible features (`plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
 - No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
@@ -37,7 +37,6 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not create markdown files to document code changes or decisions.
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
-- Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
 
 ## Build and Test Commands
 
@@ -64,27 +63,27 @@ pre-commit run              # Staged files only
 pre-commit run --all-files  # All files (recommended after significant changes)
 ```
 
-Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-merge-conflict`, `check-executables-have-shebangs`, `check-shebang-scripts-are-executable`, `check-json`, `check-toml`, `check-yaml`, `end-of-file-fixer`, `trailing-whitespace`, `mixed-line-ending`, `no-commit-to-branch`, `requirements-txt-fixer`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `ruff`, `ruff-format`.
+Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-executables-have-shebangs`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `check-shebang-scripts-are-executable`, `end-of-file-fixer`, `mixed-line-ending`, `no-commit-to-branch`, `requirements-txt-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `check-agent-files-sync`, `check-ergonomics`, `check-ruff-baselined`, `ruff`, `ruff-format`.
 
 ## Adding a New Service
 
 1. Create class extending `BaseComponentService` with `@on_message` handlers
-2. Register in `src/aiperf/plugin/plugins.yaml` under `service` category with `class`, `description`, `metadata`
-3. Add message type to `src/aiperf/common/enums/enums.py` if new messages needed
-4. Create message class in `src/aiperf/common/messages/` with `message_type` field
-5. Validate with `make validate-plugin-schemas`
+2. Register in `plugins.yaml` under `service` category with `class`, `description`, `metadata`
+3. Add message type to `common/enums/enums.py` if new messages needed
+4. Create message class in `messages/` with `message_type` field
+5. Validate with `aiperf plugins --validate`
 
 ## Adding a New Message
 
-1. Add enum value to `MessageType` in `src/aiperf/common/enums/enums.py`
-2. Create message class in `src/aiperf/common/messages/` inheriting from `Message` with `message_type` field set
+1. Add enum value to `MessageType` in `common/enums/enums.py`
+2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
 3. Add `@on_message(MessageType.X)` handler in the receiving service
 4. Auto-subscription happens during `@on_init` phase
 
 ## Adding a New Plugin
 
 1. Create plugin class implementing the appropriate base
-2. Add entry to `src/aiperf/plugin/plugins.yaml` with `class`, `description`, `metadata`
+2. Add entry to `plugins.yaml` with `class`, `description`, `metadata`
 3. Validate with `make validate-plugin-schemas`
 4. Use via `plugins.get_class(PluginType.X, 'name')`
 
@@ -94,6 +93,16 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 - `from tests.harness import mock_plugin` for plugin mocking
 - Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
 - Imports at file top, fixtures for setup, one focus per test
+- Use `from pytest import param` and put `# fmt: skip` on the `)` line:
+  ```python
+  @pytest.mark.parametrize(
+      "arg",
+      [
+          param(..., id="case1"),
+          param(..., id="case2"),
+      ],
+  )  # fmt: skip
+  ```
 - Auto-fixtures (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests
 
 ## Git Workflow
@@ -109,7 +118,6 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
 - Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
-- `dag_jsonl` input type: conversation DAG benchmarks (fork + spawn modes); see `docs/benchmark-modes/dag.md`.
 
 ## Pre-Commit Checklist
 
@@ -120,18 +128,20 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 5. `Field(description=...)` on all Pydantic fields
 6. `git commit -s`
 
-## Three-File Sync Rule
+## Four-File Sync Rule
 
-`CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all three. Always diff them after editing to confirm sync.
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all four. Run `make check-agent-files-sync` after editing to confirm sync — pre-commit enforces this on every commit that touches one of these files.
 
 ## Documentation Updates
 
-When making changes, update the appropriate documentation files. When adding a new tutorial, also add it to `README.md`'s tutorial index.
+> **DOCUMENTATION IS REQUIRED, NOT OPTIONAL.** Any PR that adds or changes a feature, CLI option, env var, plugin, message type, or service without updating the relevant docs is incomplete and will not be merged.
+
+When making changes, update the appropriate documentation files using the table below. When adding a new tutorial, also add it to `README.md`'s tutorial index. **Any new file under `docs/` must also be added to `docs/index.yml`** (the Fern site index) — `tools/check_docs_index.py` enforces this in CI. If the change is internal-only and not user-facing (e.g. developer reference, internal mechanics, debugging notes), put the doc under `docs/reference/` rather than skipping documentation.
 
 | Change type | Files to update |
 |---|---|
 | Architecture, components, data flow, communication | `docs/architecture.md` |
-| Coding standards, build commands, new patterns | `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
+| Coding standards, build commands, new patterns | `AGENTS.md` + `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
 | Code patterns, examples, base classes | `docs/dev/patterns.md` |
 | CLI arguments or commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
 | Environment variables | `docs/environment-variables.md` (auto-generated via `make generate-env-vars-docs`) |

@@ -340,8 +340,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             raise ValueError(
                 f"User not found for x_correlation_id: {credit.x_correlation_id}"
             )
-        meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit, meta)
+        turn = TurnToSend.from_previous_credit(credit)
 
         # If the next turn time already passed, the max() will
         # re-align their schedule to account for the delay.

@@ -209,23 +209,20 @@ class TestPromptGeneratorComprehensive:
     @pytest.mark.parametrize(
         "num_tokens, hash_ids, block_size, should_raise",
         [
-            # Failing cases: overshoot (M*block_size > num_tokens) with implied
-            # final block size <= 0 or > block_size, and invalid scalar inputs.
-            (10, [1, 2, 3], 5, True),  # final_block_size = 0 (overshoot, should fail)
-            (5, [1, 2, 3], 5, True),  # final_block_size = -5 (overshoot, should fail)
-            (0, [1], 5, True),  # num_tokens = 0 (should fail)
+            # Failing cases
+            (10, [1, 2, 3], 5, True),  # final_block_size = 0 (should fail)
+            (5, [1, 2, 3], 5, True),  # final_block_size = -5 (should fail)
+            (20, [1, 2], 5, True),  # final_block_size = 15 > block_size (should fail)
+            (0, [1], 5, True),  # final_block_size = 0 (should fail)
             (10, [1, 2, 3], 0, True),  # block_size = 0 (should fail)
             (10, [1, 2, 3], -1, True),  # negative block_size (should fail)
             # Passing cases
-            (10, [1, 2], 5, False),  # exact tile (final_block_size == block_size)
-            (10, [1], 15, False),  # last block partial within block_size
-            (6, [1, 2], 5, False),  # last block partial within block_size
-            (5, [1], 5, False),  # exact tile (final_block_size == block_size)
-            (3, [1], 5, False),  # last block partial within block_size
-            (12, [1, 2, 3], 5, False),  # last block partial within block_size
-            # Prefix-only: hash_ids covers a prefix, remainder is fresh tail.
-            # Real captured traces (e.g. weka kv-cache-tester) need this layout.
-            (20, [1, 2], 5, False),  # M*bs=10 < num_tokens=20: 10-token fresh tail
+            (10, [1, 2], 5, False),  # final_block_size == block_size
+            (10, [1], 15, False),  # final_block_size < block_size
+            (6, [1, 2], 5, False),  # final_block_size < block_size
+            (5, [1], 5, False),  # final_block_size == block_size
+            (3, [1], 5, False),  # final_block_size < block_size
+            (12, [1, 2, 3], 5, False),  # final_block_size < block_size
         ],
     )
     def test_generate_cached_prompt_configuration_errors(
@@ -664,42 +661,81 @@ class TestPromptGeneratorComprehensive:
         assert "corpus" in str(exc_info.value).lower()
 
     # ============================================================================
-    # _generate_cached_prompt Behavior Tests
+    # Decoded String Cache Tests
     # ============================================================================
 
-    def test_generate_cached_prompt_returns_string(self, basic_config):
-        """Test that _generate_cached_prompt returns a non-empty decoded string."""
+    def test_decoded_cache_initialized_empty(self, basic_config):
+        """Test that decoded cache is initialized as empty dict."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        result = generator._generate_cached_prompt(10, [1, 2], 5)
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert hasattr(generator, "_decoded_cache")
+        assert isinstance(generator._decoded_cache, dict)
+        assert len(generator._decoded_cache) == 0
 
-    def test_generate_cached_prompt_deterministic_for_same_inputs(self, basic_config):
-        """Test that identical inputs produce identical decoded prompts.
-
-        The previous implementation cached the decoded string keyed on
-        ``(hash_ids, num_tokens, block_size)``. The cache was removed
-        because the cache hit rate in real workloads was effectively zero
-        and the cache was a sustained per-file memory leak. Determinism is
-        still guaranteed by the underlying token block cache + RNG re-seed.
-        """
+    def test_decoded_cache_populated_on_first_call(self, basic_config):
+        """Test that decoded cache is populated after first call."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+
+        # Should have one entry in decoded cache
+        expected_key = ((1, 2), 10, 5)
+        assert expected_key in generator._decoded_cache
+        assert isinstance(generator._decoded_cache[expected_key], str)
+
+    def test_decoded_cache_hit_on_repeated_call(self, basic_config):
+        """Test that decoded cache is hit on repeated calls with same params."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        # First call - should populate cache
         result1 = generator._generate_cached_prompt(10, [1, 2], 5)
-        result2 = generator._generate_cached_prompt(10, [1, 2], 5)
+
+        # Second call with same params - should hit cache
+        with patch.object(generator.tokenizer, "decode") as mock_decode:
+            result2 = generator._generate_cached_prompt(10, [1, 2], 5)
+            mock_decode.assert_not_called()  # Decode should NOT be called
+
         assert result1 == result2
 
-    def test_generate_cached_prompt_different_hash_ids_differ(self, basic_config):
-        """Test that different hash_ids produce different prompts."""
+    def test_decoded_cache_miss_different_hash_ids(self, basic_config):
+        """Test that different hash_ids create different cache entries."""
         tokenizer, config = basic_config
         generator = PromptGenerator(config, tokenizer)
 
-        result_a = generator._generate_cached_prompt(10, [1, 2], 5)
-        result_b = generator._generate_cached_prompt(10, [3, 4], 5)
-        assert result_a != result_b
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+        _ = generator._generate_cached_prompt(10, [3, 4], 5)
+
+        # Both should be cached separately
+        assert ((1, 2), 10, 5) in generator._decoded_cache
+        assert ((3, 4), 10, 5) in generator._decoded_cache
+        assert len(generator._decoded_cache) == 2
+
+    def test_decoded_cache_miss_different_num_tokens(self, basic_config):
+        """Test that different num_tokens creates different cache entry."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._generate_cached_prompt(10, [1, 2], 5)
+        _ = generator._generate_cached_prompt(8, [1, 2], 5)  # Different final block
+
+        # Should have two separate entries
+        assert ((1, 2), 10, 5) in generator._decoded_cache
+        assert ((1, 2), 8, 5) in generator._decoded_cache
+        assert len(generator._decoded_cache) == 2
+
+    def test_decoded_cache_key_structure(self, basic_config):
+        """Test that cache key is (tuple(hash_ids), num_tokens, block_size)."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        # 12 tokens = 5 + 5 + 2 (valid final block size)
+        generator._generate_cached_prompt(12, [1, 2, 3], 5)
+
+        expected_key = ((1, 2, 3), 12, 5)
+        assert expected_key in generator._decoded_cache
 
     # ============================================================================
     # _build_token_sequence Method Tests
@@ -726,6 +762,16 @@ class TestPromptGeneratorComprehensive:
         # Token block cache should be populated
         assert 1 in generator._cache
         assert 2 in generator._cache
+
+    def test_build_token_sequence_does_not_populate_decoded_cache(self, basic_config):
+        """Test that _build_token_sequence does NOT populate decoded cache."""
+        tokenizer, config = basic_config
+        generator = PromptGenerator(config, tokenizer)
+
+        _ = generator._build_token_sequence(10, [1, 2], 5)
+
+        # Decoded cache should remain empty
+        assert len(generator._decoded_cache) == 0
 
     def test_build_token_sequence_same_validation_as_generate_cached(
         self, basic_config

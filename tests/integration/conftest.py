@@ -102,25 +102,6 @@ def setup_integration_tokenizer():
         _logger.info("Tokenizer cached successfully")
     except Exception as e:
         _logger.warning(f"Failed to pre-cache tokenizer: {e}")
-        # Pre-cache failure can leave a partial cache directory under
-        # ~/.cache/huggingface/hub/models--<name>/ that has the dir shape
-        # but not the tokenizer files. ``_is_hf_cached`` would then route
-        # subsequent calls down the local-only path and raise a confusing
-        # LocalEntryNotFoundError. Purge the partial dir so the next call
-        # re-attempts the download instead.
-        try:
-            from huggingface_hub.constants import HF_HUB_CACHE
-
-            cache_dir = Path(HF_HUB_CACHE)
-            for name in (tokenizer_name, "gpt2"):
-                partial = cache_dir / f"models--{name.replace('/', '--')}"
-                if partial.is_dir():
-                    import shutil
-
-                    shutil.rmtree(partial, ignore_errors=True)
-                    _logger.info(f"Removed partial tokenizer cache: {partial}")
-        except Exception as cleanup_err:
-            _logger.warning(f"Failed to clean partial cache: {cleanup_err}")
         # Don't enable offline mode if caching failed
         yield
         return

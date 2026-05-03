@@ -7,12 +7,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages.inference_messages import MetricRecordsData
-from aiperf.common.models import (
-    MetricResult,
-    ProcessRecordsResult,
-    ProfileResults,
-    TimesliceResult,
-)
+from aiperf.common.models import MetricResult, ProcessRecordsResult, ProfileResults
 from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 
@@ -210,7 +205,7 @@ class TestRecordsManagerTimeslice:
     """Test cases for RecordsManager timeslice functionality."""
 
     @pytest.mark.asyncio
-    async def test_process_records_result_with_both_records_and_timeslices(self):
+    async def test_process_records_result_with_both_records_and_timeslice(self):
         """Test that ProcessRecordsResult can contain both records and timeslice results."""
 
         metric_result = MetricResult(
@@ -221,24 +216,16 @@ class TestRecordsManagerTimeslice:
             count=10,
         )
 
-        timeslices = [
-            TimesliceResult(
-                start_ns=1_000_000_000,
-                end_ns=2_000_000_000,
-                metric_results=[metric_result],
-            ),
-            TimesliceResult(
-                start_ns=2_000_000_000,
-                end_ns=3_000_000_000,
-                metric_results=[metric_result],
-            ),
-        ]
+        timeslice_results = {
+            0: [metric_result],
+            1: [metric_result],
+        }
 
         # Create a ProcessRecordsResult with both types of results
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=[metric_result, metric_result],
-                timeslices=timeslices,
+                timeslice_metric_results=timeslice_results,
                 completed=2,
                 start_ns=1000000000,
                 end_ns=2000000000,
@@ -247,11 +234,11 @@ class TestRecordsManagerTimeslice:
 
         assert result.results.records is not None
         assert len(result.results.records) == 2
-        assert result.results.timeslices is not None
-        assert len(result.results.timeslices) == 2
+        assert result.results.timeslice_metric_results is not None
+        assert len(result.results.timeslice_metric_results) == 2
 
     @pytest.mark.asyncio
-    async def test_profile_results_serialization_with_timeslices(self):
+    async def test_profile_results_serialization_with_timeslice(self):
         """Test that ProfileResults with timeslice data can be serialized."""
         metric_result = MetricResult(
             tag="request_latency",
@@ -261,22 +248,14 @@ class TestRecordsManagerTimeslice:
             count=10,
         )
 
-        timeslices = [
-            TimesliceResult(
-                start_ns=1_000_000_000,
-                end_ns=2_000_000_000,
-                metric_results=[metric_result],
-            ),
-            TimesliceResult(
-                start_ns=2_000_000_000,
-                end_ns=3_000_000_000,
-                metric_results=[metric_result],
-            ),
-        ]
+        timeslice_results = {
+            0: [metric_result],
+            1: [metric_result],
+        }
 
         profile_results = ProfileResults(
             records=[metric_result],
-            timeslices=timeslices,
+            timeslice_metric_results=timeslice_results,
             completed=1,
             start_ns=1000000000,
             end_ns=2000000000,
@@ -286,6 +265,7 @@ class TestRecordsManagerTimeslice:
         result_dict = profile_results.model_dump()
 
         assert "records" in result_dict
-        assert "timeslices" in result_dict
-        assert result_dict["timeslices"] is not None
-        assert len(result_dict["timeslices"]) == 2
+        assert "timeslice_metric_results" in result_dict
+        assert result_dict["timeslice_metric_results"] is not None
+        assert 0 in result_dict["timeslice_metric_results"]
+        assert 1 in result_dict["timeslice_metric_results"]

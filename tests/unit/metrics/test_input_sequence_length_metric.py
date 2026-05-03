@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.input_sequence_length_metric import (
@@ -13,6 +13,7 @@ from aiperf.metrics.types.input_sequence_length_metric import (
     TotalInputSequenceLengthMetric,
 )
 from tests.unit.metrics.conftest import (
+    create_metric_array,
     create_record,
     run_simple_metrics_pipeline,
 )
@@ -68,7 +69,7 @@ class TestTotalInputSequenceLengthMetric:
         """Test that TotalInputSequenceLengthMetric correctly sums all input tokens"""
         metric = TotalInputSequenceLengthMetric()
         metric_results = MetricResultsDict()
-        metric_results[InputSequenceLengthMetric.tag] = sum(values)
+        metric_results[InputSequenceLengthMetric.tag] = create_metric_array(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum
@@ -80,7 +81,7 @@ class TestTotalInputSequenceLengthMetric:
             MetricFlags.TOKENIZES_INPUT_ONLY
         )
         assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
-        assert TotalInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
+        assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
         assert TotalInputSequenceLengthMetric.missing_flags(MetricFlags.INTERNAL)
 
 
@@ -115,7 +116,7 @@ class TestErrorInputSequenceLengthMetric:
         """Test that ErrorInputSequenceLengthMetric has correct flags"""
         assert ErrorInputSequenceLengthMetric.tag == "error_isl"
         assert ErrorInputSequenceLengthMetric.has_flags(MetricFlags.ERROR_ONLY)
-        assert ErrorInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
+        assert ErrorInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
 
 
 class TestTotalErrorInputSequenceLengthMetric:
@@ -131,7 +132,7 @@ class TestTotalErrorInputSequenceLengthMetric:
         """Test that TotalErrorInputSequenceLengthMetric correctly sums error input tokens"""
         metric = TotalErrorInputSequenceLengthMetric()
         metric_results = MetricResultsDict()
-        metric_results[ErrorInputSequenceLengthMetric.tag] = sum(values)
+        metric_results[ErrorInputSequenceLengthMetric.tag] = create_metric_array(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum
@@ -140,6 +141,4 @@ class TestTotalErrorInputSequenceLengthMetric:
         """Test that TotalErrorInputSequenceLengthMetric has correct metadata"""
         assert TotalErrorInputSequenceLengthMetric.tag == "total_error_isl"
         assert TotalErrorInputSequenceLengthMetric.has_flags(MetricFlags.ERROR_ONLY)
-        assert (
-            TotalErrorInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
-        )
+        assert TotalErrorInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)

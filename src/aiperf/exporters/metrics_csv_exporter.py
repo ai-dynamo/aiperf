@@ -20,7 +20,7 @@ def _percentile_keys_from(stat_keys: Sequence[str]) -> list[str]:
 
 
 class MetricsCsvExporter(MetricsBaseExporter):
-    """Exports records to a CSV file in a two-section format."""
+    """Exports records to a CSV file in a legacy, two-section format."""
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
@@ -49,7 +49,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
         writer = csv.writer(buf)
 
         # Use base class method to prepare metrics
-        prepared_metrics = self._prepare_metrics(self._results.records or [])
+        prepared_metrics = self._prepare_metrics(self._results.records)
 
         request_metrics, system_metrics = self._split_metrics(prepared_metrics)
 

@@ -64,11 +64,6 @@
     ],
     [
       "ANN201",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint.extract_payload_inputs"
-    ],
-    [
-      "ANN201",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_all_callbacks"
     ],
@@ -219,6 +214,11 @@
     ],
     [
       "ANN201",
+      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
+      "TimesliceMetricResultsProcessor.get_timeslice_index"
+    ],
+    [
+      "ANN201",
       "src/aiperf/ui/dashboard/aiperf_textual_app.py",
       "AIPerfTextualApp.on_worker_update"
     ],
@@ -319,11 +319,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/common/scenario/context_overflow.py",
-      "_extract_openai_error_message"
-    ],
-    [
-      "BLE001",
       "src/aiperf/common/tokenizer.py",
       "resolve_alias"
     ],
@@ -356,26 +351,6 @@
       "BLE001",
       "src/aiperf/controller/system_controller.py",
       "SystemController._process_heartbeat_message"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/dataset/composer/base.py",
-      "_estimate_chat_template_overheads"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/dataset/dataset_manager.py",
-      "DatasetManager._profile_configure_command"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/dataset/loader/inputs_json.py",
-      "InputsJsonPayloadLoader.can_load"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader.can_load"
     ],
     [
       "BLE001",
@@ -604,18 +579,33 @@
     ],
     [
       "BLE001",
-      "src/aiperf/post_processors/raw_record_writer_processor.py",
-      "RawRecordWriterProcessor.buffered_write"
+      "src/aiperf/post_processors/metric_results_processor.py",
+      "MetricResultsProcessor.process_result"
     ],
     [
       "BLE001",
-      "src/aiperf/records/inference_result_parser.py",
-      "InferenceResultParser._compute_chat_template_token_count"
+      "src/aiperf/post_processors/metric_results_processor.py",
+      "MetricResultsProcessor.update_derived_metrics"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/post_processors/record_export_results_processor.py",
+      "RecordExportResultsProcessor.process_result"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
+      "TimesliceMetricResultsProcessor.update_derived_metrics"
     ],
     [
       "BLE001",
       "src/aiperf/records/inference_result_parser.py",
       "InferenceResultParser.parse_request_record"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/records/records_manager.py",
+      "RecordsManager.__init__"
     ],
     [
       "BLE001",
@@ -839,28 +829,8 @@
     ],
     [
       "C901",
-      "src/aiperf/common/scenario/validator.py",
-      "validate_scenario"
-    ],
-    [
-      "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
-    ],
-    [
-      "C901",
-      "src/aiperf/common/validators/orchestrator_v1.py",
-      "validate_for_orchestrator_v1"
-    ],
-    [
-      "C901",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler.on_credit_return"
-    ],
-    [
-      "C901",
-      "src/aiperf/credit/sticky_router.py",
-      "StickyCreditRouter.send_credit"
     ],
     [
       "C901",
@@ -879,48 +849,8 @@
     ],
     [
       "C901",
-      "src/aiperf/dataset/dataset_manager.py",
-      "DatasetManager._preformat_payloads"
-    ],
-    [
-      "C901",
       "src/aiperf/dataset/generator/video.py",
       "VideoGenerator._get_ffmpeg_install_instructions"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._desugar_forks"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._parse_lines"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._resolve_and_validate"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/weka_parallel_convert.py",
-      "_process_task"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._build_model_map"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_parallel"
-    ],
-    [
-      "C901",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_serial"
     ],
     [
       "C901",
@@ -929,13 +859,8 @@
     ],
     [
       "C901",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint._render_turn_content"
-    ],
-    [
-      "C901",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint.extract_payload_inputs"
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint._set_message_content"
     ],
     [
       "C901",
@@ -944,13 +869,13 @@
     ],
     [
       "C901",
-      "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint.format_payload"
+      "src/aiperf/endpoints/openai_responses.py",
+      "ResponsesEndpoint._extract_response_content"
     ],
     [
       "C901",
       "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
+      "ResponsesEndpoint._set_item_content"
     ],
     [
       "C901",
@@ -1154,6 +1079,11 @@
     ],
     [
       "C901",
+      "src/aiperf/records/records_manager.py",
+      "RecordsManager._process_results"
+    ],
+    [
+      "C901",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1176,16 +1106,6 @@
       "C901",
       "src/aiperf/server_metrics/parquet_exporter.py",
       "ServerMetricsParquetExporter._build_parquet_metadata"
-    ],
-    [
-      "C901",
-      "src/aiperf/timing/branch_orchestrator.py",
-      "BranchOrchestrator._spawn_children_and_register_gates"
-    ],
-    [
-      "C901",
-      "src/aiperf/timing/branch_orchestrator.py",
-      "BranchOrchestrator.dispatch_pre_session_branches"
     ],
     [
       "C901",
@@ -1226,11 +1146,6 @@
       "D103",
       "src/aiperf/common/config/config_validators.py",
       "print_str_or_list"
-    ],
-    [
-      "D103",
-      "src/aiperf/common/scenario/registry.py",
-      "get_scenario"
     ],
     [
       "D103",
@@ -1309,28 +1224,8 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/common/scenario/validator.py",
-      "validate_scenario"
-    ],
-    [
-      "PLR0912",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/common/validators/orchestrator_v1.py",
-      "validate_for_orchestrator_v1"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler.on_credit_return"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/credit/sticky_router.py",
-      "StickyCreditRouter.send_credit"
     ],
     [
       "PLR0912",
@@ -1349,48 +1244,13 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._desugar_forks"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._resolve_and_validate"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/weka_parallel_convert.py",
-      "_process_task"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._build_model_map"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_parallel"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_serial"
-    ],
-    [
-      "PLR0912",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
     [
       "PLR0912",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint._render_turn_content"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint.extract_payload_inputs"
+      "src/aiperf/endpoints/openai_chat.py",
+      "ChatEndpoint._set_message_content"
     ],
     [
       "PLR0912",
@@ -1509,16 +1369,6 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/timing/branch_orchestrator.py",
-      "BranchOrchestrator._spawn_children_and_register_gates"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
-    ],
-    [
-      "PLR0912",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1549,16 +1399,6 @@
     ],
     [
       "PLR0915",
-      "src/aiperf/common/scenario/validator.py",
-      "validate_scenario"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/common/validators/orchestrator_v1.py",
-      "validate_for_orchestrator_v1"
-    ],
-    [
-      "PLR0915",
       "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
       "render_comparison_text"
     ],
@@ -1569,28 +1409,8 @@
     ],
     [
       "PLR0915",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._desugar_forks"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/dataset/loader/weka_parallel_convert.py",
-      "_process_task"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_serial"
-    ],
-    [
-      "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "PLR0915",
@@ -1709,6 +1529,11 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/records/records_manager.py",
+      "RecordsManager._process_results"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/server_metrics/export_stats.py",
       "_compute_histogram_stats"
     ],
@@ -1716,16 +1541,6 @@
       "PLR0915",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/timing/branch_orchestrator.py",
-      "BranchOrchestrator._spawn_children_and_register_gates"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
     ],
     [
       "PLR0915",

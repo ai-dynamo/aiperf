@@ -3,12 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import (
-    CreditPhase,
-    MetricConsoleGroup,
-    MetricFlags,
-    ModelSelectionStrategy,
-)
+from aiperf.common.enums import CreditPhase, MetricFlags, ModelSelectionStrategy
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
@@ -39,14 +34,7 @@ from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 
 def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
-    """Create a RequestInfo carrying ``max_tokens`` at the top level.
-
-    The record processor reads ``max_tokens`` directly from ``RequestInfo``
-    now that ``request_info.turns`` is dropped before the ZMQ hop (see
-    ``inference_client._enrich_request_record``); we populate both the
-    scalar and the legacy ``turns[-1].max_tokens`` mirror so tests exercise
-    the production shape end-to-end.
-    """
+    """Create a RequestInfo with a turn that has max_tokens set."""
     turn = Turn(max_tokens=max_tokens)
     return RequestInfo(
         model_endpoint=ModelEndpointInfo(
@@ -60,7 +48,6 @@ def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
             ),
         ),
         turns=[turn],
-        max_tokens=max_tokens,
         turn_index=0,
         credit_num=0,
         credit_phase=CreditPhase.PROFILING,
@@ -140,7 +127,7 @@ class TestRequestedOSLMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert RequestedOSLMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert RequestedOSLMetric.console_group == MetricConsoleGroup.NONE
+        assert RequestedOSLMetric.has_flags(MetricFlags.NO_CONSOLE)
         assert RequestedOSLMetric.has_flags(MetricFlags.INTERNAL)
 
 
@@ -221,7 +208,7 @@ class TestOSLMismatchDiffMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert OSLMismatchDiffMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert OSLMismatchDiffMetric.console_group == MetricConsoleGroup.NONE
+        assert OSLMismatchDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
 
 
 class TestOSLMismatchCountMetric:
@@ -330,5 +317,5 @@ class TestOSLMismatchCountMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert OSLMismatchCountMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert OSLMismatchCountMetric.console_group == MetricConsoleGroup.NONE
+        assert OSLMismatchCountMetric.has_flags(MetricFlags.NO_CONSOLE)
         assert OSLMismatchCountMetric.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS)

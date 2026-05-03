@@ -15,8 +15,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiperf.common.enums import PromptCorpus
-
 # =============================================================================
 # Plugins YAML Schema (plugins.yaml)
 # =============================================================================
@@ -325,28 +323,6 @@ class PlotMetadata(BaseModel):
     )
 
 
-class RecordRoutingMetadata(BaseModel):
-    """Metadata schema for record routing in accumulator and stream exporter plugins.
-
-    Defines which record types an accumulator or stream exporter accepts. Used by
-    RecordsManager to build a routing table: incoming records are dispatched to all
-    accumulators and stream exporters whose record_types include the matching type.
-    The role (accumulator vs stream_exporter) is determined by the plugin category.
-
-    Referenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class
-    Used in: plugins.yaml accumulator and stream_exporter entries
-    """
-
-    record_types: list[str] = Field(
-        description=(
-            "Record type identifiers this accumulator or stream exporter accepts for routing. "
-            "RecordsManager dispatches incoming records to all accumulators and stream exporters "
-            "whose record_types include the matching type. "
-            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
-        ),
-    )
-
-
 class CustomDatasetLoaderMetadata(BaseModel):
     """Metadata schema for custom dataset loader plugins.
 
@@ -375,15 +351,6 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "Used when the user does not explicitly set --isl-block-size. "
             "Must match the block size used to generate the trace's hash_ids "
             "(e.g. 16 for Bailian, 512 for Mooncake)."
-        ),
-    )
-    default_prompt_corpus: PromptCorpus = Field(
-        default=PromptCorpus.SONNET,
-        description=(
-            "Default synthetic prompt corpus for this loader. Applied when the "
-            "user does not explicitly pass --prompt-corpus. Loaders for coding "
-            "agent traces (e.g. weka_trace) override to 'coding' so reconstructed "
-            "prompts resemble real tool-use content."
         ),
     )
 
@@ -450,33 +417,6 @@ class PublicDatasetLoaderMetadata(BaseModel):
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
-    )
-    is_trace: bool = Field(
-        default=False,
-        description=(
-            "Whether this loader handles trace-format datasets. Trace public "
-            "datasets reuse hash_ids-based prompt generation, require a "
-            "tokenizer, and prefer sequential sampling. Mirrors the field of "
-            "the same name on CustomDatasetLoaderMetadata so trace loaders can "
-            "live in either pipeline."
-        ),
-    )
-    default_block_size: int | None = Field(
-        default=None,
-        ge=1,
-        description=(
-            "Default token block size for hash-based prompt caching. Used "
-            "when the user does not explicitly set --isl-block-size. Must "
-            "match the block size used to generate the trace's hash_ids."
-        ),
-    )
-    default_prompt_corpus: PromptCorpus = Field(
-        default=PromptCorpus.SONNET,
-        description=(
-            "Default synthetic prompt corpus for this loader. Applied when "
-            "the user does not explicitly pass --prompt-corpus. Loaders for "
-            "coding agent traces override to 'coding'."
-        ),
     )
 
 

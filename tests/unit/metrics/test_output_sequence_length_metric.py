@@ -4,7 +4,7 @@
 import pytest
 from pytest import approx
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.output_sequence_length_metric import (
@@ -12,6 +12,7 @@ from aiperf.metrics.types.output_sequence_length_metric import (
     TotalOutputSequenceLengthMetric,
 )
 from tests.unit.metrics.conftest import (
+    create_metric_array,
     create_record,
     run_simple_metrics_pipeline,
 )
@@ -82,7 +83,7 @@ class TestTotalOutputSequenceLengthMetric:
         """Test that TotalOutputSequenceLengthMetric correctly sums all output tokens"""
         metric = TotalOutputSequenceLengthMetric()
         metric_results = MetricResultsDict()
-        metric_results[OutputSequenceLengthMetric.tag] = sum(values)
+        metric_results[OutputSequenceLengthMetric.tag] = create_metric_array(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum
@@ -94,5 +95,5 @@ class TestTotalOutputSequenceLengthMetric:
             MetricFlags.PRODUCES_TOKENS_ONLY
         )
         assert TotalOutputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
-        assert TotalOutputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
+        assert TotalOutputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
         assert TotalOutputSequenceLengthMetric.missing_flags(MetricFlags.INTERNAL)

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_aggregate_metric import BaseAggregateMetric
@@ -14,14 +14,13 @@ class AccuracyCorrectSumMetric(BaseAggregateMetric[float]):
     AccuracyRecordProcessor writes this tag to MetricRecordDict for every record.
     Registered here so MetricResultsProcessor can aggregate it without warnings.
     AccuracyResultsProcessor and AccuracyConsoleExporter own display; this metric
-    uses console_group=NONE | INTERNAL so it does not appear in the standard table.
+    is marked NO_CONSOLE | INTERNAL so it does not appear in the standard table.
     """
 
     tag = "accuracy.correct"
     header = "Accuracy Correct"
     unit = GenericMetricUnit.RATIO
-    flags = MetricFlags.INTERNAL
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL
     required_metrics = None
 
     def _parse_record(
@@ -41,14 +40,13 @@ class AccuracyUnparsedSumMetric(BaseAggregateMetric[float]):
 
     AccuracyRecordProcessor writes this tag when the model output required the
     regex fallback (e.g. 'The answer is B.' instead of 'B').
-    Uses console_group=NONE | INTERNAL so it does not appear in the standard table.
+    Marked NO_CONSOLE | INTERNAL so it does not appear in the standard table.
     """
 
     tag = "accuracy.unparsed"
     header = "Accuracy Unparsed"
     unit = GenericMetricUnit.RATIO
-    flags = MetricFlags.INTERNAL
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL
     required_metrics = None
 
     def _parse_record(

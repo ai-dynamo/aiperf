@@ -49,6 +49,7 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
+from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -132,29 +133,18 @@ def _create_test_request_info(
     turn_index: int = 0,
     turns: list | None = None,
 ) -> RequestInfo:
-    """Create a RequestInfo for testing post processors.
-
-    Populates ``payload_bytes`` via the chat endpoint's ``format_payload``
-    when ``turns`` is non-empty — matches what ``inference_client`` does
-    pre-dispatch so the raw-record exporter's fast path
-    (``payload_bytes``-is-set) is exercised by default.
-    """
-    import orjson
-
-    from aiperf.endpoints.openai_chat import ChatEndpoint
-
-    model_endpoint = ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name=model_name)],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+    """Create a RequestInfo for testing post processors."""
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name=model_name)],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
         ),
-        endpoint=EndpointInfo(
-            type=EndpointType.CHAT,
-            base_url="http://localhost:8000/v1/test",
-        ),
-    )
-    info = RequestInfo(
-        model_endpoint=model_endpoint,
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
@@ -163,11 +153,6 @@ def _create_test_request_info(
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
     )
-    if info.turns:
-        info.payload_bytes = orjson.dumps(
-            ChatEndpoint(model_endpoint=model_endpoint).format_payload(info)
-        )
-    return info
 
 
 @pytest.fixture
@@ -338,48 +323,21 @@ def setup_mock_registry_sequences(
 
 def create_results_processor_with_metrics(
     user_config: UserConfig, *metrics: type[BaseMetric]
-):
-    """Deprecated: ``MetricResultsProcessor`` is no longer in the codebase.
-    Tests should migrate to ``MetricsAccumulator``.
+) -> MetricResultsProcessor:
+    """Create a MetricResultsProcessor with pre-configured metrics.
+
+    Args:
+        user_config: User configuration for the processor
+        metrics: list of metric classes
+
+    Returns:
+        Configured MetricResultsProcessor instance
     """
-    raise NotImplementedError(
-        "create_results_processor_with_metrics is deprecated; "
-        "MetricResultsProcessor was removed in favor of MetricsAccumulator. "
-        "Update the test to construct MetricsAccumulator directly."
-    )
 
-
-def create_accumulator_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
-):
-    """Construct a :class:`MetricsAccumulator` pre-configured with ``metrics``.
-
-    Replaces the deprecated ``create_results_processor_with_metrics`` helper.
-    Bypasses ``_setup_metrics`` / ``MetricRegistry`` so individual tests can
-    drive the accumulator with synthetic metric classes without registering
-    them globally.
-    """
-    from aiperf.metrics.accumulator import MetricsAccumulator
-
-    accumulator = MetricsAccumulator(user_config=user_config)
-    accumulator._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    accumulator._metric_classes = {metric.tag: metric for metric in metrics}
-    accumulator._aggregation_kinds = {
-        metric.tag: metric.aggregation_kind
-        for metric in metrics
-        if hasattr(metric, "aggregation_kind")
-    }
-    return accumulator
-
-
-def _make_run(config: UserConfig, artifact_dir: Path | None = None) -> UserConfig:
-    """Compatibility shim that returns the config unchanged.
-
-    ``MetricsAccumulator`` takes ``user_config: UserConfig`` directly, so
-    ``_make_run(cfg)`` is just an identity function for tests still written
-    against an older constructor signature.
-    """
-    return config
+    processor = MetricResultsProcessor(user_config)
+    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
+    processor._instances_map = {metric.tag: metric() for metric in metrics}
+    return processor
 
 
 @pytest.fixture
@@ -399,6 +357,9 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr("aiperf.metrics.metric_registry.MetricRegistry", mock_registry)
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
+    )
+    monkeypatch.setattr(
+        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
     )
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 

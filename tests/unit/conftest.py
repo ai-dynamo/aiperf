@@ -517,15 +517,7 @@ def sample_conversations() -> dict[str, Conversation]:
 
 @pytest.fixture
 def sample_request_info() -> RequestInfo:
-    """Create a sample RequestInfo for testing.
-
-    Populates ``payload_bytes`` via the real chat endpoint's
-    ``format_payload`` so ``compute_input_token_count`` has authentic
-    wire bytes to tokenise — matching what ``inference_client`` would
-    stash in production before the transport call.
-    """
-    import orjson
-
+    """Create a sample RequestInfo for testing."""
     from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
     from aiperf.common.models.model_endpoint_info import (
         EndpointInfo,
@@ -533,21 +525,19 @@ def sample_request_info() -> RequestInfo:
         ModelInfo,
         ModelListInfo,
     )
-    from aiperf.endpoints.openai_chat import ChatEndpoint
     from aiperf.plugin.enums import EndpointType
 
-    model_endpoint = ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name="test-model")],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+    return RequestInfo(
+        model_endpoint=ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
         ),
-        endpoint=EndpointInfo(
-            type=EndpointType.CHAT,
-            base_url="http://localhost:8000/v1/test",
-        ),
-    )
-    info = RequestInfo(
-        model_endpoint=model_endpoint,
         turns=[
             Turn(
                 texts=[Text(contents=["test prompt"])], role="user", model="test-model"
@@ -560,10 +550,6 @@ def sample_request_info() -> RequestInfo:
         x_correlation_id="test-correlation-id",
         conversation_id="test-conversation",
     )
-    info.payload_bytes = orjson.dumps(
-        ChatEndpoint(model_endpoint=model_endpoint).format_payload(info)
-    )
-    return info
 
 
 @pytest.fixture

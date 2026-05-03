@@ -45,6 +45,7 @@ def _make_loader(
     )
     prompt_generator = Mock()
     prompt_generator.generate.return_value = "Generated prompt"
+    prompt_generator._decoded_cache = {}
     prompt_generator._build_token_sequence.return_value = [1, 2, 3]
     return BurstGPTTraceDatasetLoader(
         filename=filename,

@@ -18,45 +18,6 @@ from aiperf.common.config import (
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
-@pytest.fixture(autouse=True)
-def _disable_weka_parallel_reconstruction():
-    """Force WekaTraceLoader serial reconstruction in unit tests.
-
-    The parallel path spawns worker processes that load a real tokenizer via
-    ``Tokenizer.from_pretrained``, which most tests stub out with a MagicMock
-    that doesn't survive process boundaries. Tests that specifically exercise
-    the parallel path drive ``_process_task`` in-process or override this
-    setting via ``monkeypatch``.
-    """
-    from aiperf.common import environment as env_mod
-
-    saved = env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS
-    env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS = 1
-    try:
-        yield
-    finally:
-        env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS = saved
-
-
-def stub_hash_id_corpus_rng(prompt_generator) -> None:
-    """Wire a deterministic stub for ``_hash_id_corpus_rng`` on a MagicMock pg.
-
-    The Weka loader's ``_decode_block_tokens`` reseeds the hash-id RNG before
-    every uncached block and slices the corpus at ``randrange(corpus_size)``.
-    Tests that mock ``prompt_generator`` need stable, hash-id-derived offsets so
-    cached blocks have non-empty content and per-(scope, hash_id) determinism.
-    """
-    state = {"h": 0}
-
-    def _reseed(h):
-        state["h"] = h
-
-    prompt_generator._hash_id_corpus_rng.reseed_for_hash_id.side_effect = _reseed
-    prompt_generator._hash_id_corpus_rng.randrange.side_effect = (
-        lambda n: state["h"] % n
-    )
-
-
 @pytest.fixture
 def create_jsonl_file():
     """Create a temporary JSONL file with custom content."""

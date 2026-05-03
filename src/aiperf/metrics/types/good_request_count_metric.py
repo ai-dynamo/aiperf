@@ -3,7 +3,7 @@
 
 from typing import ClassVar
 
-from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricFlags
 from aiperf.common.exceptions import MetricTypeError, NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_aggregate_counter_metric import BaseAggregateCounterMetric
@@ -17,11 +17,10 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
     """
 
     tag = "good_request_count"
-    header = "Good Request Count"
+    header = "GoodRequestCount"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.GOODPUT
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.GOODPUT | MetricFlags.NO_CONSOLE
     required_metrics: set[str] | None = None
 
     _thresholds: ClassVar[dict[str, float]] = {}

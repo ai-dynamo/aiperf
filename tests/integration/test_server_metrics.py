@@ -648,18 +648,15 @@ class TestServerMetrics:
                     "Each histogram timestamp should have multiple bucket rows"
                 )
 
-            # Verify dynamic label-column discovery is well-formed (extra
-            # columns beyond the required + value/sum/count/bucket schema are
-            # label columns). The mock's vllm/sglang endpoints don't currently
-            # expose labelled series; the schema therefore has zero label
-            # columns under this test setup, which is acceptable.
+            # Verify label columns exist (dynamic discovery)
+            # At minimum, vLLM metrics should have some labels
             label_cols = [
                 col
                 for col in df.columns
                 if col not in required_columns
                 and col not in ["value", "sum", "count", "bucket_le", "bucket_count"]
             ]
-            assert all(isinstance(c, str) for c in label_cols)
+            assert len(label_cols) > 0, "Should have discovered label columns"
 
             # Verify multiple endpoints are present
             endpoints = df["endpoint_url"].unique()

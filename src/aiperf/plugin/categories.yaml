@@ -152,42 +152,13 @@ record_processor:
     First stage of metrics pipeline, handling per-record computations.
     One-to-many mapping: multiple processors can be loaded simultaneously.
 
-accumulator:
-  protocol: aiperf.common.accumulator_protocols:AccumulatorProtocol
-  metadata_class: aiperf.plugin.schema.schemas:RecordRoutingMetadata
-  enum: AccumulatorType
+results_processor:
+  protocol: aiperf.post_processors.base_metrics_processor:BaseMetricsProcessor
+  enum: ResultsProcessorType
   description: |
-    Accumulators ingest records, support time-range queries, and produce summaries.
-    Primary data stores in the records pipeline. Each accumulator declares which
-    record types it handles. One-to-many mapping: multiple accumulators loaded simultaneously.
-
-stream_exporter:
-  protocol: aiperf.common.accumulator_protocols:StreamExporterProtocol
-  metadata_class: aiperf.plugin.schema.schemas:RecordRoutingMetadata
-  enum: StreamExporterType
-  description: |
-    Stream exporters write each record to an external sink (e.g. JSONL files) as it
-    arrives. No summarization dependencies. Finalized after all records are processed.
-    One-to-many mapping: multiple exporters loaded simultaneously.
-
-analyzer:
-  protocol: aiperf.common.accumulator_protocols:AnalyzerProtocol
-  enum: AnalyzerType
-  description: |
-    Single-input analyzers that derive results from one accumulator at
-    summarization time, running in records-manager. Cross-input analysis
-    (correlating data from multiple accumulators that live in separate
-    processes — GPU telemetry, server metrics, inference) runs
-    controller-side as plain functions, not analyzer plugins.
-
-artifact_publisher:
-  protocol: aiperf.exporters.protocols:ArtifactPublisherProtocol
-  enum: ArtifactPublisherType
-  description: |
-    Artifact publishers upload exported benchmark files to remote storage backends.
-    Runs after all data and stream exporters have completed. Receives the full list
-    of exported file paths. Supports S3, GCS, Azure Blob, and custom backends.
-    One-to-many mapping: multiple publishers can be loaded simultaneously.
+    Results processors aggregate results from record processors and compute derived metrics.
+    Final stage of metrics pipeline for aggregated statistics and summaries.
+    One-to-many mapping: multiple processors can be loaded simultaneously.
 
 # =============================================================================
 # Accuracy Categories

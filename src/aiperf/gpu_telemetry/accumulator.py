@@ -5,15 +5,11 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
-import numpy as np
-from numpy.typing import NDArray
-
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
-from aiperf.common.growable_array import GrowableArray
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.models import (
@@ -80,8 +76,6 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         self._realtime_enable_event = asyncio.Event()
         self._last_metric_values: dict[str, float | None] | None = None
         self._total_metrics_generated = 0
-        # Lightweight timestamp storage for query_time_range() (analyzer support)
-        self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual GPU telemetry record into hierarchical storage.
@@ -89,19 +83,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         Args:
             record: GPU TelemetryRecord containing GPU metrics and hierarchical metadata
         """
-        self._timestamps_ns.append(record.timestamp_ns)
         self._hierarchy.add_record(record)
-
-    async def process_record(self, record: TelemetryRecord) -> None:
-        """``AccumulatorProtocol``-compatible alias for ``process_telemetry_record``."""
-        await self.process_telemetry_record(record)
-
-    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
-        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
-        if len(self._timestamps_ns) == 0:
-            return np.array([], dtype=bool)
-        ts = self._timestamps_ns.data
-        return (ts >= start_ns) & (ts < end_ns)
 
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
@@ -134,9 +116,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 continue
 
             await self._report_realtime_metrics()
-            await asyncio.sleep(
-                Environment.UI.realtime_metrics_interval(self.service_config.ui_type)
-            )
+            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
 
     async def _report_realtime_metrics(self) -> None:
         """Report real-time GPU telemetry metrics."""

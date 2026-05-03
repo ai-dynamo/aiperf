@@ -216,28 +216,12 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         The delay_ms from turn metadata (if present) is honored before queuing,
         simulating user "think time" between turns in a conversation.
-
-        DAG sub-agent children (turns carrying ``parent_correlation_id``) are
-        dispatched directly here rather than queued: their continuation turns
-        arrive after the phase has been marked sending-complete for root
-        sampling, so the main rate loop may have already exited. Direct
-        dispatch avoids that race and keeps the DAG tree flowing.
         """
         if credit.is_final_turn:
             return
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit, meta)
-
-        if credit.agent_depth > 0:
-            if meta.delay_ms is not None:
-                self._scheduler.schedule_later(
-                    meta.delay_ms / MILLIS_PER_SECOND,
-                    self._credit_issuer.issue_credit(turn),
-                )
-            else:
-                await self._credit_issuer.issue_credit(turn)
-            return
+        turn = TurnToSend.from_previous_credit(credit)
 
         # Honor think-time delay from dataset metadata before queuing
         if meta.delay_ms is not None:

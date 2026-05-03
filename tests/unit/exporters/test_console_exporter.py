@@ -109,9 +109,9 @@ class TestConsoleExporter:
         [
             # ERROR_ONLY flags - always hidden
             (ErrorRequestCountMetric.tag, False),  # ERROR_ONLY flag
-            # console_group=NONE - hidden
-            (BenchmarkDurationMetric.tag, False),  # console_group=NONE
-            (OutputTokenCountMetric.tag, False),  # console_group=NONE
+            # NO_CONSOLE flags - hidden
+            (BenchmarkDurationMetric.tag, False),  # NO_CONSOLE flag
+            (OutputTokenCountMetric.tag, False),  # NO_CONSOLE flag
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
             # INTERNAL flags - hidden
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
@@ -180,39 +180,3 @@ class TestConsoleExporter:
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"
-
-    def test_realtime_view_box_stat_keys_filter(self, sample_records, capsys):
-        """Realtime config: SIMPLE_HEAVY box, custom stat columns, allowlist filter."""
-        from rich.box import SIMPLE_HEAVY
-
-        exporter = ConsoleMetricsExporter(
-            stat_keys=("avg", "p95", "max"),
-            box=SIMPLE_HEAVY,
-            title="realtime metrics",
-            metric_filter={"request_latency", "time_to_first_token"},
-        )
-        console = Console(width=100, force_terminal=False, no_color=True)
-        console.print(exporter.get_renderable(sample_records, console))
-        output = capsys.readouterr().out
-
-        # Title and SIMPLE_HEAVY box character present
-        assert "realtime metrics" in output
-        assert "━" in output
-
-        # Filter: only the two allowlisted metrics show; the others are gone
-        assert "Request Latency" in output
-        assert "Time to First Token" in output
-        assert "Inter Token Latency" not in output
-        assert "Request Throughput" not in output
-
-        # Stat columns: only the three configured ones (no min/p99/p90/p50/std)
-        header_line = next(
-            line for line in output.splitlines() if "Metric" in line and "avg" in line
-        )
-        assert "p95" in header_line
-        assert "max" in header_line
-        assert "min" not in header_line
-        assert "p99" not in header_line
-        assert "p90" not in header_line
-        assert "p50" not in header_line
-        assert "std" not in header_line

@@ -28,7 +28,7 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        if not self._results.timeslices:
+        if not self._results.timeslice_metric_results:
             raise DataExporterDisabled(
                 "TimesliceMetricsCsvExporter disabled: no timeslice metric results found"
             )
@@ -51,7 +51,7 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
     def _generate_content(self) -> str:
         """Generate tidy/long format CSV content from all timeslices.
 
-        Uses instance data member self._results.timeslices.
+        Uses instance data member self._results.timeslice_metric_results.
 
         Returns:
             str: Complete CSV content in tidy format
@@ -59,15 +59,17 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write header
-        writer.writerow(
-            ["Timeslice", "Start_NS", "End_NS", "Metric", "Unit", "Stat", "Value"]
-        )
+        # Write header with 5 columns
+        writer.writerow(["Timeslice", "Metric", "Unit", "Stat", "Value"])
 
-        # Slices are stored in chronological order. Position == slice index.
-        for timeslice_index, ts in enumerate(self._results.timeslices):
+        # Process each timeslice in sorted order
+        for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
+            metric_results_list = self._results.timeslice_metric_results[
+                timeslice_index
+            ]
+
             # Convert to display units and filter exportable metrics
-            prepared_metrics = self._prepare_metrics(ts.metric_results.values())
+            prepared_metrics = self._prepare_metrics(metric_results_list)
 
             # Write rows for each metric
             for tag, metric in sorted(prepared_metrics.items()):
@@ -81,8 +83,6 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
                         writer.writerow(
                             [
                                 timeslice_index,
-                                ts.start_ns,
-                                ts.end_ns,
                                 metric_name,
                                 unit,
                                 stat,

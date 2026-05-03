@@ -17,23 +17,17 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
-    from aiperf.timing.branch_orchestrator import PendingBranchJoin
     from aiperf.timing.concurrency import ConcurrencyManager
-    from aiperf.timing.conversation_source import SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
-
-
-_logger = AIPerfLogger(__name__)
 
 
 class CreditIssuer:
@@ -107,14 +101,12 @@ class CreditIssuer:
             False if this was the final credit or couldn't acquire slots.
 
         Note:
-            For root first turns (turn_index == 0, agent_depth == 0), acquires
-            a session slot first. Root continuations and all DAG-child turns
-            (``agent_depth > 0``) inherit the root's session slot and skip
-            session-slot acquisition. All turns acquire a prefill slot.
+            For first turns (turn_index == 0), acquires session slot first.
+            For all turns, acquires prefill slot.
             Slots are released automatically on failure.
 
         Flow:
-            1. Acquire session slot (root first turn only)
+            1. Acquire session slot (first turn only)
             2. Acquire prefill slot (all turns)
             3. Atomic numbering via increment_sent
             4. Calculate cancellation delay
@@ -122,32 +114,19 @@ class CreditIssuer:
             6. If final credit: freeze counts + set event
         """
         is_first_turn = turn.turn_index == 0
-        is_child = turn.agent_depth > 0
 
-        # Select appropriate check function based on turn type.
-        # - Root first turns need can_start_new_session (session-quota check).
-        # - Root continuations use can_send_any_turn (finish existing sessions).
-        # - DAG children use can_send_child_turn: bypasses only the
-        #   ``is_sending_complete`` flag (root sampler done) while still
-        #   honoring cancellation, duration timeout, and count limits.
-        #   Children must progress past the root-sampler-done signal so
-        #   the DAG can drain, but a user Ctrl-C or ``--benchmark-duration``
-        #   elapse must still terminate children cleanly.
-        if is_child:
-            can_proceed_fn = self._stop_checker.can_send_child_turn
-        else:
-            can_proceed_fn = (
-                self._stop_checker.can_start_new_session
-                if is_first_turn
-                else self._stop_checker.can_send_any_turn
-            )
+        # Select appropriate check function based on turn type
+        # - First turns need can_start_new_session (more restrictive - checks session quota)
+        # - Subsequent turns use can_send_any_turn (less restrictive - allows finishing existing sessions)
+        can_proceed_fn = (
+            self._stop_checker.can_start_new_session
+            if is_first_turn
+            else self._stop_checker.can_send_any_turn
+        )
 
-        # Session concurrency: one slot per root conversation, acquired on
-        # first turn only. DAG children inherit the root's slot and must not
-        # acquire their own — fanout would otherwise consume the user's
-        # configured session budget.
-        needs_session_slot = is_first_turn and not is_child
-        if needs_session_slot:
+        # Session concurrency: one slot per conversation, acquired on first turn only.
+        # Controls how many multi-turn conversations can be active simultaneously.
+        if is_first_turn:
             acquired = await self._concurrency_manager.acquire_session_slot(
                 self._phase, self._stop_checker.can_start_new_session
             )
@@ -161,7 +140,7 @@ class CreditIssuer:
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if needs_session_slot:
+            if is_first_turn:
                 self._concurrency_manager.release_session_slot(self._phase)
             return False
 
@@ -183,24 +162,19 @@ class CreditIssuer:
             None: No slots available, credit NOT issued. Retry later.
         """
         is_first_turn = turn.turn_index == 0
-        is_child = turn.agent_depth > 0
 
-        # See issue_credit for the rationale on these three cases.
-        if is_child:
-            can_proceed_fn = self._stop_checker.can_send_child_turn
-        else:
-            can_proceed_fn = (
-                self._stop_checker.can_start_new_session
-                if is_first_turn
-                else self._stop_checker.can_send_any_turn
-            )
+        # Select appropriate check function based on turn type
+        can_proceed_fn = (
+            self._stop_checker.can_start_new_session
+            if is_first_turn
+            else self._stop_checker.can_send_any_turn
+        )
 
         # Check stop condition FIRST - distinguishes False from None
         if not can_proceed_fn():
             return False
 
-        needs_session_slot = is_first_turn and not is_child
-        if needs_session_slot:
+        if is_first_turn:
             acquired = self._concurrency_manager.try_acquire_session_slot(
                 self._phase, can_proceed_fn
             )
@@ -212,7 +186,7 @@ class CreditIssuer:
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if needs_session_slot:
+            if is_first_turn:
                 self._concurrency_manager.release_session_slot(self._phase)
             return None  # No slot - credit not issued
 
@@ -253,12 +227,6 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
-            agent_depth=turn.agent_depth,
-            parent_correlation_id=turn.parent_correlation_id,
-            has_forks=turn.has_forks,
-            branch_mode=turn.branch_mode,
-            cache_bust_marker=turn.cache_bust_marker,
-            cache_bust_target=turn.cache_bust_target,
         )
 
         await self._credit_router.send_credit(credit=credit)
@@ -267,86 +235,3 @@ class CreditIssuer:
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
-
-    async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
-        """Dispatch the first turn of a mid-run DAG child session.
-
-        Thin wrapper around ``dispatch_child_turn`` that builds the
-        first ``TurnToSend`` from the sampled session.
-
-        Returns True if the credit was sent on the wire (orchestrator
-        should expect a return), False otherwise (orchestrator should
-        roll back its tracking via ``BranchOrchestrator.on_child_stopped``
-        / per-child rollback).
-        """
-        return await self.dispatch_child_turn(sampled_session.build_first_turn())
-
-    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
-        """Dispatch a DAG child turn (first or continuation).
-
-        Returns True if the credit was sent on the wire (caller should
-        expect a return), False otherwise (caller should roll back its
-        tracking via ``BranchOrchestrator.on_child_stopped``).
-
-        We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
-        False (which conflates "gate refused, not issued" with "issued,
-        was final credit") by inlining the child issuance path here:
-        gate check, non-blocking prefill-slot acquisition, then
-        ``_issue_credit_internal``. Children skip session-slot
-        acquisition (they inherit the parent's slot). The dispatch is
-        non-blocking on prefill (``try_acquire_prefill_slot``) — the
-        orchestrator drains via ``on_child_stopped`` rather than
-        waiting on a slot, matching the prior semantics.
-        """
-        can_proceed_fn = self._stop_checker.can_send_child_turn
-        if not can_proceed_fn():
-            return False
-        # Children inherit the parent's session slot; only acquire
-        # prefill (non-blocking, matches the orchestrator's rollback model).
-        if not self._concurrency_manager.try_acquire_prefill_slot(
-            self._phase, can_proceed_fn
-        ):
-            return False
-        await self._issue_credit_internal(turn)
-        return True
-
-    async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
-        """Dispatch a parent's gated turn after all its children complete.
-
-        The parent already holds a session slot (acquired at turn_index=0);
-        the gated turn has turn_index > 0, so try_issue_credit's session-slot
-        acquisition is naturally skipped (is_first_turn is False). Only a
-        prefill slot is acquired here.
-
-        Cache-bust propagation:
-            The TurnToSend constructed here re-applies the parent's
-            ``cache_bust_marker`` / ``cache_bust_target`` captured on the
-            ``PendingBranchJoin`` at suspend time. Without this, turn k+1
-            (the join turn) would dispatch with no marker while turns 0..k
-            carried one, breaking per-session cache-bust uniqueness for
-            multi-turn parents under DAG joins.
-
-        Stop-condition interaction: when ``can_send_any_turn()`` returns
-        False, try_issue_credit returns False without issuing and the
-        orchestrator increments ``BranchStats.joins_suppressed``.
-
-        Returns:
-            True if the credit was issued, False if suppressed.
-        """
-        assert pending.gated_turn_index is not None, (
-            "dispatch_join_turn called without a gated_turn_index"
-        )
-        turn = TurnToSend(
-            conversation_id=pending.parent_conversation_id,
-            x_correlation_id=pending.parent_x_correlation_id,
-            turn_index=pending.gated_turn_index,
-            num_turns=pending.parent_num_turns,
-            agent_depth=pending.parent_agent_depth,
-            parent_correlation_id=pending.parent_parent_correlation_id,
-            has_forks=pending.parent_has_forks_on_gated_turn,
-            branch_mode=pending.parent_branch_mode,
-            cache_bust_marker=pending.parent_cache_bust_marker,
-            cache_bust_target=pending.parent_cache_bust_target,
-        )
-        result = await self.try_issue_credit(turn)
-        return result is True

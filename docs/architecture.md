@@ -53,7 +53,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Loading datasets from various sources (JSONL, CSV, synthetic generators, trace replay formats)
 - Parsing and validating input data to ensure it matches the expected format
 - Writing dataset to memory-mapped files, enabling workers to access data directly without message passing
-- Supporting custom dataset types, including conversation-replay traces (Mooncake-format JSONL, Weka agentic-coding traces, Bailian, BurstGPT, DAG JSONL), for advanced benchmarking scenarios
+- Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
 
 ### Timing Manager
@@ -61,7 +61,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
 
 **Key Responsibilities:**
-- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, user-centric rate, or agentic replay)
+- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, or user-centric rate)
 - Managing precise timing to accurately reproduce real-world or synthetic load patterns
 - Supporting advanced timing scenarios, such as replaying traces with specific inter-arrival times or simulating bursty traffic
 - Ensuring that requests are dispatched to workers at the correct intervals for reliable measurement
@@ -136,7 +136,6 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
-- Auto-detecting non-Prometheus endpoints (e.g. TRT-LLM serves an iteration-stats JSON array at `/metrics` by default), probing `<base>/prometheus/metrics` once as a fallback, and disabling collection for that endpoint after a single warning if neither path yields parseable Prometheus data — see [Server Metrics Compatibility & auto-disable](server-metrics/server-metrics.md#compatibility--auto-disable)
 - Exporting server metrics alongside benchmark results
 
 ## How AIPerf Works
@@ -186,19 +185,6 @@ This section describes the end-to-end message flow during a benchmark run, showi
 5. Record Processors push metric records to Records Manager
 6. Records Manager aggregates and exports final results
 
-### Sub-Agents (Conversation Forking)
-
-AIPerf supports **conversation forking** as a first-class primitive: a parent turn may declare one or more `forks` (FORK mode, sticky-routed for prefix-cache locality) or `spawns` (SPAWN mode, routed freely). When the parent turn completes, child sessions are created and dispatched concurrently. FORK children are seeded with a clone of the parent's accumulated message history so the server sees prefix reuse; SPAWN children start with empty history. This enables benchmarks where one turn's response feeds multiple parallel continuations that share a prefix on the server — the shape required by prefix-cache and KV-aware-routing studies.
-
-The `BranchOrchestrator` lives in `src/aiperf/timing/branch_orchestrator.py`, alongside `ConversationSource` (in `conversation_source.py`) and the timing strategies, and is wired into `src/aiperf/credit/callback_handler.py`, invoked before the strategy's `handle_credit_return` call. When `orchestrator.intercept(credit)` returns `True`, the credit is consumed for a branch burst rather than the strategy's default next-turn dispatch. Children never acquire a session slot (`CreditIssuer` sets `needs_session_slot = is_first_turn and not is_child`); the parent's slot is released only once the DAG has fully drained.
-
-FORK-mode sticky routing keys on `parent_correlation_id` so every descendant of a given root is sticky-routed to the **same worker** as the root, exposing Phase-1 prefix reuse and KV-aware routing on the server. SPAWN-mode children route freely.
-
-Stats flow out of the Timing Manager via `CreditPhaseCompleteMessage` (carrying `BranchStats` counters: `children_spawned`, `children_completed`, `children_errored`, `parents_suspended`, `parents_resumed`). Existing per-request metrics are tagged with `agent_depth` so post-hoc analysis can distinguish root vs child load.
-
-See:
-- [DAG Benchmarking (Sub-Agents)](benchmark-modes/dag.md) — user-facing guide and example.
-
 ## Communication Architecture
 
 AIPerf services communicate internally via a **ZeroMQ (ZMQ) message bus**, designed for low-latency, high-throughput message passing between components.
@@ -228,17 +214,6 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 - **Services**: All service state is ephemeral and can be reconstructed from configuration
 - **Coordination**: Credit distribution happens through the message bus; dataset access via memory-mapped files
 - **Results**: Only aggregated results are persistent (exported to files)
-
-### Wire Format Compatibility
-
-AIPerf uses Pydantic / msgspec models directly as ZMQ message payloads — there is **no wire-protocol version handshake**. All services in a single run must be built from the same source tree. Mixed-version clusters (e.g. an updated Worker talking to an older Records Manager) are not supported. A single deploy ships all services together; rolling upgrades require a clean drain of in-flight credits before cutting over.
-
-Notably, the record-pipeline slim-down in the DAG sub-agents release changed several model shapes in a single commit:
-- `RequestRecord.request_info` now carries a slim `RecordContext` instead of the full `RequestInfo` (worker-side dispatch fields stay on the worker)
-- `RequestRecord.turns` removed (consumers read `payload_bytes` via the endpoint's `extract_payload_inputs` hook)
-- `Credit`/`TurnToSend` gained `agent_depth`, `parent_correlation_id`, `has_forks`, `branch_mode` fields for DAG routing
-
-Old clients receiving new messages (or vice versa) will fail to deserialise. If you need to upgrade a running benchmark, stop and restart the whole cluster.
 
 ## Design Principles
 

@@ -16,21 +16,17 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
     Creates one JSON file containing an array of all timeslices in the format:
     {
         "timeslices": [
-            {"start_ns": ..., "end_ns": ..., "metric_1": {...}, ...},
-            {"start_ns": ..., "end_ns": ..., "metric_1": {...}, ...}
+            {"timeslice_index": 0, "metric_1": {...}, "metric_2": {...}},
+            {"timeslice_index": 1, "metric_1": {...}, "metric_2": {...}}
         ],
         "input_config": {...}
     }
-
-    Slice ordering is conveyed by position in the array — there is no
-    explicit timeslice_index field, matching the server-metrics
-    BaseTimeslice wire format.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
 
-        if not self._results.timeslices:
+        if not self._results.timeslice_metric_results:
             raise DataExporterDisabled(
                 "TimesliceMetricsJsonExporter disabled: no timeslice metric results found"
             )
@@ -53,23 +49,21 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
     def _generate_content(self) -> str:
         """Generate single JSON with all timeslices in an array.
 
-        Uses instance data member self._results.timeslices.
+        Uses instance data member self._results.timeslice_metric_results.
 
         Returns:
             str: JSON content with all timeslices
         """
         timeslices_list = []
 
-        # Slices are stored in chronological order. Position == slice index.
-        for ts in self._results.timeslices:
-            prepared_json_metrics = self._prepare_metrics_for_json(
-                ts.metric_results.values()
-            )
-            timeslice = TimesliceData(
-                start_ns=ts.start_ns,
-                end_ns=ts.end_ns,
-                is_complete=ts.is_complete,
-            )
+        for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
+            metric_results = self._results.timeslice_metric_results[timeslice_index]
+
+            # Reuse base class helper to prepare metrics
+            prepared_json_metrics = self._prepare_metrics_for_json(metric_results)
+
+            # Create timeslice object with dynamic metrics
+            timeslice = TimesliceData(timeslice_index=timeslice_index)
             for tag, json_result in prepared_json_metrics.items():
                 setattr(timeslice, tag, json_result)
 

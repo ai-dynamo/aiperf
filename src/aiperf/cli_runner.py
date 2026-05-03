@@ -52,7 +52,7 @@ def run_system_controller(
     """Run the system controller with the given configuration.
 
     If num_profile_runs > 1 OR parameter sweep is detected, runs multi-run orchestration.
-    Otherwise, runs a single benchmark.
+    Otherwise, runs a single benchmark (backward compatibility).
     """
     is_sweep = user_config.loadgen.get_sweep_parameter() is not None
     is_multi_run = user_config.loadgen.num_profile_runs > 1
@@ -70,7 +70,7 @@ def _run_single_benchmark(
     user_config: UserConfig,
     service_config: ServiceConfig,
 ) -> None:
-    """Run a single benchmark."""
+    """Run a single benchmark (original behavior)."""
 
     # NOTE: On macOS, when using the Textual UI with multiprocessing, terminal corruption
     # (ASCII garbage, freezing) can occur when mouse events interfere with child processes.
@@ -178,37 +178,6 @@ def _run_single_benchmark(
         raise
     finally:
         logger.debug("AIPerf System exited")
-
-
-def _sum_runtime_response_counts(
-    successful_runs: list,
-) -> tuple[int, int]:
-    """Sum total responses and context-overflow counts across successful runs.
-
-    Each ``RunResult.summary_metrics`` is a dict of ``JsonMetricResult``
-    instances keyed by metric tag. The ``avg`` field on a count metric
-    holds the per-run total. We sum across runs to get the
-    confidence-reporting aggregate.
-
-    Total responses = ``request_count`` (valid) + ``error_request_count``,
-    matching the spec §4.8 / §7 denominator (all responses received,
-    success + failure). ``context_overflow_count`` is the dedicated
-    counter for context-overflow errors detected by the runtime classifier.
-
-    Returns ``(0, 0)`` when no successful runs exist.
-    """
-    total_responses = 0
-    context_overflow_count = 0
-    for result in successful_runs:
-        metrics = getattr(result, "summary_metrics", None) or {}
-        for tag in ("request_count", "error_request_count"):
-            metric = metrics.get(tag)
-            if metric is not None and metric.avg is not None:
-                total_responses += int(metric.avg)
-        overflow_metric = metrics.get("context_overflow_count")
-        if overflow_metric is not None and overflow_metric.avg is not None:
-            context_overflow_count += int(overflow_metric.avg)
-    return total_responses, context_overflow_count
 
 
 def _run_multi_benchmark(

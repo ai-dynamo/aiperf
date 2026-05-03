@@ -106,27 +106,15 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
-        *,
-        is_child: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
-            is_child: True when the returned credit is a DAG descendant
-                (``credit.agent_depth > 0``). Child returns bump the
-                request-level counters (``requests_completed`` /
-                ``requests_cancelled``) for observability — they're
-                real HTTP requests — but skip session-level bookkeeping
-                (``completed_sessions`` / ``cancelled_sessions``)
-                because children inherit the parent's session slot.
 
         Returns:
             True if ALL credits returned (this was the final return).
-            The ``CreditCallbackHandler`` defers the event fire via
-            ``BranchOrchestrator.has_pending_branch_work()`` when the
-            DAG still has in-flight descendants.
 
         CRITICAL: No async calls in this method - preserves atomicity.
 
@@ -135,9 +123,7 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(
-            is_final_turn, cancelled, is_child=is_child
-        )
+        return self._counter.increment_returned(is_final_turn, cancelled)
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.

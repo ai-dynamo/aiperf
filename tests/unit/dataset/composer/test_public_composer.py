@@ -13,12 +13,9 @@ from aiperf.common.config import (
     PromptConfig,
     UserConfig,
 )
-from aiperf.common.enums import PromptCorpus
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.composer.public import PublicDatasetComposer
-from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
-from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
 
 @pytest.fixture
@@ -159,8 +156,6 @@ class TestBuildLoaderKwargs:
 @pytest.mark.asyncio
 class TestCreateDatasetAsync:
     async def test_returns_conversations_with_finalized_turns(self, aimo_config):
-        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-
         conversations = _make_conversations(3)
         mock_loader = AsyncMock()
         mock_loader.load_dataset = AsyncMock(return_value={"dataset": []})
@@ -180,7 +175,7 @@ class TestCreateDatasetAsync:
             ),
             patch(
                 "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-                return_value=PublicDatasetLoaderMetadata(
+                return_value=MagicMock(
                     hf_dataset_name="test/dataset",
                     hf_split="train",
                     hf_subset=None,
@@ -198,8 +193,6 @@ class TestCreateDatasetAsync:
                 assert turn.model == "test-model"
 
     async def test_sets_sampling_strategy_from_loader(self, aimo_config):
-        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-
         aimo_config.input.dataset_sampling_strategy = None
         conversations = _make_conversations(1)
         mock_loader = AsyncMock()
@@ -220,7 +213,7 @@ class TestCreateDatasetAsync:
             ),
             patch(
                 "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-                return_value=PublicDatasetLoaderMetadata(
+                return_value=MagicMock(
                     hf_dataset_name="test/dataset",
                     hf_split="train",
                     hf_subset=None,
@@ -234,159 +227,3 @@ class TestCreateDatasetAsync:
             aimo_config.input.dataset_sampling_strategy
             == DatasetSamplingStrategy.SEQUENTIAL
         )
-
-
-# ============================================================================
-# Trace-loader kwarg injection (_inject_trace_kwargs)
-# ============================================================================
-
-
-def _trace_metadata(
-    *,
-    default_prompt_corpus: PromptCorpus = PromptCorpus.CODING,
-    default_block_size: int | None = 64,
-) -> PublicDatasetLoaderMetadata:
-    """Build a PublicDatasetLoaderMetadata flagged as is_trace=True."""
-    return PublicDatasetLoaderMetadata(
-        hf_dataset_name="semianalysisai/cc-traces-weka-042026",
-        hf_split="train",
-        is_trace=True,
-        default_block_size=default_block_size,
-        default_prompt_corpus=default_prompt_corpus,
-    )
-
-
-class TestInjectTraceKwargs:
-    """Verify the trace branch of ``_build_loader_kwargs``."""
-
-    def test_raises_when_no_tokenizer(self, aimo_config: UserConfig) -> None:
-        """Trace public datasets MUST have a tokenizer for prompt synthesis."""
-        composer = PublicDatasetComposer(aimo_config, tokenizer=None)
-        assert composer.prompt_generator is None
-        kwargs: dict = {}
-        with pytest.raises(
-            ValueError, match="Trace public datasets require a tokenizer"
-        ):
-            composer._inject_trace_kwargs(_trace_metadata(), kwargs)
-
-    def test_coding_corpus_uses_coding_content_generator(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        kwargs: dict = {}
-
-        composer._inject_trace_kwargs(
-            _trace_metadata(default_prompt_corpus=PromptCorpus.CODING), kwargs
-        )
-
-        assert isinstance(kwargs["prompt_generator"], CodingContentGenerator)
-
-    def test_sonnet_corpus_uses_composer_prompt_generator(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        kwargs: dict = {}
-
-        composer._inject_trace_kwargs(
-            _trace_metadata(default_prompt_corpus=PromptCorpus.SONNET), kwargs
-        )
-
-        # Sonnet path reuses the composer's own prompt_generator,
-        # not a CodingContentGenerator.
-        assert kwargs["prompt_generator"] is composer.prompt_generator
-        assert not isinstance(kwargs["prompt_generator"], CodingContentGenerator)
-
-    def test_user_prompt_corpus_overrides_metadata_default(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        """A user-set --prompt-corpus must win over the loader default."""
-        aimo_config.input.prompt.prompt_corpus = PromptCorpus.SONNET
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        kwargs: dict = {}
-
-        composer._inject_trace_kwargs(
-            _trace_metadata(default_prompt_corpus=PromptCorpus.CODING), kwargs
-        )
-
-        # User picked sonnet => composer prompt_generator, NOT coding.
-        assert kwargs["prompt_generator"] is composer.prompt_generator
-        assert not isinstance(kwargs["prompt_generator"], CodingContentGenerator)
-
-    def test_default_block_size_injected_when_set(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        kwargs: dict = {}
-
-        composer._inject_trace_kwargs(_trace_metadata(default_block_size=64), kwargs)
-
-        assert kwargs["default_block_size"] == 64
-
-    def test_default_block_size_omitted_when_unset(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        kwargs: dict = {}
-
-        composer._inject_trace_kwargs(_trace_metadata(default_block_size=None), kwargs)
-
-        assert "default_block_size" not in kwargs
-
-
-class TestBuildLoaderKwargsTraceBranch:
-    """Verify _build_loader_kwargs wires the trace branch end-to-end."""
-
-    def test_non_trace_metadata_does_not_inject_trace_kwargs(
-        self, aimo_config: UserConfig
-    ) -> None:
-        """Non-trace loaders (sharegpt, aimo style) must NOT receive
-        ``prompt_generator`` or ``default_block_size`` kwargs."""
-        composer = PublicDatasetComposer(aimo_config, tokenizer=None)
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="AI-MO/NuminaMath-TIR",
-                hf_split="train",
-                prompt_column="problem",
-                is_trace=False,
-            ),
-        ):
-            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
-
-        assert "prompt_generator" not in kwargs
-        assert "default_block_size" not in kwargs
-
-    def test_trace_metadata_injects_prompt_generator_and_block_size(
-        self, aimo_config: UserConfig, mock_tokenizer_cls
-    ) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        composer = PublicDatasetComposer(aimo_config, tokenizer)
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=_trace_metadata(),
-        ):
-            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
-
-        assert "prompt_generator" in kwargs
-        assert isinstance(kwargs["prompt_generator"], CodingContentGenerator)
-        assert kwargs["default_block_size"] == 64
-
-    def test_trace_metadata_without_tokenizer_raises(
-        self, aimo_config: UserConfig
-    ) -> None:
-        composer = PublicDatasetComposer(aimo_config, tokenizer=None)
-        with (
-            patch(
-                "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-                return_value=_trace_metadata(),
-            ),
-            pytest.raises(
-                ValueError, match="Trace public datasets require a tokenizer"
-            ),
-        ):
-            composer._build_loader_kwargs(PublicDatasetType.AIMO)

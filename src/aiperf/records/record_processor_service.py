@@ -13,7 +13,6 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
-    ProfileCompleteCommand,
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -108,33 +107,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 
-    @on_command(CommandType.PROFILE_COMPLETE)
-    async def _profile_complete_command(
-        self,
-        message: ProfileCompleteCommand,  # noqa: ARG002
-    ) -> None:
-        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
-
-        RecordsManager sends PROFILE_COMPLETE after all records are processed
-        but before exporting/aggregating results. Flushing children here ensures
-        buffered writers drain to disk before the RawRecordAggregator reads them.
-
-        We flush rather than stop: stop() runs the @on_stop hook chain inside
-        the message-handler task, and when SystemController later broadcasts
-        SHUTDOWN it cancels the in-flight handler task, leaving the writer
-        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
-        the buffer without tearing down the file handle, and the writer's
-        normal _close_file hook handles teardown during service shutdown.
-        """
-        for child in self._children:
-            flush = getattr(child, "flush_buffer", None)
-            if flush is None:
-                continue
-            try:
-                await flush()
-            except Exception as e:  # noqa: BLE001
-                self.error(f"Failed to flush child {child}: {e!r}")
-
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
         async with self.tokenizer_lock:
@@ -192,8 +164,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
-            agent_depth=record.request_info.agent_depth,
-            parent_correlation_id=record.request_info.parent_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
@@ -256,8 +226,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         error = record.error
         if self.user_config.output.export_level != ExportLevel.RAW:
             record.responses = None
+        record.turns = None
         record.trace_data = None
         record.request_headers = None
+        if record.request_info:
+            record.request_info.turns = None
+            record.request_info.system_message = None
+            record.request_info.user_context_message = None
         parsed_record.responses = None
         return trace_data, error
 

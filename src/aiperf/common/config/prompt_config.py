@@ -15,7 +15,6 @@ from aiperf.common.config.config_defaults import (
     PromptDefaults,
 )
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import CacheBustTarget, PromptCorpus
 
 
 class InputTokensConfig(BaseConfig):
@@ -209,37 +208,6 @@ class PrefixPromptConfig(BaseConfig):
     ] = None
 
 
-class CacheBustConfig(BaseConfig):
-    """Per-conversation cache-bust marker injected into the prompt.
-
-    Prefix variants diverge at token 0 (defeats KV-cache prefix matching for
-    the entire prompt — recommended when --shared-system-prompt-length is
-    large). Suffix variants append after existing content (lighter bust;
-    preserves leading-prefix caching). Marker is deterministic from
-    (benchmark_id, recycle_pass, trajectory_index) — reproducible across
-    reruns. Same marker for all turns within a conversation; fresh marker
-    on each recycle of a trace_id.
-    """
-
-    _CLI_GROUP = Groups.CACHE_BUST
-
-    target: Annotated[
-        CacheBustTarget,
-        Field(
-            description=(
-                "Where (and how) to inject a per-conversation cache-bust marker. "
-                "Prefix variants prepend at token 0 (most aggressive); "
-                "suffix variants append after existing content. "
-                "'none' disables the feature (default)."
-            ),
-        ),
-        CLIParameter(
-            name=("--cache-bust",),
-            group=_CLI_GROUP,
-        ),
-    ] = CacheBustTarget.NONE
-
-
 class PromptConfig(BaseConfig):
     """
     A configuration class for defining prompt related settings.
@@ -285,22 +253,6 @@ class PromptConfig(BaseConfig):
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
-    cache_bust: CacheBustConfig = CacheBustConfig()
-
-    prompt_corpus: Annotated[
-        PromptCorpus | None,
-        Field(
-            description="Source corpus for synthetic prompt text generation. "
-            "'sonnet' uses Shakespeare sonnets. "
-            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
-            "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
-            "agentic-coding loaders such as weka_trace default to 'coding').",
-        ),
-        CLIParameter(
-            name=("--prompt-corpus",),
-            group=_CLI_GROUP,
-        ),
-    ] = None
 
     sequence_distribution: Annotated[
         str | None,

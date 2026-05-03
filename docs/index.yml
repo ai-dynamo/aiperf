@@ -31,10 +31,14 @@ navigation:
       path: tutorials/vision.md
     - page: Profile Audio Language Models with AIPerf
       path: tutorials/audio.md
+    - page: Profile ASR Models with AIPerf
+      path: tutorials/asr.md
     - page: Profile Embedding Models with AIPerf
       path: tutorials/embeddings.md
     - page: Profile Ranking Models with AIPerf
       path: tutorials/rankings.md
+    - page: Profile NIM Image Retrieval with AIPerf
+      path: tutorials/nim-image-retrieval.md
     - page: SGLang Image Generation
       path: tutorials/image-generation.md
     - page: SGLang Video Generation
@@ -52,52 +56,40 @@ navigation:
       path: tutorials/custom-prompt-benchmarking.md
     - page: Profile with ShareGPT Dataset
       path: tutorials/sharegpt.md
-    - page: Multi-Turn Conversations
-      path: tutorials/multi-turn.md
-    - page: Weka Agentic Coding Traces
-      path: tutorials/weka-trace.md
-    - page: InferenceX AgentX MVP Benchmark
-      path: tutorials/agentx-mvp.md
-    - page: Sequence Length Distributions for Advanced Benchmarking
-      path: tutorials/sequence-distributions.md
-    - page: Prefix Data Synthesis Tutorial
-      path: tutorials/prefix-synthesis.md
     - page: Synthetic Dataset Generation
       path: tutorials/synthetic-dataset.md
-    - page: Agentic Code Dataset Generator
-      path: tutorials/agentic-code-generator.md
-    - page: Profile with AIMO Dataset
-      path: tutorials/aimo.md
-    - page: Profile ASR Models with Public Datasets
-      path: tutorials/asr.md
-    - page: Profile with Bailian Traces
-      path: tutorials/bailian-trace.md
-    - page: Profile with Blazedit Dataset
-      path: tutorials/blazedit.md
-    - page: Profile with BurstGPT Traces
-      path: tutorials/burst-gpt-trace.md
     - page: Profile with InstructCoder Dataset
       path: tutorials/instruct-coder.md
-    - page: Profile with LLaVA-OneVision Dataset
-      path: tutorials/llava-onevision.md
+    - page: Profile with AIMO Dataset
+      path: tutorials/aimo.md
     - page: Profile with MMStar Dataset
       path: tutorials/mmstar.md
     - page: Profile with MMVU Dataset
       path: tutorials/mmvu.md
-    - page: Profile NIM Image Retrieval with AIPerf
-      path: tutorials/nim-image-retrieval.md
+    - page: Profile with LLaVA-OneVision Dataset
+      path: tutorials/llava-onevision.md
+    - page: Profile with VisionArena Dataset
+      path: tutorials/vision-arena.md
+    - page: Profile with Blazedit Dataset
+      path: tutorials/blazedit.md
     - page: Profile with SpecBench Dataset
       path: tutorials/spec-bench.md
     - page: Profile with SPEED-Bench Dataset
       path: tutorials/speed-bench.md
-    - page: Profile with VisionArena Dataset
-      path: tutorials/vision-arena.md
-    - page: Inputs JSON Replay
-      path: tutorials/inputs-json-replay.md
-    - page: Raw Payload Replay
-      path: tutorials/raw-payload-replay.md
+    - page: Profile with Bailian Traces
+      path: tutorials/bailian-trace.md
+    - page: Profile with BurstGPT Traces
+      path: tutorials/burst-gpt-trace.md
     - page: Replay SageMaker Data Capture Traces
       path: tutorials/sagemaker-data-capture.md
+    - page: Multi-Turn Conversations
+      path: tutorials/multi-turn.md
+    - page: Sequence Length Distributions for Advanced Benchmarking
+      path: tutorials/sequence-distributions.md
+    - page: Prefix Data Synthesis Tutorial
+      path: tutorials/prefix-synthesis.md
+    - page: Agentic Code Dataset Generator
+      path: tutorials/agentic-code-generator.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:
@@ -119,8 +111,6 @@ navigation:
       path: tutorials/request-cancellation.md
     - page: Warmup Phase Configuration
       path: tutorials/warmup.md
-    - page: Parameter Sweeping
-      path: tutorials/parameter-sweeping.md
   - section: Metrics & Analysis
     collapsed: true
     contents:
@@ -128,6 +118,8 @@ navigation:
       path: tutorials/goodput.md
     - page: Multi-Run Confidence Reporting
       path: tutorials/multi-run-confidence.md
+    - page: Parameter Sweeping
+      path: tutorials/parameter-sweeping.md
     - page: Time Slicing for Performance Analysis
       path: tutorials/timeslices.md
     - page: HTTP Trace Metrics Guide
@@ -157,20 +149,12 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
-  - page: "DAG Benchmarks: Branching Conversations"
-    path: benchmark-modes/dag.md
 
 - section: Accuracy
   collapsed: true
   contents:
   - page: Accuracy Benchmarking
     path: accuracy/accuracy-benchmarking.md
-
-- section: Troubleshooting
-  collapsed: true
-  contents:
-  - page: Parameter Sweeping Error Troubleshooting Guide
-    path: troubleshooting/parameter-sweeping-errors.md
 
 - section: Reference
   collapsed: true
@@ -185,16 +169,10 @@ navigation:
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
-  - page: Input Sequence Length (ISL) Tokenization
-    path: reference/isl-tokenization.md
-  - page: ISL Budget Compensation Derivation
-    path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
-  - page: Vendor Usage Field Reference
-    path: reference/vendor-usage-fields.md
 
 - section: Server Metrics
   collapsed: true
@@ -221,7 +199,7 @@ navigation:
   contents:
   - page: Prefix Synthesis API Reference
     path: api/synthesis.md
-  - page: Sweep Aggregate API Reference
+  - page: Sweep Aggregates API Reference
     path: api/sweep-aggregates.md
 
 - section: Architecture & Internals
@@ -235,32 +213,6 @@ navigation:
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
-  - page: "Research-Grade Algorithms: Gap Analysis"
-    path: dev/gap-analysis-research-grade-algorithms.md
-  - page: "Proposal: Statistical Foundations"
-    path: dev/proposal-statistical-foundations.md
-  - page: "Proposal: Confidence Intervals"
-    path: dev/proposal-confidence-intervals.md
-  - page: "Proposal: Coordinated Omission & Latency Decomposition"
-    path: dev/proposal-coordinated-omission-and-latency-decomposition.md
-  - page: "Proposal: Advanced Analysis"
-    path: dev/proposal-advanced-analysis.md
-  - page: "Research: Client/Server Latency Correlation"
-    path: dev/research-client-server-latency-correlation.md
-  - page: "Research: GPU Utilization × Throughput"
-    path: dev/research-gpu-utilization-throughput-correlation.md
-  - page: "Research: KV-Cache × Latency"
-    path: dev/research-kv-cache-latency-correlation.md
-  - page: "Research: Power × Thermal × Performance"
-    path: dev/research-power-thermal-performance-correlation.md
-  - page: "Research: Prefill/Decode Interference"
-    path: dev/research-prefill-decode-interference-correlation.md
-  - page: "Research: Queue Depth × Scheduling"
-    path: dev/research-queue-depth-scheduling-correlation.md
-  - page: "Research: SLO Compliance × Multi-Signal"
-    path: dev/research-slo-compliance-multi-signal-correlation.md
-  - page: "Research: Token Throughput Discrepancy"
-    path: dev/research-token-throughput-discrepancy-correlation.md
 
 - section: Troubleshooting
   collapsed: true

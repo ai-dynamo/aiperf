@@ -8,17 +8,14 @@ Provides shared utilities for metric parsing, data preparation, and other
 cross-cutting concerns used by multiple plot modules.
 """
 
-from __future__ import annotations
-
 import re
 
 import orjson
 
 from aiperf.plot.metric_names import _format_server_metric_name
-from aiperf.plot.types import FilteredMetrics, ParsedMetricSpec
 
 
-def parse_server_metric_spec(metric_spec: str) -> ParsedMetricSpec:
+def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | None]:
     """
     Parse server metric specification with optional endpoint and label filters.
 
@@ -79,7 +76,7 @@ def parse_server_metric_spec(metric_spec: str) -> ParsedMetricSpec:
                 f"Expected format: metric_name{{label1=value1,label2=value2}}"
             )
         # Fallback: return as-is if pattern doesn't match (may be simple metric name)
-        return ParsedMetricSpec(metric_spec.strip(), None, None)
+        return metric_spec.strip(), None, None
 
     metric_name = combined_match.group(1)
     endpoint = combined_match.group(2)  # None if not present
@@ -110,7 +107,7 @@ def parse_server_metric_spec(metric_spec: str) -> ParsedMetricSpec:
                 )
             labels[key] = value
 
-    return ParsedMetricSpec(metric_name.strip(), endpoint, labels)
+    return metric_name.strip(), endpoint, labels
 
 
 def filter_server_metrics_dataframe(
@@ -118,7 +115,7 @@ def filter_server_metrics_dataframe(
     metric_name: str,
     endpoint_filter: str | None = None,
     labels_filter: dict | None = None,
-) -> FilteredMetrics:
+) -> tuple:
     """
     Filter server metrics DataFrame by metric name, endpoint, and labels.
 
@@ -196,7 +193,7 @@ def filter_server_metrics_dataframe(
         else ""
     )
 
-    return FilteredMetrics(filtered, unit, metric_type)
+    return filtered, unit, metric_type
 
 
 def detect_server_metric_series(df) -> list[tuple[str, str]]:

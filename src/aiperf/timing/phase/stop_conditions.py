@@ -30,19 +30,6 @@ class StopCondition(ABC):
     and may optionally implement the can_start_new_session() method for more restrictive cases.
     """
 
-    # DAG children (``agent_depth > 0``) are spawned reactively by the
-    # ``BranchOrchestrator`` at credit-return time — they are NOT driven
-    # by the phase's ``TimingStrategy`` loop and do not consume entries
-    # from the ``DatasetSampler``. They honor stop conditions that
-    # represent user-facing guarantees (cancellation, duration) but
-    # bypass ones tied to the TimingStrategy's own loop termination
-    # (``is_sending_complete``) or to root-session count targets
-    # (``--request-count``, ``--conversation-num``) that were authored
-    # for the sampled roots, not their reactive offspring. Concrete
-    # conditions set ``applies_to_dag_children = False`` to opt out of
-    # child evaluation; all others apply by default.
-    applies_to_dag_children: bool = True
-
     def __init__(
         self,
         config: CreditPhaseConfig,
@@ -80,67 +67,27 @@ class StopCondition(ABC):
         return True
 
 
-class CancellationStopCondition(StopCondition):
-    """Phase-cancelled stop condition.
+class LifecycleStopCondition(StopCondition):
+    """Lifecycle based stop condition. Checks if the phase is cancelled or has completed sending.
 
-    Honored by *every* credit, including DAG children — when the user
-    cancels (Ctrl-C, explicit API abort, pod eviction), all in-flight
-    credit issuance must stop. Separated from the sending-complete
-    check so DAG children can bypass the latter without bypassing
-    cancellation.
+    NOTE: This is always used and is the first in the list of stop conditions.
     """
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
+        """Always use this stop condition."""
         return True
 
     def can_send_any_turn(self) -> bool:
-        return not self._lifecycle.was_cancelled
-
-
-class SendingCompleteStopCondition(StopCondition):
-    """Phase has marked ``is_sending_complete`` on the lifecycle.
-
-    Set by ``PhaseRunner._wait_for_sending_complete`` after
-    ``progress.all_credits_sent_event`` fires — which ``CreditIssuer``
-    sets as soon as ``CreditCounter.increment_sent`` reports
-    ``is_final_credit`` (i.e. the root count / session-turn target has
-    been reached).
-
-    DAG children bypass this condition: the flag fires when the
-    ``TimingStrategy`` loop has dispatched its last targeted credit,
-    which is typically *before* the ``BranchOrchestrator`` has even
-    intercepted the root's return to spawn children. Honoring it would
-    block every child. DAG completion is tracked separately by
-    ``BranchOrchestrator.has_pending_branch_work()``; the callback
-    handler defers ``all_credits_returned_event`` until that drains.
-    """
-
-    applies_to_dag_children = False
-
-    @classmethod
-    def should_use(cls, config: CreditPhaseConfig) -> bool:
-        return True
-
-    def can_send_any_turn(self) -> bool:
-        return not self._lifecycle.is_sending_complete
+        """Returns True if the phase is not cancelled and has not completed sending."""
+        return (
+            not self._lifecycle.was_cancelled
+            and not self._lifecycle.is_sending_complete
+        )
 
 
 class RequestCountStopCondition(StopCondition):
-    """Request count based stop condition.
-
-    Bypassed for DAG children. ``--request-count`` is a
-    ``TimingStrategy``-loop target — "dispatch N root credits via the
-    ``DatasetSampler``" — not a global HTTP-request cap. The counter
-    it reads (``requests_sent``) DOES include DAG children for
-    observability (they're real HTTP requests), but the ``<``
-    comparison goes at-cap the instant the last root fires. Without
-    the bypass, children would all be blocked the moment the root
-    plan exhausts (including the root's own about-to-spawn
-    descendants). Duration and cancellation still apply.
-    """
-
-    applies_to_dag_children = False
+    """Request count based stop condition."""
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -153,17 +100,7 @@ class RequestCountStopCondition(StopCondition):
 
 
 class SessionCountStopCondition(StopCondition):
-    """Session count based stop condition.
-
-    Bypassed for DAG children. The counters it reads
-    (``sent_sessions``, ``total_session_turns``) correctly exclude
-    children (they inherit the parent's session slot and only bump
-    the request-level counters — see ``CreditCounter.increment_sent``),
-    but the OR comparison still goes at-cap once the root plan
-    exhausts. Bypass lets DAG offspring run past it.
-    """
-
-    applies_to_dag_children = False
+    """Session count based stop condition."""
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -191,13 +128,7 @@ class SessionCountStopCondition(StopCondition):
 
 
 class DurationStopCondition(StopCondition):
-    """Duration based stop condition.
-
-    Honored by DAG children — the user promised a time-bounded run.
-    Children that reach ``--benchmark-duration`` stop dispatching
-    further turns; in-flight requests drain via their own
-    cancellation path.
-    """
+    """Duration based stop condition."""
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -212,8 +143,7 @@ class DurationStopCondition(StopCondition):
 
 # NOTE: The order of these classes will determine the order that the stop conditions are checked in.
 _STOP_CONDITION_CLASSES = [
-    CancellationStopCondition,  # Always used first — honored by every credit, including DAG children.
-    SendingCompleteStopCondition,  # Always used — skipped for DAG children.
+    LifecycleStopCondition,  # Always used first
     RequestCountStopCondition,
     SessionCountStopCondition,
     DurationStopCondition,
@@ -271,14 +201,6 @@ class StopConditionChecker:
             stop_condition.can_start_new_session
             for stop_condition in self._stop_conditions
         ]
-        # Subset of conditions that DAG children must still honor
-        # (cancellation, duration, request/session counts). Excludes
-        # ``SendingCompleteStopCondition`` — see its docstring.
-        self._can_send_child_turn_funcs: list[Callable] = [
-            stop_condition.can_send_any_turn
-            for stop_condition in self._stop_conditions
-            if stop_condition.applies_to_dag_children
-        ]
 
     def can_send_any_turn(self) -> bool:
         """True if phase can send ANY turn (first or subsequent).
@@ -292,26 +214,6 @@ class StopConditionChecker:
         - All sessions complete (session-based mode)
         """
         return all(func() for func in self._can_send_any_turn_funcs)
-
-    def can_send_child_turn(self) -> bool:
-        """True if a DAG child credit can be issued.
-
-        Children honor only the stop conditions whose concrete class
-        declares ``applies_to_dag_children = True`` (today:
-        ``CancellationStopCondition`` and ``DurationStopCondition`` —
-        the ones that represent user-facing guarantees). They bypass:
-
-        - ``SendingCompleteStopCondition`` — the ``TimingStrategy``
-          loop's "I've dispatched my last targeted credit" flag, which
-          flips before DAG children even begin.
-        - ``RequestCountStopCondition`` / ``SessionCountStopCondition``
-          — the ``<`` comparison goes at-cap the instant the last root
-          fires; the counters themselves are already root-only (see
-          ``CreditCounter.increment_sent``).
-
-        Called by ``CreditIssuer`` when ``turn.agent_depth > 0``.
-        """
-        return all(func() for func in self._can_send_child_turn_funcs)
 
     def can_start_new_session(self) -> bool:
         """True if phase can start a NEW session (more restrictive).

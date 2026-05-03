@@ -55,10 +55,6 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         from importlib.metadata import version as get_version
 
         from aiperf.common.models.export_models import JsonExportData
-        from aiperf.exporters.aggregate.aggregate_base_exporter import (
-            _build_run_metadata_dict,
-            compute_submission_outcome,
-        )
 
         # Get AIPerf version (same approach as MetricsJsonExporter)
         try:
@@ -72,44 +68,14 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             aiperf_version=aiperf_version,
         )
 
-        # Pull scenario-submission inputs out of the aggregate metadata
-        # (see cli_runner / orchestrator: these underscore-prefixed keys are
-        # the carrier from validator+runtime to exporter, and are stripped
-        # before merging the rest of metadata into the output).
-        result_metadata = dict(self._result.metadata)
-        scenario_name = result_metadata.pop("_scenario_name", None)
-        validator_submission_valid = result_metadata.pop(
-            "_validator_submission_valid", None
-        )
-        validator_reasons = result_metadata.pop(
-            "_validator_submission_invalid_reasons", None
-        )
-        total_responses = int(result_metadata.pop("_total_responses", 0) or 0)
-        context_overflow_count = int(
-            result_metadata.pop("_context_overflow_count", 0) or 0
-        )
-
-        submission_valid, submission_invalid_reasons = compute_submission_outcome(
-            scenario_name=scenario_name,
-            validator_submission_valid=validator_submission_valid,
-            validator_reasons=validator_reasons,
-            total_responses=total_responses,
-            context_overflow_count=context_overflow_count,
-        )
-
-        run_metadata = _build_run_metadata_dict(
-            scenario_name=scenario_name,
-            submission_valid=submission_valid,
-            submission_invalid_reasons=submission_invalid_reasons,
-        )
-
+        # Add aggregate-specific metadata as extra field
+        # (JsonExportData has extra="allow" to support this)
         aggregate_metadata = {
             "aggregation_type": self._result.aggregation_type,
             "num_profile_runs": self._result.num_runs,
             "num_successful_runs": self._result.num_successful_runs,
             "failed_runs": self._result.failed_runs,
-            **result_metadata,
-            **run_metadata,
+            **self._result.metadata,
         }
         export_data.metadata = aggregate_metadata
 

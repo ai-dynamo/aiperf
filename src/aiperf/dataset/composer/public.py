@@ -110,49 +110,4 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
 
-        if loader_metadata.category is not None:
-            kwargs["category"] = loader_metadata.category
-
-        if loader_metadata.prompt_template is not None:
-            kwargs["prompt_template"] = loader_metadata.prompt_template
-
-        if loader_metadata.is_trace:
-            self._inject_trace_kwargs(loader_metadata, kwargs)
-
         return kwargs
-
-    def _inject_trace_kwargs(
-        self, loader_metadata: Any, kwargs: dict[str, Any]
-    ) -> None:
-        """Mirror CustomDatasetComposer's trace-loader plumbing.
-
-        Trace public datasets need a tokenizer-backed prompt_generator (with
-        an optional coding corpus) and the format-specific default block
-        size, the same way custom trace loaders do.
-        """
-        from aiperf.common.enums import PromptCorpus
-
-        if self.prompt_generator is None:
-            raise ValueError(
-                "Trace public datasets require a tokenizer for prompt synthesis. "
-                "Ensure the endpoint supports tokenization or provide a --tokenizer."
-            )
-
-        corpus = (
-            self.config.input.prompt.prompt_corpus
-            or loader_metadata.default_prompt_corpus
-        )
-        if corpus == PromptCorpus.CODING:
-            from aiperf.dataset.generator.coding_content import (
-                CodingContentGenerator,
-            )
-
-            kwargs["prompt_generator"] = CodingContentGenerator(
-                config=self.config.input.prompt,
-                tokenizer=self.prompt_generator.tokenizer,
-            )
-        else:
-            kwargs["prompt_generator"] = self.prompt_generator
-
-        if loader_metadata.default_block_size is not None:
-            kwargs["default_block_size"] = loader_metadata.default_block_size

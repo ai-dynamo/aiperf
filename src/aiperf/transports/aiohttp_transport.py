@@ -231,7 +231,7 @@ class AioHttpTransport(BaseTransport):
     async def send_request(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any] | bytes,
+        payload: dict[str, Any],
         *,
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
@@ -244,7 +244,7 @@ class AioHttpTransport(BaseTransport):
 
         Args:
             request_info: Request context and metadata (includes cancel_after_ns)
-            payload: JSON-serializable dict or pre-encoded JSON bytes
+            payload: JSON-serializable request payload
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
 
         Returns:
@@ -272,9 +272,7 @@ class AioHttpTransport(BaseTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-            json_bytes = (
-                payload if isinstance(payload, bytes) else orjson.dumps(payload)
-            )
+            json_bytes = orjson.dumps(payload)
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -425,7 +423,7 @@ class AioHttpTransport(BaseTransport):
     async def _submit_video_job(
         self,
         url: str,
-        payload: dict[str, Any] | bytes,
+        payload: dict[str, Any],
         headers: dict[str, str],
         *,
         use_form_data: bool = False,
@@ -436,12 +434,9 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
-        if isinstance(payload, bytes):
-            body: bytes | aiohttp.FormData = payload
-        elif use_form_data:
-            body = self._build_form_data(payload)
-        else:
-            body = orjson.dumps(payload)
+        body: bytes | aiohttp.FormData = (
+            self._build_form_data(payload) if use_form_data else orjson.dumps(payload)
+        )
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
@@ -552,7 +547,7 @@ class AioHttpTransport(BaseTransport):
     async def _send_video_request_with_polling(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any] | bytes,
+        payload: dict[str, Any],
     ) -> RequestRecord:
         """Send video generation request and poll until complete."""
         if self.aiohttp_client is None:

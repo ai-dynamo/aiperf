@@ -6,7 +6,6 @@ from abc import ABC
 from typing import ClassVar, Generic, get_args, get_origin
 
 from aiperf.common.enums import (
-    MetricConsoleGroup,
     MetricFlags,
     MetricType,
     MetricUnitT,
@@ -37,9 +36,6 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     - short_header_hide_unit: If True, the unit will not be displayed in the Dashboard short header.
     - display_order: The display order in the ConsoleExporter. Lower numbers are displayed first. None means unordered after any ordered metrics.
     - flags: The flags of the metric that determine how and when it is computed and displayed.
-    - console_group: The console display group for the metric. `MetricConsoleGroup.NONE` hides
-      the metric from the console output (equivalent to the legacy `NO_CONSOLE` flag); other values
-      group the metric into a section of the console output.
     - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
     """
 
@@ -52,7 +48,6 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     display_unit: ClassVar[MetricUnitT | None] = None
     display_order: ClassVar[int | None] = None
     flags: ClassVar[MetricFlags] = MetricFlags.NONE
-    console_group: ClassVar[MetricConsoleGroup] = MetricConsoleGroup.DEFAULT
     required_metrics: ClassVar[set[MetricTagT] | None] = None
 
     # Auto-derived attributes
@@ -132,24 +127,22 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             f"Unable to detect the value type for {cls.__name__}. Please check the generic type parameter."
         )
 
-    @classmethod
-    def _require_valid_record(cls, record: ParsedResponseRecord) -> None:
+    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
         """Check that the record is valid."""
-        if (not record or not record.valid) and not cls.has_flags(
+        if (not record or not record.valid) and not self.has_flags(
             MetricFlags.ERROR_ONLY
         ):
             raise NoMetricValue(
-                f"{cls.__name__} cannot compute a value from this "
-                "record: record is missing or marked invalid, and this "
-                "metric is not flagged ERROR_ONLY"
+                f"{type(self).__name__}: parsed response record is missing or "
+                "marked invalid (record is None or record.valid is False); "
+                "cannot extract a metric value from it."
             )
 
-    @classmethod
-    def _check_metrics(cls, metrics: MetricRecordDict | MetricResultsDict) -> None:
+    def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
         """Check that the required metrics are available."""
-        if cls.required_metrics is None:
+        if self.required_metrics is None:
             return
-        for tag in cls.required_metrics:
+        for tag in self.required_metrics:
             if tag not in metrics:
                 raise NoMetricValue(f"Missing required metric: '{tag}'")
 

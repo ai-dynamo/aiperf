@@ -207,8 +207,6 @@ def make_credit(
     is_final: bool | None = None,
     phase: CreditPhase = CreditPhase.PROFILING,
     corr_id: str | None = None,
-    parent_correlation_id: str | None = None,
-    has_forks: bool = False,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -224,8 +222,6 @@ def make_credit(
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
-        parent_correlation_id=parent_correlation_id,
-        has_forks=has_forks,
     )
 
 

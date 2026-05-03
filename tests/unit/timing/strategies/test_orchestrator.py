@@ -10,9 +10,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import TimingConfig
-from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
-from aiperf.timing.trajectory_source import TrajectorySource
 from tests.unit.timing.conftest import make_phase_config, make_timing_config
 
 
@@ -170,52 +168,3 @@ class TestPhaseConfig:
         phases = [pc.phase for pc in orch._ordered_phase_configs]
         assert CreditPhase.PROFILING in phases
         assert CreditPhase.WARMUP not in phases
-
-
-@pytest.mark.asyncio
-class TestConversationSourceSelection:
-    """PhaseOrchestrator picks the right ConversationSource subclass per timing mode."""
-
-    async def test_phase_orchestrator_uses_trajectory_source_for_agentic_replay(
-        self,
-    ) -> None:
-        """AGENTIC_REPLAY phase configs trigger TrajectorySource construction."""
-        warmup = make_phase_config(
-            CreditPhase.WARMUP,
-            TimingMode.AGENTIC_REPLAY,
-            concurrency=3,
-        )
-        profiling = make_phase_config(
-            CreditPhase.PROFILING,
-            TimingMode.AGENTIC_REPLAY,
-            concurrency=3,
-        )
-        cfg = TimingConfig(
-            phase_configs=[warmup, profiling],
-            concurrency=3,
-            random_seed=12345,
-        )
-        orch = PhaseOrchestrator(
-            config=cfg,
-            phase_publisher=make_publisher(),
-            credit_router=make_router(),
-            dataset_metadata=make_dataset(num_convs=5, turns=4),
-        )
-        assert isinstance(orch.conversation_source, TrajectorySource)
-        assert orch.conversation_source._random_seed == 12345
-        assert orch.conversation_source._target_size == 3
-
-    async def test_phase_orchestrator_uses_plain_source_for_non_agentic(self) -> None:
-        """Non-AGENTIC_REPLAY modes preserve plain ConversationSource (not the subclass)."""
-        for mode in (TimingMode.REQUEST_RATE, TimingMode.FIXED_SCHEDULE):
-            cfg = make_timing_config(mode, request_count=5, request_rate=10.0)
-            orch = PhaseOrchestrator(
-                config=cfg,
-                phase_publisher=make_publisher(),
-                credit_router=make_router(),
-                dataset_metadata=make_dataset(3, 2),
-            )
-            assert type(orch.conversation_source) is ConversationSource, (
-                f"Expected plain ConversationSource for {mode}, got "
-                f"{type(orch.conversation_source).__name__}"
-            )

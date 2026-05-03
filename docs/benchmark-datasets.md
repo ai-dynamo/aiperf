@@ -43,46 +43,6 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <td>Mooncake trace file <a href="benchmark-modes/trace-replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
-      <td><strong>Bailian Trace</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Alibaba Bailian trace file <a href="tutorials/bailian-trace.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type bailian_trace</code></a></td>
-    </tr>
-    <tr>
-      <td><strong>Raw Payload Replay</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Verbatim API request replay <a href="tutorials/raw-payload-replay.md"><code>--input-file payloads.jsonl --custom-dataset-type raw_payload</code></a></td>
-    </tr>
-    <tr>
-      <td><strong>Inputs JSON Replay</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Pre-formatted multi-turn payloads <a href="tutorials/inputs-json-replay.md"><code>--input-file inputs.json --custom-dataset-type inputs_json</code></a></td>
-    </tr>
-    <tr>
-      <td><strong>Multi-Turn JSONL</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Multi-turn conversations from JSONL <code>--input-file your_file.jsonl --custom-dataset-type multi_turn</code></td>
-    </tr>
-    <tr>
-      <td><strong>Random Pool</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Random sampling from a JSONL pool <code>--input-file your_pool.jsonl --custom-dataset-type random_pool</code></td>
-    </tr>
-    <tr>
-      <td><strong>BurstGPT Trace</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>BurstGPT real-world trace <a href="tutorials/burst-gpt-trace.md"><code>--input-file your_trace.jsonl --custom-dataset-type burst_gpt_trace</code></a></td>
-    </tr>
-    <tr>
-      <td><strong>DAG JSONL</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Conversation DAG with fork/spawn modes <a href="benchmark-modes/dag.md"><code>--input-file your_dag.jsonl --custom-dataset-type dag_jsonl</code></a></td>
-    </tr>
-    <tr>
-      <td><strong>Weka Agentic Coding Traces</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Real Claude Code sessions with subagents and KV-cache hash IDs <a href="tutorials/weka-trace.md"><code>--input-file traces/ --custom-dataset-type weka_trace</code></a></td>
-    </tr>
-    <tr>
       <td><strong>ShareGPT</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></a></td>

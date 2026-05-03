@@ -1,8 +1,0 @@
-{
-  "id": "bad",
-  "models": ["m"],
-  "block_size": 64,
-  "hash_id_scope": "local",
-  "requests": [],
-  "unexpected_field": 42
-}

@@ -63,7 +63,7 @@ aiperf profile \
   --streaming \
   --endpoint-type chat \
   --tokenizer ibm-granite/granite-4.0-micro \
-  --url http://localhost:11434 \
+  --url http://localhost:11434
   --concurrency 5 \
   --request-count 10
 ```
@@ -95,13 +95,13 @@ Example output:
 CLI Command: aiperf profile --model 'granite4:350m' --streaming --endpoint-type 'chat' --tokenizer 'ibm-granite/granite-4.0-micro' --url 'http://localhost:11434'
 Benchmark Duration: 138.89 sec
 CSV Export: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.csv
-JSON Export: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.json
-Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/logs/aiperf.log
+JSON Export: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/logs/aiperf.log
 ```
 
 ## Features
 
-- Scalable multiprocess architecture with 10 services communicating via ZMQ
+- Scalable multiprocess architecture with 9 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
 - Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
@@ -109,12 +109,8 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 
 ## Supported APIs
 
-- OpenAI: chat completions, completions, responses, embeddings, audio, image generation, video generation
-- HuggingFace: TGI generate, TEI rerankers, multimodal embeddings (vLLM)
-- NVIDIA NIM: embeddings, rankings, image retrieval
-- Cohere: rankings
-- Solido: RAG pipeline
-- Custom: template (Jinja2) and `raw` (verbatim payload passthrough)
+- OpenAI chat completions, completions, embeddings, audio, images
+- NIM embeddings, rankings
 
 ## Tutorials and Feature Guides
 
@@ -139,8 +135,6 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
 - [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
-- [Weka Agentic Coding Traces](docs/tutorials/weka-trace.md) - Replay real Claude Code sessions with subagents and KV-cache hash IDs (local files or HuggingFace `semianalysisai/cc-traces-weka-042026`)
-- [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis multi-turn agentic-coding benchmark scenario (work-in-progress MVP)
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
@@ -164,10 +158,6 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
-- [Conversation Context Mode](docs/reference/conversation-context-mode.md) - Control how conversation history accumulates
-- [Raw Payload Replay](docs/tutorials/raw-payload-replay.md) - Replay pre-built API request bodies verbatim
-- [Inputs JSON Replay](docs/tutorials/inputs-json-replay.md) - Replay multi-turn sessions from inputs.json format
-- [DAG Benchmarking (Sub-Agents)](docs/benchmark-modes/dag.md) - Fork one turn's response into parallel sibling branches for prefix-cache and KV-aware routing studies
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types
@@ -178,7 +168,6 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 - [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API
-- [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NVIDIA NIM image retrieval / inference services
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
@@ -200,7 +189,7 @@ Log File: /home/user/aiperf/artifacts/granite4:350m-openai-chat-concurrency1/log
 | [CLI Options](docs/cli-options.md) | Complete command and option reference |
 | [Metrics Reference](docs/metrics-reference.md) | All metric definitions, formulas, and requirements |
 | [Environment Variables](docs/environment-variables.md) | All `AIPERF_*` configuration variables |
-| [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 27 categories, creation guide |
+| [Plugin System](docs/plugins/plugin-system.md) | Plugin architecture, 25+ categories, creation guide |
 | [Creating Plugins](docs/plugins/creating-your-first-plugin.md) | Step-by-step plugin tutorial |
 | [Accuracy Benchmarks](docs/accuracy/accuracy_stubs.md) | Accuracy evaluation stubs and datasets |
 | [Benchmark Modes](docs/benchmark-modes/trace-replay.md) | Trace replay and timing modes |

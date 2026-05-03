@@ -31,7 +31,6 @@ from typing import ClassVar
 
 from aiperf.common.enums import (
     GenericMetricUnit,
-    MetricConsoleGroup,
     MetricFlags,
     MetricSizeUnit,
     MetricTimeUnit,
@@ -86,8 +85,7 @@ class HttpBlockedMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2000
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -128,8 +126,7 @@ class HttpConnectionReusedMetric(BaseRecordMetric[int]):
     short_header = "Conn Reused"
     unit = GenericMetricUnit.RATIO
     display_order = 2060
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -168,8 +165,7 @@ class HttpConnectingMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2020
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -216,8 +212,7 @@ class HttpDnsLookupMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2010
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -273,8 +268,7 @@ class HttpSendingMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2030
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -320,8 +314,7 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2040
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -364,8 +357,7 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2050
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -425,8 +417,7 @@ class HttpDurationMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2120
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -467,8 +458,7 @@ class HttpDataSentMetric(BaseRecordMetric[int]):
     unit = MetricSizeUnit.BYTES
     display_unit = MetricSizeUnit.KILOBYTES
     display_order = 2070
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -494,8 +484,7 @@ class HttpDataReceivedMetric(BaseRecordMetric[int]):
     unit = MetricSizeUnit.BYTES
     display_unit = MetricSizeUnit.KILOBYTES
     display_order = 2090
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -523,8 +512,7 @@ class HttpChunksSentMetric(BaseRecordMetric[int]):
     short_header = "Chunks Sent"
     unit = GenericMetricUnit.COUNT
     display_order = 2080
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -547,8 +535,7 @@ class HttpChunksReceivedMetric(BaseRecordMetric[int]):
     short_header = "Chunks Recv"
     unit = GenericMetricUnit.COUNT
     display_order = 2100
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
     def _parse_record(
         self,
@@ -582,8 +569,7 @@ class HttpConnectionOverheadMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2110
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
     required_metrics: ClassVar[set[str]] = {
         "http_req_blocked",
         "http_req_dns_lookup",
@@ -623,8 +609,7 @@ class HttpTotalTimeMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 2130
-    flags = MetricFlags.HTTP_TRACE_ONLY
-    console_group = MetricConsoleGroup.NONE
+    flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
     required_metrics: ClassVar[set[str]] = {
         "http_req_blocked",
         "http_req_dns_lookup",

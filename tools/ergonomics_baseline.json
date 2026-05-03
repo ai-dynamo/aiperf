@@ -3,11 +3,6 @@
   "violations": [
     [
       "file-size",
-      "src/aiperf/analysis/sweepline.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -44,11 +39,6 @@
     [
       "file-size",
       "src/aiperf/common/mixins/base_metrics_collector_mixin.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/common/models/dataset_models.py",
       ""
     ],
     [
@@ -118,27 +108,7 @@
     ],
     [
       "file-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/dataset/generator/prompt.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/dataset/generator/video.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/dataset/loader/weka_parallel_convert.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/dataset/loader/weka_trace.py",
       ""
     ],
     [
@@ -148,32 +118,12 @@
     ],
     [
       "file-size",
-      "src/aiperf/endpoints/base_endpoint.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
       ""
     ],
     [
       "file-size",
-      "src/aiperf/metrics/accumulator.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/metrics/column_store.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/metrics/types/http_trace_metrics.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/orchestrator/orchestrator.py",
       ""
     ],
     [
@@ -233,16 +183,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/plugin/schema/schemas.py",
-      ""
-    ],
-    [
-      "file-size",
-      "src/aiperf/records/inference_result_parser.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],
@@ -268,11 +208,6 @@
     ],
     [
       "file-size",
-      "src/aiperf/timing/branch_orchestrator.py",
-      ""
-    ],
-    [
-      "file-size",
       "src/aiperf/timing/concurrency.py",
       ""
     ],
@@ -290,16 +225,6 @@
       "file-size",
       "src/aiperf/workers/worker.py",
       ""
-    ],
-    [
-      "function-size",
-      "src/aiperf/analysis/sweepline_kv_cache.py",
-      "throughput_sweep_line_icl"
-    ],
-    [
-      "function-size",
-      "src/aiperf/analysis/sweepline_kv_cache.py",
-      "tokens_in_flight_sweep_line_icl"
     ],
     [
       "function-size",
@@ -343,11 +268,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/common/scenario/validator.py",
-      "validate_scenario"
-    ],
-    [
-      "function-size",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
     ],
@@ -358,23 +278,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/common/validators/orchestrator_v1.py",
-      "validate_for_orchestrator_v1"
-    ],
-    [
-      "function-size",
       "src/aiperf/controller/system_controller.py",
       "SystemController.__init__"
-    ],
-    [
-      "function-size",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler.on_credit_return"
-    ],
-    [
-      "function-size",
-      "src/aiperf/credit/sticky_router.py",
-      "StickyCreditRouter.send_credit"
     ],
     [
       "function-size",
@@ -408,88 +313,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/dataset/composer/base.py",
-      "BaseDatasetComposer.__init__"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/composer/base.py",
-      "_estimate_chat_template_overheads"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/dataset_manager.py",
-      "DatasetManager._configure_dataset"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_config_file"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_error_traceback"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_git_diff"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_markdown_doc"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_sql_query"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_tool_read_long"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/generator/prompt.py",
-      "PromptGenerator._build_token_sequence"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._desugar_forks"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._resolve_and_validate"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/parallel_convert.py",
-      "parallel_convert"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/weka_parallel_convert.py",
-      "_process_task"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_parallel"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader._reconstruct_serial"
-    ],
-    [
-      "function-size",
-      "src/aiperf/dataset/loader/weka_trace.py",
-      "WekaTraceLoader.convert_to_conversations"
+      "src/aiperf/dataset/loader/base_trace_loader.py",
+      "BaseTraceDatasetLoader.convert_to_conversations"
     ],
     [
       "function-size",
@@ -498,23 +323,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint.extract_payload_inputs"
-    ],
-    [
-      "function-size",
-      "src/aiperf/exporters/aggregate/aggregate_confidence_json_exporter.py",
-      "AggregateConfidenceJsonExporter._aggregate_to_export_data"
-    ],
-    [
-      "function-size",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
-    ],
-    [
-      "function-size",
-      "src/aiperf/exporters/metrics_json_exporter.py",
-      "MetricsJsonExporter._generate_content"
     ],
     [
       "function-size",
@@ -530,11 +340,6 @@
       "function-size",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._collect_gpu_metrics"
-    ],
-    [
-      "function-size",
-      "src/aiperf/metrics/accumulator.py",
-      "MetricsAccumulator._compute_timeslices"
     ],
     [
       "function-size",
@@ -1058,28 +863,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/timing/branch_orchestrator.py",
-      "BranchOrchestrator._spawn_children_and_register_gates"
-    ],
-    [
-      "function-size",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.__init__"
-    ],
-    [
-      "function-size",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner._wait_for_returning_complete"
-    ],
-    [
-      "function-size",
       "src/aiperf/timing/phase/runner.py",
       "PhaseRunner.run"
-    ],
-    [
-      "function-size",
-      "src/aiperf/timing/phase_orchestrator.py",
-      "PhaseOrchestrator.__init__"
     ],
     [
       "function-size",
@@ -1128,28 +913,8 @@
     ],
     [
       "function-size",
-      "src/aiperf/workers/session_manager.py",
-      "UserSessionManager.create_and_store"
-    ],
-    [
-      "function-size",
       "src/aiperf/workers/worker.py",
-      "Worker.__init__"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/sweepline_kv_cache.py",
-      "throughput_sweep_line_icl"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/sweepline_kv_cache.py",
-      "tokens_in_flight_sweep_line_icl"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/sweepline_stats.py",
-      "compute_active_weighted_stats"
+      "Worker._process_credit"
     ],
     [
       "keyword-only-args",
@@ -1170,21 +935,6 @@
       "keyword-only-args",
       "src/aiperf/dataset/agentic_code_gen/reporting/cache_explorer.py",
       "_classify_turn_blocks"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "ConversationReconstructor.advance_turn"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "ConversationReconstructor.init_turn_0"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "truncate_synth_buf_at_block"
     ],
     [
       "keyword-only-args",
@@ -1327,11 +1077,6 @@
       "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
-      "keyword-only-args",
-      "src/aiperf/workers/session_manager.py",
-      "UserSessionManager.create_and_store"
-    ],
-    [
       "module-state",
       "src/aiperf/common/aiperf_logger.py",
       "_ignored_files"
@@ -1375,26 +1120,6 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/dataset/generator/coding_content.py",
-      "CodingContentGenerator._gen_config_file"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._desugar_forks"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/dataset/loader/dag_jsonl.py",
-      "DagJsonlLoader._parse_lines"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/endpoints/base_endpoint.py",
-      "BaseEndpoint.extract_payload_inputs"
     ],
     [
       "nesting-depth",
