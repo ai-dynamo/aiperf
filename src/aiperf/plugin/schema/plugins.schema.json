@@ -289,6 +289,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/SearchRecipePostProcessPlugin"
       }
+    },
+    "convergence_criterion": {
+      "title": "Convergence Criterion Plugins",
+      "type": "object",
+      "description": "Convergence criteria decide when benchmark metrics have stabilized across\nrepeated runs and the adaptive trial loop can stop. Each criterion declares\nits statistical assumptions (min samples, confidence-level usage, JSONL\nconsumption) via metadata so the CLI can validate `--convergence-*` flags\nbefore importing scipy/statsmodels. Selected via `--convergence-mode <name>`.\nOne-to-one mapping per benchmark run.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ConvergenceCriterionPlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -2011,6 +2019,68 @@
       ],
       "title": "Search Recipe Post Process Plugin",
       "description": "Post-process handlers run after `SweepAnalyzer.compute()` in\n`aggregate_sweep_and_export` and emit derived artifacts (curves, knee\npoints) into `sweep_aggregate/`. Handlers are stateless and one instance\nis reused per recipe. Selected indirectly via a recipe's PostProcessSpec.\nOne-to-one mapping per recipe-emitted PostProcessSpec."
+    },
+    "ConvergenceCriterionPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for convergence criterion plugins.\n\nDeclares statistical-method capabilities so the CLI/config layer can\nvalidate `--convergence-metric` / `--convergence-stat` against the chosen\ncriterion before the plugin is imported.\n\nReferenced by: categories.yaml convergence_criterion.metadata_class\nUsed in: plugins.yaml convergence_criterion entries",
+          "properties": {
+            "min_samples": {
+              "description": "Minimum number of successful runs required before convergence can trigger.",
+              "title": "Min Samples",
+              "type": "integer"
+            },
+            "requires_confidence_level": {
+              "default": false,
+              "description": "Whether the criterion consumes plan.confidence_level (e.g. CI-width does, CV doesn't).",
+              "title": "Requires Confidence Level",
+              "type": "boolean"
+            },
+            "requires_jsonl_export": {
+              "default": false,
+              "description": "Whether the criterion reads per-request metrics from JSONL exports (e.g. distribution does).",
+              "title": "Requires Jsonl Export",
+              "type": "boolean"
+            },
+            "metric_kinds": {
+              "description": "Kinds of metrics this criterion handles. One or more of 'continuous', 'counts', 'categorical'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Metric Kinds",
+              "type": "array"
+            }
+          },
+          "required": [
+            "min_samples"
+          ],
+          "title": "ConvergenceCriterionMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Convergence Criterion Plugin",
+      "description": "Convergence criteria decide when benchmark metrics have stabilized across\nrepeated runs and the adaptive trial loop can stop. Each criterion declares\nits statistical assumptions (min samples, confidence-level usage, JSONL\nconsumption) via metadata so the CLI can validate `--convergence-*` flags\nbefore importing scipy/statsmodels. Selected via `--convergence-mode <name>`.\nOne-to-one mapping per benchmark run."
     }
   }
 }

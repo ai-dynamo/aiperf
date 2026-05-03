@@ -1927,3 +1927,45 @@ search_recipe_post_process:
       Build an axis-aligned ITL(concurrency, OSL) surface from a 2D grid
       sweep. Emits raw points + grid with nulls for unmeasured cells. Used
       by the decode-itl-curve recipe.
+
+# =============================================================================
+# Convergence Criteria
+# =============================================================================
+# Convergence criteria decide when adaptive multi-run trials can stop because
+# the chosen metric has stabilized across repeated runs.
+# =============================================================================
+convergence_criterion:
+  ci_width:
+    class: aiperf.orchestrator.convergence.ci_width:CIWidthConvergence
+    description: |
+      Stops when Student's t confidence interval width relative to the metric
+      mean falls below `--convergence-threshold` (default 0.10 = 10%). Reads
+      `--confidence-level` (default 0.95).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: true
+      requires_jsonl_export: false
+      metric_kinds: [continuous]
+
+  cv:
+    class: aiperf.orchestrator.convergence.cv:CVConvergence
+    description: |
+      Stops when the coefficient of variation across run-level statistic values
+      falls below `--convergence-threshold` (default 0.05 = 5%).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: false
+      requires_jsonl_export: false
+      metric_kinds: [continuous]
+
+  distribution:
+    class: aiperf.orchestrator.convergence.distribution:DistributionConvergence
+    description: |
+      Stops when a two-sample Kolmogorov-Smirnov test between the latest run's
+      per-request distribution and the union of prior runs yields p > threshold.
+      Requires JSONL export (`--export-format json`).
+    metadata:
+      min_samples: 3
+      requires_confidence_level: false
+      requires_jsonl_export: true
+      metric_kinds: [continuous]

@@ -379,3 +379,19 @@ search_recipe_post_process:
     points) into `sweep_aggregate/`. Handlers are stateless and one instance
     is reused per recipe. Selected indirectly via a recipe's PostProcessSpec.
     One-to-one mapping per recipe-emitted PostProcessSpec.
+
+# =============================================================================
+# Convergence Criterion Category
+# =============================================================================
+
+convergence_criterion:
+  protocol: aiperf.orchestrator.convergence.base:ConvergenceCriterion
+  metadata_class: aiperf.plugin.schema.schemas:ConvergenceCriterionMetadata
+  enum: ConvergenceCriterionType
+  description: |
+    Convergence criteria decide when benchmark metrics have stabilized across
+    repeated runs and the adaptive trial loop can stop. Each criterion declares
+    its statistical assumptions (min samples, confidence-level usage, JSONL
+    consumption) via metadata so the CLI can validate `--convergence-*` flags
+    before importing scipy/statsmodels. Selected via `--convergence-mode <name>`.
+    One-to-one mapping per benchmark run.

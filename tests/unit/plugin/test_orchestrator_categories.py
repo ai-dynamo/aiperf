@@ -2,6 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for orchestrator plugin categories (search_planner, convergence_criterion)."""
 
+from aiperf.orchestrator.convergence import (
+    CIWidthConvergence,
+    CVConvergence,
+    DistributionConvergence,
+)
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import ConvergenceCriterionType, PluginType
+from aiperf.plugin.metadata import (
+    get_convergence_criterion_metadata,
+    get_typed_metadata,
+)
 from aiperf.plugin.schema.schemas import (
     ConvergenceCriterionMetadata,
     SearchPlannerMetadata,
@@ -36,3 +47,36 @@ def test_search_planner_metadata_shape():
     assert md.supports_categorical is False
     assert md.requires_initial_samples == 5
     assert md.requires_extras == ["bo"]
+
+
+def test_convergence_criterion_plugin_lookup_by_name():
+    """All three built-in criteria are reachable via plugins.get_class."""
+    assert (
+        plugins.get_class(PluginType.CONVERGENCE_CRITERION, "ci_width")
+        is CIWidthConvergence
+    )
+    assert (
+        plugins.get_class(PluginType.CONVERGENCE_CRITERION, "cv") is CVConvergence
+    )
+    assert (
+        plugins.get_class(PluginType.CONVERGENCE_CRITERION, "distribution")
+        is DistributionConvergence
+    )
+    assert ConvergenceCriterionType.CI_WIDTH == "ci_width"
+
+
+def test_convergence_criterion_metadata_accessible():
+    """Plugin entries expose typed Pydantic metadata via the per-category helper."""
+    md = get_convergence_criterion_metadata("distribution")
+    assert isinstance(md, ConvergenceCriterionMetadata)
+    assert md.requires_jsonl_export is True
+    assert md.min_samples == 3
+    assert md.metric_kinds == ["continuous"]
+
+
+def test_convergence_criterion_metadata_via_generic_helper():
+    """The generic `get_typed_metadata` dispatches via _CATEGORY_METADATA_CLASSES."""
+    md = get_typed_metadata(PluginType.CONVERGENCE_CRITERION, "ci_width")
+    assert isinstance(md, ConvergenceCriterionMetadata)
+    assert md.requires_confidence_level is True
+    assert md.requires_jsonl_export is False

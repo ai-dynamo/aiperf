@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from aiperf.plugin.schema.schemas import (
+    ConvergenceCriterionMetadata,
     CustomDatasetLoaderMetadata,
     EndpointMetadata,
     PlotMetadata,
@@ -130,6 +131,20 @@ def get_public_dataset_loader_metadata(name: str) -> PublicDatasetLoaderMetadata
     )
 
 
+def get_convergence_criterion_metadata(name: str) -> ConvergenceCriterionMetadata:
+    """Get typed metadata for a convergence criterion plugin.
+
+    Args:
+        name: Convergence criterion plugin name (e.g., 'ci_width', 'cv', 'distribution').
+
+    Returns:
+        Validated ConvergenceCriterionMetadata instance.
+    """
+    return _get_entry("convergence_criterion", name).get_typed_metadata(
+        ConvergenceCriterionMetadata
+    )
+
+
 def is_trace_dataset(name: str) -> bool:
     """Check if a custom dataset loader is a trace-format dataset.
 
@@ -149,6 +164,7 @@ _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "plot": PlotMetadata,
     "service": ServiceMetadata,
     "custom_dataset_loader": CustomDatasetLoaderMetadata,
+    "convergence_criterion": ConvergenceCriterionMetadata,
 }
 
 
