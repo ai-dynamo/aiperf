@@ -8,19 +8,6 @@ from typing_extensions import Self
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
-class ConvergenceMode(CaseInsensitiveStrEnum):
-    """Statistical method for convergence detection in adaptive multi-run mode."""
-
-    CI_WIDTH = "ci_width"
-    """Stop when Student's t confidence interval width relative to mean is below threshold."""
-
-    CV = "cv"
-    """Stop when coefficient of variation (std/mean) is below threshold."""
-
-    DISTRIBUTION = "distribution"
-    """Stop when KS test p-value indicates latest run matches prior runs."""
-
-
 class ConvergenceStat(CaseInsensitiveStrEnum):
     """Statistic to evaluate for convergence when using ci_width or cv mode."""
 

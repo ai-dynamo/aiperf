@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 
 def validate_convergence_config(plan: BenchmarkPlan) -> None:
     """Raise ValueError for invalid adaptive/convergence plan configurations."""
-    from aiperf.common.enums import ConvergenceMode, ExportLevel
+    from aiperf.common.enums import ExportLevel
+    from aiperf.plugin.enums import ConvergenceCriterionType
 
     if not plan.use_adaptive:
         return
@@ -43,7 +44,7 @@ def validate_convergence_config(plan: BenchmarkPlan) -> None:
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
     if (
-        plan.convergence_mode == ConvergenceMode.DISTRIBUTION
+        plan.convergence_mode == ConvergenceCriterionType.DISTRIBUTION
         and plan.export_level == ExportLevel.SUMMARY
     ):
         raise ValueError(
@@ -57,7 +58,7 @@ def log_multi_run_banner(
     plan: BenchmarkPlan, total_runs: int, logger: AIPerfLogger
 ) -> None:
     """Emit the banner describing a multi-run benchmark's configuration."""
-    from aiperf.common.enums import ConvergenceMode
+    from aiperf.plugin.enums import ConvergenceCriterionType
 
     logger.info("=" * 80)
     logger.info("Starting Multi-Run Benchmark")
@@ -70,7 +71,7 @@ def log_multi_run_banner(
         logger.info(f"  Convergence mode: {plan.convergence_mode}")
         logger.info(f"  Convergence metric: {plan.convergence_metric}")
         logger.info(f"  Convergence threshold: {plan.convergence_threshold}")
-        if plan.convergence_mode == ConvergenceMode.DISTRIBUTION:
+        if plan.convergence_mode == ConvergenceCriterionType.DISTRIBUTION:
             logger.info(
                 "  Note: distribution mode converges when KS p-value > threshold "
                 "(higher threshold = stricter, opposite of ci_width/cv)"

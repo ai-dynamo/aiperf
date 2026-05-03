@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
+from aiperf.common.enums import ConvergenceStat, SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig, BenchmarkPlan
 from aiperf.orchestrator.convergence.ci_width import CIWidthConvergence
@@ -15,6 +15,7 @@ from aiperf.orchestrator.convergence.cv import CVConvergence
 from aiperf.orchestrator.convergence.distribution import DistributionConvergence
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import AdaptiveStrategy, FixedTrialsStrategy
+from aiperf.plugin.enums import ConvergenceCriterionType
 
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
@@ -43,7 +44,7 @@ def _make_config(**overrides) -> BenchmarkConfig:
 def _make_plan(
     trials: int = 5,
     convergence_metric: str | None = None,
-    convergence_mode: ConvergenceMode = ConvergenceMode.CI_WIDTH,
+    convergence_mode: ConvergenceCriterionType = ConvergenceCriterionType.CI_WIDTH,
     convergence_stat: ConvergenceStat = ConvergenceStat.AVG,
     convergence_threshold: float = 0.10,
     export_level: str = "records",
@@ -117,7 +118,7 @@ class TestCliConvergenceValidation:
         plan = _make_plan(
             trials=5,
             convergence_metric="time_to_first_token",
-            convergence_mode=ConvergenceMode.DISTRIBUTION,
+            convergence_mode=ConvergenceCriterionType.DISTRIBUTION,
             export_level="summary",
         )
 
@@ -179,7 +180,7 @@ class TestCliConvergenceStrategyWiring:
         plan = _make_plan(
             trials=5,
             convergence_metric="time_to_first_token",
-            convergence_mode=ConvergenceMode.CI_WIDTH,
+            convergence_mode=ConvergenceCriterionType.CI_WIDTH,
             convergence_stat=ConvergenceStat.P99,
             convergence_threshold=0.05,
             artifact_dir=tmp_path,
@@ -220,7 +221,7 @@ class TestCliConvergenceStrategyWiring:
         plan = _make_plan(
             trials=5,
             convergence_metric="request_latency",
-            convergence_mode=ConvergenceMode.CV,
+            convergence_mode=ConvergenceCriterionType.CV,
             convergence_threshold=0.08,
             artifact_dir=tmp_path,
         )
@@ -258,7 +259,7 @@ class TestCliConvergenceStrategyWiring:
         plan = _make_plan(
             trials=5,
             convergence_metric="time_to_first_token",
-            convergence_mode=ConvergenceMode.DISTRIBUTION,
+            convergence_mode=ConvergenceCriterionType.DISTRIBUTION,
             convergence_threshold=0.05,
             export_level="records",
             artifact_dir=tmp_path,
@@ -301,7 +302,7 @@ class TestCliConvergenceDefaults:
 
     def test_default_convergence_mode(self):
         plan = _make_plan()
-        assert plan.convergence_mode == ConvergenceMode.CI_WIDTH
+        assert plan.convergence_mode == ConvergenceCriterionType.CI_WIDTH
 
     def test_invalid_convergence_mode_raises(self):
         with pytest.raises(ValueError, match="Input should be"):

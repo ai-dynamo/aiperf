@@ -10,7 +10,6 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aiperf.common.enums import (
-    ConvergenceMode,
     ConvergenceStat,
     GPUTelemetryMode,
     SweepMode,
@@ -19,7 +18,11 @@ from aiperf.config.adaptive_search import AdaptiveSearchConfig, SLAFilter
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import SweepVariation
 from aiperf.config.zmq import BaseZMQCommunicationConfig
-from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+from aiperf.plugin.enums import (
+    ConvergenceCriterionType,
+    CustomDatasetType,
+    DatasetSamplingStrategy,
+)
 from aiperf.search_recipes._base import PostProcessSpec
 
 
@@ -99,8 +102,8 @@ class BenchmarkPlan(BaseModel):
             description="Threshold for convergence detection.",
         ),
     ]
-    convergence_mode: ConvergenceMode = Field(
-        default=ConvergenceMode.CI_WIDTH,
+    convergence_mode: ConvergenceCriterionType = Field(
+        default=ConvergenceCriterionType.CI_WIDTH,
         description="Statistical method for convergence detection.",
     )
     export_level: str = Field(

@@ -13,10 +13,14 @@ from typing import Annotated
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
+from aiperf.common.enums import ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.config.adaptive_search import AdaptiveSearchConfig, SLAFilter
-from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
+from aiperf.plugin.enums import (
+    AccuracyBenchmarkType,
+    AccuracyGraderType,
+    ConvergenceCriterionType,
+)
 from aiperf.search_recipes._base import PostProcessSpec
 
 
@@ -113,9 +117,9 @@ class MultiRunConfig(BaseConfig):
     ]
 
     convergence_mode: Annotated[
-        ConvergenceMode,
+        ConvergenceCriterionType,
         Field(
-            default=ConvergenceMode.CI_WIDTH,
+            default=ConvergenceCriterionType.CI_WIDTH,
             description="Statistical method for convergence detection (ci_width, cv, distribution).",
         ),
     ]

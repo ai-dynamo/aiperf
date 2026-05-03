@@ -19,11 +19,11 @@ from typing import Annotated, Any, ClassVar, Literal
 from cyclopts import Group, Parameter
 from pydantic import BeforeValidator, Field
 
-from aiperf.common.enums import ConvergenceMode, ConvergenceStat, SweepMode
+from aiperf.common.enums import ConvergenceStat, SweepMode
 from aiperf.config._base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.parsing import parse_int_or_int_list
-from aiperf.plugin.enums import ArrivalPattern
+from aiperf.plugin.enums import ArrivalPattern, ConvergenceCriterionType
 
 
 class LoadGeneratorConfig(BaseConfig):
@@ -532,7 +532,7 @@ class LoadGeneratorConfig(BaseConfig):
     ] = 0.10
 
     convergence_mode: Annotated[
-        ConvergenceMode,
+        ConvergenceCriterionType,
         Field(
             description="Statistical method for convergence detection. "
             "ci_width: Stop when Student's t confidence interval width relative to mean is below threshold. "
@@ -545,7 +545,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=("--convergence-mode",),
             group=Groups.MULTI_RUN,
         ),
-    ] = ConvergenceMode.CI_WIDTH
+    ] = ConvergenceCriterionType.CI_WIDTH
 
     parameter_sweep_cooldown_seconds: Annotated[
         float,

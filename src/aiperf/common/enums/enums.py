@@ -44,7 +44,6 @@ from aiperf.common.enums.media_enums import (
     VideoSynthType,
 )
 from aiperf.common.enums.server_metrics_enums import (
-    ConvergenceMode,
     ConvergenceStat,
     GPUTelemetryMode,
     GpuTelemetryType,
@@ -144,7 +143,6 @@ __all__ = [
     "CommunicationType",
     "ConnectionReuseStrategy",
     "ContentType",
-    "ConvergenceMode",
     "ConvergenceStat",
     "ConversationContextMode",
     "CreditPhase",
