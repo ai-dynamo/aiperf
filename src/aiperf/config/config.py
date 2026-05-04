@@ -518,8 +518,8 @@ class AIPerfConfig(BaseConfig):
 
         if (
             self.sweep is not None
-            and "ui" in self.runtime.model_fields_set
-            and self.runtime.ui == UIType.DASHBOARD
+            and "ui" in self.benchmark.runtime.model_fields_set
+            and self.benchmark.runtime.ui == UIType.DASHBOARD
         ):
             raise ValueError(
                 "Dashboard UI is incompatible with parameter sweeps; sweep "
