@@ -133,10 +133,10 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.artifacts.dir = outdir
+        mock_user_config.benchmark.artifacts.dir = outdir
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -144,7 +144,7 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
 
         await exporter.export()
 
-        expected = mock_user_config.artifacts.profile_export_csv_file
+        expected = mock_user_config.benchmark.artifacts.profile_export_csv_file
         assert expected.exists()
 
         text = _read(expected)
@@ -176,17 +176,17 @@ async def test_metrics_csv_exporter_empty_records_creates_empty_file(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.artifacts.dir = outdir
+        mock_user_config.benchmark.artifacts.dir = outdir
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
         exporter = MetricsCsvExporter(cfg)
         await exporter.export()
 
-        expected = mock_user_config.artifacts.profile_export_csv_file
+        expected = mock_user_config.benchmark.artifacts.profile_export_csv_file
         assert expected.exists()
         content = _read(expected)
         assert content.strip() == ""
@@ -208,10 +208,10 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.artifacts.dir = outdir
+        mock_user_config.benchmark.artifacts.dir = outdir
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -219,7 +219,7 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
 
         await exporter.export()
 
-        text = _read(mock_user_config.artifacts.profile_export_csv_file)
+        text = _read(mock_user_config.benchmark.artifacts.profile_export_csv_file)
 
         # Request section should list aaa_latency then zzz_latency in order
         # Pull only the request rows region (before the blank line separator).
@@ -256,10 +256,10 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.artifacts.dir = outdir
+        mock_user_config.benchmark.artifacts.dir = outdir
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -267,7 +267,7 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
 
         await exporter.export()
 
-        text = _read(mock_user_config.artifacts.profile_export_csv_file)
+        text = _read(mock_user_config.benchmark.artifacts.profile_export_csv_file)
 
         # counts: integer
         assert re.search(r"Input Sequence Length \(tokens\),\s*4096\b", text)
@@ -306,10 +306,10 @@ async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
 
     with tempfile.TemporaryDirectory() as tmp:
         outdir = Path(tmp)
-        mock_user_config.artifacts.dir = outdir
+        mock_user_config.benchmark.artifacts.dir = outdir
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -356,7 +356,7 @@ async def test_format_number_various_types(mock_user_config, value, expected):
     """
     cfg = ExporterConfig(
         results=None,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=None,
     )
     exporter = MetricsCsvExporter(cfg)
@@ -373,7 +373,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test that CSV export includes telemetry data section."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             results = ProfileResults(
                 records=[
@@ -391,14 +391,14 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=sample_telemetry_results,
             )
 
             exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             assert csv_file.exists()
 
             content = csv_file.read_text()
@@ -413,7 +413,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test that CSV export works when telemetry_results is None."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             results = ProfileResults(
                 records=[
@@ -431,14 +431,14 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
             exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             assert csv_file.exists()
 
             content = csv_file.read_text()
@@ -453,20 +453,20 @@ class TestMetricsCsvExporterTelemetry:
         """Test that CSV export includes data for multiple GPUs."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=sample_telemetry_results,
             )
 
             exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             content = csv_file.read_text()
 
             # Check for both GPU models in the test data
@@ -479,7 +479,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test that metric row write handles missing metrics gracefully."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             # Create TelemetryExportData with GPU that has no metrics
             telemetry_results = TelemetryExportData(
@@ -508,7 +508,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
@@ -516,7 +516,7 @@ class TestMetricsCsvExporterTelemetry:
             # Should not raise exception despite missing metrics
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             assert csv_file.exists()
 
     @pytest.mark.asyncio
@@ -555,7 +555,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test CSV export with multiple DCGM endpoints."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             # Create TelemetryExportData for two endpoints
             telemetry_results = TelemetryExportData(
@@ -617,14 +617,14 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             content = csv_file.read_text()
 
             # Check for both endpoints
@@ -639,7 +639,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test CSV export when GPU has no metric data."""
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             # Create TelemetryExportData with GPU that has no metrics
             telemetry_results = TelemetryExportData(
@@ -668,14 +668,14 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsCsvExporter(cfg)
             await exporter.export()
 
-            csv_file = mock_user_config.artifacts.profile_export_csv_file
+            csv_file = mock_user_config.benchmark.artifacts.profile_export_csv_file
             content = csv_file.read_text()
 
             # Should still have telemetry table header columns
@@ -690,7 +690,7 @@ class TestMetricsCsvExporterTelemetry:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -710,7 +710,7 @@ class TestMetricsCsvExporterTelemetry:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=None,
         )
 
@@ -765,7 +765,7 @@ class TestOptionalTelemetryHeaders:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            config=mock_user_config,
+            config=mock_user_config.benchmark,
             telemetry_results=telemetry,
         )
         return MetricsCsvExporter(cfg)
@@ -817,12 +817,12 @@ class TestOptionalTelemetryHeaders:
 
         with tempfile.TemporaryDirectory() as tmp:
             outdir = Path(tmp)
-            mock_user_config.artifacts.dir = outdir
+            mock_user_config.benchmark.artifacts.dir = outdir
 
             exporter = self._make_exporter(mock_user_config, telemetry)
             await exporter.export()
 
-            content = (mock_user_config.artifacts.profile_export_csv_file).read_text()
+            content = (mock_user_config.benchmark.artifacts.profile_export_csv_file).read_text()
 
             for expected in expected_headers:
                 assert expected in content, f"Expected '{expected}' in CSV"
@@ -880,7 +880,7 @@ def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=None,
     )
 
@@ -895,7 +895,7 @@ async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=None,
     )
 
@@ -928,7 +928,7 @@ def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
     results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=None,
     )
 
@@ -947,7 +947,7 @@ def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_insta
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=sample_telemetry_results,
     )
 
@@ -967,7 +967,7 @@ async def test_metrics_csv_exporter_export_calls_generate_content_internally(
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        config=mock_user_config,
+        config=mock_user_config.benchmark,
         telemetry_results=None,
     )
 

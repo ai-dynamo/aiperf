@@ -99,7 +99,7 @@ def _make_processor(
     proc._tokenizer_bundles = {}
     proc._tokenizer_ready = MagicMock()
     proc.run = MagicMock()
-    proc.run.cfg.runtime.uses_worker_group_manager = has_dealer
+    proc.run.cfg.benchmark.runtime.uses_worker_group_manager = has_dealer
     proc.run.cfg.output.export_level = export_level
     proc._children = children or []
     proc.records_processors = []
@@ -853,8 +853,8 @@ class TestRecordProcessorInit:
         uses_worker_group_manager: bool = False,
     ) -> MagicMock:
         run = MagicMock()
-        run.cfg.runtime.service_run_type = service_run_type
-        run.cfg.runtime.uses_worker_group_manager = uses_worker_group_manager
+        run.cfg.benchmark.runtime.service_run_type = service_run_type
+        run.cfg.benchmark.runtime.uses_worker_group_manager = uses_worker_group_manager
         return run
 
     @staticmethod

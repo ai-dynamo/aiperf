@@ -307,7 +307,7 @@ def error_parsed_record() -> ParsedResponseRecord:
 def create_exporter_config(config: AIPerfConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     return ExporterConfig(
-        config=config,
+        config=config.benchmark,
         results=ProfileResults(
             records=None,
             completed=0,

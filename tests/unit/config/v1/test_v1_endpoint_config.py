@@ -15,7 +15,7 @@ def test_endpoint_config_round_trip():
             "url": ["http://localhost:8000"],
         }
     )
-    assert cfg.model_names == ["x"]
+    assert cfg.benchmark.model_names == ["x"]
 
 
 def test_endpoint_config_has_no_validators():

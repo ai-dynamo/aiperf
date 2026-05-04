@@ -131,7 +131,7 @@ class TestJsonExporterFormatSelection:
         config = _config(tmp_path, formats=[ServerMetricsFormat.JSON])
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -146,7 +146,7 @@ class TestJsonExporterFormatSelection:
         config = _config(tmp_path, formats=[ServerMetricsFormat.CSV])
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -165,7 +165,7 @@ class TestCsvExporterFormatSelection:
         config = _config(tmp_path, formats=[ServerMetricsFormat.CSV])
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -180,7 +180,7 @@ class TestCsvExporterFormatSelection:
         config = _config(tmp_path, formats=[ServerMetricsFormat.JSON])
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -226,7 +226,7 @@ class TestAllExportersEnabled:
         )
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -246,7 +246,7 @@ class TestAllExportersEnabled:
         config = _config(tmp_path)
         exporter_config = ExporterConfig(
             results=None,
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )

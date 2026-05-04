@@ -24,7 +24,7 @@ from aiperf.common.models.sequence_distribution import (
     create_balanced_distribution,
     create_uniform_distribution,
 )
-from aiperf.config.dataset import PromptConfig
+from aiperf.config.benchmark.dataset import PromptConfig
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 

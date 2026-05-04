@@ -103,7 +103,7 @@ def _make_config(
 
 def _profiling_concurrency(cfg: Any) -> int:
     """Extract concurrency from the profiling phase of a BenchmarkConfig."""
-    for phase in cfg.phases:
+    for phase in cfg.benchmark.phases:
         if phase.name == "profiling":
             return phase.concurrency
     raise AssertionError("no profiling phase on resolved config")

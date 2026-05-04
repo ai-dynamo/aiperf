@@ -25,7 +25,7 @@ from aiperf.config import (
     ResolvedConfig,
     SweepVariation,
 )
-from aiperf.config.dataset import FileDataset
+from aiperf.config.benchmark.dataset import FileDataset
 from aiperf.config.loader import (
     ConfigurationError,
     MissingEnvironmentVariableError,
@@ -166,7 +166,7 @@ sweep:
         # Base fields preserved in both variations
         for cfg in plan.configs:
             assert cfg.get_model_names() == ["test-model"]
-            assert next(p for p in cfg.phases if p.name == "default").requests == 10
+            assert next(p for p in cfg.benchmark.phases if p.name == "default").requests == 10
 
     def test_yaml_with_multi_run_sets_plan_fields(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
@@ -477,21 +477,21 @@ class TestBenchmarkRunSerialization:
         original = self._make_run(cfg=config)
         restored = self._round_trip(original)
 
-        assert {p.name for p in restored.cfg.phases} == {
+        assert {p.name for p in restored.cfg.benchmark.phases} == {
             "warmup",
             "profiling",
             "constant_phase",
         }
         assert (
-            next(p for p in restored.cfg.phases if p.name == "warmup").type
+            next(p for p in restored.cfg.benchmark.phases if p.name == "warmup").type
             == "concurrency"
         )
         assert (
-            next(p for p in restored.cfg.phases if p.name == "profiling").type
+            next(p for p in restored.cfg.benchmark.phases if p.name == "profiling").type
             == "poisson"
         )
         assert (
-            next(p for p in restored.cfg.phases if p.name == "constant_phase").type
+            next(p for p in restored.cfg.benchmark.phases if p.name == "constant_phase").type
             == "constant"
         )
 
@@ -580,13 +580,13 @@ class TestBenchmarkRunSerialization:
         original = self._make_run(cfg=config)
         restored = self._round_trip(original)
 
-        assert {d.name for d in restored.cfg.datasets} == {"default", "secondary"}
+        assert {d.name for d in restored.cfg.benchmark.datasets} == {"default", "secondary"}
         assert (
-            next(p for p in restored.cfg.phases if p.name == "profiling").dataset
+            next(p for p in restored.cfg.benchmark.phases if p.name == "profiling").dataset
             == "secondary"
         )
         assert (
-            next(p for p in restored.cfg.phases if p.name == "profiling").concurrency
+            next(p for p in restored.cfg.benchmark.phases if p.name == "profiling").concurrency
             == 8
         )
 
@@ -640,8 +640,8 @@ profiling:
   concurrency: 1
 """)
         config = load_config_from_string(yaml_str)
-        assert "default" in [d.name for d in config.datasets]
-        assert any(p.name == "profiling" for p in config.phases)
+        assert "default" in [d.name for d in config.benchmark.datasets]
+        assert any(p.name == "profiling" for p in config.benchmark.phases)
 
     def test_warmup_profiling_flat_config(self) -> None:
         yaml_str = textwrap.dedent("""\
@@ -670,9 +670,9 @@ profiling:
   concurrency: 1
 """)
         config = load_config_from_string(yaml_str)
-        assert [p.name for p in config.phases] == ["warmup", "profiling"]
+        assert [p.name for p in config.benchmark.phases] == ["warmup", "profiling"]
         assert (
-            next(p for p in config.phases if p.name == "warmup").exclude_from_results
+            next(p for p in config.benchmark.phases if p.name == "warmup").exclude_from_results
             is True
         )
         plan = build_benchmark_plan(config)

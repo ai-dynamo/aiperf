@@ -869,7 +869,7 @@ def create_exporter_config(
     """Helper to create ExporterConfig with common defaults."""
     return ExporterConfig(
         results=profile_results,
-        config=config,
+        config=config.benchmark,
         telemetry_results=telemetry_results,
         server_metrics_results=server_metrics_results,
     )

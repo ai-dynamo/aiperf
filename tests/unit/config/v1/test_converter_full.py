@@ -25,13 +25,13 @@ def test_minimal_concurrency_run_produces_valid_aiperf_config():
     service = ServiceConfig()
     cfg = convert_user_to_aiperf(user, service)
     assert isinstance(cfg, AIPerfConfig)
-    assert cfg.endpoint.urls == ["http://localhost:8000"]
-    assert len(cfg.phases) == 1
-    assert cfg.phases[0].name == "profiling"
-    assert str(cfg.phases[0].type).lower().endswith("concurrency")
-    assert cfg.phases[0].concurrency == 100
-    assert len(cfg.datasets) == 1
-    assert cfg.datasets[0].name == "main"
+    assert cfg.benchmark.endpoint.urls == ["http://localhost:8000"]
+    assert len(cfg.benchmark.phases) == 1
+    assert cfg.benchmark.phases[0].name == "profiling"
+    assert str(cfg.benchmark.phases[0].type).lower().endswith("concurrency")
+    assert cfg.benchmark.phases[0].concurrency == 100
+    assert len(cfg.benchmark.datasets) == 1
+    assert cfg.benchmark.datasets[0].name == "main"
 
 
 def test_warmup_phase_added_when_warmup_set():
@@ -48,9 +48,9 @@ def test_warmup_phase_added_when_warmup_set():
     )
     service = ServiceConfig()
     cfg = convert_user_to_aiperf(user, service)
-    names = [p.name for p in cfg.phases]
+    names = [p.name for p in cfg.benchmark.phases]
     assert names == ["warmup", "profiling"]
-    assert cfg.phases[0].exclude_from_results is True
+    assert cfg.benchmark.phases[0].exclude_from_results is True
 
 
 def test_request_rate_run_picks_poisson_phase_type():
@@ -62,8 +62,8 @@ def test_request_rate_run_picks_poisson_phase_type():
     )
     service = ServiceConfig()
     cfg = convert_user_to_aiperf(user, service)
-    assert str(cfg.phases[0].type).lower().endswith("poisson")
-    assert cfg.phases[0].rate == 50.0
+    assert str(cfg.benchmark.phases[0].type).lower().endswith("poisson")
+    assert cfg.benchmark.phases[0].rate == 50.0
 
 
 def test_public_dataset_uses_dataset_field():
@@ -76,7 +76,7 @@ def test_public_dataset_uses_dataset_field():
     )
     service = ServiceConfig()
     cfg = convert_user_to_aiperf(user, service)
-    ds = cfg.datasets[0]
+    ds = cfg.benchmark.datasets[0]
     assert ds.name == "main"
     assert ds.dataset == "sharegpt"
 
@@ -93,7 +93,7 @@ def test_full_conversion_request_rate_only_uses_synthetic_default():
     )
     cfg = convert_user_to_aiperf(user, ServiceConfig())
     # SyntheticDataset Pydantic default takes effect (no user-set count source)
-    assert cfg.datasets[0].entries == 100
+    assert cfg.benchmark.datasets[0].entries == 100
 
 
 def test_convert_user_to_aiperf_preserves_gpu_telemetry_tokens():
@@ -106,8 +106,8 @@ def test_convert_user_to_aiperf_preserves_gpu_telemetry_tokens():
 
     config = convert_user_to_aiperf(user, ServiceConfig())
 
-    assert config.gpu_telemetry.collector == GPUTelemetryCollectorType.PYNVML
-    assert config.gpu_telemetry.mode == GPUTelemetryMode.REALTIME_DASHBOARD
+    assert config.benchmark.gpu_telemetry.collector == GPUTelemetryCollectorType.PYNVML
+    assert config.benchmark.gpu_telemetry.mode == GPUTelemetryMode.REALTIME_DASHBOARD
 
 
 def test_convert_user_to_aiperf_preserves_endpoint_parity_fields():
@@ -129,8 +129,8 @@ def test_convert_user_to_aiperf_preserves_endpoint_parity_fields():
 
     config = convert_user_to_aiperf(user, service)
 
-    assert config.endpoint.ready_check_timeout == 30.0
-    assert config.endpoint.ready_check_interval == 2.5
-    assert config.endpoint.ready_check_mode == "both"
-    assert config.endpoint.download_video_content is True
-    assert str(config.endpoint.request_content_type) == "multipart/form-data"
+    assert config.benchmark.endpoint.ready_check_timeout == 30.0
+    assert config.benchmark.endpoint.ready_check_interval == 2.5
+    assert config.benchmark.endpoint.ready_check_mode == "both"
+    assert config.benchmark.endpoint.download_video_content is True
+    assert str(config.benchmark.endpoint.request_content_type) == "multipart/form-data"

@@ -251,7 +251,7 @@ class TestBaseMetricsProcessor:
         mock_metric_registry: Mock,
         mock_user_config,
     ):
-        mock_user_config.slos = None
+        mock_user_config.benchmark.slos = None
 
         mock_metric_registry.tags_applicable_to.return_value = set()
         processor = BaseMetricsProcessor(_make_run(mock_user_config))
@@ -267,7 +267,7 @@ class TestBaseMetricsProcessor:
         mock_metric_registry: Mock,
         mock_user_config,
     ):
-        mock_user_config.slos = {"request_latency": 250.0}
+        mock_user_config.benchmark.slos = {"request_latency": 250.0}
 
         supported = {GOOD_REQUEST_COUNT_TAG, "request_latency"}
         mock_metric_registry.tags_applicable_to.return_value = supported
@@ -299,7 +299,7 @@ class TestBaseMetricsProcessor:
         mock_metric_registry: Mock,
         mock_user_config,
     ):
-        mock_user_config.slos = {"unknown_metric": 123.0}
+        mock_user_config.benchmark.slos = {"unknown_metric": 123.0}
 
         mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
         mock_metric_registry.create_dependency_order_for.return_value = [
@@ -324,7 +324,7 @@ class TestBaseMetricsProcessor:
         mock_metric_registry: Mock,
         mock_user_config,
     ):
-        mock_user_config.slos = {"inter_token_latency": 10.0}
+        mock_user_config.benchmark.slos = {"inter_token_latency": 10.0}
 
         mock_metric_registry.tags_applicable_to.return_value = {GOOD_REQUEST_COUNT_TAG}
         mock_metric_registry.create_dependency_order_for.return_value = [

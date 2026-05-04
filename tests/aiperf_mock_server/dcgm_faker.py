@@ -186,7 +186,7 @@ class DCGMFaker:
         lines = [f"# HELP {name} {help_text}", f"# TYPE {name} gauge"]
         for gpu in self.gpus:
             lines.append(
-                f'{name}{{gpu="{gpu.idx}",UUID="{gpu.uuid}",pci_bus_id="{gpu.pci_bus_id}",device="{gpu.device}",modelName="{self.cfg.model}",Hostname="{self.hostname}"}} {float(getattr(gpu, attr)):.2f}'
+                f'{name}{{gpu="{gpu.idx}",UUID="{gpu.uuid}",pci_bus_id="{gpu.pci_bus_id}",device="{gpu.device}",modelName="{self.cfg.benchmark.model}",Hostname="{self.hostname}"}} {float(getattr(gpu, attr)):.2f}'
             )
         return "\n".join(lines)
 

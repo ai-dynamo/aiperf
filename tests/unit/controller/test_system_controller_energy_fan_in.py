@@ -122,7 +122,7 @@ class TestCrossInputAnalyzerFanIn:
         self, system_controller: SystemController
     ) -> None:
         # Even with valid inputs, gpu_telemetry_disabled short-circuits.
-        system_controller.run.cfg.gpu_telemetry.enabled = False
+        system_controller.run.cfg.benchmark.gpu_telemetry.enabled = False
         system_controller._telemetry_results = _telemetry_with_energy()
         system_controller._profile_results = _profile_with_inference_metrics()
         system_controller._energy_efficiency_results = None

@@ -17,7 +17,7 @@ from aiperf.config import (
     BenchmarkRun,
 )
 from aiperf.config.loader import build_benchmark_plan, load_benchmark_plan
-from aiperf.config.models import MultiRunConfig
+from aiperf.config.benchmark.models import MultiRunConfig
 from aiperf.config.sweep import SweepVariation
 
 _MINIMAL_CONFIG_KWARGS = {
@@ -414,8 +414,8 @@ class TestConfigHierarchy:
     def test_benchmark_config_normalizes_models(self) -> None:
         """model_validator normalizes string models to ModelsAdvanced."""
         config = _make_benchmark_config()
-        assert len(config.models.items) == 1
-        assert config.models.items[0].name == "test-model"
+        assert len(config.benchmark.models.items) == 1
+        assert config.benchmark.models.items[0].name == "test-model"
 
     def test_benchmark_config_benchmark_id_property(self) -> None:
         config = _make_benchmark_config()

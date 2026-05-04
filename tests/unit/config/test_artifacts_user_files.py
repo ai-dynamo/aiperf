@@ -31,7 +31,7 @@ _BASE_YAML = """
 
 def test_user_files_default_empty():
     config = load_config_from_string(_BASE_YAML)
-    assert config.artifacts.user_files == []
+    assert config.benchmark.artifacts.user_files == []
 
 
 def test_user_files_round_trips_through_config_load():
@@ -50,8 +50,8 @@ artifacts:
         + _BASE_YAML
     )
     config = load_config_from_string(yaml_str)
-    assert len(config.artifacts.user_files) == 1
-    entry = config.artifacts.user_files[0]
+    assert len(config.benchmark.artifacts.user_files) == 1
+    entry = config.benchmark.artifacts.user_files[0]
     assert entry.path == "input_config.json"
     assert entry.format == "json"
     # Critical: load-time render must NOT have evaluated {{ isl }} on user_files content.

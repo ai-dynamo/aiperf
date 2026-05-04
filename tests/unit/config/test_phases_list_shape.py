@@ -38,8 +38,8 @@ def test_phases_accepts_list_with_name_field():
             },
         ]
     )
-    assert isinstance(cfg.phases, list)
-    assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
+    assert isinstance(cfg.benchmark.phases, list)
+    assert [p.name for p in cfg.benchmark.phases] == ["warmup", "profiling"]
 
 
 def test_phases_preserves_input_order_warmup_first():
@@ -60,8 +60,8 @@ def test_phases_preserves_input_order_warmup_first():
             },
         ]
     )
-    assert cfg.phases[0].name == "warmup"
-    assert cfg.phases[1].name == "profiling"
+    assert cfg.benchmark.phases[0].name == "warmup"
+    assert cfg.benchmark.phases[1].name == "profiling"
 
 
 def test_phases_preserves_input_order_profiling_first():
@@ -82,8 +82,8 @@ def test_phases_preserves_input_order_profiling_first():
             },
         ]
     )
-    assert cfg.phases[0].name == "profiling"
-    assert cfg.phases[1].name == "warmup"
+    assert cfg.benchmark.phases[0].name == "profiling"
+    assert cfg.benchmark.phases[1].name == "warmup"
 
 
 def test_phases_rejects_dict_shape():

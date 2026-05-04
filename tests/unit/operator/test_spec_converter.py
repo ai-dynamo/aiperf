@@ -86,19 +86,19 @@ class TestToAIPerfConfig:
             minimal_aiperfjob_spec, "test-job", "default"
         )
         config = converter.to_aiperf_config()
-        assert config.artifacts.dir == Path("/results")
+        assert config.benchmark.artifacts.dir == Path("/results")
 
     def test_full_config(self, full_aiperfjob_spec: dict[str, Any]) -> None:
         converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
         config = converter.to_aiperf_config()
 
         assert config.get_model_names() == ["gpt-4"]
-        assert "http://api.example.com/v1/chat/completions" in config.endpoint.urls
-        assert any(p.name == "profiling" for p in config.phases)
+        assert "http://api.example.com/v1/chat/completions" in config.benchmark.endpoint.urls
+        assert any(p.name == "profiling" for p in config.benchmark.phases)
         assert (
-            next(p for p in config.phases if p.name == "profiling").concurrency == 500
+            next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 500
         )
-        assert next(p for p in config.phases if p.name == "profiling").requests == 1000
+        assert next(p for p in config.benchmark.phases if p.name == "profiling").requests == 1000
 
     def test_kubernetes_service_run_type(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -108,8 +108,8 @@ class TestToAIPerfConfig:
         )
         config = converter.to_aiperf_config()
 
-        assert config.runtime.service_run_type == ServiceRunType.KUBERNETES
-        assert config.runtime.ui == UIType.SIMPLE
+        assert config.benchmark.runtime.service_run_type == ServiceRunType.KUBERNETES
+        assert config.benchmark.runtime.ui == UIType.SIMPLE
 
     def test_has_dual_bind_communication(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -119,8 +119,8 @@ class TestToAIPerfConfig:
         )
         config = converter.to_aiperf_config()
 
-        assert config.runtime.communication is not None
-        assert config.runtime.communication.type == CommunicationType.DUAL
+        assert config.benchmark.runtime.communication is not None
+        assert config.benchmark.runtime.communication.type == CommunicationType.DUAL
 
     def test_api_settings(self, minimal_aiperfjob_spec: dict[str, Any]) -> None:
         converter = AIPerfJobSpecConverter(
@@ -128,8 +128,8 @@ class TestToAIPerfConfig:
         )
         config = converter.to_aiperf_config()
 
-        assert config.runtime.api_host == "0.0.0.0"
-        assert config.runtime.api_port == 9090
+        assert config.benchmark.runtime.api_host == "0.0.0.0"
+        assert config.benchmark.runtime.api_port == 9090
 
     def test_dataset_api_url(self, minimal_aiperfjob_spec: dict[str, Any]) -> None:
         converter = AIPerfJobSpecConverter(
@@ -137,9 +137,9 @@ class TestToAIPerfConfig:
         )
         config = converter.to_aiperf_config()
 
-        assert "test-job" in config.runtime.dataset_api_base_url
-        assert "my-namespace" in config.runtime.dataset_api_base_url
-        assert "/api/dataset" in config.runtime.dataset_api_base_url
+        assert "test-job" in config.benchmark.runtime.dataset_api_base_url
+        assert "my-namespace" in config.benchmark.runtime.dataset_api_base_url
+        assert "/api/dataset" in config.benchmark.runtime.dataset_api_base_url
 
     def test_dataset_api_url_uses_job_id(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -152,9 +152,9 @@ class TestToAIPerfConfig:
         )
         config = converter.to_aiperf_config()
 
-        assert "unique-abc123" in config.runtime.dataset_api_base_url
-        assert "original-name" not in config.runtime.dataset_api_base_url
-        assert "aiperf-unique-abc123" in config.runtime.dataset_api_base_url
+        assert "unique-abc123" in config.benchmark.runtime.dataset_api_base_url
+        assert "original-name" not in config.benchmark.runtime.dataset_api_base_url
+        assert "aiperf-unique-abc123" in config.benchmark.runtime.dataset_api_base_url
 
     def test_deployment_fields_not_in_config(
         self, full_aiperfjob_spec: dict[str, Any]
@@ -410,8 +410,8 @@ class TestApplyWorkerConfig:
         config = converter.to_aiperf_config()
         num_pods = apply_worker_config(config, 5)
         assert num_pods == 1
-        assert config.runtime.workers_per_pod == 5
-        assert config.runtime.workers == 5
+        assert config.benchmark.runtime.workers_per_pod == 5
+        assert config.benchmark.runtime.workers == 5
 
     def test_multiple_pods(self, minimal_aiperfjob_spec: dict[str, Any]) -> None:
         converter = AIPerfJobSpecConverter(
@@ -420,7 +420,7 @@ class TestApplyWorkerConfig:
         config = converter.to_aiperf_config()
         num_pods = apply_worker_config(config, 50)
         assert num_pods >= 1
-        assert config.runtime.workers == num_pods * config.runtime.workers_per_pod
+        assert config.benchmark.runtime.workers == num_pods * config.benchmark.runtime.workers_per_pod
 
     def test_record_processors_set(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -430,8 +430,8 @@ class TestApplyWorkerConfig:
         )
         config = converter.to_aiperf_config()
         apply_worker_config(config, 10)
-        assert config.runtime.record_processors_per_pod == 10
-        assert config.runtime.record_processors == 10
+        assert config.benchmark.runtime.record_processors_per_pod == 10
+        assert config.benchmark.runtime.record_processors == 10
 
 
 # =============================================================================
@@ -468,7 +468,7 @@ class TestEnvVarExpansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert config.endpoint.urls == [
+        assert config.benchmark.endpoint.urls == [
             "http://my-inference-server:8080/v1/chat/completions"
         ]
 
@@ -484,7 +484,7 @@ class TestEnvVarExpansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert config.endpoint.urls == ["http://fallback-host:9000/v1/chat/completions"]
+        assert config.benchmark.endpoint.urls == ["http://fallback-host:9000/v1/chat/completions"]
 
     def test_missing_env_var_no_default_raises(self) -> None:
         from aiperf.config.loader import MissingEnvironmentVariableError
@@ -514,7 +514,7 @@ class TestEnvVarExpansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert config.endpoint.api_key == "sk-test-12345"
+        assert config.benchmark.endpoint.api_key == "sk-test-12345"
 
     def test_env_var_in_calculate_workers(
         self, monkeypatch: pytest.MonkeyPatch
@@ -559,7 +559,7 @@ class TestJinja2Expansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert next(p for p in config.phases if p.name == "profiling").concurrency == 16
+        assert next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 16
 
     def test_derived_value_from_other_field(self) -> None:
         spec = _expansion_spec(
@@ -577,8 +577,8 @@ class TestJinja2Expansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert next(p for p in config.phases if p.name == "profiling").concurrency == 8
-        assert next(p for p in config.phases if p.name == "profiling").requests == 80
+        assert next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 8
+        assert next(p for p in config.benchmark.phases if p.name == "profiling").requests == 80
 
     def test_variables_key_not_passed_to_pydantic(self) -> None:
         """variables section must be stripped before model_validate (extra='forbid')."""

@@ -505,7 +505,7 @@ class TestScenarioSingularDatasetShorthand:
     )
 
     def _isl_osl(self, cfg, ds_idx: int = 0):
-        ds = cfg.datasets[ds_idx]
+        ds = cfg.benchmark.datasets[ds_idx]
         isl = getattr(ds.prompts.isl, "value", ds.prompts.isl)
         osl = getattr(ds.prompts.osl, "value", ds.prompts.osl)
         return isl, osl

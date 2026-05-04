@@ -4,7 +4,7 @@
 
 import pytest
 
-from aiperf.config.endpoint import EndpointConfig
+from aiperf.config.benchmark.endpoint import EndpointConfig
 
 
 class TestEndpointConfigMultiURL:

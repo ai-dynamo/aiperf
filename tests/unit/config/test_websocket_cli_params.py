@@ -4,7 +4,7 @@
 """Tests for API CLI parameter validation on RuntimeConfig."""
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.models import RuntimeConfig
+from aiperf.config.benchmark.models import RuntimeConfig
 
 
 def _minimal_config(**runtime_kwargs) -> AIPerfConfig:
@@ -46,11 +46,11 @@ class TestAPICLIParams:
     def test_port_only_leaves_host_none(self) -> None:
         """Test that setting port only leaves host as None (resolved at runtime from env)."""
         config = _minimal_config(api_port=9999)
-        assert config.runtime.api_port == 9999
-        assert config.runtime.api_host is None
+        assert config.benchmark.runtime.api_port == 9999
+        assert config.benchmark.runtime.api_host is None
 
     def test_port_and_host(self) -> None:
         """Test setting both port and host."""
         config = _minimal_config(api_port=8080, api_host="0.0.0.0")
-        assert config.runtime.api_port == 8080
-        assert config.runtime.api_host == "0.0.0.0"
+        assert config.benchmark.runtime.api_port == 8080
+        assert config.benchmark.runtime.api_host == "0.0.0.0"

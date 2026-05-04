@@ -38,8 +38,8 @@ def _make_config(concurrency: int | None = 8) -> MagicMock:
     phase = MagicMock()
     phase.concurrency = concurrency
     config = MagicMock()
-    config.phases = [phase]
-    config.endpoint.urls = ["http://svc:8000/v1/chat/completions"]
+    config.benchmark.phases = [phase]
+    config.benchmark.endpoint.urls = ["http://svc:8000/v1/chat/completions"]
     config.get_model_names.return_value = ["test-model"]
     # model_dump (used by _prepare_direct_deploy before apply_k8s_runtime_config)
     config.model_dump.return_value = {"phases": [{"concurrency": concurrency}]}

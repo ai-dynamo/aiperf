@@ -135,7 +135,7 @@ class TestFixedTrialsStrategyEdgeCases:
         strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
         result = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
         assert not any(p.name == "warmup" for p in result.phases)
-        assert any(p.name == "warmup" for p in config.phases)
+        assert any(p.name == "warmup" for p in config.benchmark.phases)
 
     def test_run_label_format(self) -> None:
         strategy = FixedTrialsStrategy(num_trials=3)

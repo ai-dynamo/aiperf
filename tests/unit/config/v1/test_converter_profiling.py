@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.config.phases import PhaseType
+from aiperf.config.benchmark.phases import PhaseType
 from aiperf.config.v1 import UserConfig
 from aiperf.config.v1._converter_profiling import build_profiling
 

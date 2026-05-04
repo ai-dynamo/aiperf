@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.config import BenchmarkConfig
-from aiperf.config.artifacts import GpuTelemetryConfig
+from aiperf.config.benchmark.artifacts import GpuTelemetryConfig
 from aiperf.config.benchmark import BenchmarkRun
-from aiperf.config.models import TokenizerConfig
+from aiperf.config.benchmark.models import TokenizerConfig
 from aiperf.config.resolvers import (
     ArtifactDirResolver,
     CommConfigResolver,
@@ -225,7 +225,7 @@ class TestTokenizerResolver:
     def test_runs_validator_even_when_tokenizer_unset(self, run_with_config):
         """Resolver always invokes the validator so fake-model detection fires
         even when the user passed no `--tokenizer*` flags (and v1 left
-        ``cfg.tokenizer`` as None).
+        ``cfg.benchmark.tokenizer`` as None).
         """
         run_with_config.cfg = run_with_config.cfg.model_copy(update={"tokenizer": None})
 

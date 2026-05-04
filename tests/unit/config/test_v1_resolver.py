@@ -184,7 +184,7 @@ class TestEndpointUrlPluralization:
         config validates -- otherwise both reach Pydantic and trip
         `endpoint.url: Extra inputs are not permitted`. CLI wins (override
         semantics)."""
-        from aiperf.config.endpoint import EndpointConfig
+        from aiperf.config.benchmark.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate(
             {"url": "http://yaml", "urls": ["http://cli"], "type": "chat"}
@@ -194,7 +194,7 @@ class TestEndpointUrlPluralization:
 
     def test_only_url_promotes_to_urls(self) -> None:
         """Backwards-compat: lone singular shorthand still promotes."""
-        from aiperf.config.endpoint import EndpointConfig
+        from aiperf.config.benchmark.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate({"url": "http://only", "type": "chat"})
         assert [str(u) for u in cfg.urls] == ["http://only"]
@@ -202,7 +202,7 @@ class TestEndpointUrlPluralization:
     def test_url_as_list_promoted_intact(self) -> None:
         """When `url` is itself a list (some tests pass that), don't double-
         wrap; the prior behavior is preserved."""
-        from aiperf.config.endpoint import EndpointConfig
+        from aiperf.config.benchmark.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate(
             {"url": ["http://a", "http://b"], "type": "chat"}
@@ -250,7 +250,7 @@ phases:
         """Pristine UserConfig + a YAML file: no overrides applied, the YAML
         passes through to AIPerfConfig.model_validate verbatim."""
         cfg = resolve_config(UserConfig(), ServiceConfig(), self._yaml(tmp_path))
-        assert any("yaml" in str(u) for u in cfg.endpoint.urls)
+        assert any("yaml" in str(u) for u in cfg.benchmark.endpoint.urls)
 
     def test_config_file_plus_cli_url_override(self, tmp_path: Path) -> None:
         """CLI --url wins over YAML's url. This is the original
@@ -258,7 +258,7 @@ phases:
         this assertion flips."""
         user = UserConfig.model_validate({"endpoint": {"urls": ["http://cli-wins"]}})
         cfg = resolve_config(user, ServiceConfig(), self._yaml(tmp_path))
-        assert any("cli-wins" in str(u) for u in cfg.endpoint.urls)
+        assert any("cli-wins" in str(u) for u in cfg.benchmark.endpoint.urls)
 
     def test_missing_config_file_raises_configuration_error(self) -> None:
         """Resolver delegates to load_config_dict, which surfaces a

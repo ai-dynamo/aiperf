@@ -69,7 +69,7 @@ async def test_local_subprocess_executor_calls_subprocess(tmp_path):
 
 
 def test_extract_summary_metrics_honors_artifacts_prefix(tmp_path):
-    """Custom ``cfg.artifacts.prefix`` must be honored when locating the metrics file.
+    """Custom ``cfg.benchmark.artifacts.prefix`` must be honored when locating the metrics file.
 
     Reproduces the --profile-export-prefix regression introduced by main's
     PR #699: the executor used to hardcode ``profile_export_aiperf.json``

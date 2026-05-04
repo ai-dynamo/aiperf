@@ -440,7 +440,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test summarize produces timeslice results when slice_duration is set."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
@@ -497,7 +497,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test that values within same timeslice are accumulated."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
@@ -530,7 +530,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test aggregate metrics use vectorized AggregationKind per timeslice."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
         processor._aggregation_kinds = {
@@ -579,7 +579,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test MAX aggregation per timeslice."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {"max_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"max_ts": AggregationKind.MAX}
@@ -611,7 +611,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test MIN aggregation per timeslice."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {"min_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"min_ts": AggregationKind.MIN}
@@ -643,7 +643,7 @@ class TestTimesliceSummarize:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Test _compute_timeslices returns timeslice_windows with correct boundaries."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(run=_make_run(mock_user_config))
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
@@ -893,7 +893,7 @@ class TestTimesliceSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """All sweep metrics are present in every timeslice with correct tag/unit."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
@@ -935,7 +935,7 @@ class TestTimesliceSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Overlapping requests in a timeslice produce avg concurrency > 1."""
-        mock_user_config.artifacts.slice_duration = 2.0
+        mock_user_config.benchmark.artifacts.slice_duration = 2.0
         latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
@@ -970,7 +970,7 @@ class TestTimesliceSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Records with output_tokens and TTFT produce nonzero throughput."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
@@ -1000,7 +1000,7 @@ class TestTimesliceSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Without output_tokens, throughput avg is 0 but concurrency is nonzero."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
 
@@ -1023,7 +1023,7 @@ class TestTimesliceSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Records across 3 slices each have distinct sweep metric values."""
-        mock_user_config.artifacts.slice_duration = 1.0
+        mock_user_config.benchmark.artifacts.slice_duration = 1.0
         latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls

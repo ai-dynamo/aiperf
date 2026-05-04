@@ -197,7 +197,7 @@ class TestConvertUserToAiperfIntegration:
     def test_minimal_user_config_validates(self) -> None:
         """Sanity: smallest legal v1 input produces a valid v2 AIPerfConfig."""
         cfg = convert_user_to_aiperf(self._user_minimal(), ServiceConfig())
-        assert [m.name for m in cfg.models.items] == ["m"]
+        assert [m.name for m in cfg.benchmark.models.items] == ["m"]
 
     def test_empty_model_names_fails_v2_validation(self) -> None:
         """v1 ``endpoint.model_names`` was made optional (default `[]`) so
@@ -237,13 +237,13 @@ class TestConvertUserToAiperfIntegration:
             }
         )
         cfg = convert_user_to_aiperf(user, ServiceConfig())
-        names = [p.name for p in cfg.phases]
+        names = [p.name for p in cfg.benchmark.phases]
         assert names == ["warmup", "profiling"]
 
     def test_no_warmup_phase_when_no_warmup_flags(self) -> None:
         """Warmup must NOT be auto-emitted when the user didn't ask for it."""
         cfg = convert_user_to_aiperf(self._user_minimal(), ServiceConfig())
-        assert [p.name for p in cfg.phases] == ["profiling"]
+        assert [p.name for p in cfg.benchmark.phases] == ["profiling"]
 
     def test_recipe_lifts_sweep_to_top_level(self) -> None:
         """Grid recipe end-to-end through the converter must land

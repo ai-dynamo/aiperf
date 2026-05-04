@@ -79,9 +79,9 @@ def system_controller(
 @pytest.fixture
 def local_group_run(run: BenchmarkRun) -> BenchmarkRun:
     """BenchmarkRun configured to expose local worker-group adapter capacity."""
-    run.cfg.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
-    run.cfg.runtime.workers = 4
-    run.cfg.runtime.record_processors = 2
+    run.cfg.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+    run.cfg.benchmark.runtime.workers = 4
+    run.cfg.benchmark.runtime.record_processors = 2
     return run
 
 

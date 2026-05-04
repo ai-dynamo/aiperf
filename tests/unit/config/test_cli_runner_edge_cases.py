@@ -160,7 +160,7 @@ class TestMakeBenchmarkRun:
         config = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
         run = _make_benchmark_run(config)
 
-        assert run.artifact_dir == config.artifacts.dir
+        assert run.artifact_dir == config.benchmark.artifacts.dir
 
     def test_explicit_artifact_dir_overrides_config(self, tmp_path: Path) -> None:
         config = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)

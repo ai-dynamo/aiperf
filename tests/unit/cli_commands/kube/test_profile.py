@@ -383,7 +383,7 @@ def test_build_cr_spec_and_config_renders_jinja_in_benchmark(tmp_path) -> None:
     assert phase_concurrencies == [120, 120]  # 30 * 4
 
     # AIPerfConfig matches: drives memory estimate + connectionsPerWorker.
-    assert config.phases[0].concurrency == 120
+    assert config.benchmark.phases[0].concurrency == 120
 
 
 @pytest.mark.asyncio

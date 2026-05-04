@@ -138,12 +138,12 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify _file_path is set to {base_filename}_timeslices.csv."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
             # Note: profile_export_csv_file is already set by default config
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -158,11 +158,11 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify raises DataExporterDisabled when no timeslice data."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_without_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -176,12 +176,12 @@ class TestTimesliceMetricsCsvExporterInitialization:
     ):
         """Verify uses base filename from configured CSV path."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
             # The default profile_export_csv_file should have a base name we can check
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -200,11 +200,11 @@ class TestTimesliceMetricsCsvExporterGetExportInfo:
     ):
         """Verify export_type and file_path are correct."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -223,11 +223,11 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     ):
         """Verify CSV has correct header and tidy format."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -281,7 +281,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -323,7 +323,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -375,7 +375,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -430,7 +430,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -480,7 +480,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -516,7 +516,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -552,7 +552,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -592,11 +592,11 @@ class TestTimesliceMetricsCsvExporterFormatNumber:
     ):
         """Test _format_number with various input types."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -614,11 +614,11 @@ class TestTimesliceMetricsCsvExporterIntegration:
     ):
         """Verify export creates a valid CSV file."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -683,7 +683,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -721,7 +721,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),
@@ -755,11 +755,11 @@ class TestTimesliceMetricsCsvExporterIntegration:
     ):
         """Verify Start_NS and End_NS columns contain window timestamps."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=mock_results_with_timeslices,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -799,7 +799,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
                 self.error_summary = []
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            mock_user_config.artifacts.dir = Path(temp_dir)
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
 
             config = ExporterConfig(
                 results=MockResults(),

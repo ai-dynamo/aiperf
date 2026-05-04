@@ -63,24 +63,24 @@ class TestRecordExportFormatConfig:
 
     def test_default_records_is_jsonl(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir)
-        assert config.artifacts.records == ["jsonl"]
+        assert config.benchmark.artifacts.records == ["jsonl"]
 
     def test_single_format_csv(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["csv"])
-        assert isinstance(config.artifacts.records, list)
-        assert "csv" in config.artifacts.records
-        assert "jsonl" not in config.artifacts.records
+        assert isinstance(config.benchmark.artifacts.records, list)
+        assert "csv" in config.benchmark.artifacts.records
+        assert "jsonl" not in config.benchmark.artifacts.records
 
     def test_single_format_jsonl(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["jsonl"])
-        assert isinstance(config.artifacts.records, list)
-        assert "jsonl" in config.artifacts.records
+        assert isinstance(config.benchmark.artifacts.records, list)
+        assert "jsonl" in config.benchmark.artifacts.records
 
     def test_multiple_formats(self, tmp_artifact_dir: Path):
         config = _make_config(tmp_artifact_dir, records=["jsonl", "csv"])
-        assert isinstance(config.artifacts.records, list)
-        assert "jsonl" in config.artifacts.records
-        assert "csv" in config.artifacts.records
+        assert isinstance(config.benchmark.artifacts.records, list)
+        assert "jsonl" in config.benchmark.artifacts.records
+        assert "csv" in config.benchmark.artifacts.records
 
     def test_empty_list_raises_error(self, tmp_artifact_dir: Path):
         with pytest.raises(Exception, match="cannot be empty"):

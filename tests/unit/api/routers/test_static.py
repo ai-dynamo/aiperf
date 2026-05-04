@@ -85,15 +85,15 @@ class TestDashboardLiveContract:
         self, api_test_client: TestClient
     ) -> None:
         """Regression: the /dashboard response must include the post-fix paths
-        (cfg.models?.items, cfg.phases, connectionEpoch). If someone ships an
+        (cfg.benchmark.models?.items, cfg.benchmark.phases, connectionEpoch). If someone ships an
         older copy of dashboard.html the old loadgen/input paths would come
         back and the config bar silently breaks again.
         """
         resp = api_test_client.get("/dashboard")
         assert resp.status_code == 200
         html = resp.text
-        assert "cfg.models?.items" in html
-        assert "cfg.phases" in html
+        assert "cfg.benchmark.models?.items" in html
+        assert "cfg.benchmark.phases" in html
         assert "connectionEpoch" in html
         # Paths that belonged to the obsolete schema must stay gone.
         assert "cfg.loadgen" not in html

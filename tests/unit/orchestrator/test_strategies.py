@@ -49,7 +49,7 @@ def _make_config(**overrides) -> BenchmarkConfig:
 
 def _has_warmup_phase(config: BenchmarkConfig) -> bool:
     """Return True if config has any phase with exclude_from_results=True."""
-    return any(p.exclude_from_results for p in config.phases)
+    return any(p.exclude_from_results for p in config.benchmark.phases)
 
 
 class TestFixedTrialsStrategy:
@@ -233,7 +233,7 @@ class TestFixedTrialsStrategy:
 
         # Original config should be unchanged
         assert _has_warmup_phase(config)
-        assert any(p.name == "warmup" for p in config.phases)
+        assert any(p.name == "warmup" for p in config.benchmark.phases)
 
     def test_disable_warmup_after_first_disabled(self):
         """Test that warmup is preserved for all runs when disable_warmup_after_first=False."""
@@ -281,7 +281,7 @@ class TestFixedTrialsStrategy:
         assert not _has_warmup_phase(second_config)
 
         assert _has_warmup_phase(config)
-        assert any(p.name == "warmup" for p in config.phases)
+        assert any(p.name == "warmup" for p in config.benchmark.phases)
 
     def test_get_run_path(self):
         """Test get_run_path returns correct path structure."""
@@ -498,7 +498,7 @@ class TestAdaptiveStrategy:
 
         # Original unchanged
         assert _has_warmup_phase(config)
-        assert any(p.name == "warmup" for p in config.phases)
+        assert any(p.name == "warmup" for p in config.benchmark.phases)
 
     def test_disable_warmup_after_first_disabled(self):
         """Warmup preserved for all runs when disable_warmup_after_first=False."""

@@ -34,7 +34,7 @@ class TestDCGMFaker:
         # Verify metadata fields (TelemetryRecord inherits from GpuMetadata)
         for i, record in enumerate(records):
             gpu = faker.gpus[i]
-            assert record.gpu_model_name == gpu.cfg.model
+            assert record.gpu_model_name == gpu.cfg.benchmark.model
             assert record.hostname == faker.hostname
             assert record.gpu_uuid == gpu.uuid
             assert record.pci_bus_id == gpu.pci_bus_id

@@ -115,7 +115,7 @@ class TestBaseDatasetComposer:
 
     def test_model_selection_random(self, base_config, mock_tokenizer):
         """Test random model selection."""
-        base_config.cfg.models.strategy = ModelSelectionStrategy.RANDOM
+        base_config.cfg.benchmark.models.strategy = ModelSelectionStrategy.RANDOM
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
         result = composer._select_model_name()
@@ -123,7 +123,7 @@ class TestBaseDatasetComposer:
 
     def test_model_selection_invalid_strategy(self, base_config, mock_tokenizer):
         """Test invalid model selection strategy raises error."""
-        base_config.cfg.models.strategy = "INVALID"
+        base_config.cfg.benchmark.models.strategy = "INVALID"
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
         with pytest.raises(ValueError, match="Invalid model selection strategy"):

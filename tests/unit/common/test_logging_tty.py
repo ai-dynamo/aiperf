@@ -32,7 +32,7 @@ def mock_service_config():
     cfg = MagicMock()
     cfg.log_level = "INFO"
     cfg.ui_type = UIType.DASHBOARD
-    cfg.artifacts.dir = None
+    cfg.benchmark.artifacts.dir = None
     return cfg
 
 
@@ -249,7 +249,7 @@ class TestSetupChildProcessLogging:
     def test_file_handler_added_when_artifacts_dir_set(
         self, monkeypatch, mock_service_config, tmp_path
     ):
-        """File handler should be added when config.artifacts.dir is set."""
+        """File handler should be added when config.benchmark.artifacts.dir is set."""
         mock_service_config.ui_type = UIType.NONE
         mock_service_config.artifacts.dir = tmp_path
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)
@@ -267,7 +267,7 @@ class TestSetupChildProcessLogging:
     def test_no_file_handler_when_no_artifacts_dir(
         self, monkeypatch, mock_service_config
     ):
-        """No file handler should be added when config.artifacts.dir is falsy."""
+        """No file handler should be added when config.benchmark.artifacts.dir is falsy."""
         mock_service_config.ui_type = UIType.NONE
         mock_service_config.artifacts.dir = None
         monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: False)

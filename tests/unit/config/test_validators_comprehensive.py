@@ -22,8 +22,8 @@ from pydantic import ValidationError
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.loader import validate_config_file
-from aiperf.config.models import ModelsAdvanced
-from aiperf.config.phases import (
+from aiperf.config.benchmark.models import ModelsAdvanced
+from aiperf.config.benchmark.phases import (
     _parse_duration,
 )
 
@@ -90,7 +90,7 @@ class TestSeamlessNotOnFirstPhase:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").seamless is True
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").seamless is True
 
     def test_seamless_on_first_phase_raises(self) -> None:
         with pytest.raises(ValidationError, match="seamless"):
@@ -134,8 +134,8 @@ class TestSeamlessNotOnFirstPhase:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "warmup").seamless is False
-        assert next(p for p in cfg.phases if p.name == "profiling").seamless is False
+        assert next(p for p in cfg.benchmark.phases if p.name == "warmup").seamless is False
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").seamless is False
 
     def test_single_phase_seamless_raises(self) -> None:
         with pytest.raises(ValidationError, match="seamless"):
@@ -175,7 +175,7 @@ class TestStopConditionRequired:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").duration == 60.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration == 60.0
 
     def test_concurrency_phase_with_requests_passes(self) -> None:
         cfg = BenchmarkConfig(
@@ -190,7 +190,7 @@ class TestStopConditionRequired:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").requests == 100
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").requests == 100
 
     def test_concurrency_phase_no_stop_condition_raises(self) -> None:
         with pytest.raises(ValidationError, match="at least one of"):
@@ -228,8 +228,8 @@ class TestStopConditionRequired:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "replay").requests is None
-        assert next(p for p in cfg.phases if p.name == "replay").duration is None
+        assert next(p for p in cfg.benchmark.phases if p.name == "replay").requests is None
+        assert next(p for p in cfg.benchmark.phases if p.name == "replay").duration is None
 
     def test_user_centric_with_sessions_passes(self) -> None:
         cfg = BenchmarkConfig(
@@ -245,7 +245,7 @@ class TestStopConditionRequired:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").sessions == 10
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").sessions == 10
 
     def test_poisson_phase_no_stop_condition_raises(self) -> None:
         with pytest.raises(ValidationError, match="at least one of"):
@@ -275,8 +275,8 @@ class TestStopConditionRequired:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").requests == 100
-        assert next(p for p in cfg.phases if p.name == "profiling").duration == 60.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").requests == 100
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration == 60.0
 
 
 # ============================================================
@@ -371,7 +371,7 @@ class TestUserCentricConstraints:
                 ],
             )
         )
-        phase = next(p for p in cfg.phases if p.name == "profiling")
+        phase = next(p for p in cfg.benchmark.phases if p.name == "profiling")
         assert phase.sessions == 10
         assert phase.users == 5
 
@@ -406,8 +406,8 @@ class TestUserCentricConstraints:
             )
         )
         assert (
-            next(p for p in cfg.phases if p.name == "profiling").sessions
-            == next(p for p in cfg.phases if p.name == "profiling").users
+            next(p for p in cfg.benchmark.phases if p.name == "profiling").sessions
+            == next(p for p in cfg.benchmark.phases if p.name == "profiling").users
         )
 
     def test_requests_greater_than_users_passes(self) -> None:
@@ -424,7 +424,7 @@ class TestUserCentricConstraints:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").requests == 10
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").requests == 10
 
     def test_requests_less_than_users_raises(self) -> None:
         with pytest.raises(ValidationError, match="request-count.*num-users"):
@@ -457,8 +457,8 @@ class TestUserCentricConstraints:
             )
         )
         assert (
-            next(p for p in cfg.phases if p.name == "profiling").requests
-            == next(p for p in cfg.phases if p.name == "profiling").users
+            next(p for p in cfg.benchmark.phases if p.name == "profiling").requests
+            == next(p for p in cfg.benchmark.phases if p.name == "profiling").users
         )
 
 
@@ -484,7 +484,7 @@ class TestDatasetReferences:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").dataset == "main"
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").dataset == "main"
 
     def test_invalid_dataset_reference_raises(self) -> None:
         with pytest.raises(ValidationError, match="undefined dataset.*missing"):
@@ -505,7 +505,7 @@ class TestDatasetReferences:
     def test_none_dataset_reference_passes(self) -> None:
         """Phase without explicit dataset falls back to first dataset."""
         cfg = BenchmarkConfig(**_base_config())
-        assert next(p for p in cfg.phases if p.name == "profiling").dataset is None
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").dataset is None
 
     def test_multiple_phases_different_datasets_passes(self) -> None:
         cfg = BenchmarkConfig(
@@ -543,8 +543,8 @@ class TestDatasetReferences:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "warmup").dataset == "train"
-        assert next(p for p in cfg.phases if p.name == "profiling").dataset == "eval"
+        assert next(p for p in cfg.benchmark.phases if p.name == "warmup").dataset == "train"
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").dataset == "eval"
 
     def test_one_valid_one_invalid_reference_raises(self) -> None:
         with pytest.raises(ValidationError, match="undefined dataset.*bad"):
@@ -673,7 +673,7 @@ class TestDurationSpec:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").duration == 300.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration == 300.0
 
 
 # ============================================================
@@ -698,8 +698,8 @@ class TestGracePeriodRequiresDuration:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").grace_period == 10.0
-        assert next(p for p in cfg.phases if p.name == "profiling").duration == 60.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").grace_period == 10.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration == 60.0
 
     def test_grace_period_without_duration_raises(self) -> None:
         with pytest.raises(ValidationError, match="duration"):
@@ -730,8 +730,8 @@ class TestGracePeriodRequiresDuration:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").grace_period is None
-        assert next(p for p in cfg.phases if p.name == "profiling").duration is None
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").grace_period is None
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration is None
 
     def test_grace_period_with_duration_string_passes(self) -> None:
         """Both grace_period and duration accept DurationSpec strings."""
@@ -748,8 +748,8 @@ class TestGracePeriodRequiresDuration:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").duration == 300.0
-        assert next(p for p in cfg.phases if p.name == "profiling").grace_period == 30.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").duration == 300.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").grace_period == 30.0
 
     def test_zero_grace_period_with_duration_passes(self) -> None:
         cfg = BenchmarkConfig(
@@ -765,7 +765,7 @@ class TestGracePeriodRequiresDuration:
                 ],
             )
         )
-        assert next(p for p in cfg.phases if p.name == "profiling").grace_period == 0.0
+        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").grace_period == 0.0
 
 
 # ============================================================

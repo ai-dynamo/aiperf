@@ -304,11 +304,11 @@ class TestSubprocessManagerSpawn:
         self, subprocess_manager: SubprocessManager, mock_process_factory
     ) -> None:
         """Local worker launches start a real group-manager boundary before children."""
-        subprocess_manager.run.cfg.runtime.service_run_type = (
+        subprocess_manager.run.cfg.benchmark.runtime.service_run_type = (
             ServiceRunType.MULTIPROCESSING
         )
-        subprocess_manager.run.cfg.runtime.workers = 4
-        subprocess_manager.run.cfg.runtime.record_processors = 2
+        subprocess_manager.run.cfg.benchmark.runtime.workers = 4
+        subprocess_manager.run.cfg.benchmark.runtime.record_processors = 2
         group_process = mock_process_factory(pid=60001)
         worker_process = mock_process_factory(pid=60002)
         mock_ctx = MagicMock()
@@ -335,12 +335,12 @@ class TestSubprocessManagerSpawn:
         self, subprocess_manager: SubprocessManager
     ) -> None:
         """Local group-manager adapter exposes both worker and record-processor capacity."""
-        subprocess_manager.run.cfg.runtime.service_run_type = (
+        subprocess_manager.run.cfg.benchmark.runtime.service_run_type = (
             ServiceRunType.MULTIPROCESSING
         )
-        subprocess_manager.run.cfg.runtime.workers = 5
-        subprocess_manager.run.cfg.runtime.record_processors = 3
-        for phase in subprocess_manager.run.cfg.phases:
+        subprocess_manager.run.cfg.benchmark.runtime.workers = 5
+        subprocess_manager.run.cfg.benchmark.runtime.record_processors = 3
+        for phase in subprocess_manager.run.cfg.benchmark.phases:
             phase.concurrency = None
         mock_process = MagicMock(spec=Process)
         mock_process.pid = 60002
@@ -370,12 +370,12 @@ class TestSubprocessManagerSpawn:
         self, subprocess_manager: SubprocessManager, mock_process_factory
     ) -> None:
         """Local runtime launches should pass the adapter contract into WorkerGroupManager."""
-        subprocess_manager.run.cfg.runtime.service_run_type = (
+        subprocess_manager.run.cfg.benchmark.runtime.service_run_type = (
             ServiceRunType.MULTIPROCESSING
         )
-        subprocess_manager.run.cfg.runtime.workers = 5
-        subprocess_manager.run.cfg.runtime.record_processors = 3
-        for phase in subprocess_manager.run.cfg.phases:
+        subprocess_manager.run.cfg.benchmark.runtime.workers = 5
+        subprocess_manager.run.cfg.benchmark.runtime.record_processors = 3
+        for phase in subprocess_manager.run.cfg.benchmark.phases:
             phase.concurrency = None
         group_process = mock_process_factory(pid=60003)
         worker_process = mock_process_factory(pid=60004)

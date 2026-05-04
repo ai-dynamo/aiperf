@@ -29,8 +29,8 @@ def test_datasets_accepts_list_with_name_field():
             {"name": "eval", "type": "synthetic", "prompts": {"isl": {"mean": 64}}},
         ]
     )
-    assert isinstance(cfg.datasets, list)
-    assert [d.name for d in cfg.datasets] == ["main", "eval"]
+    assert isinstance(cfg.benchmark.datasets, list)
+    assert [d.name for d in cfg.benchmark.datasets] == ["main", "eval"]
 
 
 def test_datasets_preserves_input_order():
@@ -41,8 +41,8 @@ def test_datasets_preserves_input_order():
         ]
     )
     # Insertion order — alphabetization would invert these.
-    assert cfg.datasets[0].name == "zebra"
-    assert cfg.datasets[1].name == "alpha"
+    assert cfg.benchmark.datasets[0].name == "zebra"
+    assert cfg.benchmark.datasets[1].name == "alpha"
 
 
 def test_datasets_default_dataset_is_first_in_list():
@@ -100,7 +100,7 @@ def test_phase_dataset_reference_resolves_by_name():
             ],
         }
     )
-    assert cfg.phases[0].dataset == "eval"
+    assert cfg.benchmark.phases[0].dataset == "eval"
 
 
 def test_public_dataset_uses_dataset_field_not_name():
@@ -110,5 +110,5 @@ def test_public_dataset_uses_dataset_field_not_name():
             {"name": "my_public", "type": "public", "dataset": "sharegpt"},
         ]
     )
-    assert cfg.datasets[0].name == "my_public"
-    assert cfg.datasets[0].dataset == "sharegpt"
+    assert cfg.benchmark.datasets[0].name == "my_public"
+    assert cfg.benchmark.datasets[0].dataset == "sharegpt"

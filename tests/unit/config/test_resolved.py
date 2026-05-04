@@ -15,13 +15,13 @@ from aiperf.common.models.dataset_models import (
     Turn,
     TurnMetadata,
 )
-from aiperf.config.dataset import (
+from aiperf.config.benchmark.dataset import (
     ComposedDataset,
     FileDataset,
     PublicDataset,
     SyntheticDataset,
 )
-from aiperf.config.phases import (
+from aiperf.config.benchmark.phases import (
     ConcurrencyPhase,
     FixedSchedulePhase,
     UserCentricPhase,

@@ -132,7 +132,7 @@ class TestConsoleExportToFile:
 
     @pytest.mark.asyncio
     async def test_writes_txt_file(self, sample_records, config, tmp_path):
-        config.artifacts.dir = tmp_path
+        config.benchmark.artifacts.dir = tmp_path
 
         mock_instance = MagicMock()
 
@@ -176,7 +176,7 @@ class TestConsoleExportToFile:
 
     @pytest.mark.asyncio
     async def test_file_write_failure_does_not_crash(self, sample_records, config):
-        config.artifacts.dir = Path("/nonexistent/path/that/should/fail")
+        config.benchmark.artifacts.dir = Path("/nonexistent/path/that/should/fail")
 
         mock_instance = MagicMock()
         mock_instance.export = AsyncMock()
@@ -207,7 +207,7 @@ class TestConsoleExportToFile:
         self, sample_records, config, tmp_path
     ):
         """Non-tty live console and the .txt recording both render at 160 cols."""
-        config.artifacts.dir = tmp_path
+        config.benchmark.artifacts.dir = tmp_path
 
         captured_widths: list[int] = []
 

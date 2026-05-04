@@ -79,7 +79,7 @@ def test_ask_returns_cfg_and_variation():
     assert 1 <= proposed <= 100
     assert isinstance(proposed, int)  # int dim → integer
     # The mutated cfg must reflect the proposed value.
-    profiling = next(p for p in cfg.phases if p.name == "profiling")
+    profiling = next(p for p in cfg.benchmark.phases if p.name == "profiling")
     assert profiling.concurrency == proposed
 
 

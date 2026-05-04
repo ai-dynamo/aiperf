@@ -441,9 +441,9 @@ class TestKubernetesMode:
         config.benchmark.runtime.api_port = 9090
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
-            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+            controller.run.cfg.benchmark.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
-        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        keep_api_running = is_k8s_mode and controller.run.cfg.benchmark.runtime.api_port
         assert keep_api_running
 
     def test_keep_api_running_false_in_local_mode(
@@ -455,9 +455,9 @@ class TestKubernetesMode:
         config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
-            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+            controller.run.cfg.benchmark.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
-        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        keep_api_running = is_k8s_mode and controller.run.cfg.benchmark.runtime.api_port
         assert not keep_api_running
 
     def test_keep_api_running_false_in_kubernetes_without_api_port(
@@ -470,9 +470,9 @@ class TestKubernetesMode:
         config.benchmark.runtime.api_port = None
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
-            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+            controller.run.cfg.benchmark.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
-        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        keep_api_running = is_k8s_mode and controller.run.cfg.benchmark.runtime.api_port
         assert not keep_api_running
 
     @pytest.mark.asyncio

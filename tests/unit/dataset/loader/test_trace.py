@@ -39,7 +39,7 @@ def _make_file_config(
     if synthesis is not None:
         dataset["synthesis"] = synthesis
     return AIPerfConfig(
-        **{
+        benchmark={
             **_BASE,
             "datasets": [{"name": "default", **dataset}],
             **({"phases": phases} if phases else {}),

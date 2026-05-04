@@ -88,18 +88,18 @@ class TestMetricsJsonExporter:
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -123,7 +123,7 @@ class TestMetricsJsonExporter:
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             mock_results = type(
                 "MockResults",
@@ -140,7 +140,7 @@ class TestMetricsJsonExporter:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -155,11 +155,11 @@ class TestMetricsJsonExporter:
         """Verify uses base class export() method."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -180,11 +180,11 @@ class TestMetricsJsonExporter:
         """Verify _generate_content() uses instance data members."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -202,11 +202,11 @@ class TestMetricsJsonExporter:
         """Verify _generate_content() uses self._telemetry_results."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=sample_telemetry_results,
             )
 
@@ -226,11 +226,11 @@ class TestMetricsJsonExporter:
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -247,7 +247,7 @@ class TestMetricsJsonExporter:
                 mock_generate.assert_called_once()
 
                 # Verify file contains the returned content
-                expected_file = mock_user_config.artifacts.profile_export_json_file
+                expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
                 with open(expected_file) as f:
                     actual_content = f.read()
 
@@ -264,18 +264,18 @@ class TestMetricsJsonExporterTelemetry:
         """Test that JSON export includes telemetry_data field."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=sample_telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -307,18 +307,18 @@ class TestMetricsJsonExporterTelemetry:
         """Test that JSON export works when telemetry_results is None."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -334,18 +334,18 @@ class TestMetricsJsonExporterTelemetry:
         """Test that JSON telemetry data has correct structure with metrics."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=sample_telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -380,7 +380,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test that telemetry export handles missing metrics gracefully."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             # Create TelemetryExportData with GPU that has no metrics (empty dict)
             telemetry_results = TelemetryExportData(
@@ -407,7 +407,7 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
@@ -415,7 +415,7 @@ class TestMetricsJsonExporterTelemetry:
             # Should not raise exception despite missing metrics
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -431,7 +431,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test JSON export when metric values are None."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             # Create TelemetryExportData with metrics that have None values
             telemetry_results = TelemetryExportData(
@@ -470,14 +470,14 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -491,7 +491,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test JSON export with empty telemetry hierarchy."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             # Empty TelemetryExportData - no endpoints
             telemetry_results = TelemetryExportData(
@@ -506,14 +506,14 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -529,7 +529,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test that endpoint URLs are normalized in JSON output."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             # TelemetryExportData already has normalized endpoint keys
             # (normalization happens during conversion from TelemetryResults)
@@ -565,14 +565,14 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -587,7 +587,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test JSON export with multiple DCGM endpoints."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             # Create TelemetryExportData with two endpoints
             telemetry_results = TelemetryExportData(
@@ -647,14 +647,14 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -674,7 +674,7 @@ class TestMetricsJsonExporterTelemetry:
         """Test JSON export includes hostname metadata."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            mock_user_config.artifacts.dir = output_dir
+            mock_user_config.benchmark.artifacts.dir = output_dir
 
             telemetry_results = TelemetryExportData(
                 summary=TelemetrySummary(
@@ -708,14 +708,14 @@ class TestMetricsJsonExporterTelemetry:
 
             exporter_config = ExporterConfig(
                 results=mock_results,
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=telemetry_results,
             )
 
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.artifacts.profile_export_json_file
+            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
             with open(expected_file) as f:
                 data = json.load(f)
 
