@@ -149,7 +149,10 @@ class TestApplyOverrides:
 
     def test_model_override_singular(self) -> None:
         content = load_template_content("minimal")  # uses model: (singular)
-        result = apply_overrides(content, {"model": "new/model"})
+        # The minimal template now nests model: under benchmark: (envelope shape).
+        # apply_overrides walks the dict; the override key path mirrors the
+        # template's actual placement.
+        result = apply_overrides(content, {"benchmark": {"model": "new/model"}})
         assert "new/model" in result
         assert "meta-llama" not in result
 
