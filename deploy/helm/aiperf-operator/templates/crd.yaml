@@ -95,539 +95,547 @@ spec:
                   single-phase dict, top-level warmup/profiling) are accepted at marked
                   boundaries and normalized by the operator before validation.
                 properties:
-                  models:
-                    x-kubernetes-preserve-unknown-fields: true
-                    description: Model configuration. Accepts a single model name string, a list of model names, or an advanced
-                      configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.
-                  model:
-                    description: Shorthand sibling for `models`. Accepts a string, list of strings, or ModelsAdvanced object.
-                      Hoisted into `models` by the before-validator and not present after validation.
-                    x-kubernetes-preserve-unknown-fields: true
-                  endpoint:
+                  benchmark:
                     type: object
-                    description: Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication,
-                      timeout, and connection settings.
+                    description: Benchmark workload (the swept body).
                     properties:
-                      urls:
+                      models:
                         x-kubernetes-preserve-unknown-fields: true
-                        description: 'List of server URLs to benchmark. Requests distributed according to url_strategy. Example:
-                          [''http://localhost:8000/v1/chat/completions'']'
-                      urlStrategy:
-                        type: string
-                        enum:
-                        - round_robin
-                        description: Strategy for distributing requests across multiple URLs. round_robin cycles through URLs
-                          in order.
-                      type:
-                        type: string
-                        enum:
-                        - chat
-                        - cohere_rankings
-                        - completions
-                        - responses
-                        - chat_embeddings
-                        - embeddings
-                        - hf_tei_rankings
-                        - huggingface_generate
-                        - image_generation
-                        - video_generation
-                        - image_retrieval
-                        - nim_embeddings
-                        - nim_rankings
-                        - solido_rag
-                        - template
-                        description: 'API endpoint type determining request/response format. chat: OpenAI chat completions,
-                          completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom
-                          format.'
-                      path:
-                        type: string
-                        description: 'Override default endpoint path. Use for servers with non-standard API paths. Example:
-                          ''/custom/v2/generate'''
-                      apiKey:
-                        type: string
-                        description: 'API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}.
-                          Can also use ${VAR:default} syntax for defaults.'
-                      timeout:
-                        type: number
-                        description: Request timeout in seconds (0 = no timeout). Requests exceeding this duration are marked
-                          as failed. Should exceed expected max response time.
-                        default: 600.0
-                        minimum: 0.0
-                      readyCheckTimeout:
-                        type: number
-                        description: Seconds to wait for endpoint readiness before benchmarking (0 = skip). Probes every URL
-                          x model name; see ready_check_mode for how the probe is performed.
-                        default: 0.0
-                        minimum: 0.0
-                      readyCheckMode:
-                        type: string
-                        description: 'How ready_check_timeout probes the endpoint. ''models'': GET /v1/models and check data[].id
-                          (cheap, matches PR #841 behavior; falls back to a plain base-URL GET if /v1/models returns 404).
-                          ''inference'': POST a canned 1-token inference (strongest signal — proves weights are loaded and
-                          a forward pass works). ''both'': run models first, then inference, on each URL.'
-                        enum:
-                        - models
-                        - inference
-                        - both
-                        default: inference
-                      readyCheckInterval:
-                        type: number
-                        description: Seconds between readiness probe attempts.
-                        default: 5.0
-                        exclusiveMinimum: true
-                        minimum: 0.0
-                      streaming:
-                        type: boolean
-                        description: Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to
-                          first token) measurement. Server must support streaming for this to work.
-                        default: false
-                      transport:
-                        type: string
-                        enum:
-                        - http
-                        - http2
-                        description: HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over the
-                          URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting overrides
-                          auto-detection.
-                      connectionReuse:
-                        type: string
-                        description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
-                          new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per
-                          user session.'
-                        enum:
-                        - pooled
-                        - never
-                        - sticky-user-sessions
-                      useLegacyMaxTokens:
-                        type: boolean
-                        description: Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility with
-                          older OpenAI API versions.
-                        default: false
-                      useServerTokenCount:
-                        type: boolean
-                        description: Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens
-                          and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.
-                        default: false
-                      template:
+                        description: Model configuration. Accepts a single model name string, a list of model names, or an
+                          advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.
+                      model:
+                        description: Shorthand sibling for `models`. Accepts a string, list of strings, or ModelsAdvanced
+                          object. Hoisted into `models` by the before-validator and not present after validation.
+                        x-kubernetes-preserve-unknown-fields: true
+                      endpoint:
                         type: object
-                        description: |-
-                          Configuration for custom template-based endpoints.
-
-                          When endpoint type is "template", this configures how requests
-                          are formatted and responses are parsed.
+                        description: Endpoint configuration for connecting to inference server(s). Includes URLs, API type,
+                          authentication, timeout, and connection settings.
                         properties:
-                          body:
+                          urls:
+                            x-kubernetes-preserve-unknown-fields: true
+                            description: 'List of server URLs to benchmark. Requests distributed according to url_strategy.
+                              Example: [''http://localhost:8000/v1/chat/completions'']'
+                          urlStrategy:
                             type: string
-                            description: 'Jinja2 template string for request body. Variables: {{ "{{" }}prompt{{ "}}" }}, {{ "{{" }}max_tokens{{ "}}" }},
-                              {{ "{{" }}model{{ "}}" }}, {{ "{{" }}messages{{ "}}" }}, etc.'
-                          responseField:
+                            enum:
+                            - round_robin
+                            description: Strategy for distributing requests across multiple URLs. round_robin cycles through
+                              URLs in order.
+                          type:
                             type: string
-                            description: 'JSON path to extract response text from API response. Use dot notation for nested
-                              fields: ''choices.0.message.content''.'
-                            default: text
+                            enum:
+                            - chat
+                            - cohere_rankings
+                            - completions
+                            - responses
+                            - chat_embeddings
+                            - embeddings
+                            - hf_tei_rankings
+                            - huggingface_generate
+                            - image_generation
+                            - video_generation
+                            - image_retrieval
+                            - nim_embeddings
+                            - nim_rankings
+                            - solido_rag
+                            - template
+                            description: 'API endpoint type determining request/response format. chat: OpenAI chat completions,
+                              completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template:
+                              custom format.'
+                          path:
+                            type: string
+                            description: 'Override default endpoint path. Use for servers with non-standard API paths. Example:
+                              ''/custom/v2/generate'''
+                          apiKey:
+                            type: string
+                            description: 'API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}.
+                              Can also use ${VAR:default} syntax for defaults.'
+                          timeout:
+                            type: number
+                            description: Request timeout in seconds (0 = no timeout). Requests exceeding this duration are
+                              marked as failed. Should exceed expected max response time.
+                            default: 600.0
+                            minimum: 0.0
+                          readyCheckTimeout:
+                            type: number
+                            description: Seconds to wait for endpoint readiness before benchmarking (0 = skip). Probes every
+                              URL x model name; see ready_check_mode for how the probe is performed.
+                            default: 0.0
+                            minimum: 0.0
+                          readyCheckMode:
+                            type: string
+                            description: 'How ready_check_timeout probes the endpoint. ''models'': GET /v1/models and check
+                              data[].id (cheap, matches PR #841 behavior; falls back to a plain base-URL GET if /v1/models
+                              returns 404). ''inference'': POST a canned 1-token inference (strongest signal — proves weights
+                              are loaded and a forward pass works). ''both'': run models first, then inference, on each URL.'
+                            enum:
+                            - models
+                            - inference
+                            - both
+                            default: inference
+                          readyCheckInterval:
+                            type: number
+                            description: Seconds between readiness probe attempts.
+                            default: 5.0
+                            exclusiveMinimum: true
+                            minimum: 0.0
+                          streaming:
+                            type: boolean
+                            description: Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time
+                              to first token) measurement. Server must support streaming for this to work.
+                            default: false
+                          transport:
+                            type: string
+                            enum:
+                            - http
+                            - http2
+                            description: HTTP transport version. 'http' for HTTP/1.1, 'http2' for HTTP/2. Both are used over
+                              the URL's scheme (http:// or https://). Auto-detected from URL when unset; explicit setting
+                              overrides auto-detection.
+                          connectionReuse:
+                            type: string
+                            description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
+                              new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection
+                              per user session.'
+                            enum:
+                            - pooled
+                            - never
+                            - sticky-user-sessions
+                          useLegacyMaxTokens:
+                            type: boolean
+                            description: Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility
+                              with older OpenAI API versions.
+                            default: false
+                          useServerTokenCount:
+                            type: boolean
+                            description: Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens
+                              and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.
+                            default: false
+                          template:
+                            type: object
+                            description: |-
+                              Configuration for custom template-based endpoints.
+
+                              When endpoint type is "template", this configures how requests
+                              are formatted and responses are parsed.
+                            properties:
+                              body:
+                                type: string
+                                description: 'Jinja2 template string for request body. Variables: {{ "{{" }}prompt{{ "}}" }}, {{ "{{" }}max_tokens{{ "}}" }},
+                                  {{ "{{" }}model{{ "}}" }}, {{ "{{" }}messages{{ "}}" }}, etc.'
+                              responseField:
+                                type: string
+                                description: 'JSON path to extract response text from API response. Use dot notation for nested
+                                  fields: ''choices.0.message.content''.'
+                                default: text
+                            required:
+                            - body
+                          headers:
+                            type: object
+                            description: Custom HTTP headers to include in all requests. Useful for authentication, tracing,
+                              or routing. Values support environment variable substitution.
+                            additionalProperties:
+                              type: string
+                          extra:
+                            type: object
+                            description: 'Additional fields to include in request body. Merged into every request. Common
+                              fields: temperature, top_p, top_k, stop.'
+                            x-kubernetes-preserve-unknown-fields: true
+                          downloadVideoContent:
+                            type: boolean
+                            description: For video generation endpoints, download the video content after generation completes.
+                              Adds a content download step to the async polling flow.
+                            default: false
+                          requestContentType:
+                            type: string
+                            description: Content type for HTTP request body serialization.
+                            enum:
+                            - application/json
+                            - multipart/form-data
                         required:
-                        - body
-                      headers:
-                        type: object
-                        description: Custom HTTP headers to include in all requests. Useful for authentication, tracing, or
-                          routing. Values support environment variable substitution.
-                        additionalProperties:
-                          type: string
-                      extra:
-                        type: object
-                        description: 'Additional fields to include in request body. Merged into every request. Common fields:
-                          temperature, top_p, top_k, stop.'
-                        x-kubernetes-preserve-unknown-fields: true
-                      downloadVideoContent:
-                        type: boolean
-                        description: For video generation endpoints, download the video content after generation completes.
-                          Adds a content download step to the async polling flow.
-                        default: false
-                      requestContentType:
-                        type: string
-                        description: Content type for HTTP request body serialization.
-                        enum:
-                        - application/json
-                        - multipart/form-data
-                    required:
-                    - urls
-                    x-kubernetes-validations:
-                    - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
-                      message: endpoint.template is required when endpoint.type='template'
-                    - rule: '!has(self.template) || (has(self.type) && self.type == ''template'')'
-                      message: endpoint.template is only used when endpoint.type='template'
-                    - rule: '!has(self.requestContentType) || self.requestContentType != ''multipart/form-data'' || (has(self.type)
-                        && self.type == ''video_generation'')'
-                      message: requestContentType='multipart/form-data' is only supported on endpoint.type='video_generation'
-                        today
-                    - rule: '!has(self.path) || self.path.startsWith(''/'')'
-                      message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
-                  datasets:
-                    type: array
-                    description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
-                      Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the
-                      list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry
-                      list with name='default'.
-                    items:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    minItems: 1
-                  dataset:
-                    description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into `datasets`
-                      as a one-entry list with name='default' by the before-validator and not present after validation.
-                    x-kubernetes-preserve-unknown-fields: true
-                  phases:
-                    type: array
-                    description: 'Ordered benchmark phases. Each entry must have a unique ''name'' (e.g. ''warmup'', ''profiling'').
-                      Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({''type'':
-                      ''concurrency'', ...}) is normalized to a list of one. Top-level ''warmup:''/''profiling:'' shorthand
-                      is normalized to a [warmup, profiling] list pre-validation.'
-                    items:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    minItems: 1
-                  warmup:
-                    description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as the
-                      warmup entry by the before-validator and not present after validation. Mutually exclusive with `phases`;
-                      requires `profiling` alongside it.
-                    x-kubernetes-preserve-unknown-fields: true
-                  profiling:
-                    description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as the
-                      profiling entry by the before-validator and not present after validation. Mutually exclusive with `phases`.
-                    x-kubernetes-preserve-unknown-fields: true
-                  artifacts:
-                    type: object
-                    description: Artifacts configuration for benchmark output. Controls output directory and export formats.
-                    properties:
-                      dir:
-                        type: string
-                        description: Output directory for all benchmark artifacts. Created if it doesn't exist.
-                        default: artifacts
-                      prefix:
-                        type: string
-                        description: 'Filename prefix for all exported files. Example: ''my_run'' produces ''my_run_summary.json'',
-                          ''my_run_records.jsonl''.'
-                        default: aiperf
-                      summary:
-                        x-kubernetes-preserve-unknown-fields: true
-                        description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
-                      records:
-                        x-kubernetes-preserve-unknown-fields: true
-                        description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
-                      raw:
-                        type: boolean
-                        description: Export raw request/response payloads as JSONL.
-                        default: false
-                      trace:
-                        type: boolean
-                        description: Export HTTP trace data for debugging.
-                        default: false
-                      perChunkData:
-                        type: boolean
-                        description: Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports.
-                          These arrays contain one timing value per SSE chunk and can be very large for long responses.
-                        default: false
-                      sliceDuration:
-                        type: number
-                        description: 'Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into
-                          windows for per-window statistics. Supports: 30, ''30s'', ''5m'', ''2h''.'
-                      showTraceTiming:
-                        type: boolean
-                        description: 'Display HTTP trace timing metrics in console output. Shows detailed timing breakdown:
-                          blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.'
-                        default: false
-                      cliCommand:
-                        type: string
-                        description: CLI command used to run the benchmark, recorded in artifacts for reproducibility. [auto-populated
-                          by the CLI runner; do not set in a CR spec — any user value is overwritten.]
-                      benchmarkId:
-                        type: string
-                        description: Unique identifier for this benchmark run, used to correlate artifacts across export formats.
-                          [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]
-                      userFiles:
+                        - urls
+                        x-kubernetes-validations:
+                        - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
+                          message: endpoint.template is required when endpoint.type='template'
+                        - rule: '!has(self.template) || (has(self.type) && self.type == ''template'')'
+                          message: endpoint.template is only used when endpoint.type='template'
+                        - rule: '!has(self.requestContentType) || self.requestContentType != ''multipart/form-data'' || (has(self.type)
+                            && self.type == ''video_generation'')'
+                          message: requestContentType='multipart/form-data' is only supported on endpoint.type='video_generation'
+                            today
+                        - rule: '!has(self.path) || self.path.startsWith(''/'')'
+                          message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
+                      datasets:
                         type: array
-                        description: User-defined templated files materialized into the run directory before the benchmark
-                          begins. See docs/kubernetes/user-files.md.
+                        description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
+                          Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset
+                          in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized
+                          to a one-entry list with name='default'.
                         items:
                           type: object
-                          description: |-
-                            One user-declared output file rendered into the run directory before benchmark start.
-
-                            Path is relative to the run directory; subdirectories are allowed; absolute
-                            paths and any segment equal to '..' are rejected. Content is rendered with
-                            jinja2 against a documented context (variables: + system-injected names);
-                            see docs/kubernetes/user-files.md.
-                          properties:
-                            path:
-                              type: string
-                              description: Output path relative to the run directory. Subdirectories allowed. Absolute paths
-                                and any segment equal to '..' are rejected.
-                            format:
-                              type: string
-                              enum:
-                              - json
-                              - yaml
-                              - text
-                              description: 'Serialization format. If omitted: ''text'' when content is a string, ''json''
-                                otherwise.'
-                            content:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                              description: Templated value. Structured (dict/list/scalar) for json/yaml; string for text.
-                                Jinja2 expressions in any string leaf are rendered with the user_files context.
-                          required:
-                          - path
-                          - content
-                      steadyState:
+                          x-kubernetes-preserve-unknown-fields: true
+                        minItems: 1
+                      dataset:
+                        description: Shorthand sibling for `datasets`. Accepts a single dataset config (dict). Hoisted into
+                          `datasets` as a one-entry list with name='default' by the before-validator and not present after
+                          validation.
+                        x-kubernetes-preserve-unknown-fields: true
+                      phases:
+                        type: array
+                        description: 'Ordered benchmark phases. Each entry must have a unique ''name'' (e.g. ''warmup'', ''profiling'').
+                          Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({''type'':
+                          ''concurrency'', ...}) is normalized to a list of one. Top-level ''warmup:''/''profiling:'' shorthand
+                          is normalized to a [warmup, profiling] list pre-validation.'
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        minItems: 1
+                      warmup:
+                        description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as
+                          the warmup entry by the before-validator and not present after validation. Mutually exclusive with
+                          `phases`; requires `profiling` alongside it.
+                        x-kubernetes-preserve-unknown-fields: true
+                      profiling:
+                        description: Shorthand sibling for `phases`. Accepts a phase config dict; rolled into `phases` as
+                          the profiling entry by the before-validator and not present after validation. Mutually exclusive
+                          with `phases`.
+                        x-kubernetes-preserve-unknown-fields: true
+                      artifacts:
                         type: object
-                        description: Steady-state detection and windowed metric computation. When enabled, AIPerf detects
-                          the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and
-                          ramp-down periods.
+                        description: Artifacts configuration for benchmark output. Controls output directory and export formats.
                         properties:
-                          enabled:
+                          dir:
+                            type: string
+                            description: Output directory for all benchmark artifacts. Created if it doesn't exist.
+                            default: artifacts
+                          prefix:
+                            type: string
+                            description: 'Filename prefix for all exported files. Example: ''my_run'' produces ''my_run_summary.json'',
+                              ''my_run_records.jsonl''.'
+                            default: aiperf
+                          summary:
+                            x-kubernetes-preserve-unknown-fields: true
+                            description: 'Summary export formats. Options: json, yaml. Set to false to disable.'
+                          records:
+                            x-kubernetes-preserve-unknown-fields: true
+                            description: 'Per-request records export formats. Options: jsonl, csv. Set to false to disable.'
+                          raw:
                             type: boolean
-                            description: Enable steady-state metric computation. When enabled, AIPerf detects the steady-state
-                              region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+                            description: Export raw request/response payloads as JSONL.
                             default: false
-                          startPct:
+                          trace:
+                            type: boolean
+                            description: Export HTTP trace data for debugging.
+                            default: false
+                          perChunkData:
+                            type: boolean
+                            description: Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports.
+                              These arrays contain one timing value per SSE chunk and can be very large for long responses.
+                            default: false
+                          sliceDuration:
                             type: number
-                            minimum: 0.0
-                            exclusiveMaximum: true
-                            maximum: 100.0
-                            description: 'Manual override: start of steady-state window as a percentage of total benchmark
-                              duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.'
-                          endPct:
-                            type: number
-                            maximum: 100.0
-                            exclusiveMinimum: true
-                            minimum: 0.0
-                            description: 'Manual override: end of steady-state window as a percentage of total benchmark duration.
-                              Must be used together with --steady-state-start-pct. Overrides automatic detection.'
-                          minWindowPct:
-                            type: number
-                            description: Minimum steady-state window size as a percentage of total benchmark duration. If
-                              the detected window is smaller than this, AIPerf falls back to the full duration.
-                            default: 10.0
-                            maximum: 100.0
-                            exclusiveMinimum: true
-                            minimum: 0.0
-                          bootstrapIterations:
-                            type: integer
-                            exclusiveMinimum: true
-                            minimum: 0
-                            description: Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+
-                              to enable. Increases summarize time proportionally.
-                    x-kubernetes-validations:
-                    - rule: '!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId'
-                      message: artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already keyed
-                        by the old id
-                  slos:
-                    type: object
-                    additionalProperties:
-                      type: number
-                    description: SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to threshold
-                      values. A request is counted as good only if it meets ALL specified thresholds.
-                  tokenizer:
-                    type: object
-                    description: |-
-                      Tokenizer configuration for token counting and prompt generation.
+                            description: 'Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark
+                              into windows for per-window statistics. Supports: 30, ''30s'', ''5m'', ''2h''.'
+                          showTraceTiming:
+                            type: boolean
+                            description: 'Display HTTP trace timing metrics in console output. Shows detailed timing breakdown:
+                              blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.'
+                            default: false
+                          cliCommand:
+                            type: string
+                            description: CLI command used to run the benchmark, recorded in artifacts for reproducibility.
+                              [auto-populated by the CLI runner; do not set in a CR spec — any user value is overwritten.]
+                          benchmarkId:
+                            type: string
+                            description: Unique identifier for this benchmark run, used to correlate artifacts across export
+                              formats. [auto-generated; do not set in a CR spec unless you have a specific reason to override
+                              the UUID.]
+                          userFiles:
+                            type: array
+                            description: User-defined templated files materialized into the run directory before the benchmark
+                              begins. See docs/kubernetes/user-files.md.
+                            items:
+                              type: object
+                              description: |-
+                                One user-declared output file rendered into the run directory before benchmark start.
 
-                      AIPerf uses a HuggingFace tokenizer for accurate token counting,
-                      which is essential for ISL/OSL enforcement and metrics calculation.
-                    properties:
-                      name:
-                        type: string
-                        description: 'HuggingFace tokenizer identifier, local filesystem path, or `builtin` for a zero-network-access
-                          tokenizer backed by tiktoken (o200k_base encoding). Should match the model''s tokenizer for accurate
-                          token counts. Example: ''meta-llama/Llama-3.1-8B-Instruct'''
-                      revision:
-                        type: string
-                        description: 'Model revision to use: branch name, tag, or commit hash. Use for version pinning to
-                          ensure reproducibility.'
-                        default: main
-                      trustRemoteCode:
-                        type: boolean
-                        description: Allow execution of custom tokenizer code from the repository. Required for some models
-                          but poses security risk. Only enable for trusted sources.
-                        default: false
-                      resolvedNames:
+                                Path is relative to the run directory; subdirectories are allowed; absolute
+                                paths and any segment equal to '..' are rejected. Content is rendered with
+                                jinja2 against a documented context (variables: + system-injected names);
+                                see docs/kubernetes/user-files.md.
+                              properties:
+                                path:
+                                  type: string
+                                  description: Output path relative to the run directory. Subdirectories allowed. Absolute
+                                    paths and any segment equal to '..' are rejected.
+                                format:
+                                  type: string
+                                  enum:
+                                  - json
+                                  - yaml
+                                  - text
+                                  description: 'Serialization format. If omitted: ''text'' when content is a string, ''json''
+                                    otherwise.'
+                                content:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  description: Templated value. Structured (dict/list/scalar) for json/yaml; string for text.
+                                    Jinja2 expressions in any string leaf are rendered with the user_files context.
+                              required:
+                              - path
+                              - content
+                          steadyState:
+                            type: object
+                            description: Steady-state detection and windowed metric computation. When enabled, AIPerf detects
+                              the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up
+                              and ramp-down periods.
+                            properties:
+                              enabled:
+                                type: boolean
+                                description: Enable steady-state metric computation. When enabled, AIPerf detects the steady-state
+                                  region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down
+                                  periods.
+                                default: false
+                              startPct:
+                                type: number
+                                minimum: 0.0
+                                exclusiveMaximum: true
+                                maximum: 100.0
+                                description: 'Manual override: start of steady-state window as a percentage of total benchmark
+                                  duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.'
+                              endPct:
+                                type: number
+                                maximum: 100.0
+                                exclusiveMinimum: true
+                                minimum: 0.0
+                                description: 'Manual override: end of steady-state window as a percentage of total benchmark
+                                  duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.'
+                              minWindowPct:
+                                type: number
+                                description: Minimum steady-state window size as a percentage of total benchmark duration.
+                                  If the detected window is smaller than this, AIPerf falls back to the full duration.
+                                default: 10.0
+                                maximum: 100.0
+                                exclusiveMinimum: true
+                                minimum: 0.0
+                              bootstrapIterations:
+                                type: integer
+                                exclusiveMinimum: true
+                                minimum: 0
+                                description: Number of bootstrap iterations for confidence intervals on boundaries. Set to
+                                  50+ to enable. Increases summarize time proportionally.
+                        x-kubernetes-validations:
+                        - rule: '!has(oldSelf.benchmarkId) || oldSelf.benchmarkId == self.benchmarkId'
+                          message: artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already
+                            keyed by the old id
+                      slos:
                         type: object
                         additionalProperties:
-                          type: string
-                        description: Pre-resolved tokenizer names from alias resolution. [runtime-only; populated by the CLI
-                          or WorkerGroupManager after tokenizer validation. Excluded from JSON/YAML serialization. Do not
-                          set in a CR spec — any user value is ignored.]
-                  gpuTelemetry:
-                    x-kubernetes-preserve-unknown-fields: true
-                    description: 'GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization,
-                      temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable.'
-                  serverMetrics:
-                    x-kubernetes-preserve-unknown-fields: true
-                    description: 'Server metrics configuration for Prometheus scraping. Collects operational metrics (queue
-                      depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled:
-                      false to disable.'
-                  runtime:
-                    type: object
-                    description: Runtime configuration for worker processes and inter-process communication.
-                    properties:
-                      ui:
-                        type: string
-                        enum:
-                        - dashboard
-                        - none
-                        - simple
-                        description: 'User interface mode. dashboard: rich interactive UI, simple: text progress, none: silent
-                          operation.'
-                      workers:
-                        type: integer
-                        minimum: 1
-                        description: Total worker processes across the deployment (the maximum, ramped up to from `workers_min`).
-                          null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out)
-                          and `workers_min` (lower bound for adaptive ramp).
-                      recordProcessors:
-                        type: integer
-                        minimum: 1
-                        description: Total parallel record processors across the deployment. null = auto-detect based on CPU
-                          cores. Distinct from `record_processors_per_pod` (per-Kubernetes-pod fan-out).
-                      serviceRunType:
-                        type: string
-                        enum:
-                        - kubernetes
-                        - multiprocessing
-                        description: 'Execution mode. multiprocessing: local multi-process (default for `aiperf profile`).
-                          kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces ''kubernetes''
-                          on the controller pod; do not set this in a CR spec.]'
-                      communication:
+                          type: number
+                        description: SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to
+                          threshold values. A request is counted as good only if it meets ALL specified thresholds.
+                      tokenizer:
                         type: object
-                        x-kubernetes-preserve-unknown-fields: true
-                        description: Inter-process communication configuration. Defaults to IPC for single-machine operation.
-                      apiPort:
-                        type: integer
-                        minimum: 1
-                        maximum: 65535
-                        description: AIPerf API server port. Enables HTTP and WebSocket endpoints for real-time metrics and
-                          control.
-                      apiHost:
-                        type: string
-                        description: AIPerf API server host. Requires api_port to be set.
-                      datasetApiBaseUrl:
-                        type: string
-                        description: Base URL the operator injects into worker pods so they can fetch datasets from the controller-pod
-                          sidecar in Kubernetes mode. [operator-managed; do not set in a CR spec.]
-                      workersPerPod:
-                        type: integer
-                        minimum: 1
-                        maximum: 100
-                        description: Worker containers packed into each Kubernetes worker pod (Kubernetes mode only). The
-                          total number of worker containers cluster-wide is `workers` (or auto-detected); this knob controls
-                          how that total is fanned across pods. Ignored in multiprocessing mode.
-                      recordProcessorsPerPod:
-                        type: integer
-                        minimum: 1
-                        maximum: 100
-                        description: Record-processor containers packed into each Kubernetes worker pod (Kubernetes mode only).
-                          Sibling of `workers_per_pod`; controls per-pod fan-out, not the cluster-wide total. Ignored in multiprocessing
-                          mode.
-                      workersMin:
-                        type: integer
-                        minimum: 1
-                        description: Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the upper
-                          bound / target total).
-                    x-kubernetes-validations:
-                    - rule: '!has(self.apiHost) || has(self.apiPort)'
-                      message: runtime.apiHost requires runtime.apiPort to be set
-                    - rule: '!has(self.workersMin) || !has(self.workers) || self.workersMin <= self.workers'
-                      message: runtime.workersMin must be <= runtime.workers
-                  logging:
-                    type: object
-                    description: Logging configuration for verbosity and debug settings.
-                    properties:
-                      level:
-                        type: string
-                        description: Global logging verbosity level (loguru-style severity ladder; TRACE most verbose, CRITICAL
-                          least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and WARNING) and
-                          have no equivalent in the Python stdlib `logging` module — pick INFO/WARNING/ERROR if you want stdlib-compatible
-                          severities.
-                        enum:
-                        - TRACE
-                        - DEBUG
-                        - INFO
-                        - NOTICE
-                        - WARNING
-                        - SUCCESS
-                        - ERROR
-                        - CRITICAL
-                  metrics:
-                    type: object
-                    description: Metrics aggregation configuration for benchmark summaries.
-                  accuracy:
-                    type: object
-                    description: |-
-                      Configuration for accuracy benchmarking mode.
+                        description: |-
+                          Tokenizer configuration for token counting and prompt generation.
 
-                      When benchmark is set, enables accuracy evaluation alongside
-                      performance profiling using standard benchmarks (MMLU, AIME, etc.).
-                    properties:
-                      benchmark:
-                        type: string
-                        enum:
-                        - mmlu
-                        - aime
-                        - hellaswag
-                        - bigbench
-                        - aime24
-                        - aime25
-                        - math_500
-                        - gpqa_diamond
-                        - lcb_codegeneration
-                        description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
-                          profiling. AIME variants: ''aime'' is the legacy combined set (deprecated for new runs); prefer
-                          the year-pinned ''aime24'' or ''aime25'' for reproducibility.'
-                      tasks:
-                        type: array
-                        items:
-                          type: string
-                        description: Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects).
-                          If not set, all tasks are included.
-                      nShots:
-                        type: integer
-                        description: Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum
-                          8.
-                        default: 0
-                        minimum: 0
-                        maximum: 8
-                      enableCot:
-                        type: boolean
-                        description: Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions
-                          to the prompt.
-                        default: false
-                      grader:
-                        type: string
-                        enum:
-                        - exact_match
-                        - math
-                        - multiple_choice
-                        - code_execution
-                        description: Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice,
-                          code_execution). If not set, uses the benchmark's default grader.
-                      systemPrompt:
-                        type: string
-                        description: Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific
-                          system prompt.
-                      verbose:
-                        type: boolean
-                        description: Enable verbose output for accuracy evaluation, showing per-problem grading details.
-                        default: false
-                  randomSeed:
-                    type: integer
-                    description: Global random seed for reproducibility. Can be overridden per-dataset. If not set, uses system
-                      entropy.
-                  variables:
-                    type: object
-                    description: User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load. Preserved
-                      on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve them again at
-                      run time.
-                    x-kubernetes-preserve-unknown-fields: true
+                          AIPerf uses a HuggingFace tokenizer for accurate token counting,
+                          which is essential for ISL/OSL enforcement and metrics calculation.
+                        properties:
+                          name:
+                            type: string
+                            description: 'HuggingFace tokenizer identifier, local filesystem path, or `builtin` for a zero-network-access
+                              tokenizer backed by tiktoken (o200k_base encoding). Should match the model''s tokenizer for
+                              accurate token counts. Example: ''meta-llama/Llama-3.1-8B-Instruct'''
+                          revision:
+                            type: string
+                            description: 'Model revision to use: branch name, tag, or commit hash. Use for version pinning
+                              to ensure reproducibility.'
+                            default: main
+                          trustRemoteCode:
+                            type: boolean
+                            description: Allow execution of custom tokenizer code from the repository. Required for some models
+                              but poses security risk. Only enable for trusted sources.
+                            default: false
+                          resolvedNames:
+                            type: object
+                            additionalProperties:
+                              type: string
+                            description: Pre-resolved tokenizer names from alias resolution. [runtime-only; populated by the
+                              CLI or WorkerGroupManager after tokenizer validation. Excluded from JSON/YAML serialization.
+                              Do not set in a CR spec — any user value is ignored.]
+                      gpuTelemetry:
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: 'GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power,
+                          utilization, temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable.'
+                      serverMetrics:
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: 'Server metrics configuration for Prometheus scraping. Collects operational metrics (queue
+                          depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set
+                          enabled: false to disable.'
+                      runtime:
+                        type: object
+                        description: Runtime configuration for worker processes and inter-process communication.
+                        properties:
+                          ui:
+                            type: string
+                            enum:
+                            - dashboard
+                            - none
+                            - simple
+                            description: 'User interface mode. dashboard: rich interactive UI, simple: text progress, none:
+                              silent operation.'
+                          workers:
+                            type: integer
+                            minimum: 1
+                            description: Total worker processes across the deployment (the maximum, ramped up to from `workers_min`).
+                              null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out)
+                              and `workers_min` (lower bound for adaptive ramp).
+                          recordProcessors:
+                            type: integer
+                            minimum: 1
+                            description: Total parallel record processors across the deployment. null = auto-detect based
+                              on CPU cores. Distinct from `record_processors_per_pod` (per-Kubernetes-pod fan-out).
+                          serviceRunType:
+                            type: string
+                            enum:
+                            - kubernetes
+                            - multiprocessing
+                            description: 'Execution mode. multiprocessing: local multi-process (default for `aiperf profile`).
+                              kubernetes: distributed across pods. [operator-managed under AIPerfJob — the operator forces
+                              ''kubernetes'' on the controller pod; do not set this in a CR spec.]'
+                          communication:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                            description: Inter-process communication configuration. Defaults to IPC for single-machine operation.
+                          apiPort:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                            description: AIPerf API server port. Enables HTTP and WebSocket endpoints for real-time metrics
+                              and control.
+                          apiHost:
+                            type: string
+                            description: AIPerf API server host. Requires api_port to be set.
+                          datasetApiBaseUrl:
+                            type: string
+                            description: Base URL the operator injects into worker pods so they can fetch datasets from the
+                              controller-pod sidecar in Kubernetes mode. [operator-managed; do not set in a CR spec.]
+                          workersPerPod:
+                            type: integer
+                            minimum: 1
+                            maximum: 100
+                            description: Worker containers packed into each Kubernetes worker pod (Kubernetes mode only).
+                              The total number of worker containers cluster-wide is `workers` (or auto-detected); this knob
+                              controls how that total is fanned across pods. Ignored in multiprocessing mode.
+                          recordProcessorsPerPod:
+                            type: integer
+                            minimum: 1
+                            maximum: 100
+                            description: Record-processor containers packed into each Kubernetes worker pod (Kubernetes mode
+                              only). Sibling of `workers_per_pod`; controls per-pod fan-out, not the cluster-wide total. Ignored
+                              in multiprocessing mode.
+                          workersMin:
+                            type: integer
+                            minimum: 1
+                            description: Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the
+                              upper bound / target total).
+                        x-kubernetes-validations:
+                        - rule: '!has(self.apiHost) || has(self.apiPort)'
+                          message: runtime.apiHost requires runtime.apiPort to be set
+                        - rule: '!has(self.workersMin) || !has(self.workers) || self.workersMin <= self.workers'
+                          message: runtime.workersMin must be <= runtime.workers
+                      logging:
+                        type: object
+                        description: Logging configuration for verbosity and debug settings.
+                        properties:
+                          level:
+                            type: string
+                            description: Global logging verbosity level (loguru-style severity ladder; TRACE most verbose,
+                              CRITICAL least). NOTICE and SUCCESS are loguru-specific intermediate levels (between INFO and
+                              WARNING) and have no equivalent in the Python stdlib `logging` module — pick INFO/WARNING/ERROR
+                              if you want stdlib-compatible severities.
+                            enum:
+                            - TRACE
+                            - DEBUG
+                            - INFO
+                            - NOTICE
+                            - WARNING
+                            - SUCCESS
+                            - ERROR
+                            - CRITICAL
+                      metrics:
+                        type: object
+                        description: Metrics aggregation configuration for benchmark summaries.
+                      accuracy:
+                        type: object
+                        description: |-
+                          Configuration for accuracy benchmarking mode.
+
+                          When benchmark is set, enables accuracy evaluation alongside
+                          performance profiling using standard benchmarks (MMLU, AIME, etc.).
+                        properties:
+                          benchmark:
+                            type: string
+                            enum:
+                            - mmlu
+                            - aime
+                            - hellaswag
+                            - bigbench
+                            - aime24
+                            - aime25
+                            - math_500
+                            - gpqa_diamond
+                            - lcb_codegeneration
+                            description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
+                              profiling. AIME variants: ''aime'' is the legacy combined set (deprecated for new runs); prefer
+                              the year-pinned ''aime24'' or ''aime25'' for reproducibility.'
+                          tasks:
+                            type: array
+                            items:
+                              type: string
+                            description: Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
+                              subjects). If not set, all tasks are included.
+                          nShots:
+                            type: integer
+                            description: Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation.
+                              Maximum 8.
+                            default: 0
+                            minimum: 0
+                            maximum: 8
+                          enableCot:
+                            type: boolean
+                            description: Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions
+                              to the prompt.
+                            default: false
+                          grader:
+                            type: string
+                            enum:
+                            - exact_match
+                            - math
+                            - multiple_choice
+                            - code_execution
+                            description: Override the default grader for the selected benchmark (e.g., exact_match, math,
+                              multiple_choice, code_execution). If not set, uses the benchmark's default grader.
+                          systemPrompt:
+                            type: string
+                            description: Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific
+                              system prompt.
+                          verbose:
+                            type: boolean
+                            description: Enable verbose output for accuracy evaluation, showing per-problem grading details.
+                            default: false
+                    required:
+                    - endpoint
+                    x-kubernetes-validations:
+                    - rule: '!has(self.multiRun) || !has(self.multiRun.parameterSweepSameSeed) || !self.multiRun.parameterSweepSameSeed
+                        || has(self.randomSeed)'
+                      message: multiRun.parameterSweepSameSeed=true requires randomSeed to be set; without a base seed every
+                        variation already gets a fresh draw, so 'same seed' is meaningless
+                    - rule: '!has(self.sweep) || !has(self.runtime) || !has(self.runtime.ui) || self.runtime.ui != ''dashboard'''
+                      message: Dashboard UI cannot multiplex sweep variations (live results would overwrite each other in
+                        the console). Use ui='simple' or 'none' with sweep configurations.
                   sweep:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
@@ -694,11 +702,11 @@ spec:
                         maximum: 1
                       convergenceMode:
                         type: string
-                        description: Statistical method for convergence detection (ci_width, cv, distribution).
                         enum:
                         - ci_width
                         - cv
                         - distribution
+                        description: Statistical method for convergence detection (ci_width, cv, distribution).
                       parameterSweepCooldownSeconds:
                         type: number
                         description: Cooldown duration in seconds between sweep variations. Honored by MultiRunOrchestrator
@@ -738,6 +746,13 @@ spec:
                             enum:
                             - bayes
                             default: bayes
+                          planner:
+                            type: string
+                            enum:
+                            - bayesian
+                            description: Outer-loop search planner plugin name. Defaults to `bayesian` (scikit-optimize-backed).
+                              Third-party planners registered under the `search_planner` plugin category are valid here. Selected
+                              via `--search-planner` on the CLI.
                           searchSpace:
                             type: array
                             description: Dimensions to optimize over. Must be non-empty.
@@ -954,16 +969,18 @@ spec:
                     x-kubernetes-validations:
                     - rule: '!has(self.convergenceMetric) || !has(self.mode) || self.mode != ''repeated'''
                       message: adaptive convergence (convergenceMetric) is incompatible with mode='repeated'; use mode='independent'
+                  variables:
+                    type: object
+                    description: 'User-defined values exposed to Jinja2 in `{{ "{{" }} ... {{ "}}" }}` expressions during config load. Cross-variation:
+                      scenario `runs[i].variables:` deep-merge over this base. Preserved on the resolved config so run-time
+                      renderers can resolve them again.'
+                    x-kubernetes-preserve-unknown-fields: true
+                  randomSeed:
+                    type: integer
+                    description: Global random seed for reproducibility. Base seed for per-variation derivation in sweep mode
+                      (variation N gets base + N).
                 required:
-                - endpoint
-                x-kubernetes-validations:
-                - rule: '!has(self.multiRun) || !has(self.multiRun.parameterSweepSameSeed) || !self.multiRun.parameterSweepSameSeed
-                    || has(self.randomSeed)'
-                  message: multiRun.parameterSweepSameSeed=true requires randomSeed to be set; without a base seed every variation
-                    already gets a fresh draw, so 'same seed' is meaningless
-                - rule: '!has(self.sweep) || !has(self.runtime) || !has(self.runtime.ui) || self.runtime.ui != ''dashboard'''
-                  message: Dashboard UI cannot multiplex sweep variations (live results would overwrite each other in the
-                    console). Use ui='simple' or 'none' with sweep configurations.
+                - benchmark
               resourceMode:
                 type: string
                 description: CPU/memory resource mode for controller and worker pods. 'burstable' (default) sets requests

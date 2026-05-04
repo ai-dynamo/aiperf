@@ -152,6 +152,11 @@
           "title": "Algorithm",
           "type": "string"
         },
+        "planner": {
+          "$ref": "#/$defs/SearchPlannerType",
+          "default": "bayesian",
+          "description": "Outer-loop search planner plugin name. Defaults to `bayesian` (scikit-optimize-backed). Third-party planners registered under the `search_planner` plugin category are valid here. Selected via `--search-planner` on the CLI."
+        },
         "searchSpace": {
           "description": "Dimensions to optimize over. Must be non-empty.",
           "items": {
@@ -678,6 +683,177 @@
         }
       },
       "title": "AugmentConfig",
+      "type": "object"
+    },
+    "BenchmarkConfig": {
+      "additionalProperties": false,
+      "description": "Pure runtime configuration - what SystemController and services need.\n\nContains all fields required to execute a single benchmark run.\nDoes NOT include sweep, multi_run, variables, or random_seed settings\n(those live on AIPerfConfig as envelope-level cross-variation fields).\n\nRequired Sections:\n    - models: Model(s) to benchmark\n    - endpoint: Server connection settings\n    - datasets: Named data sources\n    - phases: Benchmark phase configuration (single or named phases)\n\nOptional Sections:\n    - artifacts: Export and console settings\n    - slos: SLO-based quality metrics (generic dict)\n    - tokenizer: Token counting configuration\n    - gpu_telemetry: GPU metrics from DCGM endpoints\n    - server_metrics: Server metrics from Prometheus endpoints\n    - runtime: Worker and communication settings\n    - logging: Logging and debug settings\n    - accuracy: Accuracy evaluation configuration\n\nNote:\n    When a phase doesn't specify a dataset, the first dataset defined\n    in the datasets section is used as the default.\n\nValidation:\n    The configuration is validated in several stages:\n    1. Individual field validation (types, ranges, formats)\n    2. Dataset reference validation (phase configs reference existing datasets)\n    3. Cross-field validation (mutual exclusivity, dependencies)\n\nEnvironment Variables:\n    Values can reference environment variables using ${VAR} syntax.\n    Optional defaults: ${VAR:default_value}\n\n    Example:\n        api_key: ${OPENAI_API_KEY}\n        api_key: ${OPENAI_API_KEY:sk-default}",
+      "properties": {
+        "models": {
+          "$ref": "#/$defs/ModelsAdvanced",
+          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        "endpoint": {
+          "$ref": "#/$defs/EndpointConfig",
+          "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
+        },
+        "datasets": {
+          "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+          "items": {
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "synthetic": "#/$defs/SyntheticDataset",
+                "file": "#/$defs/FileDataset",
+                "public": "#/$defs/PublicDataset",
+                "composed": "#/$defs/ComposedDataset"
+              }
+            },
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SyntheticDataset"
+              },
+              {
+                "$ref": "#/$defs/FileDataset"
+              },
+              {
+                "$ref": "#/$defs/PublicDataset"
+              },
+              {
+                "$ref": "#/$defs/ComposedDataset"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Datasets",
+          "type": "array"
+        },
+        "phases": {
+          "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
+          "items": {
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "concurrency": "#/$defs/ConcurrencyPhase",
+                "poisson": "#/$defs/PoissonPhase",
+                "gamma": "#/$defs/GammaPhase",
+                "constant": "#/$defs/ConstantPhase",
+                "user_centric": "#/$defs/UserCentricPhase",
+                "fixed_schedule": "#/$defs/FixedSchedulePhase"
+              }
+            },
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConcurrencyPhase"
+              },
+              {
+                "$ref": "#/$defs/PoissonPhase"
+              },
+              {
+                "$ref": "#/$defs/GammaPhase"
+              },
+              {
+                "$ref": "#/$defs/ConstantPhase"
+              },
+              {
+                "$ref": "#/$defs/UserCentricPhase"
+              },
+              {
+                "$ref": "#/$defs/FixedSchedulePhase"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Phases",
+          "type": "array"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/ArtifactsConfig",
+          "description": "Artifacts configuration for benchmark output. Controls output directory and export formats."
+        },
+        "slos": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": ".*\\{\\{.*\\}\\}.*",
+                    "description": "Jinja2 template (e.g., '{{ variable }}')."
+                  },
+                  {
+                    "type": "string",
+                    "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+                    "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to threshold values. A request is counted as good only if it meets ALL specified thresholds.",
+          "title": "Slos",
+          "x-jinja2-supported": true
+        },
+        "tokenizer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenizerConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tokenizer configuration for token counting. Used for ISL/OSL enforcement and accurate metrics. If not specified, uses the first model name."
+        },
+        "gpuTelemetry": {
+          "$ref": "#/$defs/GpuTelemetryConfig",
+          "description": "GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization, temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable."
+        },
+        "serverMetrics": {
+          "$ref": "#/$defs/ServerMetricsConfig",
+          "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeConfig",
+          "description": "Runtime configuration for worker processes and inter-process communication."
+        },
+        "logging": {
+          "$ref": "#/$defs/LoggingConfig"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricsConfig",
+          "description": "Metrics aggregation configuration for benchmark summaries."
+        },
+        "accuracy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccuracyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
+        }
+      },
+      "required": [
+        "models",
+        "endpoint",
+        "datasets",
+        "phases"
+      ],
+      "title": "BenchmarkConfig",
       "type": "object"
     },
     "CancellationConfig": {
@@ -1458,14 +1634,13 @@
       "title": "ConstantPhase",
       "type": "object"
     },
-    "ConvergenceMode": {
-      "description": "Statistical method for convergence detection in adaptive multi-run mode.",
+    "ConvergenceCriterionType": {
       "enum": [
         "ci_width",
         "cv",
         "distribution"
       ],
-      "title": "ConvergenceMode",
+      "title": "ConvergenceCriterionType",
       "type": "string"
     },
     "ConvergenceStat": {
@@ -3563,7 +3738,7 @@
           "x-jinja2-supported": true
         },
         "convergenceMode": {
-          "$ref": "#/$defs/ConvergenceMode",
+          "$ref": "#/$defs/ConvergenceCriterionType",
           "default": "ci_width",
           "description": "Statistical method for convergence detection (ci_width, cv, distribution)."
         },
@@ -5139,6 +5314,13 @@
       ],
       "title": "ScenarioSweep",
       "type": "object"
+    },
+    "SearchPlannerType": {
+      "enum": [
+        "bayesian"
+      ],
+      "title": "SearchPlannerType",
+      "type": "string"
     },
     "SearchSpaceDimension": {
       "additionalProperties": false,
@@ -6972,210 +7154,11 @@
       "type": "string"
     }
   },
-  "additionalProperties": false,
   "description": "JSON Schema for AIPerf YAML configuration files. This schema enables IDE autocompletion and validation for AIPerf benchmark configurations. Schema version: 2.0.0",
   "properties": {
-    "models": {
-      "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced. Accepts a model name string, list of model names, or full ModelsAdvanced config.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Single model name (normalized to ModelsAdvanced)."
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "description": "List of model names (normalized to ModelsAdvanced)."
-        },
-        {
-          "$ref": "#/$defs/ModelsAdvanced"
-        }
-      ]
-    },
-    "endpoint": {
-      "$ref": "#/$defs/EndpointConfig",
-      "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
-    },
-    "datasets": {
-      "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
-      "items": {
-        "discriminator": {
-          "propertyName": "type",
-          "mapping": {
-            "synthetic": "#/$defs/SyntheticDataset",
-            "file": "#/$defs/FileDataset",
-            "public": "#/$defs/PublicDataset",
-            "composed": "#/$defs/ComposedDataset"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/SyntheticDataset"
-          },
-          {
-            "$ref": "#/$defs/FileDataset"
-          },
-          {
-            "$ref": "#/$defs/PublicDataset"
-          },
-          {
-            "$ref": "#/$defs/ComposedDataset"
-          }
-        ]
-      },
-      "minItems": 1,
-      "title": "Datasets",
-      "type": "array"
-    },
-    "phases": {
-      "description": "Ordered benchmark phases. Each entry must have a unique 'name' (e.g. 'warmup', 'profiling'). Order in the list IS the execution order; the first phase runs first. Single-config shorthand ({'type': 'concurrency', ...}) is normalized to a list of one. Top-level 'warmup:'/'profiling:' shorthand is normalized to a [warmup, profiling] list pre-validation.",
-      "items": {
-        "discriminator": {
-          "propertyName": "type",
-          "mapping": {
-            "concurrency": "#/$defs/ConcurrencyPhase",
-            "poisson": "#/$defs/PoissonPhase",
-            "gamma": "#/$defs/GammaPhase",
-            "constant": "#/$defs/ConstantPhase",
-            "user_centric": "#/$defs/UserCentricPhase",
-            "fixed_schedule": "#/$defs/FixedSchedulePhase"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/ConcurrencyPhase"
-          },
-          {
-            "$ref": "#/$defs/PoissonPhase"
-          },
-          {
-            "$ref": "#/$defs/GammaPhase"
-          },
-          {
-            "$ref": "#/$defs/ConstantPhase"
-          },
-          {
-            "$ref": "#/$defs/UserCentricPhase"
-          },
-          {
-            "$ref": "#/$defs/FixedSchedulePhase"
-          }
-        ]
-      },
-      "minItems": 1,
-      "title": "Phases",
-      "type": "array"
-    },
-    "artifacts": {
-      "$ref": "#/$defs/ArtifactsConfig",
-      "description": "Artifacts configuration for benchmark output. Controls output directory and export formats."
-    },
-    "slos": {
-      "anyOf": [
-        {
-          "additionalProperties": {
-            "oneOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string",
-                "pattern": ".*\\{\\{.*\\}\\}.*",
-                "description": "Jinja2 template (e.g., '{{ variable }}')."
-              },
-              {
-                "type": "string",
-                "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-                "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-              }
-            ]
-          },
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to threshold values. A request is counted as good only if it meets ALL specified thresholds.",
-      "title": "Slos",
-      "x-jinja2-supported": true
-    },
-    "tokenizer": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/TokenizerConfig"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Tokenizer configuration for token counting. Used for ISL/OSL enforcement and accurate metrics. If not specified, uses the first model name."
-    },
-    "gpuTelemetry": {
-      "$ref": "#/$defs/GpuTelemetryConfig",
-      "description": "GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization, temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable."
-    },
-    "serverMetrics": {
-      "$ref": "#/$defs/ServerMetricsConfig",
-      "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
-    },
-    "runtime": {
-      "$ref": "#/$defs/RuntimeConfig",
-      "description": "Runtime configuration for worker processes and inter-process communication."
-    },
-    "logging": {
-      "$ref": "#/$defs/LoggingConfig"
-    },
-    "metrics": {
-      "$ref": "#/$defs/MetricsConfig",
-      "description": "Metrics aggregation configuration for benchmark summaries."
-    },
-    "accuracy": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/AccuracyConfig"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
-    },
-    "randomSeed": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        },
-        {
-          "type": "string",
-          "pattern": ".*\\{\\{.*\\}\\}.*",
-          "description": "Jinja2 template (e.g., '{{ variable }}')."
-        },
-        {
-          "type": "string",
-          "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-          "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-        }
-      ],
-      "default": null,
-      "description": "Global random seed for reproducibility. Can be overridden per-dataset. If not set, uses system entropy.",
-      "title": "Randomseed",
-      "x-jinja2-supported": true
-    },
-    "variables": {
-      "additionalProperties": true,
-      "description": "User-defined values exposed to Jinja2 in `{{ ... }}` expressions during config load. Preserved on the resolved config so run-time renderers (e.g. `artifacts.user_files`) can resolve them again at run time.",
-      "title": "Variables",
-      "type": "object"
+    "benchmark": {
+      "$ref": "#/$defs/BenchmarkConfig",
+      "description": "Benchmark workload (the swept body)."
     },
     "sweep": {
       "anyOf": [
@@ -7208,92 +7191,39 @@
       "$ref": "#/$defs/MultiRunConfig",
       "description": "Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes multiple runs and computes aggregate statistics."
     },
-    "model": {
-      "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
-      "oneOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        {
-          "$ref": "#/$defs/ModelsAdvanced",
-          "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
-          "x-kubernetes-preserve-unknown-fields": true
-        }
-      ],
-      "x-singular-alias-of": "models"
+    "variables": {
+      "additionalProperties": true,
+      "description": "User-defined values exposed to Jinja2 in `{{ ... }}` expressions during config load. Cross-variation: scenario `runs[i].variables:` deep-merge over this base. Preserved on the resolved config so run-time renderers can resolve them again.",
+      "title": "Variables",
+      "type": "object"
     },
-    "dataset": {
-      "description": "Shorthand for 'datasets'. Accepts a single value which will be converted to a list/dict. Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
-      "oneOf": [
+    "randomSeed": {
+      "anyOf": [
         {
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "synthetic": "#/$defs/SyntheticDataset",
-              "file": "#/$defs/FileDataset",
-              "public": "#/$defs/PublicDataset",
-              "composed": "#/$defs/ComposedDataset"
-            }
-          },
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SyntheticDataset"
-            },
-            {
-              "$ref": "#/$defs/FileDataset"
-            },
-            {
-              "$ref": "#/$defs/PublicDataset"
-            },
-            {
-              "$ref": "#/$defs/ComposedDataset"
-            }
-          ]
+          "type": "integer"
         },
         {
-          "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name (`phase.dataset = '<name>'`); when omitted, the FIRST dataset in the list is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
-          "items": {
-            "discriminator": {
-              "propertyName": "type",
-              "mapping": {
-                "synthetic": "#/$defs/SyntheticDataset",
-                "file": "#/$defs/FileDataset",
-                "public": "#/$defs/PublicDataset",
-                "composed": "#/$defs/ComposedDataset"
-              }
-            },
-            "anyOf": [
-              {
-                "$ref": "#/$defs/SyntheticDataset"
-              },
-              {
-                "$ref": "#/$defs/FileDataset"
-              },
-              {
-                "$ref": "#/$defs/PublicDataset"
-              },
-              {
-                "$ref": "#/$defs/ComposedDataset"
-              }
-            ]
-          },
-          "minItems": 1,
-          "title": "Datasets",
-          "type": "array"
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": ".*\\{\\{.*\\}\\}.*",
+          "description": "Jinja2 template (e.g., '{{ variable }}')."
+        },
+        {
+          "type": "string",
+          "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+          "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
         }
       ],
-      "x-singular-alias-of": "datasets"
+      "default": null,
+      "description": "Global random seed for reproducibility. Base seed for per-variation derivation in sweep mode (variation N gets base + N).",
+      "title": "Randomseed",
+      "x-jinja2-supported": true
     }
   },
   "required": [
-    "endpoint",
-    "phases"
+    "benchmark"
   ],
   "title": "AIPerf Configuration Schema",
   "type": "object",
@@ -7305,27 +7235,5 @@
       "datasets",
       "phases"
     ]
-  },
-  "anyOf": [
-    {
-      "required": [
-        "model"
-      ]
-    },
-    {
-      "required": [
-        "models"
-      ]
-    },
-    {
-      "required": [
-        "dataset"
-      ]
-    },
-    {
-      "required": [
-        "datasets"
-      ]
-    }
-  ]
+  }
 }
