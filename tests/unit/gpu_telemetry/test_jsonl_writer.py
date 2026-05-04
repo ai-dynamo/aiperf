@@ -24,7 +24,7 @@ from tests.unit.post_processors.conftest import aiperf_lifecycle, make_telemetry
 def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> BenchmarkRun:
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=artifact_dir or Path("/tmp/test"),
     )
 
@@ -33,25 +33,32 @@ def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> Benchma
 def telemetry_export_config(tmp_artifact_dir: Path) -> AIPerfConfig:
     """Create an AIPerfConfig for telemetry export testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
-        artifacts={
-            "dir": str(tmp_artifact_dir),
-        },
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "artifacts": {
+                "dir": str(tmp_artifact_dir),
+            },
+        }
     )
 
 
@@ -136,9 +143,7 @@ class TestGPUTelemetryJSONLWriterInitialization:
     ):
         """Test that initialization clears existing output file."""
         # Create a file with existing content
-        output_file = (
-            telemetry_export_config.artifacts.profile_export_gpu_telemetry_jsonl_file
-        )
+        output_file = telemetry_export_config.benchmark.artifacts.profile_export_gpu_telemetry_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("existing content\n")
 

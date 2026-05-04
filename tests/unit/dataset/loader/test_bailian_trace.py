@@ -122,15 +122,17 @@ class TestBailianTraceDatasetLoader:
     @pytest.fixture
     def default_user_config(self):
         return AIPerfConfig(
-            **_BASE,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "file",
-                    "path": "dummy.jsonl",
-                    "format": "mooncake_trace",
-                }
-            ],
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "dummy.jsonl",
+                        "format": "mooncake_trace",
+                    }
+                ],
+            }
         )
 
     def _make_config(

@@ -51,13 +51,14 @@ class TestBodyEnvelopePartition:
 class TestMigrateYamlText:
     def test_flat_shape_rewraps_body_under_benchmark(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            endpoint:
-              urls: ["http://localhost:8000/v1/chat/completions"]
-            phases:
-              - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
-            random_seed: 42
-        """).strip()
+benchmark:
+  models: [llama]
+  endpoint:
+    urls: ["http://localhost:8000/v1/chat/completions"]
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+random_seed: 42
+""").strip()
         out = migrate_yaml_text(flat)
         # body keys nested under benchmark:
         assert "benchmark:" in out
@@ -69,31 +70,32 @@ class TestMigrateYamlText:
 
     def test_already_migrated_yaml_passes_through_unchanged(self):
         already = textwrap.dedent("""
-            random_seed: 42
-            benchmark:
-              models: [llama]
-              endpoint:
-                urls: ["http://localhost:8000/v1/chat/completions"]
-              phases:
-                - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
-        """).strip()
+random_seed: 42
+benchmark:
+  models: [llama]
+  endpoint:
+    urls: ["http://localhost:8000/v1/chat/completions"]
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+""").strip()
         out = migrate_yaml_text(already)
         # idempotent
         assert migrate_yaml_text(out) == out
 
     def test_envelope_keys_stay_at_top_level(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            sweep:
-              type: grid
-              variables:
-                "phases.profiling.concurrency": [1, 2, 4]
-            multi_run:
-              num_runs: 3
-            variables:
-              isl: 128
-            random_seed: 42
-        """).strip()
+benchmark:
+  models: [llama]
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.profiling.concurrency: [1, 2, 4]
+multi_run:
+  num_runs: 3
+variables:
+  isl: 128
+random_seed: 42
+""").strip()
         out = migrate_yaml_text(flat)
         # all four envelope keys at top
         for key in ("sweep:", "multi_run:", "variables:", "random_seed:"):
@@ -101,29 +103,31 @@ class TestMigrateYamlText:
 
     def test_grid_sweep_path_keys_get_benchmark_prefix(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            phases:
-              - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
-            sweep:
-              type: grid
-              variables:
-                "phases.profiling.concurrency": [1, 2, 4]
-                "datasets.0.entries": [100, 200]
-        """).strip()
+benchmark:
+  models: [llama]
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.profiling.concurrency: [1, 2, 4]
+    benchmark.datasets.0.entries: [100, 200]
+""").strip()
         out = migrate_yaml_text(flat)
         assert "benchmark.phases.profiling.concurrency" in out
         assert "benchmark.datasets.0.entries" in out
 
     def test_grid_variables_path_unchanged(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            variables:
-              isl: 128
-            sweep:
-              type: grid
-              variables:
-                "variables.isl": [128, 256]
-        """).strip()
+benchmark:
+  models: [llama]
+variables:
+  isl: 128
+sweep:
+  type: grid
+  variables:
+    "variables.isl": [128, 256]
+""").strip()
         out = migrate_yaml_text(flat)
         assert "variables.isl" in out
         # no benchmark.variables.isl
@@ -131,17 +135,20 @@ class TestMigrateYamlText:
 
     def test_scenario_runs_body_keys_get_benchmark_wrapper(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            sweep:
-              type: scenarios
-              runs:
-                - name: low
-                  phases:
-                    - {name: profiling, type: concurrency, concurrency: 1}
-                - name: high
-                  phases:
-                    - {name: profiling, type: concurrency, concurrency: 10}
-        """).strip()
+benchmark:
+  models: [llama]
+sweep:
+  type: scenarios
+  runs:
+    - name: low
+      benchmark:
+        phases:
+          - {name: profiling, type: concurrency, concurrency: 1}
+    - name: high
+      benchmark:
+        phases:
+          - {name: profiling, type: concurrency, concurrency: 10}
+""").strip()
         out = migrate_yaml_text(flat)
         # phases inside runs[i] should now be runs[i].benchmark.phases
         # naive substring check: there should be no top-level `phases:` directly inside a run dict
@@ -151,17 +158,19 @@ class TestMigrateYamlText:
 
     def test_scenario_runs_keep_name_and_variables_at_top(self):
         flat = textwrap.dedent("""
-            models: [llama]
-            phases:
-              - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
-            sweep:
-              type: scenarios
-              runs:
-                - name: pair_0
-                  variables: {isl: 128}
-                  phases:
-                    - {name: profiling, type: concurrency, concurrency: 5}
-        """).strip()
+benchmark:
+  models: [llama]
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+sweep:
+  type: scenarios
+  runs:
+    - name: pair_0
+      variables: {isl: 128}
+      benchmark:
+        phases:
+          - {name: profiling, type: concurrency, concurrency: 5}
+""").strip()
         out = migrate_yaml_text(flat)
         # runs[0].name and runs[0].variables stay at top of the run dict
         assert "name: pair_0" in out

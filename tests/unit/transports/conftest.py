@@ -136,24 +136,31 @@ def edge_case_inputs() -> dict[str, str]:
 def user_config() -> AIPerfConfig:
     """Fixture providing a sample AIPerfConfig for transports testing."""
     return AIPerfConfig(
-        models=["gpt-4"],
-        endpoint={
-            "type": EndpointType.CHAT,
-            "urls": ["http://localhost:8000"],
-            "timeout": 600,
-            "api_key": "test-api-key",
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["gpt-4"],
+            "endpoint": {
+                "type": EndpointType.CHAT,
+                "urls": ["http://localhost:8000"],
+                "timeout": 600,
+                "api_key": "test-api-key",
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 

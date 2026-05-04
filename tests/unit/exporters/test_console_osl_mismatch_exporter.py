@@ -26,27 +26,29 @@ class TestConsoleOSLMismatchExporter:
     def mock_user_config(self):
         """Create a mock config."""
         return AIPerfConfig(
-            models=["test-model"],
-            endpoint={
-                "urls": ["http://localhost:8000/v1/chat/completions"],
-                "type": "chat",
-            },
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {
+                    "urls": ["http://localhost:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
 
     def _create_profile_results(

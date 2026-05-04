@@ -31,202 +31,222 @@ from aiperf.config.loader import (
 # ---------------------------------------------------------------------------
 
 _SNAKE_CASE_YAML = textwrap.dedent("""\
-    random_seed: 42
+random_seed: 42
 
-    models:
-      - test-model
+benchmark:
+  models:
+    - test-model
 
-    endpoint:
-      urls:
-        - http://localhost:8000/v1/chat/completions
-      url_strategy: round_robin
-      ready_check_timeout: 30.0
-      connection_reuse: pooled
-      use_legacy_max_tokens: false
-      use_server_token_count: true
-      download_video_content: false
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    url_strategy: round_robin
+    ready_check_timeout: 30.0
+    connection_reuse: pooled
+    use_legacy_max_tokens: false
+    use_server_token_count: true
+    download_video_content: false
 
-    datasets:
-      - name: main
-        type: synthetic
-        entries: 100
-        prompts:
-          isl: 512
-          osl: 128
-          batch_size: 2
-        prefix_prompts:
-          pool_size: 4
-          length: 256
-        turn_delay: 100
-        turn_delay_ratio: 0.5
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 512
+        osl: 128
+        batch_size: 2
+      prefix_prompts:
+        pool_size: 4
+        length: 256
+      turn_delay: 100
+      turn_delay_ratio: 0.5
 
-    phases:
-      - name: warmup
-        type: concurrency
-        requests: 50
-        concurrency: 4
-        exclude_from_results: true
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 4
+      exclude_from_results: true
 
-      - name: profiling
-        type: gamma
-        duration: 300
-        rate: 50.0
-        concurrency: 64
-        rate_ramp: 30
-        grace_period: 60
-        seamless: true
+    - name: profiling
+      type: gamma
+      duration: 300
+      rate: 50.0
+      concurrency: 64
+      rate_ramp: 30
+      grace_period: 60
+      seamless: true
 
-    gpu_telemetry:
-      enabled: false
+  gpu_telemetry:
+    enabled: false
 
-    server_metrics:
-      enabled: false
+  server_metrics:
+    enabled: false
 
-    artifacts:
-      dir: ./artifacts
-      slice_duration: 60
-      show_trace_timing: true
-      per_chunk_data: true
+  artifacts:
+    dir: ./artifacts
+    slice_duration: 60
+    show_trace_timing: true
+    per_chunk_data: true
 """)
 
 _CAMEL_CASE_YAML = textwrap.dedent("""\
-    randomSeed: 42
+randomSeed: 42
 
-    models:
-      - test-model
+benchmark:
+  models:
+    - test-model
 
-    endpoint:
-      urls:
-        - http://localhost:8000/v1/chat/completions
-      urlStrategy: round_robin
-      readyCheckTimeout: 30.0
-      connectionReuse: pooled
-      useLegacyMaxTokens: false
-      useServerTokenCount: true
-      downloadVideoContent: false
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    urlStrategy: round_robin
+    readyCheckTimeout: 30.0
+    connectionReuse: pooled
+    useLegacyMaxTokens: false
+    useServerTokenCount: true
+    downloadVideoContent: false
 
-    datasets:
-      - name: main
-        type: synthetic
-        entries: 100
-        prompts:
-          isl: 512
-          osl: 128
-          batchSize: 2
-        prefixPrompts:
-          poolSize: 4
-          length: 256
-        turnDelay: 100
-        turnDelayRatio: 0.5
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 512
+        osl: 128
+        batchSize: 2
+      prefixPrompts:
+        poolSize: 4
+        length: 256
+      turnDelay: 100
+      turnDelayRatio: 0.5
 
-    phases:
-      - name: warmup
-        type: concurrency
-        requests: 50
-        concurrency: 4
-        excludeFromResults: true
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 4
+      excludeFromResults: true
 
-      - name: profiling
-        type: gamma
-        duration: 300
-        rate: 50.0
-        concurrency: 64
-        rateRamp: 30
-        gracePeriod: 60
-        seamless: true
+    - name: profiling
+      type: gamma
+      duration: 300
+      rate: 50.0
+      concurrency: 64
+      rateRamp: 30
+      gracePeriod: 60
+      seamless: true
 
-    gpuTelemetry:
-      enabled: false
+  artifacts:
+    dir: ./artifacts
+    sliceDuration: 60
+    showTraceTiming: true
+    perChunkData: true
+gpuTelemetry:
+  enabled: false
 
-    serverMetrics:
-      enabled: false
+serverMetrics:
+  enabled: false
 
-    artifacts:
-      dir: ./artifacts
-      sliceDuration: 60
-      showTraceTiming: true
-      perChunkData: true
 """)
 
 _MIXED_CASE_YAML = textwrap.dedent("""\
-    randomSeed: 42
+randomSeed: 42
 
-    models:
-      - test-model
+benchmark:
+  models:
+    - test-model
 
-    endpoint:
-      urls:
-        - http://localhost:8000/v1/chat/completions
-      url_strategy: round_robin
-      readyCheckTimeout: 30.0
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    url_strategy: round_robin
+    readyCheckTimeout: 30.0
 
-    datasets:
-      - name: main
-        type: synthetic
-        entries: 100
-        prompts:
-          isl: 512
-          batch_size: 2
-        turn_delay: 100
-        turnDelayRatio: 0.5
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 512
+        batch_size: 2
+      turn_delay: 100
+      turnDelayRatio: 0.5
 
-    phases:
-      - name: profiling
-        type: concurrency
-        requests: 10
-        concurrency: 1
-        exclude_from_results: false
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 10
+      concurrency: 1
+      exclude_from_results: false
 
-    gpu_telemetry:
-      enabled: false
+  gpu_telemetry:
+    enabled: false
 
-    serverMetrics:
-      enabled: false
+serverMetrics:
+  enabled: false
 """)
 
 
 def _assert_configs_equivalent(a: AIPerfConfig, b: AIPerfConfig) -> None:
     """Assert two configs are semantically equivalent on key fields."""
     assert a.random_seed == b.random_seed
-    assert a.get_model_names() == b.get_model_names()
+    assert a.benchmark.get_model_names() == b.benchmark.get_model_names()
 
     # Endpoint
-    assert a.endpoint.urls == b.endpoint.urls
-    assert a.endpoint.url_strategy == b.endpoint.url_strategy
-    assert a.endpoint.ready_check_timeout == b.endpoint.ready_check_timeout
-    assert a.endpoint.connection_reuse == b.endpoint.connection_reuse
-    assert a.endpoint.use_legacy_max_tokens == b.endpoint.use_legacy_max_tokens
-    assert a.endpoint.use_server_token_count == b.endpoint.use_server_token_count
-    assert a.endpoint.download_video_content == b.endpoint.download_video_content
+    assert a.benchmark.endpoint.urls == b.benchmark.endpoint.urls
+    assert a.benchmark.endpoint.url_strategy == b.benchmark.endpoint.url_strategy
+    assert (
+        a.benchmark.endpoint.ready_check_timeout
+        == b.benchmark.endpoint.ready_check_timeout
+    )
+    assert (
+        a.benchmark.endpoint.connection_reuse == b.benchmark.endpoint.connection_reuse
+    )
+    assert (
+        a.benchmark.endpoint.use_legacy_max_tokens
+        == b.benchmark.endpoint.use_legacy_max_tokens
+    )
+    assert (
+        a.benchmark.endpoint.use_server_token_count
+        == b.benchmark.endpoint.use_server_token_count
+    )
+    assert (
+        a.benchmark.endpoint.download_video_content
+        == b.benchmark.endpoint.download_video_content
+    )
 
     # Datasets
-    ds_a = a.get_dataset("main")
-    ds_b = b.get_dataset("main")
+    ds_a = a.benchmark.get_dataset("main")
+    ds_b = b.benchmark.get_dataset("main")
     assert ds_a.prompts.batch_size == ds_b.prompts.batch_size
     assert ds_a.prefix_prompts.pool_size == ds_b.prefix_prompts.pool_size
     assert ds_a.turn_delay.expected_value == ds_b.turn_delay.expected_value
     assert ds_a.turn_delay_ratio == ds_b.turn_delay_ratio
 
     # Phases
-    warmup_a = next(p for p in a.phases if p.name == "warmup")
-    warmup_b = next(p for p in b.phases if p.name == "warmup")
+    warmup_a = next(p for p in a.benchmark.phases if p.name == "warmup")
+    warmup_b = next(p for p in b.benchmark.phases if p.name == "warmup")
     assert warmup_a.exclude_from_results == warmup_b.exclude_from_results
 
-    prof_a = next(p for p in a.phases if p.name == "profiling")
-    prof_b = next(p for p in b.phases if p.name == "profiling")
+    prof_a = next(p for p in a.benchmark.phases if p.name == "profiling")
+    prof_b = next(p for p in b.benchmark.phases if p.name == "profiling")
     assert prof_a.rate_ramp is not None
     assert prof_b.rate_ramp is not None
     assert prof_a.rate_ramp.duration == prof_b.rate_ramp.duration
     assert prof_a.grace_period == prof_b.grace_period
 
     # Top-level sections
-    assert a.gpu_telemetry.enabled == b.gpu_telemetry.enabled
-    assert a.server_metrics.enabled == b.server_metrics.enabled
+    assert a.benchmark.gpu_telemetry.enabled == b.benchmark.gpu_telemetry.enabled
+    assert a.benchmark.server_metrics.enabled == b.benchmark.server_metrics.enabled
 
     # Artifacts
-    assert a.artifacts.slice_duration == b.artifacts.slice_duration
-    assert a.artifacts.show_trace_timing == b.artifacts.show_trace_timing
-    assert a.artifacts.per_chunk_data == b.artifacts.per_chunk_data
+    assert a.benchmark.artifacts.slice_duration == b.benchmark.artifacts.slice_duration
+    assert (
+        a.benchmark.artifacts.show_trace_timing
+        == b.benchmark.artifacts.show_trace_timing
+    )
+    assert a.benchmark.artifacts.per_chunk_data == b.benchmark.artifacts.per_chunk_data
 
 
 # ============================================================
@@ -243,7 +263,7 @@ class TestCamelCaseFileLoading:
         config = load_config(f)
         assert isinstance(config, AIPerfConfig)
         assert config.random_seed == 42
-        assert not config.gpu_telemetry.enabled
+        assert not config.benchmark.gpu_telemetry.enabled
 
     def test_load_camel_case_file(self, tmp_path: Path) -> None:
         f = tmp_path / "camel.yaml"
@@ -251,7 +271,7 @@ class TestCamelCaseFileLoading:
         config = load_config(f)
         assert isinstance(config, AIPerfConfig)
         assert config.random_seed == 42
-        assert not config.gpu_telemetry.enabled
+        assert not config.benchmark.gpu_telemetry.enabled
 
     def test_load_mixed_case_file(self, tmp_path: Path) -> None:
         f = tmp_path / "mixed.yaml"
@@ -259,7 +279,7 @@ class TestCamelCaseFileLoading:
         config = load_config(f)
         assert isinstance(config, AIPerfConfig)
         assert config.random_seed == 42
-        assert config.endpoint.ready_check_timeout == 30.0
+        assert config.benchmark.endpoint.ready_check_timeout == 30.0
 
     def test_snake_and_camel_produce_equivalent_configs(self, tmp_path: Path) -> None:
         snake_file = tmp_path / "snake.yaml"
@@ -422,41 +442,43 @@ class TestCamelCasePerSection:
         self, yaml_snippet: str, field: str, expected: object
     ) -> None:
         yaml_str = textwrap.dedent(f"""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-              {yaml_snippet}
-            datasets:
-              - {{name: d, type: synthetic}}
-            phases:
-              - {{name: p, type: concurrency, requests: 1}}
+            benchmark:
+              models: [m]
+              endpoint:
+                urls: [http://localhost:8000/v1/chat/completions]
+                {yaml_snippet}
+              datasets:
+                - {{name: d, type: synthetic}}
+              phases:
+                - {{name: p, type: concurrency, requests: 1}}
         """)
         config = load_config_from_string(yaml_str)
-        assert getattr(config.endpoint, field) == expected
+        assert getattr(config.benchmark.endpoint, field) == expected
 
     def test_dataset_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - name: main
-                type: synthetic
-                entries: 50
-                prompts:
-                  isl: 256
-                  batchSize: 4
-                  blockSize: 128
-                prefixPrompts:
-                  sharedSystemLength: 100
-                  userContextLength: 50
-                turnDelay: 200
-                turnDelayRatio: 2.0
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 50
+      prompts:
+        isl: 256
+        batchSize: 4
+        blockSize: 128
+      prefixPrompts:
+        sharedSystemLength: 100
+        userContextLength: 50
+      turnDelay: 200
+      turnDelayRatio: 2.0
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+""")
         config = load_config_from_string(yaml_str)
-        ds = config.get_dataset("main")
+        ds = config.benchmark.get_dataset("main")
         assert ds.prompts.batch_size == 4
         assert ds.prompts.block_size == 128
         assert ds.prefix_prompts.shared_system_length == 100
@@ -466,118 +488,123 @@ class TestCamelCasePerSection:
 
     def test_phase_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-              streaming: true
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - name: warm
-                type: concurrency
-                requests: 10
-                concurrency: 2
-                excludeFromResults: true
-                concurrencyRamp: 10
-                prefillConcurrency: 1
-              - name: prof
-                type: poisson
-                duration: 60
-                rate: 10.0
-                rateRamp: {duration: 15, strategy: exponential}
-                gracePeriod: 30
-                seamless: true
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+    streaming: true
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - name: warm
+      type: concurrency
+      requests: 10
+      concurrency: 2
+      excludeFromResults: true
+      concurrencyRamp: 10
+      prefillConcurrency: 1
+    - name: prof
+      type: poisson
+      duration: 60
+      rate: 10.0
+      rateRamp: {duration: 15, strategy: exponential}
+      gracePeriod: 30
+      seamless: true
+""")
         config = load_config_from_string(yaml_str)
-        warm = next(p for p in config.phases if p.name == "warm")
+        warm = next(p for p in config.benchmark.phases if p.name == "warm")
         assert warm.exclude_from_results is True
         assert warm.concurrency_ramp.duration == 10.0
         assert warm.prefill_concurrency == 1
 
-        prof = next(p for p in config.phases if p.name == "prof")
+        prof = next(p for p in config.benchmark.phases if p.name == "prof")
         assert prof.rate_ramp.duration == 15.0
         assert prof.rate_ramp.strategy == "exponential"
         assert prof.grace_period == 30.0
 
     def test_fixed_schedule_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - name: replay
-                type: fixed_schedule
-                dataset: d
-                autoOffset: false
-                startOffset: 1000
-                endOffset: 5000
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - name: replay
+      type: fixed_schedule
+      dataset: d
+      autoOffset: false
+      startOffset: 1000
+      endOffset: 5000
+""")
         config = load_config_from_string(yaml_str)
-        phase = next(p for p in config.phases if p.name == "replay")
+        phase = next(p for p in config.benchmark.phases if p.name == "replay")
         assert phase.auto_offset is False
         assert phase.start_offset == 1000
         assert phase.end_offset == 5000
 
     def test_artifacts_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            artifacts:
-              sliceDuration: 120
-              showTraceTiming: true
-              perChunkData: true
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  artifacts:
+    sliceDuration: 120
+    showTraceTiming: true
+    perChunkData: true
+""")
         config = load_config_from_string(yaml_str)
-        assert config.artifacts.slice_duration == 120.0
-        assert config.artifacts.show_trace_timing is True
-        assert config.artifacts.per_chunk_data is True
+        assert config.benchmark.artifacts.slice_duration == 120.0
+        assert config.benchmark.artifacts.show_trace_timing is True
+        assert config.benchmark.artifacts.per_chunk_data is True
 
     def test_runtime_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            runtime:
-              serviceRunType: multiprocessing
-              recordProcessors: 2
-              apiPort: 9090
-              apiHost: 0.0.0.0
-              workersPerPod: 5
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  runtime:
+    serviceRunType: multiprocessing
+    recordProcessors: 2
+    apiPort: 9090
+    apiHost: 0.0.0.0
+    workersPerPod: 5
+""")
         config = load_config_from_string(yaml_str)
-        assert config.runtime.service_run_type == "multiprocessing"
-        assert config.runtime.record_processors == 2
-        assert config.runtime.api_port == 9090
-        assert config.runtime.api_host == "0.0.0.0"
-        assert config.runtime.workers_per_pod == 5
+        assert config.benchmark.runtime.service_run_type == "multiprocessing"
+        assert config.benchmark.runtime.record_processors == 2
+        assert config.benchmark.runtime.api_port == 9090
+        assert config.benchmark.runtime.api_host == "0.0.0.0"
+        assert config.benchmark.runtime.workers_per_pod == 5
 
     def test_multi_run_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            multiRun:
-              numRuns: 3
-              cooldownSeconds: 10.0
-              confidenceLevel: 0.99
-              setConsistentSeed: false
-              disableWarmupAfterFirst: false
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 10.0
+  confidenceLevel: 0.99
+  setConsistentSeed: false
+  disableWarmupAfterFirst: false
+""")
         config = load_config_from_string(yaml_str)
         assert config.multi_run.num_runs == 3
         assert config.multi_run.cooldown_seconds == 10.0
@@ -587,51 +614,53 @@ class TestCamelCasePerSection:
 
     def test_accuracy_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            accuracy:
-              benchmark: mmlu
-              nShots: 5
-              enableCot: true
-              systemPrompt: "Answer concisely."
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  accuracy:
+    benchmark: mmlu
+    nShots: 5
+    enableCot: true
+    systemPrompt: "Answer concisely."
+""")
         config = load_config_from_string(yaml_str)
-        assert config.accuracy.n_shots == 5
-        assert config.accuracy.enable_cot is True
-        assert config.accuracy.system_prompt == "Answer concisely."
+        assert config.benchmark.accuracy.n_shots == 5
+        assert config.benchmark.accuracy.enable_cot is True
+        assert config.benchmark.accuracy.system_prompt == "Answer concisely."
 
     def test_tcp_communication_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            runtime:
-              communication:
-                type: tcp
-                recordsPort: 6000
-                creditRouterPort: 6001
-                controlPort: 6002
-                eventBusProxy:
-                  frontendPort: 7000
-                  backendPort: 7001
-                datasetManagerProxy:
-                  frontendPort: 7002
-                  backendPort: 7003
-                rawInferenceProxy:
-                  frontendPort: 7004
-                  backendPort: 7005
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  runtime:
+    communication:
+      type: tcp
+      recordsPort: 6000
+      creditRouterPort: 6001
+      controlPort: 6002
+      eventBusProxy:
+        frontendPort: 7000
+        backendPort: 7001
+      datasetManagerProxy:
+        frontendPort: 7002
+        backendPort: 7003
+      rawInferenceProxy:
+        frontendPort: 7004
+        backendPort: 7005
+""")
         config = load_config_from_string(yaml_str)
-        comm = config.runtime.communication
+        comm = config.benchmark.runtime.communication
         assert comm.records_port == 6000
         assert comm.credit_router_port == 6001
         assert comm.control_port == 6002
@@ -642,59 +671,62 @@ class TestCamelCasePerSection:
 
     def test_dual_communication_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            runtime:
-              communication:
-                type: dual
-                ipcPath: /tmp/bench
-                tcpHost: 0.0.0.0
-                controllerHost: controller.ns.svc
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  runtime:
+    communication:
+      type: dual
+      ipcPath: /tmp/bench
+      tcpHost: 0.0.0.0
+      controllerHost: controller.ns.svc
+""")
         config = load_config_from_string(yaml_str)
-        comm = config.runtime.communication
+        comm = config.benchmark.runtime.communication
         assert comm.ipc_path == "/tmp/bench"
         assert comm.tcp_host == "0.0.0.0"
         assert comm.controller_host == "controller.ns.svc"
 
     def test_tokenizer_camel_case_fields(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            tokenizer:
-              name: meta-llama/Llama-3.1-8B-Instruct
-              trustRemoteCode: true
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+  tokenizer:
+    name: meta-llama/Llama-3.1-8B-Instruct
+    trustRemoteCode: true
+""")
         config = load_config_from_string(yaml_str)
-        assert config.tokenizer.trust_remote_code is True
+        assert config.benchmark.tokenizer.trust_remote_code is True
 
     def test_server_metrics_discovery_camel_case(self) -> None:
         yaml_str = textwrap.dedent("""\
-            models: [m]
-            endpoint:
-              urls: [http://localhost:8000/v1/chat/completions]
-            datasets:
-              - {name: d, type: synthetic}
-            phases:
-              - {name: p, type: concurrency, requests: 1}
-            serverMetrics:
-              enabled: true
-              discovery:
-                mode: kubernetes
-                labelSelector: app=vllm
-        """)
+benchmark:
+  models: [m]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+  datasets:
+    - {name: d, type: synthetic}
+  phases:
+    - {name: p, type: concurrency, requests: 1}
+serverMetrics:
+  enabled: true
+  discovery:
+    mode: kubernetes
+    labelSelector: app=vllm
+""")
         config = load_config_from_string(yaml_str)
-        assert config.server_metrics.discovery.label_selector == "app=vllm"
+        assert config.benchmark.server_metrics.discovery.label_selector == "app=vllm"
 
 
 # ============================================================

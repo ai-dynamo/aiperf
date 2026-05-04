@@ -54,14 +54,14 @@ class TestMacOSTerminalFixes:
     def config_dashboard(self) -> BenchmarkPlan:
         """Create a BenchmarkPlan with Dashboard UI type."""
         return build_benchmark_plan(
-            AIPerfConfig(**_BASE, runtime={"ui": UIType.DASHBOARD})
+            AIPerfConfig(benchmark={**_BASE, "runtime": {"ui": UIType.DASHBOARD}})
         )
 
     @pytest.fixture
     def config_simple(self) -> BenchmarkPlan:
         """Create a BenchmarkPlan with Simple UI type."""
         return build_benchmark_plan(
-            AIPerfConfig(**_BASE, runtime={"ui": UIType.SIMPLE})
+            AIPerfConfig(benchmark={**_BASE, "runtime": {"ui": UIType.SIMPLE}})
         )
 
     def test_spawn_method_set_on_macos_dashboard(

@@ -39,21 +39,22 @@ def test_aiperf_config_serialization():
     """
     Tests that AIPerfConfig can be serialized to dict and contains expected fields.
     """
-    config = AIPerfConfig(**_BASE)
+    config = AIPerfConfig(benchmark=_BASE)
 
     config_dict = config.model_dump()
 
-    assert "models" in config_dict
-    assert "endpoint" in config_dict
-    assert "datasets" in config_dict
-    assert "phases" in config_dict
+    assert "benchmark" in config_dict
+    assert "models" in config_dict["benchmark"]
+    assert "endpoint" in config_dict["benchmark"]
+    assert "datasets" in config_dict["benchmark"]
+    assert "phases" in config_dict["benchmark"]
 
 
 def test_aiperf_config_json_serialization():
     """
     Tests that AIPerfConfig can be serialized to JSON string and contains expected values.
     """
-    config = AIPerfConfig(**_BASE)
+    config = AIPerfConfig(benchmark=_BASE)
 
     json_output = config.model_dump_json()
 
@@ -65,10 +66,10 @@ def test_aiperf_config_nested_access():
     """
     Tests that nested configuration objects are properly accessible.
     """
-    config = AIPerfConfig(**_BASE)
+    config = AIPerfConfig(benchmark=_BASE)
 
     # Verify nested dataset config is accessible
-    dataset = config.get_default_dataset()
+    dataset = config.benchmark.get_default_dataset()
     assert dataset is not None
     assert dataset.entries == 100
 
@@ -77,9 +78,9 @@ def test_aiperf_config_model_names():
     """
     Tests that model names are properly extracted from configuration.
     """
-    config = AIPerfConfig(**_BASE)
+    config = AIPerfConfig(benchmark=_BASE)
 
-    model_names = config.get_model_names()
+    model_names = config.benchmark.get_model_names()
     assert model_names == ["test-model"]
 
 

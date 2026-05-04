@@ -13,10 +13,17 @@ from pydantic import ValidationError
 from aiperf.config.config import AIPerfConfig
 from aiperf.config.endpoint import EndpointConfig
 
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
+
 
 def _base_config(**overrides) -> dict:
-    """Minimal valid AIPerfConfig dict with overrides."""
-    base = {
+    """Minimal valid AIPerfConfig envelope dict with overrides.
+
+    Envelope-level keys (``sweep``, ``multi_run``, ``variables``,
+    ``random_seed``) stay at top level; everything else lands inside
+    ``benchmark``.
+    """
+    body = {
         "models": ["test-model"],
         "endpoint": {
             "urls": ["http://localhost:8000/v1/chat/completions"],
@@ -38,8 +45,11 @@ def _base_config(**overrides) -> dict:
             }
         ],
     }
-    base.update(overrides)
-    return base
+    env_overrides = {
+        k: overrides.pop(k) for k in list(overrides) if k in _ENVELOPE_KEYS
+    }
+    body.update(overrides)
+    return {"benchmark": body, **env_overrides}
 
 
 # =============================================================================
@@ -69,10 +79,12 @@ class TestPrefillConcurrencyRequiresStreaming:
             )
         )
         assert (
-            next(p for p in config.phases if p.name == "profiling").prefill_concurrency
+            next(
+                p for p in config.benchmark.phases if p.name == "profiling"
+            ).prefill_concurrency
             == 4
         )
-        assert config.endpoint.streaming is True
+        assert config.benchmark.endpoint.streaming is True
 
     def test_prefill_without_streaming_fails(self):
         with pytest.raises(
@@ -105,7 +117,7 @@ class TestPrefillConcurrencyRequiresStreaming:
                 },
             )
         )
-        assert config.endpoint.streaming is False
+        assert config.benchmark.endpoint.streaming is False
 
     def test_multiple_phases_one_fails(self):
         with pytest.raises(
@@ -162,7 +174,7 @@ class TestPrefillConcurrencyRequiresStreaming:
                 ],
             )
         )
-        assert len(config.phases) == 2
+        assert len(config.benchmark.phases) == 2
 
 
 # =============================================================================
@@ -182,8 +194,8 @@ class TestApiHostRequiresApiPort:
                 },
             )
         )
-        assert config.runtime.api_host == "0.0.0.0"
-        assert config.runtime.api_port == 9090
+        assert config.benchmark.runtime.api_host == "0.0.0.0"
+        assert config.benchmark.runtime.api_port == 9090
 
     def test_host_without_port_fails(self):
         with pytest.raises(ValidationError, match="api_port"):
@@ -203,13 +215,13 @@ class TestApiHostRequiresApiPort:
                 },
             )
         )
-        assert config.runtime.api_port == 9090
-        assert config.runtime.api_host is None
+        assert config.benchmark.runtime.api_port == 9090
+        assert config.benchmark.runtime.api_host is None
 
     def test_neither_set_passes(self):
         config = AIPerfConfig(**_base_config())
-        assert config.runtime.api_host is None
-        assert config.runtime.api_port is None
+        assert config.benchmark.runtime.api_host is None
+        assert config.benchmark.runtime.api_port is None
 
 
 # =============================================================================
@@ -242,7 +254,7 @@ class TestFixedScheduleSampling:
             )
         )
         assert (
-            next(p for p in config.phases if p.name == "replay").type
+            next(p for p in config.benchmark.phases if p.name == "replay").type
             == "fixed_schedule"
         )
 
@@ -285,7 +297,7 @@ class TestFixedScheduleSampling:
             )
         )
         assert (
-            next(p for p in config.phases if p.name == "replay").type
+            next(p for p in config.benchmark.phases if p.name == "replay").type
             == "fixed_schedule"
         )
 
@@ -322,7 +334,7 @@ class TestUserCentricRequiresMultiTurn:
             )
         )
         assert (
-            next(p for p in config.phases if p.name == "profiling").type
+            next(p for p in config.benchmark.phases if p.name == "profiling").type
             == "user_centric"
         )
 
@@ -368,7 +380,7 @@ class TestUserCentricRequiresMultiTurn:
             )
         )
         assert (
-            next(p for p in config.phases if p.name == "profiling").type
+            next(p for p in config.benchmark.phases if p.name == "profiling").type
             == "user_centric"
         )
 
@@ -455,4 +467,4 @@ class TestStreamingNormalization:
                     }
                 )
             )
-        assert config.endpoint.streaming is False
+        assert config.benchmark.endpoint.streaming is False

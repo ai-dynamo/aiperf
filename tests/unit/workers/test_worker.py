@@ -351,7 +351,7 @@ class TestKubernetesMode:
 
         return BenchmarkRun(
             benchmark_id="test",
-            cfg=config,
+            cfg=config.benchmark,
             artifact_dir=Path("/tmp/test"),
         )
 
@@ -364,7 +364,7 @@ class TestKubernetesMode:
         mock_psutil_process,
     ) -> Worker:
         """Create a Worker in Kubernetes mode."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -384,7 +384,7 @@ class TestKubernetesMode:
         mock_psutil_process,
     ) -> Worker:
         """Create a Worker in local (multiprocessing) mode."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         worker = Worker(
             run=self._make_run(config),
             service_id="local-worker",
@@ -408,7 +408,7 @@ class TestKubernetesMode:
         expected: bool,
     ) -> None:
         """_is_kubernetes_mode should return True only for KUBERNETES run type."""
-        config.runtime.service_run_type = run_type
+        config.benchmark.runtime.service_run_type = run_type
         worker = Worker(
             run=self._make_run(config),
             service_id="test-worker",
@@ -495,7 +495,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """PROFILE_CONFIGURE should not complete until WorkerDispatchable has been sent."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -520,7 +520,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Group-managed local workers defer readiness until group dataset is ready."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         worker = Worker(
             run=self._make_run(config),
             service_id="local-worker",
@@ -582,7 +582,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Group-managed workers should initialize directly from pod-local dataset readiness."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -595,8 +595,8 @@ class TestKubernetesMode:
         await worker._on_dataset_ready(
             GroupDatasetReady(
                 service_id="worker-pod-manager",
-                data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
-                index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+                data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat",
+                index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat",
                 conversation_count=4,
                 total_size_bytes=1024,
                 pod_index="0",
@@ -724,7 +724,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Concurrent pod-local ready signals should emit a single dispatchable/READY transition."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -748,14 +748,14 @@ class TestKubernetesMode:
             service_id="worker-pod-manager",
             benchmark_generation="gen-1",
             dataset_generation="data-1",
-            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
-            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat",
             ready=True,
         )
         dataset_ready = GroupDatasetReady(
             service_id="worker-pod-manager",
-            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
-            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat",
             conversation_count=4,
             total_size_bytes=1024,
             pod_index="0",
@@ -794,7 +794,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Repeated pod-local dataset snapshots should not rerun readiness flow."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -808,8 +808,8 @@ class TestKubernetesMode:
             service_id="worker-pod-manager",
             benchmark_generation="gen-1",
             dataset_generation="data-1",
-            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
-            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat",
             ready=True,
         )
 
@@ -824,7 +824,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Repeated config notifications after ready should be ignored."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -840,10 +840,10 @@ class TestKubernetesMode:
             ),
             client_metadata=MemoryMapClientMetadata(
                 data_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat"
+                    f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat"
                 ),
                 index_file_path=Path(
-                    f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat"
+                    f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat"
                 ),
                 conversation_count=0,
                 total_size_bytes=0,
@@ -861,7 +861,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Kubernetes workers should ignore download notifications from a different pod."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",
@@ -872,8 +872,8 @@ class TestKubernetesMode:
 
         wrong_pod_download = GroupDatasetReady(
             service_id="worker-pod-manager",
-            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/dataset.dat",
-            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.artifacts.benchmark_id}/index.dat",
+            data_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/dataset.dat",
+            index_file_path=f"/aiperf/datasets/aiperf_mmap_{config.benchmark.artifacts.benchmark_id}/index.dat",
             conversation_count=0,
             total_size_bytes=0,
             pod_index="16",
@@ -891,7 +891,7 @@ class TestKubernetesMode:
         self, config: AIPerfConfig
     ) -> None:
         """Kubernetes workers should not become dispatchable from a non-ready snapshot."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
             run=self._make_run(config),
             service_id="k8s-worker",

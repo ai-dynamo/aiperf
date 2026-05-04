@@ -98,19 +98,26 @@ def _list(items: list) -> MagicMock:
 def _sample_config() -> AIPerfConfig:
     """Create a minimal AIPerfConfig for testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "main",
-                "type": "synthetic",
-                "entries": 10,
-                "prompts": {"isl": 32, "osl": 16},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32, "osl": 16},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 

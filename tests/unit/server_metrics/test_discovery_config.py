@@ -128,45 +128,58 @@ class TestAIPerfConfigWithDiscovery:
 
     def test_default_discovery_in_full_config(self):
         cfg = AIPerfConfig(**_BASE)
-        assert cfg.server_metrics.discovery.mode == ServerMetricsDiscoveryMode.AUTO
+        assert (
+            cfg.benchmark.server_metrics.discovery.mode
+            == ServerMetricsDiscoveryMode.AUTO
+        )
 
     def test_yaml_style_discovery_in_full_config(self):
         cfg = AIPerfConfig(
-            **_BASE,
-            server_metrics={
-                "urls": ["http://server:8000/metrics"],
-                "discovery": {
-                    "mode": "kubernetes",
-                    "namespace": "inference",
+            benchmark={
+                **_BASE,
+                "server_metrics": {
+                    "urls": ["http://server:8000/metrics"],
+                    "discovery": {
+                        "mode": "kubernetes",
+                        "namespace": "inference",
+                    },
                 },
-            },
+            }
         )
         assert (
-            cfg.server_metrics.discovery.mode == ServerMetricsDiscoveryMode.KUBERNETES
+            cfg.benchmark.server_metrics.discovery.mode
+            == ServerMetricsDiscoveryMode.KUBERNETES
         )
-        assert cfg.server_metrics.discovery.namespace == "inference"
-        assert cfg.server_metrics.urls == ["http://server:8000/metrics"]
+        assert cfg.benchmark.server_metrics.discovery.namespace == "inference"
+        assert cfg.benchmark.server_metrics.urls == ["http://server:8000/metrics"]
 
     def test_disabled_discovery_in_full_config(self):
         cfg = AIPerfConfig(
-            **_BASE,
-            server_metrics={
-                "urls": ["http://server:8000/metrics"],
-                "discovery": {"mode": "disabled"},
-            },
+            benchmark={
+                **_BASE,
+                "server_metrics": {
+                    "urls": ["http://server:8000/metrics"],
+                    "discovery": {"mode": "disabled"},
+                },
+            }
         )
-        assert cfg.server_metrics.discovery.mode == ServerMetricsDiscoveryMode.DISABLED
+        assert (
+            cfg.benchmark.server_metrics.discovery.mode
+            == ServerMetricsDiscoveryMode.DISABLED
+        )
 
     def test_serialization_roundtrip(self):
         cfg = AIPerfConfig(
-            **_BASE,
-            server_metrics={
-                "discovery": {
-                    "mode": "kubernetes",
-                    "label_selector": "app=vllm",
-                    "namespace": "inference",
+            benchmark={
+                **_BASE,
+                "server_metrics": {
+                    "discovery": {
+                        "mode": "kubernetes",
+                        "label_selector": "app=vllm",
+                        "namespace": "inference",
+                    },
                 },
-            },
+            }
         )
         data = cfg.model_dump(exclude_none=True)
         restored = AIPerfConfig.model_validate(data)

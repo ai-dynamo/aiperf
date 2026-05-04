@@ -39,23 +39,24 @@ from aiperf.config.sweep import expand_sweep
 # ============================================================
 
 _MINIMAL_YAML = textwrap.dedent("""\
-    models:
-      - test-model
-    endpoint:
-      urls:
-        - http://localhost:8000/v1/chat/completions
-    datasets:
-      - name: default
-        type: synthetic
-        entries: 100
-        prompts:
-          isl: 128
-          osl: 64
-    phases:
-      - name: default
-        type: concurrency
-        requests: 10
-        concurrency: 1
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
 """)
 
 _MINIMAL_CONFIG_KWARGS = {
@@ -99,17 +100,17 @@ class TestYamlToBenchmarkPlan:
 
     def test_yaml_with_grid_sweep_expands_correctly(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: grid
-              variables:
-                phases.default.concurrency:
-                  - 8
-                  - 16
-                phases.default.requests:
-                  - 100
-                  - 200
-                  - 300
-        """)
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.default.concurrency:
+      - 8
+      - 16
+    benchmark.phases.default.requests:
+      - 100
+      - 200
+      - 300
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert len(plan.configs) == 6
@@ -133,18 +134,20 @@ class TestYamlToBenchmarkPlan:
 
     def test_yaml_with_scenario_sweep_preserves_base_fields(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: scenarios
-              runs:
-                - name: low-concurrency
-                  phases:
-                    - name: default
-                      concurrency: 2
-                - name: high-concurrency
-                  phases:
-                    - name: default
-                      concurrency: 64
-        """)
+sweep:
+  type: scenarios
+  runs:
+    - name: low-concurrency
+      benchmark:
+        phases:
+          - name: default
+            concurrency: 2
+    - name: high-concurrency
+      benchmark:
+        phases:
+          - name: default
+            concurrency: 64
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert len(plan.configs) == 2
@@ -167,11 +170,11 @@ class TestYamlToBenchmarkPlan:
 
     def test_yaml_with_multi_run_sets_plan_fields(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            multi_run:
-              num_runs: 5
-              cooldown_seconds: 2.5
-              confidence_level: 0.99
-        """)
+multi_run:
+  num_runs: 5
+  cooldown_seconds: 2.5
+  confidence_level: 0.99
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert plan.trials == 5
@@ -181,16 +184,16 @@ class TestYamlToBenchmarkPlan:
 
     def test_yaml_with_sweep_and_multi_run_combined(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: grid
-              variables:
-                phases.default.concurrency:
-                  - 8
-                  - 16
-                  - 32
-            multi_run:
-              num_runs: 3
-        """)
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.default.concurrency:
+      - 8
+      - 16
+      - 32
+multi_run:
+  num_runs: 3
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert len(plan.configs) == 3
@@ -204,27 +207,28 @@ class TestYamlToBenchmarkPlan:
         import yaml
 
         yaml_str = textwrap.dedent("""\
-            models:
-              - test-model
-            endpoint:
-              urls:
-                - http://localhost:8000/v1/chat/completions
-            datasets:
-              - name: default
-                type: synthetic
-                entries: 100
-                prompts:
-                  isl: 128
-                  osl: 64
-            phases:
-              - name: default
-                type: concurrency
-                requests: 10
-                concurrency:
-                  - 8
-                  - 16
-                  - 32
-        """)
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency:
+        - 8
+        - 16
+        - 32
+""")
         data = yaml.safe_load(yaml_str)
         variations = expand_sweep(data)
 
@@ -237,15 +241,15 @@ class TestYamlToBenchmarkPlan:
 
     def test_sweep_field_stripped_from_expanded_configs(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: grid
-              variables:
-                phases.default.concurrency:
-                  - 4
-                  - 8
-            multi_run:
-              num_runs: 2
-        """)
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.default.concurrency:
+      - 4
+      - 8
+multi_run:
+  num_runs: 2
+""")
         plan = _yaml_to_plan(yaml_str)
 
         for cfg in plan.configs:
@@ -254,12 +258,12 @@ class TestYamlToBenchmarkPlan:
 
     def test_expanded_configs_are_benchmark_config_not_aiperf_config(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: grid
-              variables:
-                phases.default.concurrency:
-                  - 1
-        """)
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.default.concurrency:
+      - 1
+""")
         plan = _yaml_to_plan(yaml_str)
 
         for cfg in plan.configs:
@@ -271,24 +275,25 @@ class TestYamlToBenchmarkPlan:
     ) -> None:
         monkeypatch.setenv("TEST_URL", "http://gpu-server:9000/v1/chat/completions")
         yaml_str = textwrap.dedent("""\
-            models:
-              - test-model
-            endpoint:
-              urls:
-                - ${TEST_URL}
-            datasets:
-              - name: default
-                type: synthetic
-                entries: 100
-                prompts:
-                  isl: 128
-                  osl: 64
-            phases:
-              - name: default
-                type: concurrency
-                requests: 10
-                concurrency: 1
-        """)
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - ${TEST_URL}
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert (
@@ -299,24 +304,25 @@ class TestYamlToBenchmarkPlan:
     def test_env_var_with_default_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("MISSING_VAR", raising=False)
         yaml_str = textwrap.dedent("""\
-            models:
-              - test-model
-            endpoint:
-              urls:
-                - ${MISSING_VAR:http://fallback:8000/v1/chat/completions}
-            datasets:
-              - name: default
-                type: synthetic
-                entries: 100
-                prompts:
-                  isl: 128
-                  osl: 64
-            phases:
-              - name: default
-                type: concurrency
-                requests: 10
-                concurrency: 1
-        """)
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - ${MISSING_VAR:http://fallback:8000/v1/chat/completions}
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
+""")
         plan = _yaml_to_plan(yaml_str)
 
         assert (
@@ -329,24 +335,25 @@ class TestYamlToBenchmarkPlan:
     ) -> None:
         monkeypatch.delenv("REQUIRED_VAR", raising=False)
         yaml_str = textwrap.dedent("""\
-            models:
-              - test-model
-            endpoint:
-              urls:
-                - ${REQUIRED_VAR}
-            datasets:
-              - name: default
-                type: synthetic
-                entries: 100
-                prompts:
-                  isl: 128
-                  osl: 64
-            phases:
-              - name: default
-                type: concurrency
-                requests: 10
-                concurrency: 1
-        """)
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - ${REQUIRED_VAR}
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
+""")
         with pytest.raises(MissingEnvironmentVariableError, match="REQUIRED_VAR"):
             _yaml_to_plan(yaml_str)
 
@@ -620,46 +627,48 @@ class TestFlatConfigYaml:
 
     def test_minimal_flat_config(self) -> None:
         yaml_str = textwrap.dedent("""\
-            model: test-model
-            endpoint:
-              url: http://localhost:8000/v1/chat/completions
-            dataset:
-              isl: 512
-              osl: 128
-            profiling:
-              type: concurrency
-              requests: 10
-              concurrency: 1
-        """)
+model: test-model
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+dataset:
+  isl: 512
+  osl: 128
+profiling:
+  type: concurrency
+  requests: 10
+  concurrency: 1
+""")
         config = load_config_from_string(yaml_str)
         assert "default" in [d.name for d in config.datasets]
         assert any(p.name == "profiling" for p in config.phases)
 
     def test_warmup_profiling_flat_config(self) -> None:
         yaml_str = textwrap.dedent("""\
-            model: test-model
-            endpoint:
-              url: http://localhost:8000/v1/chat/completions
-            datasets:
-              - name: warmup
-                isl: 256
-                osl: 64
-                entries: 100
-              - name: profiling
-                isl: {mean: 550, stddev: 50}
-                osl: {mean: 150, stddev: 25}
-                entries: 500
-            warmup:
-              type: concurrency
-              dataset: warmup
-              requests: 100
-              concurrency: 8
-            profiling:
-              type: concurrency
-              dataset: profiling
-              requests: 10
-              concurrency: 1
-        """)
+model: test-model
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+  datasets:
+    - name: warmup
+      isl: 256
+      osl: 64
+      entries: 100
+    - name: profiling
+      isl: {mean: 550, stddev: 50}
+      osl: {mean: 150, stddev: 25}
+      entries: 500
+warmup:
+  type: concurrency
+  dataset: warmup
+  requests: 100
+  concurrency: 8
+profiling:
+  type: concurrency
+  dataset: profiling
+  requests: 10
+  concurrency: 1
+""")
         config = load_config_from_string(yaml_str)
         assert [p.name for p in config.phases] == ["warmup", "profiling"]
         assert (

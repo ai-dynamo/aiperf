@@ -404,17 +404,19 @@ class TestRandomPoolBatchSize:
             dataset_config["video"] = {"batch_size": batch_size_video}
 
         return AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[{"name": "default", **dataset_config}],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [{"name": "default", **dataset_config}],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
 
     def test_batch_size_image_produces_correct_image_count(self, default_user_run):

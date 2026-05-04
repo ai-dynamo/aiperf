@@ -44,10 +44,10 @@ def _create_config(
     gpu_telemetry: dict = {"enabled": gpu_telemetry_enabled}
     if gpu_telemetry_urls is not None:
         gpu_telemetry["urls"] = gpu_telemetry_urls
-    config = AIPerfConfig(**_BASE, gpu_telemetry=gpu_telemetry)
+    config = AIPerfConfig(benchmark={**_BASE, "gpu_telemetry": gpu_telemetry})
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 

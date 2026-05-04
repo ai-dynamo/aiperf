@@ -33,7 +33,9 @@ _BASE = dict(
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 def _make_config(prompts=None, prefix_prompts=None) -> AIPerfConfig:
@@ -43,7 +45,9 @@ def _make_config(prompts=None, prefix_prompts=None) -> AIPerfConfig:
         dataset["prompts"] = prompts
     if prefix_prompts is not None:
         dataset["prefix_prompts"] = prefix_prompts
-    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
+    return AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
 
 
 @patch("builtins.open", mock_open(read_data=MOCK_CORPUS_CONTENT))

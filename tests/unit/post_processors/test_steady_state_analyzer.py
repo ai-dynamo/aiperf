@@ -49,24 +49,31 @@ def _make_user_config(
         ss_kwargs["end_pct"] = end_pct
 
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/completions"],
-            "type": "completions",
-            "streaming": False,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 1,
-                "prompts": {"isl": 8, "osl": 8},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
-        ],
-        artifacts={"steady_state": ss_kwargs},
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/completions"],
+                "type": "completions",
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 1,
+                    "prompts": {"isl": 8, "osl": 8},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 1,
+                    "concurrency": 1,
+                }
+            ],
+            "artifacts": {"steady_state": ss_kwargs},
+        }
     )
 
 

@@ -37,9 +37,13 @@ _MINIMAL_CONFIG_KWARGS = {
 }
 
 
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
+
+
 def _make_aiperf_config(**overrides: object) -> AIPerfConfig:
-    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
-    return AIPerfConfig(**kwargs)
+    env_kwargs = {k: overrides.pop(k) for k in list(overrides) if k in _ENVELOPE_KEYS}
+    body = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return AIPerfConfig(benchmark=body, **env_kwargs)
 
 
 def _make_benchmark_config() -> BenchmarkConfig:

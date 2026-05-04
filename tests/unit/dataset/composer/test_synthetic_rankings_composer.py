@@ -30,7 +30,9 @@ def _rankings_config(**rankings_overrides) -> AIPerfConfig:
     }
     if rankings_overrides:
         dataset["rankings"].update(rankings_overrides)
-    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
+    return AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
 
 
 def test_initialization_basic(mock_tokenizer):

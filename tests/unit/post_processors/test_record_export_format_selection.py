@@ -45,14 +45,16 @@ def _make_config(tmp_artifact_dir: Path, **artifacts_overrides) -> AIPerfConfig:
         **artifacts_overrides,
     }
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-        },
-        datasets=_MINIMAL_DATASETS,
-        phases=_MINIMAL_PHASES,
-        artifacts=artifacts,
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+            },
+            "datasets": _MINIMAL_DATASETS,
+            "phases": _MINIMAL_PHASES,
+            "artifacts": artifacts,
+        }
     )
 
 

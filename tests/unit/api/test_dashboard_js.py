@@ -136,7 +136,7 @@ def _build_app(
     app = FastAPI(title="aiperf-dashboard-test")
     run = BenchmarkRun(
         benchmark_id="dashboard-test",
-        cfg=cfg,
+        cfg=cfg.benchmark,
         artifact_dir=Path("/tmp/aiperf-dashboard-test"),
     )
     svc = _StubAPIService(run)
@@ -156,7 +156,7 @@ def _build_app(
 
     # Pre-computed phase announcements (for the v2 tests that need to see the
     # PhaseCards component render an entry per configured phase name).
-    phase_names = [p.name for p in cfg.phases]
+    phase_names = [p.name for p in cfg.benchmark.phases]
     ws_payloads = list(extra_ws_payloads or [])
 
     # NOTE: FastAPI's ``@app.websocket`` rejects the upgrade (HTTP 403) unless
@@ -208,59 +208,68 @@ def _build_app(
 
 def _build_multi_phase_cfg() -> AIPerfConfig:
     return AIPerfConfig(
-        models=["llama3-8b", "llama3-70b"],
-        endpoint={
-            "urls": ["http://srv:8000/v1/chat/completions"],
-            "type": "chat",
-            "streaming": True,
-            "api_key": "SHOULD_NOT_LEAK",
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "warmup", "type": "concurrency", "requests": 50, "concurrency": 4},
-            {
-                "name": "profiling",
-                "type": "poisson",
-                "rate": 20,
-                "duration": 300,
-                "concurrency": 32,
+        benchmark={
+            "models": ["llama3-8b", "llama3-70b"],
+            "endpoint": {
+                "urls": ["http://srv:8000/v1/chat/completions"],
+                "type": "chat",
+                "streaming": True,
+                "api_key": "SHOULD_NOT_LEAK",
             },
-        ],
-        runtime={"api_port": 8080},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "requests": 50,
+                    "concurrency": 4,
+                },
+                {
+                    "name": "profiling",
+                    "type": "poisson",
+                    "rate": 20,
+                    "duration": 300,
+                    "concurrency": 32,
+                },
+            ],
+            "runtime": {"api_port": 8080},
+        }
     )
 
 
 def _build_single_phase_cfg() -> AIPerfConfig:
     return AIPerfConfig(
-        models=["gpt-4o-mini"],
-        endpoint={
-            "urls": ["http://srv:8000/v1/chat/completions"],
-            "type": "chat",
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 50,
-                "prompts": {"isl": 128, "osl": 32},
-            }
-        ],
-        phases=[
-            {
-                "name": "default",
-                "type": "concurrency",
-                "requests": 100,
-                "concurrency": 8,
-            }
-        ],
-        runtime={"api_port": 8080},
+        benchmark={
+            "models": ["gpt-4o-mini"],
+            "endpoint": {
+                "urls": ["http://srv:8000/v1/chat/completions"],
+                "type": "chat",
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 50,
+                    "prompts": {"isl": 128, "osl": 32},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 8,
+                }
+            ],
+            "runtime": {"api_port": 8080},
+        }
     )
 
 
@@ -629,37 +638,42 @@ class TestDashboardV2Render:
         # Config has 3 phases with non-warmup-or-profiling names to prove
         # the v1 bucketing behavior is gone.
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "phase_alpha",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
                 },
-                {
-                    "name": "phase_beta",
-                    "type": "concurrency",
-                    "requests": 20,
-                    "concurrency": 2,
-                },
-                {
-                    "name": "phase_gamma",
-                    "type": "concurrency",
-                    "requests": 30,
-                    "concurrency": 3,
-                },
-            ],
-            runtime={"api_port": 8080},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "phase_alpha",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    },
+                    {
+                        "name": "phase_beta",
+                        "type": "concurrency",
+                        "requests": 20,
+                        "concurrency": 2,
+                    },
+                    {
+                        "name": "phase_gamma",
+                        "type": "concurrency",
+                        "requests": 30,
+                        "concurrency": 3,
+                    },
+                ],
+                "runtime": {"api_port": 8080},
+            }
         )
 
         with _run_server(cfg, broadcast_phases=True) as base_url:
@@ -762,7 +776,7 @@ class TestDashboardV2RealtimeMetrics:
       smoothness)
 
     SLO policy: the dashboard only renders pass/fail chips against
-    thresholds the user declared via ``cfg.slos`` (the same dict AIPerf's
+    thresholds the user declared via ``cfg.benchmark.slos`` (the same dict AIPerf's
     goodput feature consumes). No fabricated "industry defaults" - silence
     is the honest option when the user hasn't said what good looks like.
     """
@@ -771,7 +785,7 @@ class TestDashboardV2RealtimeMetrics:
     def test_realtime_metrics_tiles_render_expected_values(self, _page: Page) -> None:
         """Each hero tile must show its canonical primary stat + secondary stat.
 
-        No ``cfg.slos`` is configured in the multi-phase fixture, so no chip
+        No ``cfg.benchmark.slos`` is configured in the multi-phase fixture, so no chip
         should render on latency tiles - we're testing the stat-picker, not
         the threshold policy.
         """
@@ -884,7 +898,7 @@ class TestDashboardV2RealtimeMetrics:
     def test_realtime_metrics_chip_honors_user_slo_and_renders_threshold(
         self, _page: Page
     ) -> None:
-        """When the user declares ``cfg.slos``, the chip is binary pass/fail
+        """When the user declares ``cfg.benchmark.slos``, the chip is binary pass/fail
         against that value and the chip label echoes the user's threshold.
 
         Customer: "I want TTFT p99 ≤ 100 ms, ITL avg ≤ 10 ms, Request
@@ -892,30 +906,35 @@ class TestDashboardV2RealtimeMetrics:
         and we check both outcomes against the same SLO declaration.
         """
         cfg_with_slo = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
-            slos={
-                "time_to_first_token": 100.0,
-                "inter_token_latency": 10.0,
-                "request_latency": 1500.0,
-            },
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+                "slos": {
+                    "time_to_first_token": 100.0,
+                    "inter_token_latency": 10.0,
+                    "request_latency": 1500.0,
+                },
+                "runtime": {"api_port": 8080},
+            }
         )
 
         # Scenario A: all three pass → green chips with the user's thresholds.
@@ -1033,7 +1052,7 @@ class TestDashboardV2RealtimeMetrics:
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_realtime_metrics_no_chip_without_user_slo(self, _page: Page) -> None:
         """Absolute regression guard against fabricated defaults: no chip may
-        appear on any latency tile when ``cfg.slos`` does not cover it.
+        appear on any latency tile when ``cfg.benchmark.slos`` does not cover it.
 
         Tile renders values + secondary stat, but no pass/fail judgment —
         the dashboard does not claim to know whether 500 ms TTFT is "good"
@@ -1105,26 +1124,31 @@ class TestDashboardV2RealtimeMetrics:
         declarations rather than a fabricated pass-rate band.
         """
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
-            slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+                "slos": {"time_to_first_token": 500.0, "inter_token_latency": 30.0},
+                "runtime": {"api_port": 8080},
+            }
         )
 
         # 100% passes → green.
@@ -1173,26 +1197,31 @@ class TestDashboardV2RealtimeMetrics:
     ) -> None:
         """Any user-SLO failure → warn. No fake band; binary at the user's bar."""
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
-            slos={"time_to_first_token": 500.0},
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+                "slos": {"time_to_first_token": 500.0},
+                "runtime": {"api_port": 8080},
+            }
         )
         near_miss = {
             "type": "realtime_metrics",
@@ -1245,26 +1274,31 @@ class TestDashboardV2RealtimeMetrics:
         failed-count chip and pass-rate stay live during a run.
         """
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
-            slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+                "slos": {"time_to_first_token": 500.0, "inter_token_latency": 30.0},
+                "runtime": {"api_port": 8080},
+            }
         )
         # Real-server shape: goodput/good_request_count/request_count populate
         # ``avg`` only. 997 / 1000 = 3 failed, pass rate 99.7%.
@@ -1610,26 +1644,31 @@ class TestDashboardV2HeroStrip:
         """Health = OK when every user SLO's p99 is at or under the user's
         threshold and no requests are failing."""
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 1000,
-                    "concurrency": 4,
-                }
-            ],
-            slos={"time_to_first_token": 500.0, "inter_token_latency": 30.0},
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 1000,
+                        "concurrency": 4,
+                    }
+                ],
+                "slos": {"time_to_first_token": 500.0, "inter_token_latency": 30.0},
+                "runtime": {"api_port": 8080},
+            }
         )
         payload = [
             {
@@ -1685,26 +1724,31 @@ class TestDashboardV2HeroStrip:
     def test_hero_health_error_when_slo_violated(self, _page: Page) -> None:
         """SLO violation → hero turns red and spells out the violation."""
         cfg = AIPerfConfig(
-            models=["llama3-8b"],
-            endpoint={"urls": ["http://srv:8000/v1/chat/completions"], "type": "chat"},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 128, "osl": 32},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 100,
-                    "concurrency": 4,
-                }
-            ],
-            slos={"time_to_first_token": 200.0},
-            runtime={"api_port": 8080},
+            benchmark={
+                "models": ["llama3-8b"],
+                "endpoint": {
+                    "urls": ["http://srv:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 128, "osl": 32},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 100,
+                        "concurrency": 4,
+                    }
+                ],
+                "slos": {"time_to_first_token": 200.0},
+                "runtime": {"api_port": 8080},
+            }
         )
         payload = [
             {

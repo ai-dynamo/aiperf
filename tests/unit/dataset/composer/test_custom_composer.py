@@ -32,7 +32,9 @@ def _file_config(
     """Build an AIPerfConfig with a file dataset."""
     dataset = {"type": "file", "path": path, "format": format_str}
     dataset.update(dataset_extras)
-    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
+    return AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
 
 
 class TestInitialization:

@@ -107,24 +107,26 @@ class TestConfigValidation:
         from aiperf.config.loader import dump_config
 
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 50,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 50,
-                    "concurrency": 5,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 50,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 50,
+                        "concurrency": 5,
+                    }
+                ],
+            }
         )
 
         yaml_str = dump_config(config, exclude_defaults=False)
@@ -144,24 +146,26 @@ class TestConfigValidation:
         from aiperf.config.loader import save_config
 
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 10,
-                    "prompts": {"isl": 32, "osl": 16},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "prompts": {"isl": 32, "osl": 16},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
 
         path = Path(tempfile.mktemp(suffix=".yaml"))

@@ -56,7 +56,7 @@ def _make_run(config: AIPerfConfig) -> BenchmarkRun:
     """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
@@ -65,7 +65,9 @@ def _config(**dataset_overrides) -> AIPerfConfig:
     """Build an AIPerfConfig with a single synthetic dataset, merging overrides."""
     dataset = {"type": "synthetic", "entries": 100, "prompts": {"isl": 128, "osl": 64}}
     dataset.update(dataset_overrides)
-    return AIPerfConfig(**_BASE, datasets=[{"name": "default", **dataset}])
+    return AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
 
 
 # ============================================================================
@@ -169,15 +171,17 @@ def custom_config() -> BenchmarkRun:
     """Basic custom configuration for testing."""
     return _make_run(
         AIPerfConfig(
-            **_BASE,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "file",
-                    "path": "test_data.jsonl",
-                    "format": "single_turn",
-                }
-            ],
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "test_data.jsonl",
+                        "format": "single_turn",
+                    }
+                ],
+            },
         )
     )
 
@@ -187,14 +191,16 @@ def trace_config() -> BenchmarkRun:
     """Configuration for TRACE dataset type."""
     return _make_run(
         AIPerfConfig(
-            **_BASE,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "file",
-                    "path": "trace_data.jsonl",
-                    "format": "mooncake_trace",
-                }
-            ],
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "trace_data.jsonl",
+                        "format": "mooncake_trace",
+                    }
+                ],
+            },
         )
     )

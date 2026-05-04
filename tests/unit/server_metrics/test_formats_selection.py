@@ -23,7 +23,9 @@ from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 _BASE = dict(
@@ -46,7 +48,9 @@ _BASE = dict(
 def _config(tmp_path, formats=None) -> AIPerfConfig:
     """Build an AIPerfConfig with optional server_metrics format override."""
     sm = {"formats": formats} if formats is not None else {}
-    return AIPerfConfig(**_BASE, artifacts={"dir": str(tmp_path)}, server_metrics=sm)
+    return AIPerfConfig(
+        benchmark={**_BASE, "artifacts": {"dir": str(tmp_path)}, "server_metrics": sm}
+    )
 
 
 @pytest.fixture

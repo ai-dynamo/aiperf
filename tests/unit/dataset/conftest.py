@@ -63,24 +63,31 @@ def _mock_control_client():
 def dataset_config(tmp_path: Path) -> AIPerfConfig:
     """Create an AIPerfConfig for dataset testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-            "streaming": False,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
-        artifacts={"dir": str(tmp_path)},
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "artifacts": {"dir": str(tmp_path)},
+        }
     )
 
 
@@ -89,7 +96,7 @@ def dataset_run(dataset_config: AIPerfConfig) -> BenchmarkRun:
     """Create a BenchmarkRun wrapping the dataset config."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=dataset_config,
+        cfg=dataset_config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 

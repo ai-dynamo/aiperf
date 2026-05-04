@@ -28,20 +28,27 @@ from aiperf.exporters.utils import normalize_endpoint_display
 def gpu_config():
     """Create an AIPerfConfig with gpu_telemetry enabled."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
-        gpu_telemetry={"urls": ["http://localhost:9400/metrics"]},
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "gpu_telemetry": {"urls": ["http://localhost:9400/metrics"]},
+        }
     )
 
 
@@ -69,25 +76,27 @@ class TestGPUTelemetryConsoleExporter:
         """Test that export does not print when gpu_telemetry is not enabled."""
         # Create config with gpu_telemetry explicitly disabled
         no_gpu_config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
-            gpu_telemetry={"enabled": False},
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+                "gpu_telemetry": {"enabled": False},
+            }
         )
         exporter_config = ExporterConfig(
             results=mock_profile_results,

@@ -46,14 +46,16 @@ def _make_csv_config(tmp_artifact_dir: Path, **artifacts_overrides) -> AIPerfCon
         **artifacts_overrides,
     }
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-        },
-        datasets=_MINIMAL_DATASETS,
-        phases=_MINIMAL_PHASES,
-        artifacts=artifacts,
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+            },
+            "datasets": _MINIMAL_DATASETS,
+            "phases": _MINIMAL_PHASES,
+            "artifacts": artifacts,
+        }
     )
 
 
@@ -173,7 +175,7 @@ class TestRecordExportCSVProcessorInitialization:
         csv_config: AIPerfConfig,
     ):
         """Test that @on_init clears existing output file."""
-        output_file = csv_config.artifacts.dir / "profile_export_records.csv"
+        output_file = csv_config.benchmark.artifacts.dir / "profile_export_records.csv"
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("existing content\n")
 

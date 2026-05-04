@@ -72,8 +72,8 @@ class TestBaseMetricsProcessor:
         expected_supported_flags: list[MetricFlags],
     ) -> None:
         """Test filter generation based on endpoint capabilities."""
-        mock_user_config.endpoint.type = endpoint_type
-        mock_user_config.endpoint.streaming = streaming
+        mock_user_config.benchmark.endpoint.type = endpoint_type
+        mock_user_config.benchmark.endpoint.streaming = streaming
 
         processor = BaseMetricsProcessor(_make_run(mock_user_config))
         required_flags, disallowed_flags = processor.get_filters()

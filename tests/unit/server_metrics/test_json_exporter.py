@@ -47,7 +47,7 @@ _BASE = dict(
 @pytest.fixture
 def mock_config(tmp_path):
     """Create an AIPerfConfig with a temp output directory."""
-    return AIPerfConfig(**_BASE, artifacts={"dir": str(tmp_path)})
+    return AIPerfConfig(benchmark={**_BASE, "artifacts": {"dir": str(tmp_path)}})
 
 
 @pytest.fixture
@@ -761,10 +761,7 @@ class TestServerMetricsJsonExporterInputConfig:
     ):
         """Test that input_config only includes explicitly set values (exclude_unset=True)."""
         # Create a config with only a few explicitly set values
-        config = AIPerfConfig(
-            **_BASE,
-            artifacts={"dir": str(tmp_path)},
-        )
+        config = AIPerfConfig(benchmark={**_BASE, "artifacts": {"dir": str(tmp_path)}})
 
         exporter_config = create_exporter_config(
             profile_results=mock_profile_results,

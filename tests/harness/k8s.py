@@ -214,19 +214,26 @@ def build_succeeded_pod(base: dict[str, Any] | None = None) -> dict[str, Any]:
 def build_sample_config() -> AIPerfConfig:
     """Create a minimal AIPerfConfig for testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "main",
-                "type": "synthetic",
-                "entries": 10,
-                "prompts": {"isl": 32, "osl": 16},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "main",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32, "osl": 16},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 
@@ -240,7 +247,7 @@ def build_sample_run(config: AIPerfConfig | None = None) -> BenchmarkRun:
         config = build_sample_config()
     return BenchmarkRun(
         benchmark_id="test-run-001",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test-artifacts"),
     )
 

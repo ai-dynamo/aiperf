@@ -18,7 +18,9 @@ from tests.unit.post_processors.conftest import aiperf_lifecycle
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 _BASE = dict(
@@ -42,9 +44,11 @@ _BASE = dict(
 def config_with_jsonl(tmp_artifact_dir: Path) -> AIPerfConfig:
     """Create AIPerfConfig for server metrics JSONL export testing."""
     return AIPerfConfig(
-        **_BASE,
-        artifacts={"dir": str(tmp_artifact_dir)},
-        server_metrics={"formats": [ServerMetricsFormat.JSONL]},
+        benchmark={
+            **_BASE,
+            "artifacts": {"dir": str(tmp_artifact_dir)},
+            "server_metrics": {"formats": [ServerMetricsFormat.JSONL]},
+        }
     )
 
 

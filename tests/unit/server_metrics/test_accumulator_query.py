@@ -18,7 +18,9 @@ from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 def _make_server_metrics_record(timestamp_ns: int) -> ServerMetricsRecord:
@@ -34,23 +36,30 @@ def _make_server_metrics_record(timestamp_ns: int) -> ServerMetricsRecord:
 @pytest.fixture
 def accumulator() -> ServerMetricsAccumulator:
     config = AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-            "streaming": False,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
     return ServerMetricsAccumulator(run=_make_run(config))
 

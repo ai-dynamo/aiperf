@@ -39,22 +39,29 @@ def make_latency_metric(
 def router_config() -> BenchmarkRun:
     """BenchmarkRun for router testing."""
     config = AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )

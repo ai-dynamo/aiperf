@@ -44,7 +44,7 @@ def make_config(phases: dict | None = None) -> AIPerfConfig:
                 "concurrency": 10,
             }
         ]
-    return AIPerfConfig(**_BASE, phases=phases)
+    return AIPerfConfig(benchmark={**_BASE, "phases": phases})
 
 
 class TestTimingConfig:

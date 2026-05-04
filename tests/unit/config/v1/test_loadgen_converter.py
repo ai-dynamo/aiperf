@@ -34,7 +34,7 @@ def test_concurrency_list_lifts_to_sweep_variables() -> None:
     assert cfg.sweep.variables == {"phases.profiling.concurrency": [10, 20, 30]}
     # PhaseConfig assigned its own default (concurrency=1) since the list was
     # stripped before validation; expand_sweep overwrites this per variation.
-    profiling_phase = next(p for p in cfg.phases if p.name == "profiling")
+    profiling_phase = next(p for p in cfg.benchmark.phases if p.name == "profiling")
     assert profiling_phase.concurrency in (None, 1)
 
 
@@ -47,7 +47,7 @@ def test_concurrency_csv_string_lifts_to_sweep_variables() -> None:
 def test_concurrency_scalar_does_not_create_sweep() -> None:
     cfg = _convert(loadgen={"concurrency": 10})
     assert cfg.sweep is None
-    profiling_phase = next(p for p in cfg.phases if p.name == "profiling")
+    profiling_phase = next(p for p in cfg.benchmark.phases if p.name == "profiling")
     assert profiling_phase.concurrency == 10
 
 

@@ -35,10 +35,19 @@ _MINIMAL_CONFIG_KWARGS = {
 }
 
 
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
+
+
 def _make_config(**overrides) -> AIPerfConfig:
-    """Create a minimal AIPerfConfig for testing."""
-    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
-    return AIPerfConfig(**kwargs)
+    """Create a minimal AIPerfConfig for testing.
+
+    Splits overrides into envelope-level and body-level kwargs so callers
+    can pass either flat (e.g. ``multi_run={...}``) or body (e.g.
+    ``runtime={...}``) without knowing the partition.
+    """
+    env_kwargs = {k: overrides.pop(k) for k in list(overrides) if k in _ENVELOPE_KEYS}
+    body = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return AIPerfConfig(benchmark=body, **env_kwargs)
 
 
 def _make_plan(**overrides) -> BenchmarkPlan:
@@ -52,8 +61,8 @@ def _make_run(**overrides) -> BenchmarkRun:
     config = _make_config(**overrides)
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
-        artifact_dir=config.artifacts.dir,
+        cfg=config.benchmark,
+        artifact_dir=config.benchmark.artifacts.dir,
     )
 
 
@@ -395,7 +404,7 @@ class TestSweepAggregateRouting:
             runtime={"ui": "simple"},
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [10, 20]},
+                "variables": {"benchmark.phases.default.concurrency": [10, 20]},
             },
         )
         plan = build_benchmark_plan(cfg)
@@ -437,7 +446,7 @@ class TestOperatorModeSweepGate:
             runtime={"ui": "simple"},
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [10, 20]},
+                "variables": {"benchmark.phases.default.concurrency": [10, 20]},
             },
         )
         plan = build_benchmark_plan(cfg)

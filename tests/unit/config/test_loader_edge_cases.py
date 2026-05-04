@@ -31,23 +31,24 @@ from aiperf.config.loader import (
 )
 
 _MINIMAL_YAML = textwrap.dedent("""\
-    models:
-      - test-model
-    endpoint:
-      urls:
-        - http://localhost:8000/v1/chat/completions
-    datasets:
-      - name: default
-        type: synthetic
-        entries: 100
-        prompts:
-          isl: 128
-          osl: 64
-    phases:
-      - name: default
-        type: concurrency
-        requests: 10
-        concurrency: 1
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
 """)
 
 _MINIMAL_CONFIG_KWARGS: dict = {
@@ -67,9 +68,13 @@ _MINIMAL_CONFIG_KWARGS: dict = {
 }
 
 
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
+
+
 def _make_aiperf_config(**overrides: object) -> AIPerfConfig:
-    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
-    return AIPerfConfig(**kwargs)
+    env_kwargs = {k: overrides.pop(k) for k in list(overrides) if k in _ENVELOPE_KEYS}
+    body = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return AIPerfConfig(benchmark=body, **env_kwargs)
 
 
 # ============================================================
@@ -87,7 +92,7 @@ class TestLoadConfig:
         config = load_config(cfg_file)
 
         assert isinstance(config, AIPerfConfig)
-        assert config.get_model_names() == ["test-model"]
+        assert config.benchmark.get_model_names() == ["test-model"]
 
     def test_load_from_nonexistent_file_raises(self, tmp_path: Path) -> None:
         missing = tmp_path / "does_not_exist.yaml"
@@ -126,7 +131,9 @@ class TestLoadConfig:
         # substitute_env=False skips env var expansion, so the raw string
         # passes through to Pydantic as the model name
         config = load_config(cfg_file, substitute_env=False)
-        assert config.get_model_names() == ["${MODEL_NAME_THAT_DOES_NOT_EXIST}"]
+        assert config.benchmark.get_model_names() == [
+            "${MODEL_NAME_THAT_DOES_NOT_EXIST}"
+        ]
 
 
 # ============================================================
@@ -141,7 +148,7 @@ class TestLoadConfigFromString:
         config = load_config_from_string(_MINIMAL_YAML)
 
         assert isinstance(config, AIPerfConfig)
-        assert config.get_model_names() == ["test-model"]
+        assert config.benchmark.get_model_names() == ["test-model"]
 
     @pytest.mark.parametrize(
         "bad_yaml,match",
@@ -373,13 +380,13 @@ class TestLoadBenchmarkPlan:
 
     def test_plan_from_file_with_sweep(self, tmp_path: Path) -> None:
         yaml_with_sweep = _MINIMAL_YAML + textwrap.dedent("""\
-            sweep:
-              type: grid
-              variables:
-                phases.default.concurrency:
-                  - 1
-                  - 2
-        """)
+sweep:
+  type: grid
+  variables:
+    benchmark.phases.default.concurrency:
+      - 1
+      - 2
+""")
         cfg_file = tmp_path / "sweep.yaml"
         cfg_file.write_text(yaml_with_sweep)
 

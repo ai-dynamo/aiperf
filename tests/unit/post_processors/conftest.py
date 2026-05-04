@@ -79,7 +79,7 @@ def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> Benchma
     """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=artifact_dir or Path("/tmp/test"),
     )
 
@@ -125,23 +125,30 @@ async def raw_record_processor(service_id: str, config: AIPerfConfig):
 @pytest.fixture
 def mock_user_config() -> AIPerfConfig:
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/completions"],
-            "type": EndpointType.COMPLETIONS,
-            "streaming": False,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/completions"],
+                "type": EndpointType.COMPLETIONS,
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 
@@ -149,28 +156,35 @@ def mock_user_config() -> AIPerfConfig:
 def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
     """Create an AIPerfConfig for raw record testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={
-            "urls": ["http://localhost:8000/v1/chat/completions"],
-            "type": EndpointType.CHAT,
-            "streaming": False,
-        },
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
-        artifacts={
-            "dir": str(tmp_artifact_dir),
-            "raw": True,
-            "records": ["jsonl"],
-        },
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+                "streaming": False,
+            },
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "artifacts": {
+                "dir": str(tmp_artifact_dir),
+                "raw": True,
+                "records": ["jsonl"],
+            },
+        }
     )
 
 

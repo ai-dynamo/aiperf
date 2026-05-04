@@ -191,20 +191,27 @@ def make_throughput_metric(
 def api_config() -> AIPerfConfig:
     """Create an AIPerfConfig for API service testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
-        runtime={"api_port": 8080, "api_host": "0.0.0.0"},
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+            "runtime": {"api_port": 8080, "api_host": "0.0.0.0"},
+        }
     )
 
 
@@ -213,7 +220,7 @@ def api_run(api_config: AIPerfConfig) -> BenchmarkRun:
     """Create a BenchmarkRun wrapping the API config."""
     return BenchmarkRun(
         benchmark_id="api-test",
-        cfg=api_config,
+        cfg=api_config.benchmark,
         artifact_dir=Path("/tmp/api-test"),
     )
 

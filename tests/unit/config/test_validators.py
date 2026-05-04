@@ -33,9 +33,13 @@ _BASE_KWARGS = {
 }
 
 
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
+
+
 def _make(**overrides) -> AIPerfConfig:
-    kwargs = {**_BASE_KWARGS, **overrides}
-    return AIPerfConfig(**kwargs)
+    env_kwargs = {k: overrides.pop(k) for k in list(overrides) if k in _ENVELOPE_KEYS}
+    body = {**_BASE_KWARGS, **overrides}
+    return AIPerfConfig(benchmark=body, **env_kwargs)
 
 
 def test_sweep_with_dashboard_ui_rejected() -> None:
@@ -43,7 +47,7 @@ def test_sweep_with_dashboard_ui_rejected() -> None:
         _make(
             sweep={
                 "type": "grid",
-                "variables": {"phases.profiling.concurrency": [10, 20]},
+                "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
             },
             runtime={"ui": "dashboard"},
         )
@@ -53,7 +57,7 @@ def test_sweep_with_simple_ui_accepted() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
         },
         runtime={"ui": "simple"},
     )
@@ -70,7 +74,7 @@ def test_same_seed_with_random_seed_accepted() -> None:
         random_seed=42,
         sweep={
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
         },
         runtime={"ui": "simple"},
         multi_run={"parameter_sweep_same_seed": True},
@@ -85,7 +89,7 @@ def test_negative_cooldown_rejected_by_field_constraint() -> None:
         _make(
             sweep={
                 "type": "grid",
-                "variables": {"phases.profiling.concurrency": [10, 20]},
+                "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
             },
             runtime={"ui": "simple"},
             multi_run={"parameter_sweep_cooldown_seconds": -1.0},
@@ -101,7 +105,7 @@ def test_cooldown_positive_accepted() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
         },
         runtime={"ui": "simple"},
         multi_run={"parameter_sweep_cooldown_seconds": 5.0},
@@ -141,7 +145,7 @@ def test_parameter_sweep_mode_with_concurrency_list_succeeds() -> None:
     cfg = _make(
         sweep={
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": [10, 20]},
+            "variables": {"benchmark.phases.profiling.concurrency": [10, 20]},
         },
         runtime={"ui": "simple"},
         multi_run={"mode": "independent"},

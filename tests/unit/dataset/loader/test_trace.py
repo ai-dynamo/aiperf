@@ -1008,15 +1008,17 @@ class TestMooncakeTraceReproducibility:
         """
         return _make_run(
             AIPerfConfig(
-                **_BASE,
-                datasets=[
-                    {
-                        "name": "default",
-                        "type": "synthetic",
-                        "entries": 100,
-                        "prompts": {"isl": 100, "osl": 50, "block_size": 64},
-                    }
-                ],
+                benchmark={
+                    **_BASE,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "synthetic",
+                            "entries": 100,
+                            "prompts": {"isl": 100, "osl": 50, "block_size": 64},
+                        }
+                    ],
+                }
             )
         )
 
@@ -1178,22 +1180,24 @@ def _make_synthesis_config(
     if block_size != 512:
         # Use a synthetic dataset to set block_size via prompts config
         return AIPerfConfig(
-            **_BASE,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
-                },
-                {
-                    "name": "traces",
-                    "type": "file",
-                    "path": "dummy.jsonl",
-                    "format": "mooncake_trace",
-                    "synthesis": synthesis,
-                },
-            ],
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
+                    },
+                    {
+                        "name": "traces",
+                        "type": "file",
+                        "path": "dummy.jsonl",
+                        "format": "mooncake_trace",
+                        "synthesis": synthesis,
+                    },
+                ],
+            }
         )
 
     return _make_file_config(synthesis=synthesis)
@@ -1201,7 +1205,7 @@ def _make_synthesis_config(
 
 def _get_synthesis_config(config: AIPerfConfig):
     """Get the synthesis config from the default dataset for _apply_synthesis calls."""
-    dataset_config = config.get_default_dataset()
+    dataset_config = config.benchmark.get_default_dataset()
     return getattr(dataset_config, "synthesis", None)
 
 

@@ -16,7 +16,9 @@ from aiperf.dataset.generator import ImageGenerator
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 _BASE = dict(
@@ -38,16 +40,18 @@ def _make_config(**image_overrides) -> AIPerfConfig:
     }
     images.update(image_overrides)
     return AIPerfConfig(
-        **_BASE,
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-                "images": images,
-            }
-        ],
+        benchmark={
+            **_BASE,
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                    "images": images,
+                }
+            ],
+        }
     )
 
 

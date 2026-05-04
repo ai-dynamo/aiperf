@@ -38,25 +38,27 @@ class TestBaseDatasetComposer:
         """Create a basic AIPerfConfig for testing."""
         return _make_run(
             AIPerfConfig(
-                models={
-                    "items": [
-                        {"name": "test-model-1"},
-                        {"name": "test-model-2"},
+                benchmark={
+                    "models": {
+                        "items": [
+                            {"name": "test-model-1"},
+                            {"name": "test-model-2"},
+                        ],
+                        "strategy": ModelSelectionStrategy.ROUND_ROBIN,
+                    },
+                    **_BASE,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {
+                                "isl": {"mean": 100, "stddev": 10},
+                                "osl": {"mean": 50, "stddev": 5},
+                            },
+                        }
                     ],
-                    "strategy": ModelSelectionStrategy.ROUND_ROBIN,
-                },
-                **_BASE,
-                datasets=[
-                    {
-                        "name": "default",
-                        "type": "synthetic",
-                        "entries": 1,
-                        "prompts": {
-                            "isl": {"mean": 100, "stddev": 10},
-                            "osl": {"mean": 50, "stddev": 5},
-                        },
-                    }
-                ],
+                }
             )
         )
 
@@ -65,23 +67,25 @@ class TestBaseDatasetComposer:
         """Create configuration with sequence distribution."""
         return _make_run(
             AIPerfConfig(
-                models=["test-model"],
-                **_BASE,
-                datasets=[
-                    {
-                        "name": "default",
-                        "type": "synthetic",
-                        "entries": 1,
-                        "prompts": {
-                            "isl": {"mean": 100, "stddev": 10},
-                            "osl": {"mean": 50, "stddev": 5},
-                            "sequence_distribution": [
-                                {"isl": 100, "osl": 25, "probability": 50},
-                                {"isl": 200, "osl": 50, "probability": 50},
-                            ],
-                        },
-                    }
-                ],
+                benchmark={
+                    "models": ["test-model"],
+                    **_BASE,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {
+                                "isl": {"mean": 100, "stddev": 10},
+                                "osl": {"mean": 50, "stddev": 5},
+                                "sequence_distribution": [
+                                    {"isl": 100, "osl": 25, "probability": 50},
+                                    {"isl": 200, "osl": 50, "probability": 50},
+                                ],
+                            },
+                        }
+                    ],
+                }
             )
         )
 
@@ -205,16 +209,18 @@ class TestBaseDatasetComposer:
     def test_set_max_tokens_without_distribution_none_osl(self, mock_tokenizer):
         """Test setting max_tokens when osl is None."""
         config = AIPerfConfig(
-            models=["test-model"],
-            **_BASE,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 1,
-                    "prompts": {"isl": 128},
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 1,
+                        "prompts": {"isl": 128},
+                    }
+                ],
+            }
         )
         composer = ConcreteBaseComposer(_make_run(config), mock_tokenizer)
         turn = Turn()
@@ -285,7 +291,11 @@ def _prompts_config(**prompts_overrides):
     dataset = {"type": "synthetic", "entries": 1, "prompts": prompts_overrides}
     return _make_run(
         AIPerfConfig(
-            **_BASE, models=["test-model"], datasets=[{"name": "default", **dataset}]
+            benchmark={
+                **_BASE,
+                "models": ["test-model"],
+                "datasets": [{"name": "default", **dataset}],
+            }
         )
     )
 

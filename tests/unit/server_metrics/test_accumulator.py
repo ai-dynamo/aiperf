@@ -21,26 +21,35 @@ from aiperf.server_metrics.storage import ServerMetricsHierarchy
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 @pytest.fixture
 def mock_config() -> AIPerfConfig:
     """Provide minimal AIPerfConfig for testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 
@@ -382,24 +391,26 @@ class TestSliceDurationConfig:
         """Test that slice_duration from config is used for windowed stats."""
         # Create config with custom slice_duration
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         # Set slice_duration to 2 seconds
         config.output.slice_duration = 2.0
@@ -453,24 +464,26 @@ class TestSliceDurationConfig:
     async def test_default_window_size_is_1_second(self):
         """Test that default window size is 1 second when slice_duration is None."""
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         # Ensure slice_duration is None (default)
         config.output.slice_duration = None

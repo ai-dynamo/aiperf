@@ -152,16 +152,18 @@ def mock_config(tmp_path):
     a temporary directory that is automatically cleaned up after tests.
     """
     config = AIPerfConfig(
-        **_BASE,
-        artifacts={"dir": str(tmp_path)},
-        server_metrics={"formats": [ServerMetricsFormat.PARQUET]},
+        benchmark={
+            **_BASE,
+            "artifacts": {"dir": str(tmp_path)},
+            "server_metrics": {"formats": [ServerMetricsFormat.PARQUET]},
+        }
     )
 
     # Verify that output path is within tmp_path (isolation check)
-    assert str(config.artifacts.server_metrics_export_parquet_file).startswith(
-        str(tmp_path)
-    ), (
-        f"Parquet file path {config.artifacts.server_metrics_export_parquet_file} is not within tmp_path {tmp_path}"
+    assert str(
+        config.benchmark.artifacts.server_metrics_export_parquet_file
+    ).startswith(str(tmp_path)), (
+        f"Parquet file path {config.benchmark.artifacts.server_metrics_export_parquet_file} is not within tmp_path {tmp_path}"
     )
 
     return config
@@ -254,9 +256,11 @@ class TestParquetExporterBasics:
     def test_parquet_disabled_when_format_not_selected(self, tmp_path):
         """Exporter is disabled when Parquet format not selected."""
         config = AIPerfConfig(
-            **_BASE,
-            artifacts={"dir": str(tmp_path)},
-            server_metrics={"formats": [ServerMetricsFormat.JSON]},
+            benchmark={
+                **_BASE,
+                "artifacts": {"dir": str(tmp_path)},
+                "server_metrics": {"formats": [ServerMetricsFormat.JSON]},
+            }
         )
         hierarchy = build_hierarchy({})
         mock_accumulator = create_mock_accumulator(config, hierarchy)

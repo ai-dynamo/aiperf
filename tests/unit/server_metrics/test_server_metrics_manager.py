@@ -37,7 +37,7 @@ def _make_run(config: AIPerfConfig) -> BenchmarkRun:
 
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
@@ -45,7 +45,7 @@ def _make_run(config: AIPerfConfig) -> BenchmarkRun:
 @pytest.fixture
 def config_with_endpoint() -> BenchmarkRun:
     """Create BenchmarkRun with inference endpoint."""
-    return _make_run(AIPerfConfig(**_BASE))
+    return _make_run(AIPerfConfig(benchmark=_BASE))
 
 
 @pytest.fixture
@@ -53,13 +53,15 @@ def config_with_server_metrics_urls() -> BenchmarkRun:
     """Create BenchmarkRun with custom server metrics URLs."""
     return _make_run(
         AIPerfConfig(
-            **_BASE,
-            server_metrics={
-                "urls": [
-                    "http://custom-endpoint:9400/metrics",
-                    "http://another-endpoint:8081",
-                ],
-            },
+            benchmark={
+                **_BASE,
+                "server_metrics": {
+                    "urls": [
+                        "http://custom-endpoint:9400/metrics",
+                        "http://another-endpoint:8081",
+                    ],
+                },
+            }
         )
     )
 
@@ -323,10 +325,7 @@ class TestDisabledServerMetrics:
         self,
     ):
         """Test configuration when server metrics are disabled via CLI flag."""
-        config = AIPerfConfig(
-            **_BASE,
-            server_metrics={"enabled": False},
-        )
+        config = AIPerfConfig(benchmark={**_BASE, "server_metrics": {"enabled": False}})
         manager = ServerMetricsManager(
             run=_make_run(config),
         )
@@ -784,8 +783,10 @@ class TestMetricsDiscovery:
     async def test_disabled_mode_returns_empty(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={"discovery": {"mode": "disabled"}},
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {"discovery": {"mode": "disabled"}},
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -796,8 +797,10 @@ class TestMetricsDiscovery:
     async def test_kubernetes_mode_not_in_cluster(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={"discovery": {"mode": "kubernetes"}},
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {"discovery": {"mode": "kubernetes"}},
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -812,14 +815,16 @@ class TestMetricsDiscovery:
     async def test_kubernetes_mode_in_cluster(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={
-                    "discovery": {
-                        "mode": "kubernetes",
-                        "namespace": "inference",
-                        "label_selector": "app=vllm",
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {
+                        "discovery": {
+                            "mode": "kubernetes",
+                            "namespace": "inference",
+                            "label_selector": "app=vllm",
+                        },
                     },
-                },
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -844,7 +849,7 @@ class TestMetricsDiscovery:
 
     @pytest.mark.asyncio
     async def test_auto_mode_in_cluster(self):
-        run = _make_run(AIPerfConfig(**_BASE))
+        run = _make_run(AIPerfConfig(benchmark=_BASE))
         manager = ServerMetricsManager(run=run)
         with (
             patch(
@@ -864,7 +869,7 @@ class TestMetricsDiscovery:
     async def test_auto_mode_in_cluster_derives_namespace_from_default_endpoint(self):
         run = _make_run(
             AIPerfConfig(
-                **{
+                benchmark={
                     **_BASE,
                     "endpoint": {
                         "urls": [
@@ -896,7 +901,7 @@ class TestMetricsDiscovery:
 
     @pytest.mark.asyncio
     async def test_auto_mode_not_in_cluster(self):
-        run = _make_run(AIPerfConfig(**_BASE))
+        run = _make_run(AIPerfConfig(benchmark=_BASE))
         manager = ServerMetricsManager(run=run)
         with patch(
             "aiperf.server_metrics.endpoint_resolver.is_running_in_kubernetes",
@@ -909,8 +914,10 @@ class TestMetricsDiscovery:
     async def test_discovery_exception_handled_gracefully(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={"discovery": {"mode": "kubernetes"}},
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {"discovery": {"mode": "kubernetes"}},
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -932,8 +939,10 @@ class TestMetricsDiscovery:
     async def test_configure_integrates_discovered_endpoints(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={"discovery": {"mode": "kubernetes"}},
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {"discovery": {"mode": "kubernetes"}},
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -970,7 +979,7 @@ class TestMetricsDiscovery:
 
     @pytest.mark.asyncio
     async def test_configure_auto_in_cluster_replaces_default_endpoint(self):
-        run = _make_run(AIPerfConfig(**_BASE))
+        run = _make_run(AIPerfConfig(benchmark=_BASE))
         manager = ServerMetricsManager(run=run)
 
         with (
@@ -1005,11 +1014,13 @@ class TestMetricsDiscovery:
     async def test_configure_deduplicates_discovered_endpoints(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={
-                    "urls": ["http://already-there:8080/metrics"],
-                    "discovery": {"mode": "kubernetes"},
-                },
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {
+                        "urls": ["http://already-there:8080/metrics"],
+                        "discovery": {"mode": "kubernetes"},
+                    },
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -1044,11 +1055,13 @@ class TestMetricsDiscovery:
     async def test_configure_kubernetes_discovery_keeps_explicit_urls(self):
         run = _make_run(
             AIPerfConfig(
-                **_BASE,
-                server_metrics={
-                    "urls": ["http://custom-endpoint:9400/metrics"],
-                    "discovery": {"mode": "kubernetes"},
-                },
+                benchmark={
+                    **_BASE,
+                    "server_metrics": {
+                        "urls": ["http://custom-endpoint:9400/metrics"],
+                        "discovery": {"mode": "kubernetes"},
+                    },
+                }
             )
         )
         manager = ServerMetricsManager(run=run)
@@ -1086,7 +1099,7 @@ class TestMetricsDiscovery:
 
     @pytest.mark.asyncio
     async def test_configure_auto_not_in_cluster_keeps_default_endpoint(self):
-        run = _make_run(AIPerfConfig(**_BASE))
+        run = _make_run(AIPerfConfig(benchmark=_BASE))
         manager = ServerMetricsManager(run=run)
 
         with (

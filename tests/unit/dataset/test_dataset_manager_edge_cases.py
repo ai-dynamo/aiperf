@@ -77,17 +77,17 @@ def _make_config(
             "entries": 100,
             "prompts": {"isl": 128, "osl": 64},
         }
-    kwargs = dict(_BASE_CONFIG)
-    kwargs["datasets"] = [dataset]
+    body = dict(_BASE_CONFIG)
+    body["datasets"] = [dataset]
     if artifacts_dir is not None:
-        kwargs["artifacts"] = {"dir": str(artifacts_dir)}
-    return AIPerfConfig(**kwargs)
+        body["artifacts"] = {"dir": str(artifacts_dir)}
+    return AIPerfConfig(benchmark=body)
 
 
 def _make_run(cfg: AIPerfConfig, *, artifact_dir: Path | None = None) -> BenchmarkRun:
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=cfg,
+        cfg=cfg.benchmark,
         artifact_dir=artifact_dir or Path("/tmp/test"),
     )
 

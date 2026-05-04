@@ -131,7 +131,7 @@ def _generate_csv_content(
 @pytest.fixture
 def mock_config(tmp_path):
     """Create an AIPerfConfig with a temp output directory."""
-    return AIPerfConfig(**_BASE, artifacts={"dir": str(tmp_path)})
+    return AIPerfConfig(benchmark={**_BASE, "artifacts": {"dir": str(tmp_path)}})
 
 
 @pytest.fixture

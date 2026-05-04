@@ -47,7 +47,7 @@ _BASE = dict(
 def _make_run() -> BenchmarkRun:
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=AIPerfConfig(**_BASE),
+        cfg=AIPerfConfig(benchmark=_BASE).benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 

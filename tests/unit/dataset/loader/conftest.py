@@ -37,30 +37,32 @@ def create_user_config_and_composer(mock_tokenizer_cls):
 
     def _create():
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "file",
-                    "path": "test_data.jsonl",
-                    "format": "single_turn",
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "test_data.jsonl",
+                        "format": "single_turn",
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         tokenizer = mock_tokenizer_cls.from_pretrained(
             "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
         run = BenchmarkRun(
-            benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test")
+            benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
         )
         composer = CustomDatasetComposer(run, tokenizer)
         return config, composer
@@ -72,24 +74,26 @@ def create_user_config_and_composer(mock_tokenizer_cls):
 def default_user_config() -> AIPerfConfig:
     """Create a default AIPerfConfig for testing."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        phases=[
-            {
-                "name": "default",
-                "type": "concurrency",
-                "requests": 10,
-                "concurrency": 1,
-            }
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        }
     )
 
 
@@ -97,7 +101,7 @@ def _make_run(config: AIPerfConfig) -> BenchmarkRun:
     """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
@@ -107,7 +111,7 @@ def default_user_run(default_user_config: AIPerfConfig) -> BenchmarkRun:
     """Create a default BenchmarkRun wrapping default_user_config."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=default_user_config,
+        cfg=default_user_config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 

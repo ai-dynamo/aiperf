@@ -79,7 +79,7 @@ _STUB_PROCESS_HEALTH = ProcessHealth(
 def _make_run(cfg: AIPerfConfig) -> BenchmarkRun:
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=cfg,
+        cfg=cfg.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
@@ -116,7 +116,7 @@ def k8s_worker(
     mock_psutil_process,
 ) -> Worker:
     """Construct a Kubernetes-mode Worker for group-managed peer-command tests."""
-    config.runtime.service_run_type = ServiceRunType.KUBERNETES
+    config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
     worker = Worker(run=_make_run(config), service_id="k8s-edge-worker")
     worker._pod_index = "0"
     worker._measure_baseline_rtt = AsyncMock()

@@ -44,7 +44,7 @@ def _make_config(phases: dict | None = None) -> AIPerfConfig:
                 "concurrency": 10,
             }
         ]
-    return AIPerfConfig(**_BASE, phases=phases)
+    return AIPerfConfig(benchmark={**_BASE, "phases": phases})
 
 
 @pytest.fixture
@@ -53,7 +53,9 @@ def config() -> AIPerfConfig:
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 @pytest.fixture

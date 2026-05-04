@@ -362,7 +362,7 @@ class TestKubernetesMode:
 
         run = BenchmarkRun(
             benchmark_id="test",
-            cfg=config,
+            cfg=config.benchmark,
             artifact_dir=Path("/tmp/test"),
         )
         mock_ui = AsyncMock()
@@ -408,10 +408,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Group-managed K8s topology should require pod managers, not direct child services."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.workers = 12
-        config.runtime.workers_per_pod = 5
-        config.runtime.record_processors_per_pod = 2
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 12
+        config.benchmark.runtime.workers_per_pod = 5
+        config.benchmark.runtime.record_processors_per_pod = 2
         controller, _ = self._create_system_controller(config, mock_service_manager)
         assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 3
         assert ServiceType.WORKER not in controller.required_services
@@ -424,7 +424,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Local mode should require a worker-group manager instead of direct worker children."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(config, mock_service_manager)
         assert controller.required_services[ServiceType.WORKER_GROUP_MANAGER] == 1
         assert ServiceType.WORKER not in controller.required_services
@@ -437,8 +437,8 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode with api_port set, keep_api_running should be True."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.api_port = 9090
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = 9090
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
             controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
@@ -452,7 +452,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """In local mode, keep_api_running should be False."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
             controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
@@ -466,8 +466,8 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode without api_port, keep_api_running should be False."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.api_port = None
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
         controller, _ = self._create_system_controller(config, mock_service_manager)
         is_k8s_mode = (
             controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
@@ -482,10 +482,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Kubernetes startup should let the service manager handle required services once."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.api_port = None
-        config.gpu_telemetry.enabled = False
-        config.server_metrics.enabled = False
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
         controller, _ = self._create_system_controller(config, mock_service_manager)
         controller._wait_for_all_configured = AsyncMock(return_value=None)
         controller._wait_for_sufficient_worker_pods = AsyncMock(return_value=None)
@@ -504,10 +504,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Local startup should let the service manager own the WorkerGroupManager topology."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
-        config.runtime.api_port = None
-        config.gpu_telemetry.enabled = False
-        config.server_metrics.enabled = False
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
         controller, _ = self._create_system_controller(config, mock_service_manager)
         controller._wait_for_all_configured = AsyncMock(return_value=None)
         controller._start_profiling_all_services = AsyncMock(return_value=None)
@@ -525,10 +525,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Kubernetes startup should wait for sufficient worker-pod readiness before profiling."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.api_port = None
-        config.gpu_telemetry.enabled = False
-        config.server_metrics.enabled = False
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.api_port = None
+        config.benchmark.gpu_telemetry.enabled = False
+        config.benchmark.server_metrics.enabled = False
         controller, _ = self._create_system_controller(config, mock_service_manager)
         controller._wait_for_all_configured = AsyncMock(return_value=None)
         controller._wait_for_sufficient_worker_pods = AsyncMock(return_value=None)
@@ -549,9 +549,9 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Pod snapshots should drive Kubernetes readiness gating."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.workers = 2
-        config.runtime.workers_per_pod = 2
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 2
+        config.benchmark.runtime.workers_per_pod = 2
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         await controller._on_worker_pod_state(
@@ -582,7 +582,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Pod readiness wait should actively request pod snapshot refreshes."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(config, mock_service_manager)
         ServiceRegistry.expect_service("wpm_0", ServiceType.WORKER_GROUP_MANAGER)
         ServiceRegistry.register(
@@ -627,7 +627,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Pod readiness wait should time out when no dispatchable pod arrives."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(config, mock_service_manager)
         controller._send_control_command = AsyncMock(return_value=None)
 
@@ -647,7 +647,7 @@ class TestKubernetesMode:
         Event-bus proxy is also off by default because the dedicated event-bus-proxy
         sidecar container owns it (see ``AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED``).
         """
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
         call_kwargs = mock_proxy_cls.call_args[1]
         assert call_kwargs["enable_event_bus"] is False
@@ -663,7 +663,7 @@ class TestKubernetesMode:
         """With the sidecar flag off, SystemController hosts the event-bus proxy itself."""
         from aiperf.kubernetes.environment import K8sEnvironment
 
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         monkeypatch.setattr(K8sEnvironment, "EVENT_BUS_SIDECAR_ENABLED", False)
         _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
         call_kwargs = mock_proxy_cls.call_args[1]
@@ -675,7 +675,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """In local group-managed mode, WorkerGroupManager owns the raw inference proxy."""
-        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        config.benchmark.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
         _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
         call_kwargs = mock_proxy_cls.call_args[1]
         assert call_kwargs["enable_event_bus"] is True
@@ -691,10 +691,10 @@ class TestKubernetesMode:
         """WPM Registration with capacity fields logs pod capacity info."""
         from aiperf.common.service_registry import ServiceRegistry
 
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.workers = 8
-        config.runtime.workers_per_pod = 4
-        config.runtime.record_processors_per_pod = 1
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         msg = Registration(
@@ -717,10 +717,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """WPM registrations that disagree with configured pod capacity should warn."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.workers = 8
-        config.runtime.workers_per_pod = 4
-        config.runtime.record_processors_per_pod = 1
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         msg = Registration(
@@ -745,10 +745,10 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Group registrations should track declared capacity without expecting child services."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
-        config.runtime.workers = 8
-        config.runtime.workers_per_pod = 4
-        config.runtime.record_processors_per_pod = 1
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.workers = 8
+        config.benchmark.runtime.workers_per_pod = 4
+        config.benchmark.runtime.record_processors_per_pod = 1
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
@@ -786,7 +786,7 @@ class TestKubernetesMode:
         """Regular service Registration (no capacity fields) should not change expectations."""
         from aiperf.common.service_registry import ServiceRegistry
 
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
@@ -818,7 +818,7 @@ class TestKubernetesMode:
         mock_service_manager: AsyncMock,
     ) -> None:
         """Worker status summaries should surface pending worker startup phases."""
-        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.benchmark.runtime.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(config, mock_service_manager)
 
         await controller._on_worker_status_summary(

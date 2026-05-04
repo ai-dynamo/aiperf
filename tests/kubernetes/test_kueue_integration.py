@@ -52,24 +52,26 @@ def _mock_custom_api(return_value=None, side_effect=None):
 def kube_config() -> AIPerfConfig:
     """Create a minimal AIPerfConfig for manifest generation."""
     return AIPerfConfig(
-        models=["test-model"],
-        endpoint={"urls": ["http://llm-server:8000"]},
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 10,
-                "prompts": {"isl": 32, "osl": 16},
-            }
-        ],
-        phases=[
-            {
-                "name": "default",
-                "type": "concurrency",
-                "requests": 100,
-                "concurrency": 10,
-            }
-        ],
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://llm-server:8000"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32, "osl": 16},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 10,
+                }
+            ],
+        }
     )
 
 

@@ -67,7 +67,7 @@ class TestExpandSweep:
     """Tests for sweep expansion functions."""
 
     def _base_config(self, **overrides):
-        base = {
+        body = {
             "models": ["test-model"],
             "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
             "datasets": [
@@ -87,11 +87,18 @@ class TestExpandSweep:
                 }
             ],
         }
-        base.update(overrides)
-        return base
+        env_keys = {"sweep", "multi_run", "variables", "random_seed"}
+        env = {k: overrides.pop(k) for k in list(overrides) if k in env_keys}
+        body.update(overrides)
+        return {"benchmark": body, **env}
 
     def _phase(self, cfg: dict, name: str) -> dict:
-        return next(p for p in cfg["phases"] if p["name"] == name)
+        phases = (
+            cfg.get("benchmark", {}).get("phases")
+            if isinstance(cfg.get("benchmark"), dict)
+            else cfg.get("phases")
+        )
+        return next(p for p in phases if p["name"] == name)
 
     def test_no_sweep_returns_single(self):
         data = self._base_config()
@@ -107,8 +114,8 @@ class TestExpandSweep:
             sweep={
                 "type": "grid",
                 "variables": {
-                    "phases.default.concurrency": [8, 16],
-                    "phases.default.requests": [100, 200, 300],
+                    "benchmark.phases.default.concurrency": [8, 16],
+                    "benchmark.phases.default.requests": [100, 200, 300],
                 },
             }
         )
@@ -134,7 +141,7 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [1, 2, 4, 8]},
+                "variables": {"benchmark.phases.default.concurrency": [1, 2, 4, 8]},
             }
         )
         result = expand_sweep(data)
@@ -172,7 +179,7 @@ class TestExpandSweep:
     def test_magic_list_detection(self):
         data = self._base_config()
         # Replace the default phase with one whose concurrency is a magic list.
-        data["phases"] = [
+        data["benchmark"]["phases"] = [
             {"name": "default", "type": "concurrency", "concurrency": [8, 16, 32]}
         ]
 
@@ -184,7 +191,7 @@ class TestExpandSweep:
 
     def test_magic_list_multiple_fields(self):
         data = self._base_config()
-        data["phases"] = [
+        data["benchmark"]["phases"] = [
             {
                 "name": "default",
                 "type": "concurrency",
@@ -200,18 +207,21 @@ class TestExpandSweep:
         data = self._base_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [1, 2]},
+                "variables": {"benchmark.phases.default.concurrency": [1, 2]},
             }
         )
         # Also add magic list (should be ignored since explicit sweep exists)
-        data["phases"][0]["requests"] = [100, 200]
+        data["benchmark"]["phases"][0]["requests"] = [100, 200]
 
         result = expand_sweep(data)
         assert len(result) == 2  # Only explicit sweep
 
     def test_sweep_section_removed_from_output(self):
         data = self._base_config(
-            sweep={"type": "grid", "variables": {"phases.default.concurrency": [1]}}
+            sweep={
+                "type": "grid",
+                "variables": {"benchmark.phases.default.concurrency": [1]},
+            }
         )
         result = expand_sweep(data)
         for config_dict, _ in result:
@@ -222,17 +232,17 @@ class TestExpandSweep:
             sweep={
                 "type": "grid",
                 "variables": {
-                    "phases.default.concurrency": [8, 16],
+                    "benchmark.phases.default.concurrency": [8, 16],
                 },
             }
         )
         result = expand_sweep(data)
 
         assert result[0][1].index == 0
-        assert result[0][1].values == {"phases.default.concurrency": 8}
+        assert result[0][1].values == {"benchmark.phases.default.concurrency": 8}
 
         assert result[1][1].index == 1
-        assert result[1][1].values == {"phases.default.concurrency": 16}
+        assert result[1][1].values == {"benchmark.phases.default.concurrency": 16}
 
     def test_sweep_none_returns_single(self):
         data = self._base_config(sweep=None)
@@ -254,8 +264,8 @@ class TestExpandSweep:
             sweep={
                 "type": "grid",
                 "variables": {
-                    "phases.default.concurrency": [4, 8],
-                    "phases.default.requests": [10, 20],
+                    "benchmark.phases.default.concurrency": [4, 8],
+                    "benchmark.phases.default.requests": [10, 20],
                 },
             }
         )
@@ -267,8 +277,8 @@ class TestExpandSweep:
             sweep={
                 "type": "grid",
                 "variables": {
-                    "phases.default.requests": [10, 20],
-                    "phases.default.concurrency": [4, 8],
+                    "benchmark.phases.default.requests": [10, 20],
+                    "benchmark.phases.default.concurrency": [4, 8],
                 },
             }
         )
@@ -280,7 +290,7 @@ class TestExpandSweep:
         first_keys = list(result_a[0][1].values.keys())
         assert first_keys == sorted(first_keys)
         # Specifically: concurrency before requests.
-        assert first_keys[0] == "phases.default.concurrency"
+        assert first_keys[0] == "benchmark.phases.default.concurrency"
 
 
 class TestHelpers:
@@ -323,8 +333,8 @@ class TestHelpers:
             ]
         }
         fields = detect_sweep_fields(data)
-        assert "phases.default.concurrency" in fields
-        assert fields["phases.default.concurrency"] == [8, 16, 32]
+        assert "benchmark.phases.default.concurrency" in fields
+        assert fields["benchmark.phases.default.concurrency"] == [8, 16, 32]
 
     def test_detect_sweep_fields_ignores_string_lists(self):
         data = {
@@ -374,7 +384,7 @@ class TestSetNestedValueStrictNamedList:
         with pytest.raises(ValueError, match=r"no entry named 'profilling'"):
             _set_nested_value(data, "phases.profilling.rate", 1)
         # The phantom phase MUST NOT have been added.
-        names = [p["name"] for p in data["phases"]]
+        names = [p["name"] for p in data["benchmark"]["phases"]]
         assert names == ["profiling"], (
             "strict-mode must not auto-append on unknown name"
         )
@@ -387,12 +397,12 @@ class TestSetNestedValueStrictNamedList:
                 {"name": "warmup", "concurrency": 2},
             ]
         }
-        _set_nested_value(data, "phases.profiling.concurrency", 64)
+        _set_nested_value(data, "benchmark.phases.profiling.concurrency", 64)
         # Find profiling entry and verify update.
-        prof = next(p for p in data["phases"] if p["name"] == "profiling")
+        prof = next(p for p in data["benchmark"]["phases"] if p["name"] == "profiling")
         assert prof["concurrency"] == 64
         # Other entry untouched.
-        warm = next(p for p in data["phases"] if p["name"] == "warmup")
+        warm = next(p for p in data["benchmark"]["phases"] if p["name"] == "warmup")
         assert warm["concurrency"] == 2
 
     def test_set_nested_value_phases_profiling_falls_back_to_default(self):
@@ -413,11 +423,13 @@ class TestSetNestedValueStrictNamedList:
                 {"name": "default", "type": "concurrency", "concurrency": 8},
             ]
         }
-        _set_nested_value(data, "phases.profiling.concurrency", 64)
+        _set_nested_value(data, "benchmark.phases.profiling.concurrency", 64)
         # The single non-warmup phase (named "default") got the override.
-        default_phase = next(p for p in data["phases"] if p["name"] == "default")
+        default_phase = next(
+            p for p in data["benchmark"]["phases"] if p["name"] == "default"
+        )
         assert default_phase["concurrency"] == 64
-        warm = next(p for p in data["phases"] if p["name"] == "warmup")
+        warm = next(p for p in data["benchmark"]["phases"] if p["name"] == "warmup")
         assert warm["concurrency"] == 1
 
     def test_set_nested_value_phases_profiling_ambiguous_falls_through(self):
@@ -430,7 +442,7 @@ class TestSetNestedValueStrictNamedList:
             ]
         }
         with pytest.raises(ValueError, match=r"no entry named 'profiling'"):
-            _set_nested_value(data, "phases.profiling.concurrency", 64)
+            _set_nested_value(data, "benchmark.phases.profiling.concurrency", 64)
 
     def test_expand_sweep_grid_typo_named_path_errors_at_expand_time(self):
         """A grid-sweep typo'd named-list path errors at `expand_sweep` time
@@ -477,18 +489,19 @@ class TestScenarioSingularDatasetShorthand:
     """
 
     BASE_HEADER = (
-        "models:\n"
-        "  - test/model\n"
-        "endpoint:\n"
-        "  type: chat\n"
-        '  urls: ["http://localhost:8000/v1/chat/completions"]\n'
+        "benchmark:\n"
+        "  models:\n"
+        "    - test/model\n"
+        "  endpoint:\n"
+        "    type: chat\n"
+        '    urls: ["http://localhost:8000/v1/chat/completions"]\n'
     )
     PHASES_TAIL = (
-        "phases:\n"
-        "  - name: profiling\n"
-        "    type: concurrency\n"
-        "    requests: 10\n"
-        "    concurrency: 1\n"
+        "  phases:\n"
+        "    - name: profiling\n"
+        "      type: concurrency\n"
+        "      requests: 10\n"
+        "      concurrency: 1\n"
     )
 
     def _isl_osl(self, cfg, ds_idx: int = 0):
@@ -503,7 +516,7 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - {name: main, type: synthetic, entries: 200}\n"
                 "sweep:\n"
                 "  type: scenarios\n"
@@ -535,7 +548,7 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "dataset:\n"
+                "  dataset:\n"
                 "  name: main\n"
                 "  type: synthetic\n"
                 "  entries: 200\n"
@@ -569,7 +582,7 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - {name: main, type: synthetic, entries: 200}\n"
                 "  - {name: secondary, type: synthetic, entries: 100}\n"
                 "sweep:\n"
@@ -594,7 +607,7 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - {name: main, type: synthetic, entries: 200}\n"
                 "  - {name: secondary, type: synthetic, entries: 100}\n"
                 "sweep:\n"
@@ -637,14 +650,14 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - {name: main, type: synthetic, entries: 200}\n"
                 "sweep:\n"
                 "  type: scenarios\n"
                 "  runs:\n"
                 "    - dataset: {isl: 128, osl: 128}\n"
-                "      datasets:\n"
-                "        - {name: main, isl: 256, osl: 256}\n"
+                "  datasets:\n"
+                "  - {name: main, isl: 256, osl: 256}\n"
             )
             + self.PHASES_TAIL
         )
@@ -662,11 +675,11 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - name: main\n"
-                "    type: synthetic\n"
-                "    entries: 200\n"
-                "    prompts: {isl: 64, osl: 32}\n"
+                "  type: synthetic\n"
+                "  entries: 200\n"
+                "  prompts: {isl: 64, osl: 32}\n"
                 "sweep:\n"
                 "  type: scenarios\n"
                 "  runs:\n"
@@ -693,7 +706,7 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - {name: main, type: synthetic, entries: 200}\n"
                 "sweep:\n"
                 "  type: scenarios\n"
@@ -718,11 +731,11 @@ class TestScenarioSingularDatasetShorthand:
         yaml_str = (
             self.BASE_HEADER
             + (
-                "datasets:\n"
+                "  datasets:\n"
                 "  - name: main\n"
-                "    type: synthetic\n"
-                "    entries: 200\n"
-                "    prompts: {isl: 64, osl: 32}\n"
+                "  type: synthetic\n"
+                "  entries: 200\n"
+                "  prompts: {isl: 64, osl: 32}\n"
                 "sweep:\n"
                 "  type: scenarios\n"
                 "  runs:\n"

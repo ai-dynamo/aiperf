@@ -41,7 +41,7 @@ class TestRawRecordWriterProcessorInitialization:
         )
 
         expected_dir = (
-            user_config_raw.artifacts.artifact_directory
+            user_config_raw.benchmark.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert expected_dir.exists()
@@ -279,7 +279,7 @@ class TestRawRecordAggregator:
 
         # Verify raw_records directory is cleaned up
         raw_records_dir = (
-            user_config_raw.artifacts.artifact_directory
+            user_config_raw.benchmark.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert not raw_records_dir.exists()
@@ -304,7 +304,7 @@ class TestRawRecordAggregator:
         """Test that aggregator skips empty lines in input files."""
         # Create a processor file with some empty lines
         raw_records_dir = (
-            user_config_raw.artifacts.artifact_directory
+            user_config_raw.benchmark.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         raw_records_dir.mkdir(parents=True, exist_ok=True)
@@ -336,7 +336,7 @@ class TestRawRecordAggregator:
     ):
         """Test that aggregator clears existing output file."""
         # Create existing output file
-        output_file = user_config_raw.artifacts.profile_export_raw_jsonl_file
+        output_file = user_config_raw.benchmark.artifacts.profile_export_raw_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("old content\n")
 

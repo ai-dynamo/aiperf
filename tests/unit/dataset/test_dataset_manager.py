@@ -25,7 +25,9 @@ from aiperf.plugin.enums import (
 
 
 def _make_run(config: AIPerfConfig) -> BenchmarkRun:
-    return BenchmarkRun(benchmark_id="test", cfg=config, artifact_dir=Path("/tmp/test"))
+    return BenchmarkRun(
+        benchmark_id="test", cfg=config.benchmark, artifact_dir=Path("/tmp/test")
+    )
 
 
 # ============================================================================
@@ -59,15 +61,17 @@ def mock_tokenizer(mock_tokenizer_cls):
 def base_user_config() -> AIPerfConfig:
     """Create a basic AIPerfConfig for testing."""
     return AIPerfConfig(
-        **_BASE_CONFIG,
-        datasets=[
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
+        benchmark={
+            **_BASE_CONFIG,
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+        }
     )
 
 
@@ -76,7 +80,7 @@ def base_run(base_user_config: AIPerfConfig) -> BenchmarkRun:
     """Create a BenchmarkRun wrapping the base config."""
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=base_user_config,
+        cfg=base_user_config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
@@ -228,15 +232,17 @@ class TestDatasetManager:
 
         try:
             config = AIPerfConfig(
-                **_BASE_CONFIG,
-                datasets=[
-                    {
-                        "name": "default",
-                        "type": "file",
-                        "path": filename,
-                        "format": CustomDatasetType.MOONCAKE_TRACE,
-                    }
-                ],
+                benchmark={
+                    **_BASE_CONFIG,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "file",
+                            "path": filename,
+                            "format": CustomDatasetType.MOONCAKE_TRACE,
+                        }
+                    ],
+                }
             )
 
             dataset_manager = DatasetManager(
@@ -291,15 +297,17 @@ class TestDatasetManager:
 
         try:
             config = AIPerfConfig(
-                **_BASE_CONFIG,
-                datasets=[
-                    {
-                        "name": "default",
-                        "type": "file",
-                        "path": filename,
-                        "format": CustomDatasetType.MOONCAKE_TRACE,
-                    }
-                ],
+                benchmark={
+                    **_BASE_CONFIG,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "file",
+                            "path": filename,
+                            "format": CustomDatasetType.MOONCAKE_TRACE,
+                        }
+                    ],
+                }
             )
 
             dataset_manager = DatasetManager(
@@ -360,15 +368,17 @@ class TestDatasetManagerMemoryAndClient:
     ):
         """Test that in-memory dataset is freed after dataset client is initialized."""
         config = AIPerfConfig(
-            **_BASE_CONFIG,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 5,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
+            benchmark={
+                **_BASE_CONFIG,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 5,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+            }
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -410,15 +420,17 @@ class TestDatasetManagerFallbackHandlers:
     async def dataset_manager_with_entries(self, mock_tokenizer):
         """Create a configured dataset manager with multiple entries."""
         config = AIPerfConfig(
-            **_BASE_CONFIG,
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 3,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
+            benchmark={
+                **_BASE_CONFIG,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 3,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+            }
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -596,27 +608,29 @@ class TestDatasetManagerTokenizerSkip:
     async def test_tokenizer_skipped_for_non_tokenizing_endpoint(self):
         """Test that tokenizer is not loaded when endpoint has tokenizes_input=false."""
         config = AIPerfConfig(
-            models=["nvidia/nemoretriever-page-elements-v3"],
-            endpoint={
-                "urls": ["http://localhost:8000/v1/image_retrieval"],
-                "type": "image_retrieval",
-            },
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["nvidia/nemoretriever-page-elements-v3"],
+                "endpoint": {
+                    "urls": ["http://localhost:8000/v1/image_retrieval"],
+                    "type": "image_retrieval",
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
@@ -640,27 +654,29 @@ class TestDatasetManagerTokenizerSkip:
     async def test_tokenizer_loaded_for_tokenizing_endpoint(self):
         """Test that tokenizer is loaded when endpoint has tokenizes_input=true."""
         config = AIPerfConfig(
-            models=["test-model"],
-            endpoint={
-                "urls": ["http://localhost:8000/v1/chat/completions"],
-                "type": EndpointType.CHAT,
-            },
-            datasets=[
-                {
-                    "name": "default",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64},
-                }
-            ],
-            phases=[
-                {
-                    "name": "default",
-                    "type": "concurrency",
-                    "requests": 10,
-                    "concurrency": 1,
-                }
-            ],
+            benchmark={
+                "models": ["test-model"],
+                "endpoint": {
+                    "urls": ["http://localhost:8000/v1/chat/completions"],
+                    "type": EndpointType.CHAT,
+                },
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128, "osl": 64},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "default",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
         )
         dataset_manager = DatasetManager(
             run=_make_run(config),
