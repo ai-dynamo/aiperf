@@ -34,22 +34,28 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
     spec_dict = sweep_cr["spec"]
     spec = AIPerfSweepSpec.model_validate(spec_dict)
 
-    base_benchmark = spec.template.spec.benchmark.model_dump(
+    benchmark_body = spec.template.spec.benchmark.model_dump(
         by_alias=True, exclude_none=True, exclude_defaults=True
     )
+    # Build the envelope dict that expand_sweep expects: body under
+    # `benchmark`, cross-variation fields (sweep, variables, random_seed)
+    # at envelope level. multi_run is handled separately via plan_kwargs.
+    sweep_input: dict[str, Any] = {"benchmark": benchmark_body}
     if spec.sweep is not None:
-        sweep_input = {
-            **base_benchmark,
-            "sweep": spec.sweep.model_dump(by_alias=True),
-        }
-    else:
-        sweep_input = dict(base_benchmark)
+        sweep_input["sweep"] = spec.sweep.model_dump(by_alias=True)
+    if spec.variables:
+        sweep_input["variables"] = spec.variables
+    if spec.random_seed is not None:
+        sweep_input["random_seed"] = spec.random_seed
 
     expanded = expand_sweep(sweep_input)
     configs: list[BenchmarkConfig] = []
     variations = []
     for variant_dict, variation in expanded:
-        configs.append(BenchmarkConfig.model_validate(variant_dict))
+        # expand_sweep returns envelope-shaped variants — strip everything
+        # but the body before instantiating BenchmarkConfig.
+        body = variant_dict.get("benchmark", {})
+        configs.append(BenchmarkConfig.model_validate(body))
         variations.append(variation)
 
     if spec.convergence is not None:

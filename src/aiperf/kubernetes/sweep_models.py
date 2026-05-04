@@ -196,7 +196,7 @@ class AIPerfJobTemplate(BaseConfig):
     )
     spec: AIPerfJobSpec = Field(
         ...,
-        description="AIPerfJobSpec used as the child stamp. Must not contain sweep:/multi_run:.",
+        description="AIPerfJobSpec used as the child stamp.",
     )
 
 
@@ -235,6 +235,24 @@ class AIPerfSweepSpec(BaseConfig):
         description="Child stamp; spec is an AIPerfJobSpec.",
     )
 
+    variables: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "User-defined values exposed to Jinja2 in `{{ ... }}` "
+            "expressions during config load. Per-variation scenarios overlay "
+            "via `sweep.runs[i].variables:`."
+        ),
+    )
+
+    random_seed: int | None = Field(
+        default=None,
+        description=(
+            "Base random seed for per-variation derivation. "
+            "Variation N gets `random_seed + N` unless multi_run.auto_set_seed "
+            "is False."
+        ),
+    )
+
     @model_validator(mode="after")
     def _validate_axis_combination(self) -> AIPerfSweepSpec:
         # Rule 1: at least one of sweep, multi_run, convergence must be set.
@@ -254,23 +272,5 @@ class AIPerfSweepSpec(BaseConfig):
                 raise ValueError(
                     "`multiRun.trials` must be unset when `convergence` is set; "
                     "convergence.maxRuns governs the per-cell trial cap."
-                )
-        # Rule 4: sweep-axis keys must not appear inside template.spec.benchmark
-        # — they belong at AIPerfSweep.spec. Top-level template.spec is already
-        # guarded by AIPerfJobSpec's extra="forbid". AIPerfConfig itself owns
-        # `sweep`/`multi_run` fields (for non-k8s sweep CLI) with non-None
-        # defaults, so we use model_fields_set to flag only user-supplied keys.
-        # `convergence` and camelCase `multiRun` aren't AIPerfConfig fields and
-        # would already have been rejected by AIPerfConfig's extra="forbid",
-        # but we keep them in the list for a clearer error message in the rare
-        # case alias-resolution lets one through.
-        forbidden_attrs = ("sweep", "multi_run")
-        benchmark = self.template.spec.benchmark
-        explicit = benchmark.model_fields_set
-        for attr in forbidden_attrs:
-            if attr in explicit:
-                raise ValueError(
-                    f"`template.spec.benchmark.{attr}` is not permitted on AIPerfSweep. "
-                    f"Set `spec.{attr}` at the top level instead."
                 )
         return self

@@ -224,8 +224,11 @@ class KubeOptions(KubeManageOptions):
     def to_crd_spec(self, config: AIPerfConfig) -> dict[str, Any]:
         """Build a nested CRD spec dict from CLI options + AIPerfConfig.
 
-        Places AIPerfConfig fields under the ``benchmark`` key and deployment
-        fields (image, podTemplate, scheduling) at the top level of spec.
+        Places the BenchmarkConfig body under the ``benchmark`` key and
+        deployment fields (image, podTemplate, scheduling) at the top level
+        of spec. AIPerfJob carries a single benchmark — sweep/multi_run/
+        variables/random_seed envelope fields from AIPerfConfig are dropped
+        here; for sweeps, use AIPerfSweep.
 
         Args:
             config: The validated AIPerfConfig from CLI flags.
@@ -234,8 +237,10 @@ class KubeOptions(KubeManageOptions):
             Nested CRD spec dict: {benchmark: {...}, image: ..., ...}
         """
 
-        # AIPerfConfig fields go under benchmark key (camelCase for CRD)
-        benchmark = config.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+        # Only the BenchmarkConfig body lands on AIPerfJob.spec.benchmark.
+        benchmark = config.benchmark.model_dump(
+            mode="json", by_alias=True, exclude_defaults=True
+        )
 
         # Deployment fields at spec level in camelCase via DeploymentConfig serialization
         dc = self.to_deployment_config()
@@ -246,7 +251,10 @@ class KubeOptions(KubeManageOptions):
         # already has connectionsPerWorker, don't override it.
         if "workers" in self.model_fields_set and self.workers > 0:
             concurrency = max(
-                (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
+                (
+                    getattr(phase, "concurrency", 1) or 1
+                    for phase in config.benchmark.phases
+                ),
                 default=1,
             )
             dc_dict["connectionsPerWorker"] = max(

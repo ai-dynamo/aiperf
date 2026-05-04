@@ -1013,8 +1013,8 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
     spec_properties["imagePullPolicy"] = operator.pop("imagePullPolicy")
 
     benchmark_walked["description"] = (
-        "Benchmark configuration (AIPerfConfig). Strictly typed via the\n"
-        "AIPerfConfig schema, with x-kubernetes-preserve-unknown-fields: true\n"
+        "Benchmark workload (BenchmarkConfig). Strictly typed via the\n"
+        "BenchmarkConfig schema, with x-kubernetes-preserve-unknown-fields: true\n"
         "at narrow shorthand boundaries (models, distributions, endpoint urls,\n"
         "top-level shortcut fields, telemetry urls).\n"
         "\n"
@@ -1103,7 +1103,7 @@ def _build_crd(_config_properties: dict[str, Any]) -> dict[str, Any]:
                                     "description": (
                                         "AIPerfJob specification.\n"
                                         "\n"
-                                        "spec.benchmark holds AIPerfConfig fields (models, endpoint,\n"
+                                        "spec.benchmark holds BenchmarkConfig fields (models, endpoint,\n"
                                         "datasets, phases, etc.) using camelCase aliases (urlStrategy,\n"
                                         "apiKey, readyCheckTimeout, …). The underlying Pydantic model\n"
                                         "also accepts the snake_case names used in AIPerf CLI YAML,\n"
@@ -1310,40 +1310,9 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
             ),
         )
 
-    # Tier 1D — forbid sweep/multiRun inside template.spec.benchmark.
-    # The orchestration axes belong on AIPerfSweep.spec, not on the per-child
-    # stamp. AIPerfJobSpec's extra='forbid' already rejects unknown keys at
-    # template.spec, but AIPerfConfig's own ``sweep``/``multi_run`` fields
-    # (which exist for non-k8s sweep CLI) would otherwise sneak through.
-    template = properties.get("template")
-    if isinstance(template, dict):
-        template_spec = (template.get("properties") or {}).get("spec")
-        if isinstance(template_spec, dict):
-            template_benchmark = (template_spec.get("properties") or {}).get(
-                "benchmark"
-            )
-            if isinstance(template_benchmark, dict):
-                _add_validation_rules(
-                    template_benchmark,
-                    (
-                        {
-                            "rule": "!has(self.sweep)",
-                            "message": (
-                                "template.spec.benchmark.sweep is forbidden — "
-                                "set spec.sweep at the AIPerfSweep top level "
-                                "instead"
-                            ),
-                        },
-                        {
-                            "rule": "!has(self.multiRun)",
-                            "message": (
-                                "template.spec.benchmark.multiRun is "
-                                "forbidden — set spec.multiRun at the "
-                                "AIPerfSweep top level instead"
-                            ),
-                        },
-                    ),
-                )
+    # Tier 1D removed: AIPerfJobSpec.benchmark is typed as BenchmarkConfig
+    # (no sweep/multi_run fields), so the type system enforces this at the
+    # apiserver level via the generated structural schema — no CEL needed.
 
     # Attach CEL immutability rules to top-level orchestration fields.
     # Re-running a sweep with mutated axes would corrupt the run-epoch ledger

@@ -17,7 +17,7 @@ from typing import Any
 from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config import AIPerfConfig
+from aiperf.config import BenchmarkConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.kubernetes.k8s_models import K8sCamelModel
 
@@ -381,8 +381,12 @@ class AIPerfJobSpec(DeploymentConfig):
         description="Skip the operator-side endpoint reachability probe before deploying.",
     )
 
-    benchmark: AIPerfConfig = Field(
-        ..., description="Benchmark configuration (AIPerfConfig)."
+    benchmark: BenchmarkConfig = Field(
+        ...,
+        description=(
+            "Benchmark workload (BenchmarkConfig). AIPerfJob carries a "
+            "single benchmark — no in-CR sweep capability. For sweeps, use AIPerfSweep."
+        ),
     )
 
     @field_validator("image")
