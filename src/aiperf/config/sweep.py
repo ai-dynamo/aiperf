@@ -162,6 +162,24 @@ def _is_named_dict_list(obj: list[Any]) -> bool:
 def _expand_grid_sweep(
     base_data: dict[str, Any], variables: dict[str, list[Any]]
 ) -> list[tuple[dict[str, Any], SweepVariation]]:
+    """Cartesian-product expansion. Path keys must be envelope-rooted.
+
+    Allowed prefixes: ``benchmark.*``, ``variables.*``. Anything else is
+    rejected; it would target a non-sweepable subtree (sweep, multi_run,
+    random_seed) or a stale flat-shape path (`phases.X` instead of
+    `benchmark.phases.X`).
+    """
+    for path in variables:
+        if not isinstance(path, str) or not path.startswith(
+            ("benchmark.", "variables.")
+        ):
+            raise ValueError(
+                f"grid sweep variable {path!r} targets a non-sweepable "
+                f"subtree; allowed prefixes: benchmark.*, variables.*. "
+                f"If you migrated from the flat shape, prepend `benchmark.` "
+                f"(e.g. `phases.profiling.rate` -> "
+                f"`benchmark.phases.profiling.rate`)."
+            )
     # Sort field names alphabetically so variation order is stable across
     # writes / reads of the CR. The K8s apiserver alphabetizes object-typed
     # map keys at storage (CRD `additionalProperties` schemas), so a Python
@@ -175,7 +193,7 @@ def _expand_grid_sweep(
     results = []
     for idx, combo in enumerate(combinations):
         variant = copy.deepcopy(base_data)
-        values = {}
+        values: dict[str, Any] = {}
         for field_path, value in zip(field_names, combo, strict=False):
             _set_nested_value(variant, field_path, value)
             values[field_path] = value
@@ -188,31 +206,29 @@ def _expand_grid_sweep(
 def _normalize_scenario_dataset_form(
     scenario: dict[str, Any], base: dict[str, Any], idx: int
 ) -> None:
-    """Rewrite scenario ``dataset:`` (singular) into ``datasets: [...]`` so it
-    deep-merges cleanly against the always-plural base.
-
-    By the time scenario expansion runs, the base config has already been
-    through ``AIPerfConfig`` validation, which promotes singular ``dataset:``
-    to plural ``datasets:``. A scenario carrying the singular form would
-    otherwise land alongside the plural base key and trip mutual-exclusivity
-    in per-variation validation. This helper resolves the target dataset name
-    (explicit, or inherited from a single-entry base) and rewrites in place.
+    """Rewrite scenario `benchmark.dataset:` (singular) into
+    `benchmark.datasets: [...]` so it deep-merges cleanly against the
+    always-plural base.
     """
     from aiperf.config._benchmark_normalizers import DATASET_VS_DATASETS_MSG
 
-    if "dataset" not in scenario:
+    bench = scenario.get("benchmark")
+    if not isinstance(bench, dict):
         return
-    if "datasets" in scenario:
+    if "dataset" not in bench:
+        return
+    if "datasets" in bench:
         raise ValueError(f"sweep run [{idx}]: " + DATASET_VS_DATASETS_MSG)
 
-    original = scenario["dataset"]
+    original = bench["dataset"]
     if not isinstance(original, dict):
         raise ValueError(
-            f"sweep run [{idx}]: 'dataset:' must be a mapping; "
+            f"sweep run [{idx}]: 'benchmark.dataset:' must be a mapping; "
             f"got {type(original).__name__}."
         )
 
-    base_datasets = base.get("datasets") or []
+    base_bench = base.get("benchmark", {})
+    base_datasets = base_bench.get("datasets") or []
     explicit_name = original.get("name") if isinstance(original, dict) else None
     if explicit_name is not None:
         resolved_name = explicit_name
@@ -226,22 +242,41 @@ def _normalize_scenario_dataset_form(
     else:
         names = [d.get("name") for d in base_datasets if isinstance(d, dict)]
         raise ValueError(
-            f"sweep run [{idx}]: scenario uses singular 'dataset:' against a "
-            f"base with multiple datasets ({names!r}); add 'name:' to the "
-            f"scenario's dataset to disambiguate."
+            f"sweep run [{idx}]: scenario uses singular 'benchmark.dataset:' "
+            f"against a base with multiple datasets ({names!r}); add 'name:' "
+            f"to disambiguate."
         )
 
-    scenario.pop("dataset")
-    scenario["datasets"] = [
+    bench.pop("dataset")
+    bench["datasets"] = [
         {"name": resolved_name, **{k: v for k, v in original.items() if k != "name"}}
     ]
+
+
+_ALLOWED_SCENARIO_RUN_KEYS = {"name", "variables", "benchmark"}
 
 
 def _expand_scenario_sweep(
     base_data: dict[str, Any], runs: list[dict[str, Any]]
 ) -> list[tuple[dict[str, Any], SweepVariation]]:
+    """Expand scenario sweep. Each run is a partial envelope.
+
+    Allowed run keys: ``name``, ``variables``, ``benchmark``. Anything
+    else is rejected (it would land at envelope level and hide intent).
+    The `benchmark:` subtree of each run deep-merges into
+    ``envelope["benchmark"]``; the `variables:` subtree of each run
+    deep-merges into ``envelope["variables"]``.
+    """
     results = []
     for idx, scenario in enumerate(runs):
+        unknown = set(scenario.keys()) - _ALLOWED_SCENARIO_RUN_KEYS
+        if unknown:
+            raise ValueError(
+                f"sweep run [{idx}]: unknown field(s) {sorted(unknown)!r}; "
+                f"allowed: name, variables, benchmark. (If you migrated "
+                f"from the flat shape, wrap body fields under "
+                f"`benchmark:` inside the run.)"
+            )
         variant = copy.deepcopy(base_data)
         scenario_data = {k: v for k, v in scenario.items() if k != "name"}
         _normalize_scenario_dataset_form(scenario_data, variant, idx)
