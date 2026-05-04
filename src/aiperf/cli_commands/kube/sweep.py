@@ -133,6 +133,66 @@ async def sweep(
         )
 
 
+def _extract_envelope_keys(
+    raw: dict[str, Any], *, config_file: Path
+) -> tuple[dict[str, Any], Any, Any, Any]:
+    """Pull (bench_dict, sweep_cfg, multirun_cfg, envelope_variables) from a
+    user YAML file. Accepts three shapes: bare AIPerfConfig, AIPerfJob CR,
+    AIPerfSweep CR (the last is rejected).
+    """
+    is_aiperf_cr = (
+        isinstance(raw, dict)
+        and isinstance(raw.get("apiVersion"), str)
+        and raw["apiVersion"].startswith("aiperf.nvidia.com")
+    )
+    if is_aiperf_cr and raw.get("kind") == "AIPerfSweep":
+        raise ValueError(
+            f"'{config_file}' is already an AIPerfSweep CR. Use "
+            f"`kubectl apply -f {config_file}` to submit it, or pass a plain "
+            f"AIPerfConfig YAML / AIPerfJob CR to have `aiperf kube sweep` "
+            f"build the sweep CR."
+        )
+    if is_aiperf_cr and raw.get("kind") == "AIPerfJob":
+        cr_spec = dict(raw.get("spec") or {})
+        benchmark_raw = cr_spec.get("benchmark") or {}
+        sweep_cfg = cr_spec.pop("sweep", None) or benchmark_raw.pop("sweep", None)
+        multirun = (
+            cr_spec.pop("multiRun", None)
+            or cr_spec.pop("multi_run", None)
+            or benchmark_raw.pop("multi_run", None)
+            or benchmark_raw.pop("multiRun", None)
+        )
+        return benchmark_raw, sweep_cfg, multirun, cr_spec.pop("variables", None)
+
+    sweep_cfg = raw.pop("sweep", None)
+    multirun = raw.pop("multi_run", None) or raw.pop("multiRun", None)
+    envelope_variables = raw.pop("variables", None)
+    if isinstance(raw.get("benchmark"), dict) and not (
+        "models" in raw or "model" in raw or "endpoint" in raw
+    ):
+        return raw["benchmark"], sweep_cfg, multirun, envelope_variables
+    return raw, sweep_cfg, multirun, envelope_variables
+
+
+def _build_multirun_cfg(
+    multirun_cfg_from_yaml: Any,
+    *,
+    multi_run_trials: int | None,
+    cooldown_seconds: float,
+) -> dict[str, Any] | None:
+    """Merge YAML-declared multi_run with CLI overrides. CLI wins per docs."""
+    multirun_cfg: dict[str, Any] | None = None
+    if multirun_cfg_from_yaml is not None:
+        multirun_cfg = dict(multirun_cfg_from_yaml)
+    if multi_run_trials is not None:
+        multirun_cfg = multirun_cfg or {}
+        multirun_cfg["trials"] = multi_run_trials
+    if cooldown_seconds:
+        multirun_cfg = multirun_cfg or {}
+        multirun_cfg["cooldownSeconds"] = cooldown_seconds
+    return multirun_cfg
+
+
 def _build_sweep_cr_dict(
     *,
     config_file: Path | None,
@@ -173,54 +233,9 @@ def _build_sweep_cr_dict(
     from aiperf.config.loader import expand_config_dict
 
     raw = yaml.safe_load(config_file.read_text()) or {}
-
-    # `kube sweep` accepts three YAML shapes; `kube init` produces #2 today, so
-    # users who follow the "init -> sweep" path land here without rewriting.
-    #
-    # 1. Bare AIPerfConfig YAML with optional top-level `sweep:`/`multi_run:`.
-    # 2. AIPerfJob CR (apiVersion + kind=AIPerfJob): benchmark lives under
-    #    `spec.benchmark`; sweep/multi_run may be there if the user added them.
-    # 3. AIPerfSweep CR: rejected -- if it's already a sweep CR, the user
-    #    should `kubectl apply -f` directly rather than re-build it.
-    is_aiperf_cr = (
-        isinstance(raw, dict)
-        and isinstance(raw.get("apiVersion"), str)
-        and raw["apiVersion"].startswith("aiperf.nvidia.com")
+    bench_dict, sweep_cfg, multirun_cfg_from_yaml, envelope_variables = (
+        _extract_envelope_keys(raw, config_file=config_file)
     )
-    if is_aiperf_cr and raw.get("kind") == "AIPerfSweep":
-        raise ValueError(
-            f"'{config_file}' is already an AIPerfSweep CR. Use "
-            f"`kubectl apply -f {config_file}` to submit it, or pass a plain "
-            f"AIPerfConfig YAML / AIPerfJob CR to have `aiperf kube sweep` "
-            f"build the sweep CR."
-        )
-    if is_aiperf_cr and raw.get("kind") == "AIPerfJob":
-        cr_spec = dict(raw.get("spec") or {})
-        benchmark_raw = cr_spec.get("benchmark") or {}
-        sweep_cfg = cr_spec.pop("sweep", None) or benchmark_raw.pop("sweep", None)
-        multirun_cfg_from_yaml = (
-            cr_spec.pop("multiRun", None)
-            or cr_spec.pop("multi_run", None)
-            or benchmark_raw.pop("multi_run", None)
-            or benchmark_raw.pop("multiRun", None)
-        )
-        envelope_variables = cr_spec.pop("variables", None)
-        bench_dict = benchmark_raw
-    else:
-        sweep_cfg = raw.pop("sweep", None)
-        multirun_cfg_from_yaml = raw.pop("multi_run", None) or raw.pop("multiRun", None)
-        # Pull envelope-level `variables:` (used as Jinja context) before
-        # picking the body subtree.
-        envelope_variables = raw.pop("variables", None)
-        # Envelope-shape YAML (post-restructure) wraps body fields under a
-        # top-level `benchmark:` key. Drill into that so `bench_dict` holds the
-        # body keys directly, matching the legacy flat-shape handling.
-        if isinstance(raw.get("benchmark"), dict) and not (
-            "models" in raw or "model" in raw or "endpoint" in raw
-        ):
-            bench_dict = raw["benchmark"]
-        else:
-            bench_dict = raw
 
     # Render Jinja2 / ${ENV_VAR} in the benchmark portion before submission so
     # unresolved `{{ ... }}` literals never trip AIPerfSweepSpec.model_validate
@@ -264,18 +279,11 @@ def _build_sweep_cr_dict(
     if sweep_cfg is not None:
         spec["sweep"] = sweep_cfg
 
-    multirun_cfg: dict[str, Any] | None = None
-    if multirun_cfg_from_yaml is not None:
-        multirun_cfg = dict(multirun_cfg_from_yaml)
-    if multi_run_trials is not None:
-        multirun_cfg = multirun_cfg or {}
-        # CLI flag overrides YAML, matching the documented behaviour of
-        # _TRIALS_PARAM ("overrides multi_run.trials in the YAML"). Earlier
-        # we used setdefault, which made YAML win silently.
-        multirun_cfg["trials"] = multi_run_trials
-    if cooldown_seconds:
-        multirun_cfg = multirun_cfg or {}
-        multirun_cfg["cooldownSeconds"] = cooldown_seconds
+    multirun_cfg = _build_multirun_cfg(
+        multirun_cfg_from_yaml,
+        multi_run_trials=multi_run_trials,
+        cooldown_seconds=cooldown_seconds,
+    )
     if multirun_cfg:
         spec["multiRun"] = multirun_cfg
 

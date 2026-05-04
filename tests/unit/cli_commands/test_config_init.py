@@ -43,7 +43,12 @@ class TestGenerate:
         # Body keys live under the `benchmark:` envelope key (or via the
         # top-level `model:` shortcut hoist that survives in some templates).
         body = parsed.get("benchmark", parsed)
-        assert "model" in parsed or "models" in parsed or "model" in body or "models" in body
+        assert (
+            "model" in parsed
+            or "models" in parsed
+            or "model" in body
+            or "models" in body
+        )
         assert "endpoint" in body
 
     def test_unknown_template_exits_with_message(self, capsys) -> None:

@@ -174,7 +174,9 @@ class TestProperty1PBT:
         """The i-th variation's values dict carries the i-th concurrency."""
         plan = build_benchmark_plan(_make_config(concurrency))
 
-        actual = [v.values["benchmark.phases.profiling.concurrency"] for v in plan.variations]
+        actual = [
+            v.values["benchmark.phases.profiling.concurrency"] for v in plan.variations
+        ]
         assert actual == concurrency
 
 

@@ -40,7 +40,9 @@ class TestMagicListPromotion:
             ]
         }
         _promote_magic_lists_to_sweep_block(nested)
-        assert nested["sweep"]["variables"] == {"benchmark.phases.profiling.concurrency": [42]}
+        assert nested["sweep"]["variables"] == {
+            "benchmark.phases.profiling.concurrency": [42]
+        }
 
     def test_multiple_magic_lists_in_same_phase_promoted_together(self) -> None:
         """Both `concurrency` and `request_rate` (when list-shaped) lift in

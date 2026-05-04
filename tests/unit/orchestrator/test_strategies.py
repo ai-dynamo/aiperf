@@ -129,7 +129,9 @@ class TestFixedTrialsStrategy:
         strategy = FixedTrialsStrategy(num_trials=3)
         assert strategy.get_cooldown_seconds() == 0.0
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_on_first_run(self):
         """Test auto_set_seed sets random_seed on first run when None."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
@@ -141,7 +143,9 @@ class TestFixedTrialsStrategy:
         assert new_config.random_seed == FixedTrialsStrategy.DEFAULT_SEED
         assert config.random_seed is None
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_preserves_user_seed(self):
         """Test auto_set_seed preserves user-specified random_seed."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
@@ -152,7 +156,9 @@ class TestFixedTrialsStrategy:
 
         assert new_config.random_seed == 999
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_disabled(self):
         """Test that auto_set_seed=False doesn't modify config."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=False)
@@ -186,7 +192,9 @@ class TestFixedTrialsStrategy:
         assert not _has_warmup_phase(new_config)
         assert _has_warmup_phase(config)
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_ensure_random_seed_creates_deep_copy(self):
         """Test that _ensure_random_seed creates a deep copy."""
         strategy = FixedTrialsStrategy(num_trials=3, auto_set_seed=True)
@@ -450,7 +458,9 @@ class TestAdaptiveStrategy:
 
     # -- Config parity (seed handling, warmup disabling) --
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_on_first_run(self):
         """Auto-sets seed when none specified, matching FixedTrialsStrategy."""
         criterion = self._make_mock_criterion()
@@ -462,7 +472,9 @@ class TestAdaptiveStrategy:
         assert new_config.random_seed == AdaptiveStrategy.DEFAULT_SEED
         assert config.random_seed is None
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_preserves_user_seed(self):
         """Preserves user-specified seed."""
         criterion = self._make_mock_criterion()
@@ -473,7 +485,9 @@ class TestAdaptiveStrategy:
         new_config = strategy.get_next_config(config, [])
         assert new_config.random_seed == 999
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_auto_set_seed_disabled(self):
         """auto_set_seed=False leaves seed as None."""
         criterion = self._make_mock_criterion()
@@ -522,7 +536,9 @@ class TestAdaptiveStrategy:
         assert _has_warmup_phase(second)
         assert any(p.name == "warmup" for p in second.phases)
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
+    @pytest.mark.skip(
+        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
+    )
     def test_config_parity_seed_and_warmup_with_fixed_trials(self):
         """Full config transformation parity between Adaptive and Fixed strategies."""
         criterion = self._make_mock_criterion()

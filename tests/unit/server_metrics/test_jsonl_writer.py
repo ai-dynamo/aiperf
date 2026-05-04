@@ -132,7 +132,9 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        output_file = (
+            config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        )
         assert output_file.exists()
 
         lines = output_file.read_text().strip().split("\n")
@@ -177,7 +179,9 @@ class TestServerMetricsRecordProcessing:
                 )
                 await processor.process_server_metrics_record(record)
 
-        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        output_file = (
+            config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        )
         lines = output_file.read_text().strip().split("\n")
         assert len(lines) == 5
 
@@ -197,7 +201,9 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        output_file = (
+            config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        )
         data = orjson.loads(output_file.read_text().strip())
 
         assert "metrics" in data
@@ -236,7 +242,9 @@ class TestServerMetricsRecordProcessing:
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
-        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        output_file = (
+            config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        )
         data = orjson.loads(output_file.read_text().strip())
 
         # Verify histogram is in slim format
@@ -295,7 +303,9 @@ class TestDuplicateRecordHandling:
             await processor.process_server_metrics_record(unique_record)
             await processor.process_server_metrics_record(duplicate_record)
 
-        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        output_file = (
+            config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
+        )
         lines = output_file.read_text().strip().split("\n")
 
         # Should only have 1 line (duplicate skipped)

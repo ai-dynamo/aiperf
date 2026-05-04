@@ -42,12 +42,8 @@ def test_build_plan_grid_sweep():
     assert len(plan.configs) == 2
     assert len(plan.variations) == 2
     assert plan.trials == 2
-    assert plan.variations[0].values == {
-        "benchmark.phases.profiling.concurrency": 8
-    }
-    assert plan.variations[1].values == {
-        "benchmark.phases.profiling.concurrency": 32
-    }
+    assert plan.variations[0].values == {"benchmark.phases.profiling.concurrency": 8}
+    assert plan.variations[1].values == {"benchmark.phases.profiling.concurrency": 32}
 
 
 def test_build_plan_no_sweep_just_multirun():
