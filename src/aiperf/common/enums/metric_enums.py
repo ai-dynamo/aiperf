@@ -683,6 +683,14 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     REASONING = "reasoning"
     """Reasoning token metrics."""
 
+    EFFECTIVE = "effective"
+    """Full-window time-weighted analyzer outputs (sweep-line throughput, concurrency,
+    tokens-in-flight, plus the coordinated-omission-aware effective_latency)."""
+
+    ACTIVE = "active"
+    """Phase-active-only time-weighted analyzer outputs — throughput restricted to
+    intervals where the relevant phase has at least one request in flight."""
+
 
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.

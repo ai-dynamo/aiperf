@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.models import MetricResult
 
 if TYPE_CHECKING:
@@ -42,6 +42,7 @@ def _array_to_metric_result(
     header: str,
     unit: str,
     values_ms: NDArray[np.float64],
+    console_group: MetricConsoleGroup = MetricConsoleGroup.EFFECTIVE,
 ) -> MetricResult:
     """Build a fully-populated :class:`MetricResult` from a 1-D ndarray."""
     p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
@@ -66,6 +67,7 @@ def _array_to_metric_result(
         p90=float(p90),
         p95=float(p95),
         p99=float(p99),
+        console_group=console_group,
     )
 
 
@@ -103,6 +105,7 @@ def compute_credit_to_start_latency(store: ColumnStore) -> MetricResult | None:
         header="Credit-to-Start Latency",
         unit="ms",
         values_ms=values_ms,
+        console_group=MetricConsoleGroup.NONE,
     )
 
 

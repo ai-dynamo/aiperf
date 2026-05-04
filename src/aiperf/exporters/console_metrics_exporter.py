@@ -47,6 +47,8 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
     console_groups: ClassVar[tuple[MetricConsoleGroup, ...] | None] = (
         MetricConsoleGroup.DEFAULT,
+        MetricConsoleGroup.EFFECTIVE,
+        MetricConsoleGroup.ACTIVE,
         MetricConsoleGroup.USAGE,
         MetricConsoleGroup.CACHE,
         MetricConsoleGroup.PREDICTION,
@@ -131,12 +133,19 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         for record in records:
             if not self._should_show(record):
                 continue
-            try:
-                metric_class = MetricRegistry.get_class(record.tag)
-            except MetricTypeError:
-                continue
-            grouped.setdefault(metric_class.console_group, []).append(record)
+            grouped.setdefault(self._record_group(record), []).append(record)
         return grouped
+
+    @staticmethod
+    def _record_group(record: MetricResult) -> MetricConsoleGroup:
+        """Resolve a record's console group: registered metric ClassVar first,
+        then the inline `record.console_group` override (used by analyzer-
+        injected results whose tags are not in MetricRegistry), defaulting to
+        `DEFAULT`."""
+        try:
+            return MetricRegistry.get_class(record.tag).console_group
+        except MetricTypeError:
+            return record.console_group or MetricConsoleGroup.DEFAULT
 
     def _build_table(self, title: str, records: list[MetricResult]) -> Table:
         table_kwargs: dict = {"title": title}
@@ -168,9 +177,15 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         try:
             metric_class = MetricRegistry.get_class(record.tag)
         except MetricTypeError:
-            # Unregistered tag (plugin/external metric): pass through when an
-            # explicit allowlist is set; otherwise hide.
-            return self.metric_filter is not None
+            # Unregistered tag (analyzer-injected or external plugin metric):
+            # honor the inline `record.console_group` override against the
+            # group filter; pass the flag filter since there's no metric class
+            # to query for flags.
+            if self.console_groups is not None:
+                inline_group = record.console_group or MetricConsoleGroup.DEFAULT
+                if inline_group not in self.console_groups:
+                    return False
+            return True
         if (
             self.console_groups is not None
             and metric_class.console_group not in self.console_groups

@@ -25,6 +25,7 @@ from aiperf.common.constants import STAT_KEYS
 from aiperf.common.enums import (
     CacheBustTarget,
     CreditPhase,
+    MetricConsoleGroup,
     MetricValueTypeT,
     SSEFieldType,
 )
@@ -63,6 +64,13 @@ class MetricResult(JsonMetricResult):
     sum: int | float | None = Field(
         default=None,
         description="The sum of all the metric values across all records",
+    )
+    console_group: MetricConsoleGroup | None = Field(
+        default=None,
+        exclude=True,
+        description="Optional console-grouping override for analyzer-injected results "
+        "whose tags are not in MetricRegistry. Excluded from JSON dumps; the registered "
+        "metric class's `console_group` ClassVar is the source of truth for everything else.",
     )
 
     def to_display_unit(self) -> MetricResult:

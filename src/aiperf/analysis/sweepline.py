@@ -15,6 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.models import MetricResult
 
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -155,14 +156,23 @@ class SweepLineCurves:
             results[spec.tag] = metric_result_from_sweep_line_stats(
                 spec.tag, spec.header, spec.unit, stats, scale=spec.scale
             )
+        self._compute_active_variants(results, window_start, window_end)
+        return results
 
-        # Active-only variants: time-weight only over segments where the
-        # corresponding phase has at least one record in flight. These show
-        # intensity while the phase is happening rather than diluted by idle
-        # gaps in the whole run window. The same applies to per-user variants:
-        # `effective_*_throughput_per_user` is also forced to 0 during idle
-        # gaps by divide_step_functions, so the active mask is needed there
-        # too to avoid biased percentiles.
+    def _compute_active_variants(
+        self,
+        results: dict[str, MetricResult],
+        window_start: float,
+        window_end: float,
+    ) -> None:
+        """Active-only variants: time-weight only over segments where the
+        corresponding phase has at least one record in flight. These show
+        intensity while the phase is happening rather than diluted by idle
+        gaps in the whole run window. The same applies to per-user variants:
+        `effective_*_throughput_per_user` is also forced to 0 during idle
+        gaps by divide_step_functions, so the active mask is needed there
+        too to avoid biased percentiles.
+        """
         for tag, header, unit, scale, rate, rate_ts, mask, mask_ts in (
             (
                 "active_decode_throughput",
@@ -219,10 +229,13 @@ class SweepLineCurves:
                 rate_ts, rate, mask_ts, mask, window_start, window_end
             )
             results[tag] = metric_result_from_sweep_line_stats(
-                tag, header, unit, stats, scale=scale
+                tag,
+                header,
+                unit,
+                stats,
+                scale=scale,
+                console_group=MetricConsoleGroup.ACTIVE,
             )
-
-        return results
 
 
 def _sweep_line_cumsum(
