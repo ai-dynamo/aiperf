@@ -45,7 +45,10 @@ def resolve_config(
     Returns:
         Fully resolved `AIPerfConfig` ready for downstream use.
     """
-    from aiperf.config.v1.converter import convert_user_to_aiperf
+    from aiperf.config.v1.converter import (
+        _wrap_under_envelope,
+        convert_user_to_aiperf,
+    )
 
     if config_file is None:
         return convert_user_to_aiperf(user_config, service_config)
@@ -55,6 +58,8 @@ def resolve_config(
 
     yaml_dict = load_config_dict(config_file)
     overrides = build_v1_overrides(user_config, service_config)
+    if overrides:
+        overrides = _wrap_under_envelope(overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     return AIPerfConfig.model_validate(merged)
 
@@ -135,7 +140,14 @@ def _apply_recipe_and_multirun(out: dict[str, Any], user: UserConfig) -> None:
     if recipe_output is not None:
         sweep_vars = recipe_output.get("sweep_variables")
         if sweep_vars:
-            out["sweep"] = {"type": "grid", "variables": dict(sweep_vars)}
+            # Recipe paths are body-rooted (``phases.<name>.<field>``);
+            # the envelope-shaped sweep block needs them prefixed with
+            # ``benchmark.`` to resolve. Idempotent for keys already so prefixed.
+            prefixed = {
+                (k if k.startswith("benchmark.") else f"benchmark.{k}"): v
+                for k, v in sweep_vars.items()
+            }
+            out["sweep"] = {"type": "grid", "variables": prefixed}
     multi_run = build_multi_run(user, recipe_output=recipe_output)
     if multi_run:
         out["multi_run"] = multi_run

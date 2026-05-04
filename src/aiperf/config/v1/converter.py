@@ -45,6 +45,29 @@ if TYPE_CHECKING:
     from aiperf.config.v1 import ServiceConfig, UserConfig
 
 
+# Envelope keys that stay at top level. Everything else moves under `benchmark:`.
+_ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed", "benchmark"}
+
+
+def _wrap_under_envelope(v2_dict: dict[str, Any]) -> dict[str, Any]:
+    """Partition a flat-shaped v2 dict into envelope shape.
+
+    Envelope keys ({sweep, multi_run, variables, random_seed, benchmark})
+    stay at top level. Everything else is moved under `benchmark:`.
+    Idempotent: a dict that is already envelope-shaped passes through.
+    """
+    body = {k: v2_dict[k] for k in list(v2_dict.keys()) if k not in _ENVELOPE_KEYS}
+    if not body:
+        return v2_dict
+    for k in body:
+        del v2_dict[k]
+    if "benchmark" in v2_dict and isinstance(v2_dict["benchmark"], dict):
+        v2_dict["benchmark"].update(body)
+    else:
+        v2_dict["benchmark"] = body
+    return v2_dict
+
+
 def _init_random_seed(user: UserConfig) -> None:
     from aiperf.common import random_generator as rng
     from aiperf.common.exceptions import InvalidStateError
@@ -98,6 +121,15 @@ def _apply_recipe_sweep_variables(
         return
 
     _reject_recipe_plus_magic_lists(user)
+
+    # Recipes emit body-rooted paths (``phases.<name>.<field>``,
+    # ``datasets.<name>.<field>``); the envelope-shaped sweep block needs them
+    # prefixed with ``benchmark.`` so ``expand_sweep`` can resolve them against
+    # the envelope-shaped config. Idempotent for keys already so prefixed.
+    sweep_variables = {
+        (k if k.startswith("benchmark.") else f"benchmark.{k}"): v
+        for k, v in sweep_variables.items()
+    }
 
     existing = nested.get("sweep")
     if isinstance(existing, dict):
@@ -173,7 +205,7 @@ def _promote_magic_lists_to_sweep_block(nested: dict[str, Any]) -> None:
             )
         for key in list(phase.keys()):
             if key in MAGIC_LIST_FIELDS and isinstance(phase[key], list):
-                sweep_variables[f"phases.{phase_name}.{key}"] = phase.pop(key)
+                sweep_variables[f"benchmark.phases.{phase_name}.{key}"] = phase.pop(key)
     if sweep_variables:
         existing_sweep = nested.get("sweep")
         if isinstance(existing_sweep, dict):
@@ -241,4 +273,5 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
     _apply_recipe_sweep_variables(nested, recipe_output, user)
     _promote_magic_lists_to_sweep_block(nested)
 
+    nested = _wrap_under_envelope(nested)
     return AIPerfConfig(**nested)
