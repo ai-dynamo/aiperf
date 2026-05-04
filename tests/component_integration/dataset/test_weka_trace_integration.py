@@ -63,7 +63,6 @@ def test_weka_trace_end_to_end_validates_for_orchestrator_v1(monkeypatch):
     # Should not raise.
     validate_for_orchestrator_v1(md)
 
-    # Topology checks.
     parent_md = next(c for c in md.conversations if c.conversation_id == "trace_sa")
     child_md = next(
         c for c in md.conversations if c.conversation_id == "trace_sa::sa:agent_001"

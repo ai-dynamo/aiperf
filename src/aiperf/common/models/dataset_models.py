@@ -169,6 +169,19 @@ class Turn(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible tool definitions. "
         "When set alongside raw_messages, injected into the API payload.",
     )
+    reset_context: bool = Field(
+        default=False,
+        description=(
+            "When True, the endpoint formatter discards messages accumulated "
+            "from prior turns in this conversation before applying this turn's "
+            "raw_messages. Used by delta-encoded multi-turn conversations to "
+            "express a non-monotonic context change (e.g. weka's mid-segment "
+            "LCP cut, or any source that needs to rewrite an earlier prefix). "
+            "Has no effect when raw_messages is None or when the surrounding "
+            "Conversation.context_mode is a MESSAGE_ARRAY mode (each turn "
+            "already carries a self-contained array)."
+        ),
+    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )

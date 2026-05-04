@@ -588,13 +588,21 @@ async def test_warmup_setup_does_not_build_recycle_queue():
 @pytest.mark.asyncio
 async def test_warmup_marks_sending_complete():
     """``_execute_warmup`` signals sending-complete once after dispatching
-    all trajectory credits."""
+    all trajectory credits.
+
+    ``mark_sending_complete`` is a guarded fallback now that PhaseRunner re-anchors
+    ``total_expected_requests`` to the actual trajectory count: when the count-based
+    path wins the race, the strategy's call is skipped via the
+    ``is_sending_complete`` guard. Force the guard to evaluate ``False`` so this
+    legacy behavioral assertion still applies.
+    """
     trajectories = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
     ]
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories
     )
+    strategy.lifecycle.is_sending_complete = False
     await strategy.setup_phase()
     await strategy.execute_phase()
 
@@ -623,6 +631,7 @@ async def test_warmup_marks_sending_complete_after_dispatch():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories, issuer=issuer
     )
+    strategy.lifecycle.is_sending_complete = False
 
     def record_mark() -> None:
         call_order.append("mark_sending_complete")
@@ -638,6 +647,33 @@ async def test_warmup_marks_sending_complete_after_dispatch():
         "issue_credit",
         "mark_sending_complete",
     ]
+
+
+@pytest.mark.asyncio
+async def test_warmup_skips_mark_sending_complete_when_already_complete():
+    """When ``CreditCounter.is_final_credit`` already fired (and PhaseRunner's
+    ``CreditIssuer`` already advanced the lifecycle into SENDING_COMPLETE),
+    the strategy must NOT re-call ``mark_sending_complete``. Without this
+    guard the strategy double-transitions the state machine -> ValueError.
+
+    This is the regression guard for the warmup-hang fix: PhaseRunner now
+    re-anchors ``total_expected_requests`` to the actual trajectory count,
+    so the count-based path is the primary signal and the strategy's call
+    becomes a guarded fallback.
+    """
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
+    ]
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP, trajectories=trajectories
+    )
+    # Simulate the count-based path having already won the race.
+    strategy.lifecycle.is_sending_complete = True
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    strategy.lifecycle.mark_sending_complete.assert_not_called()
 
 
 # =============================================================================

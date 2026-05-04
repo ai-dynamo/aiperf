@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end smoke test for the DAG subagent pipeline (Task 17).
+"""End-to-end smoke test for the DAG subagent pipeline.
 
 This test does not spawn the full ``aiperf`` subprocess. Instead it loads the
 ``small.dag.jsonl`` fixture via the plugin-registered

@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
@@ -143,6 +144,18 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
         return DatasetSamplingStrategy.SEQUENTIAL
+
+    @classmethod
+    def get_default_context_mode(cls) -> ConversationContextMode:
+        """Weka emits delta-encoded turns; the endpoint accumulates at request time.
+
+        Overrides ``BaseFileLoader.get_default_context_mode`` (None) so the
+        composer / dataset_manager picks ``DELTAS_WITH_RESPONSES`` for weka,
+        which (a) matches the per-turn ``raw_messages`` shape this loader now
+        emits and (b) correctly bypasses the preformat fast path in
+        ``DatasetManager`` (deltas need at-request-time accumulation).
+        """
+        return ConversationContextMode.DELTAS_WITH_RESPONSES
 
     @classmethod
     def can_load(
@@ -486,13 +499,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         from aiperf.common.models import (
             ConversationBranchInfo,
-            Text,
             Turn,
             TurnPrerequisite,
         )
         from aiperf.dataset.loader.weka_synth_buf import (
             ConversationReconstructor,
-            compose_weka_prompt_tokens,
         )
 
         conversations: list[Conversation] = []
@@ -501,19 +512,20 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         for _plan_idx, plan in enumerate(parent_plans, 1):
             # ``hash_id_scope: "local"`` requires per-trace cache + RNG reset to
-            # prevent cross-trace hash_id aliasing inflating KV-cache hit rates (P21).
+            # prevent cross-trace hash_id aliasing inflating KV-cache hit rates.
             pg = self.prompt_generator
             pg._cache.clear()
             pg._hash_id_corpus_rng.set_trace_id(plan.trace_id)
 
             model_map = model_map_per_trace.get(plan.trace_id, {})
 
-            # raw_messages is multi-segment LCP-driven so AIPerf can replay
-            # byte-for-byte without thread/accumulate heuristics. See spec 4.4.
+            # raw_messages carries delta-encoded segments per turn; the
+            # endpoint accumulates across turns at request time, with
+            # ``reset_context`` flagging non-monotonic LCP cuts.
             trace = data[plan.trace_id][0]
             conv = Conversation(
                 session_id=plan.trace_id,
-                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
             )
             recon = ConversationReconstructor(
                 block_size=self._block_size,
@@ -546,15 +558,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         seed=seed,
                     )
 
-                prompt_seed = f"{plan.trace_id}:turn_{k}:prompt_tail"
-                prompt_tokens = compose_weka_prompt_tokens(
-                    hash_ids=req.hash_ids,
-                    input_length=req.input_length,
-                    decode_block_tokens=self._decode_block_tokens,
-                    sample_partial_tail_tokens=self.sample_partial_tail_tokens,
-                    seed=prompt_seed,
-                )
-                prompt = self._decode_tokens_to_text(prompt_tokens)
                 # Turn.timestamp/delay are in milliseconds; weka traces record seconds.
                 t_ms = req.t * 1000.0
                 if k == 0:
@@ -565,14 +568,15 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     delay_ms = t_ms - plan.normals[k - 1][1].t * 1000.0
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
+                delta = recon.turn_delta()
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else delay_ms,
                         model=model_map.get(req.model, req.model),
                         max_tokens=self._cap_output(req),
-                        texts=[Text(name="text", contents=[prompt])],
-                        raw_messages=recon.snapshot_messages(),
+                        raw_messages=delta.delta_messages,
+                        reset_context=delta.reset_context,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -658,7 +662,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             )
             child_conv = Conversation(
                 session_id=cp.session_id,
-                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
             )
             for k, creq in enumerate(cp.entry.requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
@@ -680,15 +684,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_in_tokens=creq.input_length,
                         seed=seed,
                     )
-                child_prompt_seed = f"{cp.session_id}:turn_{k}:prompt_tail"
-                child_prompt_tokens = compose_weka_prompt_tokens(
-                    hash_ids=creq.hash_ids,
-                    input_length=creq.input_length,
-                    decode_block_tokens=self._decode_block_tokens,
-                    sample_partial_tail_tokens=self.sample_partial_tail_tokens,
-                    seed=child_prompt_seed,
-                )
-                prompt = self._decode_tokens_to_text(child_prompt_tokens)
                 t_ms = creq.t * 1000.0
                 if k == 0:
                     child_delay_ms: float | None = None
@@ -698,14 +693,15 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     child_delay_ms = t_ms - cp.entry.requests[k - 1].t * 1000.0
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
+                child_delta = child_recon.turn_delta()
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else child_delay_ms,
                         model=child_model_map.get(creq.model, creq.model),
                         max_tokens=creq.output_length,
-                        texts=[Text(name="text", contents=[prompt])],
-                        raw_messages=child_recon.snapshot_messages(),
+                        raw_messages=child_delta.delta_messages,
+                        reset_context=child_delta.reset_context,
                     )
                 )
             conversations.append(child_conv)
@@ -743,7 +739,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         from aiperf.common.models import (
             ConversationBranchInfo,
-            Text,
             Turn,
             TurnPrerequisite,
         )
@@ -873,7 +868,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
             parent_conv = Conversation(
                 session_id=trace_id,
-                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
             )
             for t_dict in result["parent_turns"]:
                 parent_conv.turns.append(
@@ -882,8 +877,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         delay=t_dict["delay"],
                         model=t_dict["model"],
                         max_tokens=t_dict["max_tokens"],
-                        texts=[Text(name="text", contents=[t_dict["prompt"]])],
                         raw_messages=t_dict["raw_messages"],
+                        reset_context=t_dict["reset_context"],
                     )
                 )
             for branch in result["branches"]:
@@ -912,7 +907,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             for child in result["children"]:
                 child_conv = Conversation(
                     session_id=child["session_id"],
-                    context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                    context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
                 )
                 for t_dict in child["turns"]:
                     child_conv.turns.append(
@@ -921,8 +916,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             delay=t_dict["delay"],
                             model=t_dict["model"],
                             max_tokens=t_dict["max_tokens"],
-                            texts=[Text(name="text", contents=[t_dict["prompt"]])],
                             raw_messages=t_dict["raw_messages"],
+                            reset_context=t_dict["reset_context"],
                         )
                     )
                 conversations.append(child_conv)

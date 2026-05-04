@@ -724,7 +724,10 @@ async def test_request_rate_child_dispatch_uses_credit_issuer() -> None:
 
     # Two children landed, three rolled back.
     assert orch.stats.children_spawned == 2
-    assert orch.stats.children_errored == 3
+    # Saturated ``dispatch_first_turn`` (returns False) is stop-condition
+    # refusal, not an error — tally as truncated.
+    assert orch.stats.children_truncated == 3
+    assert orch.stats.children_errored == 0
 
 
 # =============================================================================
@@ -1242,7 +1245,7 @@ async def test_fail_fast_aborts_parent_on_child_error(monkeypatch) -> None:
     cs = _mk_source([root, *children])
     issuer = _mk_issuer()
 
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    monkeypatch.setattr("aiperf.common.environment.Environment.DAG.FAIL_FAST", True)
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))

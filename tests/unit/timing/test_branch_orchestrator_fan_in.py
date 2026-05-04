@@ -338,7 +338,9 @@ async def test_fan_in_idempotent_on_double_delivery():
 async def test_fan_in_under_fail_fast_cascades_correctly(monkeypatch):
     """AIPERF_DAG_FAIL_FAST=true: one B child errors. Parent + every orphan
     in BOTH A and B is aborted; both branches' gate state is dropped."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
     cs = _mk_source(_fan_in_metadata())
     _mk_start(cs)
     issuer = _mk_issuer()

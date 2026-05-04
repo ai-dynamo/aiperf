@@ -56,6 +56,18 @@ def compose_weka_prompt_tokens(
 
 
 @dataclass
+class TurnDelta:
+    """Per-turn emission for delta-encoded conversation reconstruction.
+
+    Returned by :meth:`ConversationReconstructor.turn_delta` after each
+    ``init_turn_0`` / ``advance_turn`` call.
+    """
+
+    delta_messages: list[dict[str, str]]
+    reset_context: bool
+
+
+@dataclass
 class RoleSegment:
     """One role-tagged segment of the reconstructed conversation.
 
@@ -67,7 +79,7 @@ class RoleSegment:
     for this segment. ``content`` is the decoded text and is always equal to
     ``decode_tokens_to_text(tokens)`` at the time the segment was emitted.
 
-    Post-P17 invariant: every segment except the trailing user holds exactly
+    Block-alignment invariant: every segment except the trailing user holds exactly
     ``block_count * block_size`` tokens; the trailing user segment may hold
     ``block_count * block_size + partial_tail`` tokens. The tokens for any
     given hash_id are byte-identical across every segment they appear in.
@@ -112,6 +124,8 @@ class ConversationReconstructor:
     decode_tokens_to_text: Callable[[list[int]], str]
     bpe_stable_terminator_tokens: list[int] = field(default_factory=list)
     _segments: list[RoleSegment] = field(default_factory=list)
+    _emitted_segment_count: int = 0
+    _last_disturbance_at: int | None = None
 
     def init_turn_0(
         self,
@@ -127,7 +141,7 @@ class ConversationReconstructor:
         any partial tail of ``in_tokens % bs`` tokens is appended to the user
         segment via ``sample_partial_tail_tokens``.
 
-        Post-P19: tool_tokens and system_tokens are merged into a SINGLE
+        tool_tokens and system_tokens are merged into a SINGLE
         ``role="system"`` segment of ``ceil((tool+system)/bs) * bs`` tokens.
         Some serving stacks (Anthropic API, certain Qwen deployments) reject
         chat requests containing multiple adjacent system messages; trace
@@ -188,6 +202,8 @@ class ConversationReconstructor:
         )
 
         self._segments = segs
+        self._emitted_segment_count = 0
+        self._last_disturbance_at = None
 
     def advance_turn(
         self,
@@ -206,7 +222,7 @@ class ConversationReconstructor:
         rule applies across all three structural patterns (append-only,
         mid-seq replace, pull-back); see §4.4.1.
 
-        Post-P17: assistant size is block-aligned UP via
+        Assistant size is block-aligned UP via
         ``ceil(prev_out_tokens / bs) * bs``, clamped to fit the new region.
         This makes the asst content slightly larger than the recorded
         ``prev_out_tokens`` (by up to ``bs - 1`` tokens) but preserves the
@@ -218,13 +234,14 @@ class ConversationReconstructor:
         lcp = longest_common_prefix(prev_hash_ids, curr_hash_ids)
         prev_partial_tail = prev_in_tokens % bs
 
-        truncate_synth_buf_at_block(
+        truncate_disturbance = truncate_synth_buf_at_block(
             self._segments,
             lcp,
             bs,
             decode_tokens_to_text=self.decode_tokens_to_text,
             prev_partial_tail=prev_partial_tail,
         )
+        self._last_disturbance_at = truncate_disturbance
 
         new_blocks = curr_hash_ids[lcp:m_curr]
         new_partial_tail_n = curr_in_tokens % bs
@@ -268,6 +285,41 @@ class ConversationReconstructor:
                 )
             )
 
+    def turn_delta(self) -> TurnDelta:
+        """Compute the raw_messages to emit for the just-completed turn.
+
+        Three cases:
+          1. First call after ``init_turn_0`` (``_emitted_segment_count == 0``):
+             emit ALL current segments, ``reset_context=False``. This is
+             turn 0's baseline state.
+          2. Strict append (no disturbance, or disturbance only touched
+             segments at index ``>= _emitted_segment_count``): emit segments
+             at index ``>= _emitted_segment_count``, ``reset_context=False``.
+          3. Disturbance touched a previously-emitted segment (index
+             ``< _emitted_segment_count``): emit ALL current segments,
+             ``reset_context=True``.
+
+        Updates ``_emitted_segment_count`` to ``len(self._segments)`` on
+        return. Clears ``_last_disturbance_at`` to ``None``.
+        """
+        disturbed_emitted = (
+            self._last_disturbance_at is not None
+            and self._last_disturbance_at < self._emitted_segment_count
+        )
+        if self._emitted_segment_count == 0 or disturbed_emitted:
+            messages = [{"role": s.role, "content": s.content} for s in self._segments]
+            reset = self._emitted_segment_count != 0 and disturbed_emitted
+        else:
+            messages = [
+                {"role": s.role, "content": s.content}
+                for s in self._segments[self._emitted_segment_count :]
+            ]
+            reset = False
+
+        self._emitted_segment_count = len(self._segments)
+        self._last_disturbance_at = None
+        return TurnDelta(delta_messages=messages, reset_context=reset)
+
     def snapshot_messages(self) -> list[dict[str, str]]:
         """Return the current synth_buf as a list of OpenAI-style chat messages.
 
@@ -306,10 +358,10 @@ def truncate_synth_buf_at_block(
     block_size: int,
     decode_tokens_to_text: Callable[[list[int]], str] | None = None,
     prev_partial_tail: int = 0,
-) -> None:
+) -> int | None:
     """Truncate ``segments`` in place so cumulative block_count == target_blocks.
 
-    Post-P17: every segment except the trailing user holds exactly
+    Block-aligned shape: every segment except the trailing user holds exactly
     ``block_count * block_size`` tokens, and the trailing user holds
     ``block_count * block_size + prev_partial_tail`` tokens. So:
 
@@ -325,10 +377,18 @@ def truncate_synth_buf_at_block(
 
     When ``decode_tokens_to_text`` is provided, ``content`` is re-derived
     from the surviving tokens to keep the (tokens, content) invariant.
+
+    Returns the smallest segment index whose tokens shrank or were re-sliced
+    (boundary cut that strips a partial tail, or mid-segment cut), or
+    ``None`` if no segment's tokens were modified. Segments that were
+    deleted entirely past the cut are not counted as "modifications" of
+    a surviving segment — only the segment whose own token list changed
+    in place is reported. Used by :meth:`ConversationReconstructor.turn_delta`
+    to detect disturbances of previously-emitted segments.
     """
     if target_blocks <= 0:
         segments.clear()
-        return
+        return None
 
     cursor = 0
     for i, seg in enumerate(segments):
@@ -336,18 +396,20 @@ def truncate_synth_buf_at_block(
             cursor += seg.block_count
             continue
         if cursor + seg.block_count == target_blocks:
-            # Boundary cut: strip the trailing partial_tail tokens (post-P17
-            # the only tokens past block_count*bs are the partial tail).
+            # Boundary cut: strip the trailing partial_tail tokens (the only
+            # tokens past block_count*bs are the partial tail).
+            disturbed: int | None = None
             if prev_partial_tail > 0 and len(seg.tokens) > 0:
                 stripped_n = min(prev_partial_tail, len(seg.tokens))
                 seg.tokens = seg.tokens[:-stripped_n]
                 if decode_tokens_to_text is not None:
                     seg.content = decode_tokens_to_text(seg.tokens)
+                disturbed = i
             del segments[i + 1 :]
-            return
+            return disturbed
         if cursor == target_blocks:
             del segments[i:]
-            return
+            return None
         # Mid-segment cut: token-level slice on a guaranteed block boundary.
         kept_blocks = target_blocks - cursor
         kept_tokens_n = min(len(seg.tokens), kept_blocks * block_size)
@@ -356,4 +418,5 @@ def truncate_synth_buf_at_block(
         if decode_tokens_to_text is not None:
             seg.content = decode_tokens_to_text(seg.tokens)
         del segments[i + 1 :]
-        return
+        return i
+    return None

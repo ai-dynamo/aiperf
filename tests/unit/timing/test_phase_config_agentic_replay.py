@@ -67,7 +67,7 @@ def test_profiling_config_propagates_cap() -> None:
 # ``credit_counter.is_final_credit`` requires either ``total_expected_requests``
 # or ``expected_num_sessions`` to be non-None for ``SendingCompleteStopCondition``
 # to fire. ``_build_warmup_config`` sets ``total_expected_requests = loadgen.concurrency``
-# (the cohort burst size) so the warmup barrier releases after the burst lands.
+# (the warmup burst size) so the warmup barrier releases after the burst lands.
 
 
 def test_warmup_config_total_expected_requests_set() -> None:

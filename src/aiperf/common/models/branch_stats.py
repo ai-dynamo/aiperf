@@ -44,6 +44,13 @@ class BranchStats(AIPerfBaseModel):
         description="Number of parent join turns that were suppressed by the stop condition "
         "(not dispatched after all children completed).",
     )
+    children_truncated: int = Field(
+        default=0,
+        description="Number of DAG child sessions whose continuation was blocked by a stop "
+        "condition (typically the --request-count cap) and were released from join "
+        "tracking before reaching their leaf turn. Counts each child once, regardless "
+        "of how many of its remaining turns were skipped.",
+    )
 
     def stats_dict(self) -> dict[str, int]:
         """Snapshot the counters as a plain dict (stable shape for exporters)."""

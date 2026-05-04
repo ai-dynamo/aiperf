@@ -45,6 +45,7 @@ class _WekaParentTurnDict(TypedDict):
     max_tokens: int
     prompt: str
     raw_messages: list[dict[str, str]]
+    reset_context: bool
 
 
 class _WekaBranchDict(TypedDict):
@@ -180,6 +181,10 @@ def _init_worker(args: _WekaWorkerInitArgs) -> None:
     """Worker init: attach corpus shared memory + load tokenizer from cache."""
     global _worker_state
 
+    from aiperf.dataset.loader.parallel_convert import _install_hard_exit_on_sigterm
+
+    _install_hard_exit_on_sigterm()
+
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
@@ -267,7 +272,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     assert _worker_state is not None
     from aiperf.dataset.loader.weka_synth_buf import (
         ConversationReconstructor,
-        compose_weka_prompt_tokens,
     )
 
     state = _worker_state
@@ -312,15 +316,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 seed=seed,
             )
 
-        prompt_seed = f"{task.trace_id}:turn_{k}:prompt_tail"
-        prompt_tokens = compose_weka_prompt_tokens(
-            hash_ids=req["hash_ids"],
-            input_length=req["input_length"],
-            decode_block_tokens=parent_decode,
-            sample_partial_tail_tokens=parent_partial,
-            seed=prompt_seed,
-        )
-        prompt = parent_decode_text(prompt_tokens)
         t_ms = req["t"] * 1000.0
         if k == 0:
             delay_ms: float | None = None
@@ -331,14 +326,15 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
 
+        parent_delta = parent_recon.turn_delta()
         parent_turns.append(
             {
                 "timestamp": None if task.ignore_delays else t_ms,
                 "delay": None if task.ignore_delays else delay_ms,
                 "model": task.model_map.get(req["model"], req["model"]),
                 "max_tokens": req["capped_output_length"],
-                "prompt": prompt,
-                "raw_messages": parent_recon.snapshot_messages(),
+                "raw_messages": parent_delta.delta_messages,
+                "reset_context": parent_delta.reset_context,
             }
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
@@ -419,15 +415,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
                 )
-            child_prompt_seed = f"{cp['session_id']}:turn_{k}:prompt_tail"
-            child_prompt_tokens = compose_weka_prompt_tokens(
-                hash_ids=creq["hash_ids"],
-                input_length=creq["input_length"],
-                decode_block_tokens=child_decode,
-                sample_partial_tail_tokens=child_partial,
-                seed=child_prompt_seed,
-            )
-            prompt = child_decode_text(child_prompt_tokens)
             t_ms = creq["t"] * 1000.0
             if k == 0:
                 child_delay_ms: float | None = None
@@ -438,14 +425,15 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 
+            child_delta = child_recon.turn_delta()
             child_turns.append(
                 {
                     "timestamp": None if task.ignore_delays else t_ms,
                     "delay": None if task.ignore_delays else child_delay_ms,
                     "model": task.model_map.get(creq["model"], creq["model"]),
                     "max_tokens": creq["output_length"],
-                    "prompt": prompt,
-                    "raw_messages": child_recon.snapshot_messages(),
+                    "raw_messages": child_delta.delta_messages,
+                    "reset_context": child_delta.reset_context,
                 }
             )
         children_out.append(
@@ -466,6 +454,37 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     }
 
 
+def _drive_reconstruction_pool(
+    pool, tasks: list[_WekaTraceTask]
+) -> list[_WekaProcessTaskResult]:
+    """Run ``_process_task`` across the pool with periodic progress logs.
+
+    ``chunksize=1`` for proper work-stealing on the heavy-tail corpus (max
+    trace ~29x median tokenize cost). Submission order is preserved so the
+    result stream stays byte-identical to the serial path (parity tests in
+    ``tests/integration/dataset/test_weka_parallel_heavy.py``).
+    """
+    from aiperf.common.aiperf_logger import AIPerfLogger as _ALogger
+
+    log = _ALogger(__name__)
+    n_tasks = len(tasks)
+    log_every = max(1, n_tasks // 10)
+    results: list[_WekaProcessTaskResult] = []
+    t_start = time.monotonic()
+    for i, res in enumerate(pool.imap(_process_task, tasks, chunksize=1), 1):
+        results.append(res)
+        if i == n_tasks or i % log_every == 0:
+            elapsed = time.monotonic() - t_start
+            rate = i / elapsed if elapsed > 0 else 0.0
+            pct = 100.0 * i / n_tasks
+            log.info(
+                f"WekaTraceLoader: reconstructed "
+                f"{i}/{n_tasks} ({pct:.0f}%) "
+                f"in {elapsed:.1f}s ({rate:.1f} traces/s)"
+            )
+    return results
+
+
 def run_parallel_weka_reconstruction(
     tasks: list[_WekaTraceTask],
     *,
@@ -483,8 +502,10 @@ def run_parallel_weka_reconstruction(
     Returns reconstruction-result dicts in the same order as ``tasks``.
     """
     from aiperf.dataset.loader.parallel_convert import (
+        _POOL_JOIN_TIMEOUT_S,
         _ensure_valid_stdio_fds,
         _set_daemon,
+        _shutdown_pool,
     )
 
     _ensure_valid_stdio_fds()
@@ -517,25 +538,13 @@ def run_parallel_weka_reconstruction(
                 trust_remote_code=trust_remote_code,
                 revision=revision,
             )
-            with ctx.Pool(num_workers, _init_worker, (init_args,)) as pool:
-                from aiperf.common.aiperf_logger import AIPerfLogger as _ALogger
-
-                _log = _ALogger(__name__)
-                n_tasks = len(tasks)
-                log_every = max(1, n_tasks // 10)
-                results: list[_WekaProcessTaskResult] = []
-                t_start = time.monotonic()
-                for i, res in enumerate(pool.imap(_process_task, tasks), 1):
-                    results.append(res)
-                    if i == n_tasks or i % log_every == 0:
-                        elapsed = time.monotonic() - t_start
-                        rate = i / elapsed if elapsed > 0 else 0.0
-                        pct = 100.0 * i / n_tasks
-                        _log.info(
-                            f"WekaTraceLoader: reconstructed "
-                            f"{i}/{n_tasks} ({pct:.0f}%) "
-                            f"in {elapsed:.1f}s ({rate:.1f} traces/s)"
-                        )
+            pool = ctx.Pool(num_workers, _init_worker, (init_args,))
+            try:
+                results = _drive_reconstruction_pool(pool, tasks)
+            finally:
+                # See ``_shutdown_pool`` for why ``terminate()`` would wedge
+                # on weka workers' rayon-threaded HF tokenizer.
+                _shutdown_pool(pool, timeout_s=_POOL_JOIN_TIMEOUT_S)
         finally:
             if was_daemon:
                 _set_daemon(True)

@@ -17,12 +17,12 @@ from aiperf.common.enums.base_enums import (
 from aiperf.common.exceptions import MetricUnitError
 
 if TYPE_CHECKING:
-    from aiperf.metrics.metric_dicts import MetricArray
+    from aiperf.metrics.metric_dicts import MetricAggregator
 
 MetricValueTypeT: TypeAlias = int | float | list[float] | list[int]
 MetricValueTypeVarT = TypeVar("MetricValueTypeVarT", bound=MetricValueTypeT)
 MetricDictValueTypeT: TypeAlias = (
-    "MetricValueTypeT | list[MetricValueTypeT] | MetricArray"
+    "MetricValueTypeT | list[MetricValueTypeT] | MetricAggregator"
 )
 
 
@@ -429,6 +429,23 @@ class MetricType(CaseInsensitiveStrEnum):
     Examples: request throughput, output token throughput, etc."""
 
 
+class AggregationKind(CaseInsensitiveStrEnum):
+    """Defines how an aggregate metric combines per-record values.
+
+    Used by MetricsAccumulator for vectorized windowed aggregation
+    instead of replaying records through metric instances.
+    """
+
+    SUM = "sum"
+    """Sum all values. Used by counter metrics (request count, error count, etc.)."""
+
+    MAX = "max"
+    """Take the maximum value. Used by max timestamp metrics."""
+
+    MIN = "min"
+    """Take the minimum value. Used by min timestamp metrics."""
+
+
 class PlotMetricDirection(CaseInsensitiveStrEnum):
     """Direction indicating whether higher or lower metric values are better for plotting purposes."""
 
@@ -711,6 +728,12 @@ class MetricFlags(Flag):
 
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
+
+    PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 17
+    """Record metrics for which percentile rollups should also produce
+    ``adj_*`` percentiles that treat each failed request as ``+inf`` latency.
+    Surfaces honest tail latency under non-trivial error rates — see
+    https://github.com/ai-dynamo/aiperf/issues/688."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

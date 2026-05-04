@@ -136,6 +136,7 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
+- Auto-detecting non-Prometheus endpoints (e.g. TRT-LLM serves an iteration-stats JSON array at `/metrics` by default), probing `<base>/prometheus/metrics` once as a fallback, and disabling collection for that endpoint after a single warning if neither path yields parseable Prometheus data — see [Server Metrics Compatibility & auto-disable](server-metrics/server-metrics.md#compatibility--auto-disable)
 - Exporting server metrics alongside benchmark results
 
 ## How AIPerf Works

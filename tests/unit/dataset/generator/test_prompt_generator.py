@@ -680,7 +680,7 @@ class TestPromptGeneratorComprehensive:
         """Test that identical inputs produce identical decoded prompts.
 
         The previous implementation cached the decoded string keyed on
-        ``(hash_ids, num_tokens, block_size)``. The cache was removed (P23)
+        ``(hash_ids, num_tokens, block_size)``. The cache was removed
         because the cache hit rate in real workloads was effectively zero
         and the cache was a sustained per-file memory leak. Determinism is
         still guaranteed by the underlying token block cache + RNG re-seed.

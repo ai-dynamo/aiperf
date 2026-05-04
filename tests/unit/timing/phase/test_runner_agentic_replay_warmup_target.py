@@ -1,0 +1,279 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Regression tests for AGENTIC_REPLAY warmup ``total_expected_requests``.
+
+Originally these tests pinned the ``PhaseRunner.__init__`` re-anchor logic
+that lowered ``total_expected_requests`` to match the actual trajectory count
+when ``concurrency`` exceeded the number of usable trajectories. That bug
+class is now caught earlier: ``TrajectorySource.__init__`` raises
+``InsufficientTrajectoriesError`` when ``concurrency > usable_trajectories``,
+so the runner-side re-anchor only ever applies to the in-budget case
+(``concurrency <= len(trajectories)``).
+
+This module now exercises:
+- the construction-time rejection path (replacing the old "cap-at-pool" /
+  "short-traces-skipped" assertions);
+- the unchanged in-budget path: warmup target equals ``concurrency`` when the
+  trajectory build matches it exactly;
+- the unchanged non-AGENTIC_REPLAY warmup and PROFILING phase behavior.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from aiperf.common.enums import CreditPhase
+from aiperf.common.scenario.base import InsufficientTrajectoriesError
+from aiperf.plugin.enums import ArrivalPattern, TimingMode
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.phase.runner import PhaseRunner
+from aiperf.timing.trajectory_source import TrajectorySource
+
+pytestmark = pytest.mark.asyncio
+
+
+def _make_dataset_metadata(turn_counts_by_id: dict[str, int]) -> MagicMock:
+    """Build a MagicMock dataset_metadata mirroring the existing trajectory tests."""
+    md = MagicMock()
+    convs = []
+    for cid, n in turn_counts_by_id.items():
+        c = MagicMock()
+        c.conversation_id = cid
+        c.turns = [MagicMock(has_forks=False) for _ in range(n)]
+        convs.append(c)
+    md.conversations = convs
+    return md
+
+
+def _warmup_config(concurrency: int) -> CreditPhaseConfig:
+    """Mirror the placeholder shape produced by ``_build_warmup_config`` for AGENTIC_REPLAY."""
+    return CreditPhaseConfig(
+        phase=CreditPhase.WARMUP,
+        timing_mode=TimingMode.AGENTIC_REPLAY,
+        total_expected_requests=concurrency,
+        concurrency=concurrency,
+        prefill_concurrency=None,
+        request_rate=None,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        seamless=False,
+        grace_period_sec=float("inf"),
+    )
+
+
+def _make_runner(
+    config: CreditPhaseConfig,
+    conversation_source,
+) -> PhaseRunner:
+    pub = MagicMock()
+    pub.publish_phase_start = AsyncMock()
+    pub.publish_phase_sending_complete = AsyncMock()
+    pub.publish_phase_complete = AsyncMock()
+    pub.publish_progress = AsyncMock()
+    router = MagicMock()
+    router.send_credit = router.cancel_all_credits = AsyncMock()
+    router.mark_credits_complete = MagicMock()
+    router.set_return_callback = router.set_first_token_callback = MagicMock()
+    conc = MagicMock()
+    conc.configure_for_phase = MagicMock()
+    conc.acquire_session_slot = AsyncMock(return_value=True)
+    conc.acquire_prefill_slot = AsyncMock(return_value=True)
+    conc.release_session_slot = conc.release_prefill_slot = MagicMock()
+    conc.set_session_limit = conc.set_prefill_limit = MagicMock()
+    conc.release_stuck_slots = MagicMock(return_value=(0, 0))
+    cancel = MagicMock()
+    cancel.next_cancellation_delay_ns = MagicMock(return_value=None)
+    cb = MagicMock()
+    cb.register_phase = cb.unregister_phase = MagicMock()
+    cb.on_credit_return = cb.on_first_token = AsyncMock()
+    return PhaseRunner(
+        config=config,
+        conversation_source=conversation_source,
+        phase_publisher=pub,
+        credit_router=router,
+        concurrency_manager=conc,
+        cancellation_policy=cancel,
+        callback_handler=cb,
+        user_config=None,
+    )
+
+
+class TestAgenticReplayWarmupTarget:
+    """``PhaseRunner`` warmup-target behavior under AGENTIC_REPLAY."""
+
+    async def test_concurrency_above_pool_size_rejected_at_construction(self) -> None:
+        """Pool of 6, concurrency=8 -> ``InsufficientTrajectoriesError`` at __init__.
+
+        Replaces the old "re-anchor target to 6" assertion: silently capping
+        load below the requested concurrency was the bug we now refuse to
+        paper over with a runtime adjustment.
+        """
+        md = _make_dataset_metadata({f"t{i}": 5 for i in range(6)})
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        with pytest.raises(InsufficientTrajectoriesError) as exc_info:
+            TrajectorySource(
+                dataset_metadata=md,
+                dataset_sampler=sampler,
+                concurrency=8,
+                random_seed=42,
+            )
+        assert exc_info.value.concurrency == 8
+        assert exc_info.value.usable_trajectories == 6
+
+    async def test_concurrency_below_pool_size_uses_concurrency(self) -> None:
+        """Pool of 10, concurrency=4 -> 4 trajectories -> target = 4 (unchanged)."""
+        md = _make_dataset_metadata({f"t{i}": 5 for i in range(10)})
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        src = TrajectorySource(
+            dataset_metadata=md, dataset_sampler=sampler, concurrency=4, random_seed=42
+        )
+        assert len(src.trajectories) == 4
+
+        config = _warmup_config(concurrency=4)
+        runner = _make_runner(config, src)
+        assert runner._config.total_expected_requests == 4
+
+    async def test_short_traces_skipped_below_concurrency_rejected(self) -> None:
+        """Pool of 6 with one 1-turn trace, concurrency=8: rejected at __init__.
+
+        Previously the runner re-anchored target to the 5 usable trajectories;
+        now ``TrajectorySource`` rejects the configuration directly because
+        each lane is pinned to a distinct trajectory and the requested
+        concurrency cannot be honoured.
+        """
+        md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5, "d": 5, "e": 5, "tiny": 1})
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        with pytest.raises(InsufficientTrajectoriesError) as exc_info:
+            TrajectorySource(
+                dataset_metadata=md,
+                dataset_sampler=sampler,
+                concurrency=8,
+                random_seed=42,
+            )
+        assert exc_info.value.concurrency == 8
+        assert exc_info.value.usable_trajectories == 5
+        # Pool size counts ALL traces, including the skipped tiny one.
+        assert exc_info.value.pool_size == 6
+
+    async def test_profiling_phase_target_unchanged(self) -> None:
+        """The re-anchor only applies to WARMUP, not PROFILING (in-budget run)."""
+        md = _make_dataset_metadata({f"t{i}": 5 for i in range(8)})
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        src = TrajectorySource(
+            dataset_metadata=md, dataset_sampler=sampler, concurrency=8, random_seed=42
+        )
+
+        profiling = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.AGENTIC_REPLAY,
+            total_expected_requests=100,
+            expected_duration_sec=900,
+            concurrency=8,
+            request_rate=None,
+            arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        )
+        runner = _make_runner(profiling, src)
+        # PROFILING target untouched.
+        assert runner._config.total_expected_requests == 100
+
+    async def test_non_agentic_replay_warmup_target_unchanged(self) -> None:
+        """The re-anchor must not touch REQUEST_RATE warmups (in-budget run)."""
+        md = _make_dataset_metadata({f"t{i}": 5 for i in range(8)})
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        src = TrajectorySource(
+            dataset_metadata=md, dataset_sampler=sampler, concurrency=8, random_seed=42
+        )
+
+        rr_warmup = CreditPhaseConfig(
+            phase=CreditPhase.WARMUP,
+            timing_mode=TimingMode.REQUEST_RATE,
+            total_expected_requests=50,
+            concurrency=8,
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+        )
+        runner = _make_runner(rr_warmup, src)
+        # REQUEST_RATE warmup untouched (the re-anchor is AGENTIC_REPLAY-specific).
+        assert runner._config.total_expected_requests == 50
+
+
+class TestAgenticReplayWarmupTargetIntegrationWithCounter:
+    """Sanity-check that the warmup target makes the counter fire ``is_final_credit``."""
+
+    @pytest.mark.parametrize(
+        "concurrency,pool_size,expected_count",
+        [
+            (4, 10, 4),  # below pool size
+            (10, 10, 10),  # at pool size
+        ],
+    )
+    async def test_counter_fires_final_credit_on_last_trajectory(
+        self,
+        concurrency: int,
+        pool_size: int,
+        expected_count: int,
+    ) -> None:
+        """After construction, the counter flips ``is_final_credit`` exactly on
+        the last trajectory's credit, which is what unblocks the runner's wait.
+
+        Only in-budget shapes are exercised here; out-of-budget shapes are
+        rejected at ``TrajectorySource.__init__`` and are pinned by
+        ``TestAgenticReplayWarmupTarget`` above.
+        """
+        from aiperf.credit.structs import TurnToSend
+        from aiperf.timing.phase.credit_counter import CreditCounter
+
+        turn_counts: dict[str, int] = {f"t{i}": 5 for i in range(pool_size)}
+        md = _make_dataset_metadata(turn_counts)
+        sampler = MagicMock()
+        sampler.next_conversation_id.side_effect = [
+            c.conversation_id for c in md.conversations
+        ]
+        src = TrajectorySource(
+            dataset_metadata=md,
+            dataset_sampler=sampler,
+            concurrency=concurrency,
+            random_seed=42,
+        )
+        assert len(src.trajectories) == expected_count
+
+        config = _warmup_config(concurrency=concurrency)
+        runner = _make_runner(config, src)
+        assert runner._config.total_expected_requests == expected_count
+
+        counter = CreditCounter(runner._config)
+        is_final_seen = False
+        for i in range(expected_count):
+            turn = TurnToSend(
+                conversation_id=f"t{i}",
+                x_correlation_id=f"x{i}",
+                turn_index=0,
+                num_turns=5,
+                agent_depth=0,
+            )
+            _, is_final = counter.increment_sent(turn)
+            if i == expected_count - 1:
+                assert is_final is True, (
+                    f"Last warmup credit (i={i}) must flip is_final_credit; "
+                    f"otherwise warmup hangs at {expected_count}/{concurrency}."
+                )
+                is_final_seen = True
+            else:
+                assert is_final is False
+        assert is_final_seen

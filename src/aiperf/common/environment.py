@@ -11,6 +11,7 @@ Structure:
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.CONFIG.*         - Configuration file paths for distributed deployments
+    Environment.DAG.*            - DAG branch orchestration settings
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -20,6 +21,7 @@ Structure:
     Environment.RECORD.*         - Record processing
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
+    Environment.STEADY_STATE.*   - Steady-state detection
     Environment.TIMING.*         - Timing manager settings
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
@@ -37,7 +39,10 @@ Examples:
 
 import platform
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
+
+if TYPE_CHECKING:
+    from aiperf.plugin.enums import UIType
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -164,6 +169,27 @@ class _ConfigSettings(BaseSettings):
         default=None,
         description="Path to user configuration JSON/YAML file. "
         "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
+    )
+
+
+class _DagSettings(BaseSettings):
+    """DAG branch orchestration configuration.
+
+    Controls runtime behaviour of ``BranchOrchestrator`` for FORK-mode
+    DAG benchmarks (``dag_jsonl`` input type).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_DAG_",
+    )
+
+    FAIL_FAST: bool = Field(
+        default=False,
+        description="When True, a single child error aborts the parent and every "
+        "orphan sibling under the same DAG branch (releases sticky refcounts and "
+        "calls issuer.abort_session). When False (default), a child error is "
+        "treated as leaf-reached for join counting and the parent's join still "
+        "fires. Inspected once at BranchOrchestrator construction.",
     )
 
 
@@ -501,6 +527,22 @@ class _MetricsSettings(BaseSettings):
         default=50,
         description="Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens)",
     )
+    TDIGEST_COMPRESSION: int = Field(
+        ge=20,
+        le=10000,
+        default=500,
+        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
+    )
+    LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
+        default="ragged",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (≤0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+    )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+    )
 
 
 class _RecordSettings(BaseSettings):
@@ -799,16 +841,26 @@ class _UISettings(BaseSettings):
         default=3,
         description="Duration in seconds to display UI notifications before auto-dismissing",
     )
-    REALTIME_METRICS_INTERVAL: float = Field(
-        ge=1.0,
+    REALTIME_METRICS_INTERVAL: float | None = Field(
+        ge=0.0,
         le=1000.0,
-        default=5.0,
-        description="Interval in seconds between real-time metrics messages",
+        default=None,
+        description=(
+            "Interval in seconds between real-time metrics publishes (and "
+            "the per-tick stats log block). 0 disables the log block; "
+            "dashboards still poll. When unset, defaults to 5.0 under "
+            "--ui dashboard, 30.0 otherwise."
+        ),
     )
-    REALTIME_METRICS_ENABLED: bool = Field(
-        default=False,
-        description="Enable real-time metrics collection and reporting despite UI type",
-    )
+
+    def realtime_metrics_interval(self, ui_type: "UIType") -> float:
+        """Resolve the realtime metrics tick interval, applying the auto-default by UI type."""
+        if self.REALTIME_METRICS_INTERVAL is not None:
+            return self.REALTIME_METRICS_INTERVAL
+        from aiperf.plugin.enums import UIType as _UIType  # local import: avoid cycle
+
+        return 5.0 if ui_type == _UIType.DASHBOARD else 30.0
+
     SPINNER_REFRESH_RATE: float = Field(
         ge=0.1,
         le=100.0,
@@ -1035,6 +1087,10 @@ class _Environment(BaseSettings):
     CONFIG: _ConfigSettings = Field(
         default_factory=_ConfigSettings,
         description="Configuration file paths for distributed deployments",
+    )
+    DAG: _DagSettings = Field(
+        default_factory=_DagSettings,
+        description="DAG branch orchestration settings",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI-surface end-to-end tests for the ``agentic_replay`` timing mode.
 
-Complements ``test_agentic_replay_e2e.py`` (T19), which stops at the
+Complements ``test_agentic_replay_e2e.py``, which stops at the
 strategy/exporter boundary and constructs ``TrajectorySource`` /
 ``AgenticReplayStrategy`` directly from Python. This file drives the *full*
 ``aiperf profile --scenario inferencex-agentx-mvp --unsafe-override`` flow
@@ -15,16 +15,16 @@ The CLI surface this exercises that the strategy-boundary tests do *not*:
   ``CLIParameter`` flags hung off ``UserConfig``).
 * ``UserConfig.model_post_init`` -> ``_run_scenario_validator`` ->
   ``validate_scenario`` firing during config construction (not from the
-  T19 manual ``MagicMock`` stubbing path).
+  manual ``MagicMock`` stubbing path in ``test_agentic_replay_e2e.py``).
 * ``validate_scenario`` writing through to the read-only ``timing_mode``
   property: the validator falls back to ``user_config._timing_mode`` when the
-  setter raises ``AttributeError``. T19 mocks both attributes so this path is
-  never exercised; the CLI test uses a real ``UserConfig`` where the property
-  *is* read-only.
+  setter raises ``AttributeError``. ``test_agentic_replay_e2e.py`` mocks
+  both attributes so this path is never exercised; the CLI test uses a real
+  ``UserConfig`` where the property *is* read-only.
 * The validator's auto-set behaviors mutating real config (``random_seed``,
   ``--inter-turn-delay-cap-seconds``, ``--use-think-time-only``,
   ``extra_inputs.ignore_eos``).
-* ``PhaseOrchestrator`` (T20 wiring at ``timing/phase_orchestrator.py:120``)
+* ``PhaseOrchestrator`` (at ``timing/phase_orchestrator.py:120``)
   detecting ``timing_mode == AGENTIC_REPLAY`` on its phase configs and
   constructing a ``TrajectorySource`` instead of the default
   ``ConversationSource``.
@@ -36,13 +36,13 @@ The CLI surface this exercises that the strategy-boundary tests do *not*:
   under ``artifacts/<run-id>/profile_export_aiperf.json``.
 
 Note on fixtures:
-    The shipped ``tests/fixtures/weka_traces_small/`` (created by T19) was
-    designed for the strategy-boundary path which monkeypatches
-    ``synthesize_prompts_from_hash_ids`` to a no-op. Many of its turns
-    satisfy ``len(hash_ids) * block_size > in[k]``, which the real
-    ``PromptGenerator`` rejects with ``ConfigurationError``. The CLI path
-    cannot easily monkeypatch loader internals, so this file builds its
-    own block-size-consistent mini fixture in ``tmp_path`` via
+    The shipped ``tests/fixtures/weka_traces_small/`` was designed for the
+    strategy-boundary path in ``test_agentic_replay_e2e.py``, which
+    monkeypatches ``synthesize_prompts_from_hash_ids`` to a no-op. Many of
+    its turns satisfy ``len(hash_ids) * block_size > in[k]``, which the
+    real ``PromptGenerator`` rejects with ``ConfigurationError``. The CLI
+    path cannot easily monkeypatch loader internals, so this file builds
+    its own block-size-consistent mini fixture in ``tmp_path`` via
     ``_write_weka_fixture``.
 """
 
@@ -70,11 +70,12 @@ pytestmark = pytest.mark.component_integration
 def _write_weka_fixture(target_dir: Path, *, num_traces: int = 6) -> Path:
     """Write a minimal hash_id-valid weka trace fixture into ``target_dir``.
 
-    The shipped ``tests/fixtures/weka_traces_small/`` was designed for the T19
-    strategy-boundary tests, which monkeypatch the loader's
-    ``synthesize_prompts_from_hash_ids`` and never actually reconstruct
-    prompts. Many of its turns satisfy ``len(hash_ids) * block_size > in[k]``
-    with a final-block size <=0, which is rejected by the real
+    The shipped ``tests/fixtures/weka_traces_small/`` was designed for the
+    strategy-boundary tests in ``test_agentic_replay_e2e.py``, which
+    monkeypatch the loader's ``synthesize_prompts_from_hash_ids`` and
+    never actually reconstruct prompts. Many of its turns satisfy
+    ``len(hash_ids) * block_size > in[k]`` with a final-block size <=0,
+    which is rejected by the real
     ``PromptGenerator.synthesize_prompts_from_hash_ids`` path that the CLI
     surface exercises. This helper writes a smaller (default 6-trace),
     block-size-consistent fixture instead so the full CLI pipeline can run
@@ -247,7 +248,6 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
         f"CLI run failed; stderr=\n{result.stderr}\n\nlog=\n{result.log}"
     )
 
-    # ---- (2) validator log captures ----
     log_text = caplog.text
     assert "setting timing_mode" in log_text, (
         "validator must log timing_mode auto-set under --scenario "
@@ -257,7 +257,6 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
         "validator must auto-set inter-turn-delay-cap when unset"
     )
 
-    # ---- (3) (4) metrics + request_count ----
     assert result.json is not None, "JSON export must exist"
     assert result.request_count > 0, (
         "request_count must be > 0; warmup barrier did not release into "

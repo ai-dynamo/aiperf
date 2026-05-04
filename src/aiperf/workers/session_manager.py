@@ -68,6 +68,10 @@ class UserSession(AIPerfBaseModel):
           dropped so the endpoint sends the turn's messages as-authored).
         - Under every other mode the turn is appended. Callers that only need
           per-turn overrides can read ``turn_list[-1]`` after this call.
+          When jumping ahead past untraversed turns (e.g. agentic_replay's
+          mid-trajectory resume at ``k_i > 0``), prior turns 0..turn_index-1
+          are seeded first so the endpoint accumulator reproduces the full
+          chat prefix from the trace's delta-encoded turns.
 
         Args:
             turn_index: The index of the turn to advance to.
@@ -86,6 +90,23 @@ class UserSession(AIPerfBaseModel):
         if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
+            # Delta-encoded modes accumulate. For ``DELTAS_WITH_RESPONSES``
+            # (e.g. weka agentic_replay), if a caller skips ahead past
+            # untraversed turns (agentic_replay warmup resumes at k_i > 0
+            # without going through turns 0..k_i-1), seed those first so
+            # the endpoint's build_messages reproduces the full chat prefix
+            # from the trace's pre-canned delta turns.
+            #
+            # ``DELTAS_WITHOUT_RESPONSES`` is left unchanged: that mode
+            # captures live responses via ``store_response`` and assumes
+            # linear traversal; pre-seeding from trace turns would inject
+            # placeholder responses that the live-capture flow never wrote.
+            if (
+                self.context_mode == ConversationContextMode.DELTAS_WITH_RESPONSES
+                and len(self.turn_list) < turn_index
+            ):
+                for missing_idx in range(len(self.turn_list), turn_index):
+                    self.turn_list.append(self.conversation.turns[missing_idx])
             self.turn_list.append(turn)
         self.turn_index = turn_index
         return turn

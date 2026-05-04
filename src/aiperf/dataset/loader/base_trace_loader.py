@@ -31,7 +31,7 @@ def _compute_file_hash(filepath: str) -> str:
     Falls back to hashing the filepath string if the file cannot be read.
     Used as the per-file ``trace_id`` scope for ``HashIdRandomGenerator`` so
     that two different trace files with overlapping ``hash_id`` values
-    produce different content. See P22 fix notes.
+    produce different content.
     """
     try:
         hasher = hashlib.sha256()

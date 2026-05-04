@@ -8,6 +8,8 @@ from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     _apply_cache_bust,
     _apply_cache_bust_to_system_message,
+    _find_first_system_message,
+    _find_first_user_turn,
     _inject_marker_into_first_user_text,
     _inject_marker_into_first_user_turn,
     _inject_marker_into_raw_messages,
@@ -450,3 +452,181 @@ def test_inject_into_first_user_turn_unexpected_content_type_logs_and_bails(capl
 
     assert raw[0]["content"] == 99999
     assert any("cache-bust" in rec.message for rec in caplog.records)
+
+
+# =============================================================================
+# Delta-mode (DELTAS_WITH_RESPONSES) helper + dispatch coverage
+# =============================================================================
+# Under DELTAS_WITH_RESPONSES the session_manager appends each turn's delta
+# to ``turn_list``. The system role lives in ``turn_list[0].raw_messages[0]``;
+# subsequent turns' raw_messages start with the prior assistant response and
+# the new user prompt. The lookup must walk forward, NOT index ``[-1]``.
+
+
+def _make_delta_session(turns_raw: list[list[dict] | None]) -> UserSession:
+    """Build a UserSession whose ``turn_list`` is an accumulating delta list.
+
+    Each entry in ``turns_raw`` becomes a Turn's raw_messages. The conversation
+    declares ``num_turns == len(turns_raw)`` so this represents the post-
+    ``advance_turn`` state at the final turn under DELTAS_WITH_RESPONSES.
+    """
+    turns = [Turn(raw_messages=raw) for raw in turns_raw]
+    conversation = Conversation(session_id="conv_test", turns=list(turns))
+    return UserSession(
+        x_correlation_id="xcorr_test",
+        num_turns=len(turns),
+        conversation=conversation,
+        turn_list=list(turns),
+    )
+
+
+def test_find_first_system_message_in_delta_turn_list_picks_turn_0():
+    """In delta mode, system lives in turn_list[0]; later deltas start with assistant."""
+    turn_0 = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+
+    raw = _find_first_system_message(session.turn_list)
+
+    assert raw is session.turn_list[0].raw_messages
+    assert raw[0]["role"] == "system"
+
+
+def test_find_first_system_message_no_system_returns_none():
+    turn_0 = [{"role": "user", "content": "hi"}]
+    turn_1 = [
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "more"},
+    ]
+    session = _make_delta_session([turn_0, turn_1])
+
+    assert _find_first_system_message(session.turn_list) is None
+
+
+def test_find_first_user_turn_skips_leading_system_only_delta():
+    """A leading delta with only a system role must NOT be returned by user-turn lookup."""
+    turn_0_system_only = [{"role": "system", "content": "rules"}]
+    turn_1_user = [{"role": "user", "content": "hi"}]
+    session = _make_delta_session([turn_0_system_only, turn_1_user])
+
+    user_turn = _find_first_user_turn(session.turn_list)
+
+    assert user_turn is session.turn_list[1]
+
+
+def test_find_first_user_turn_picks_turn_with_user_role():
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1 = [
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "more"},
+    ]
+    session = _make_delta_session([turn_0, turn_1])
+
+    assert _find_first_user_turn(session.turn_list) is session.turn_list[0]
+
+
+def test_apply_system_prefix_under_deltas_injects_into_turn_0_not_last():
+    """The bug we are fixing: under deltas, system_prefix must mutate turn_list[0],
+    NOT turn_list[-1] (whose raw_messages start with an assistant role)."""
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    out = _apply_cache_bust(session, credit, system_message=None)
+
+    assert out is None
+    # System message in turn_list[0] is mutated, not turn_list[-1].
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "rules"
+    # Turn 1's delta is untouched (still starts with assistant, no marker).
+    assert session.turn_list[1].raw_messages[0]["role"] == "assistant"
+    assert session.turn_list[1].raw_messages[0]["content"] == "hello"
+
+
+def test_apply_system_suffix_under_deltas_injects_into_turn_0_system():
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_SUFFIX,
+        marker=_SUFFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == "rules" + _SUFFIX_MARKER
+
+
+def test_apply_first_turn_prefix_under_deltas_injects_into_turn_0_user_role():
+    """FIRST_TURN_PREFIX with turn_index==0 must target turn_list[0]'s user role,
+    not the latest delta's user role."""
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=0,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    # First user message in turn 0 mutated; turn 1's user is untouched.
+    assert session.turn_list[0].raw_messages[1]["content"] == _PREFIX_MARKER + "hi"
+    assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
+
+
+def test_apply_system_prefix_no_system_under_deltas_falls_back_to_turn_0_user():
+    """No system anywhere + delta-mode turn_list -> fallback marks turn 0 user only."""
+    turn_0 = [{"role": "user", "content": "hi"}]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=0,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
+    assert session.turn_list[1].raw_messages[1]["content"] == "follow up"

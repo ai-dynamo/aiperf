@@ -359,7 +359,9 @@ async def test_on_child_leaf_reached_unknown_parent_corr_logs_and_noops():
 async def test_on_child_errored_fail_fast_env_terminates(monkeypatch):
     """With ``AIPERF_DAG_FAIL_FAST=true`` set BEFORE construction, the
     fail-fast branch runs: active join is popped, abort_session awaited."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
 
     issuer = MagicMock()
     issuer.abort_session = AsyncMock()
@@ -399,7 +401,9 @@ async def test_on_child_errored_fail_fast_env_terminates(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_on_child_errored_non_fail_fast_continues(monkeypatch):
-    monkeypatch.delenv("AIPERF_DAG_FAIL_FAST", raising=False)
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", False)
 
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock()

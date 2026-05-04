@@ -22,7 +22,10 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
-from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.scenario.base import (
+    EmptyTracePoolError,
+    InsufficientTrajectoriesError,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.trajectory_source import (
@@ -91,7 +94,12 @@ def test_concurrency_zero_yields_empty_trajectories_then_raises() -> None:
 
 
 def test_mixed_valid_and_invalid_traces_skips_zero_turn_traces() -> None:
-    """Traces 1 and 3 have 0 turns; the trajectory list must exclude them."""
+    """Traces 1 and 3 have 0 turns; the trajectory list must exclude them.
+
+    Concurrency 3 matches the 3 valid traces, so the run is accepted; the
+    zero-turn skip path is exercised inside ``_build_trajectories`` without
+    tripping the new ``InsufficientTrajectoriesError`` guard.
+    """
     ds = _make_dataset(
         {
             "trace_0": 4,
@@ -106,15 +114,42 @@ def test_mixed_valid_and_invalid_traces_skips_zero_turn_traces() -> None:
     src = TrajectorySource(
         dataset_metadata=ds,
         dataset_sampler=sampler,
-        concurrency=5,
+        concurrency=3,
         random_seed=99,
     )
 
     cids = {t.conversation_id for t in src.trajectories}
     assert "trace_1" not in cids
     assert "trace_3" not in cids
-    assert cids.issubset({"trace_0", "trace_2", "trace_4"})
-    assert len(src.trajectories) <= 3
+    assert cids == {"trace_0", "trace_2", "trace_4"}
+
+
+def test_mixed_valid_and_invalid_traces_concurrency_over_usable_raises() -> None:
+    """When zero-turn skips push usable trajectories below concurrency, the
+    constructor raises ``InsufficientTrajectoriesError`` rather than silently
+    capping load. Pool=5 (3 valid + 2 zero-turn), concurrency=5 -> 3 usable.
+    """
+    ds = _make_dataset(
+        {
+            "trace_0": 4,
+            "trace_1": 0,
+            "trace_2": 4,
+            "trace_3": 0,
+            "trace_4": 4,
+        }
+    )
+    sampler = _Sampler([c.conversation_id for c in ds.conversations])
+
+    with pytest.raises(InsufficientTrajectoriesError) as exc_info:
+        TrajectorySource(
+            dataset_metadata=ds,
+            dataset_sampler=sampler,
+            concurrency=5,
+            random_seed=99,
+        )
+    assert exc_info.value.concurrency == 5
+    assert exc_info.value.usable_trajectories == 3
+    assert exc_info.value.pool_size == 5
 
 
 # =============================================================================

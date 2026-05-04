@@ -107,6 +107,19 @@ class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 
 
+class IncompatibleMetricsEndpointError(AIPerfError):
+    """Raised when an HTTP metrics endpoint returns content that cannot be
+    interpreted as Prometheus exposition format (e.g. a JSON body, or text
+    that fails the Prometheus parser). Indicates a structural mismatch the
+    collector cannot recover from by retrying — the affected collector should
+    auto-disable rather than spam parse errors at the configured interval.
+
+    A representative trigger is the TensorRT-LLM ``/metrics`` endpoint, which
+    serves an iteration-stats JSON array (``application/json``) at the same
+    path Prometheus scrapers expect.
+    """
+
+
 class InitializationError(AIPerfError):
     """Exception raised when something fails to initialize."""
 
@@ -181,8 +194,16 @@ class PluginNotFoundError(AIPerfError):
     """Exception raised when a plugin is not found. This is used to indicate that a plugin is not found when trying to get a plugin class or metadata."""
 
 
-class PostProcessorDisabled(AIPerfError):
+class PluginDisabled(AIPerfError):
+    """Raised when initializing an accumulator or stream exporter to indicate it is disabled and should not be loaded."""
+
+
+class PostProcessorDisabled(PluginDisabled):
     """Raised when initializing a post processor to indicate to the caller that it is disabled and should not be used."""
+
+
+class ArtifactPublisherDisabled(PluginDisabled):
+    """Raised when initializing an artifact publisher to indicate it is disabled and should not be used."""
 
 
 class ProxyError(AIPerfError):

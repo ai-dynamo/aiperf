@@ -265,7 +265,9 @@ async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
 async def test_delayed_join_fail_fast_aborts_siblings_mid_gap(monkeypatch):
     """With ``AIPERF_DAG_FAIL_FAST=true`` and a child erroring during the
     gap, the parent and every orphan sibling are aborted immediately."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
 
     cs = _mk_source(_k5_metadata())
 

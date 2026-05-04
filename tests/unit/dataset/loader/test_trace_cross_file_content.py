@@ -3,13 +3,13 @@
 
 """Cross-file content distinction for trace loaders sharing PromptGenerator.
 
-P22 fix: ``PromptGenerator._cache`` was keyed only on ``hash_id`` so two
-different trace files with overlapping ``hash_id`` values produced identical
-content. ``BaseTraceDatasetLoader`` now scopes block content by file content
-hash via ``HashIdRandomGenerator.set_trace_id`` and clears the cache in
+``PromptGenerator._cache`` keyed only on ``hash_id`` would let two different
+trace files with overlapping ``hash_id`` values produce identical content.
+``BaseTraceDatasetLoader`` scopes block content by file content hash via
+``HashIdRandomGenerator.set_trace_id`` and clears the cache in
 ``_init_trace_scope``.
 
-These tests confirm the fix for the three loaders that inherit from
+These tests confirm the contract for the three loaders that inherit from
 ``BaseTraceDatasetLoader`` (Mooncake, Bailian, BurstGPT). They use a realistic
 ``PromptGenerator`` driven by the mocked ``Tokenizer`` so we exercise the
 actual ``_build_token_sequence`` reseed path end-to-end.

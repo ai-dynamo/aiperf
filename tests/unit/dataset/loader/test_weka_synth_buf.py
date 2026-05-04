@@ -6,7 +6,7 @@ These tests stub out the real prompt synthesis so they don't need a
 tokenizer; they verify segment shapes, LCP-driven truncation, and the
 symmetric asst|user attribution rule.
 
-Post-P17 invariants tested:
+Invariants tested:
 - ``sum(len(seg.tokens)) == in_tokens`` exactly after init_turn_0 and
   advance_turn (block-aligned segment sizes).
 - Every segment except the trailing user holds ``block_count * bs`` tokens.
@@ -76,7 +76,7 @@ def test_init_turn_0_no_prefix_emits_one_user_segment():
 def test_init_turn_0_with_tool_and_system_prefix_split():
     r = _make_recon()
     # in=500, tool=100, system=50, user=remainder (block_size=64).
-    # Post-P19: tool+system merged into ONE system segment.
+    # tool+system merged into ONE system segment.
     # prefix_tokens = 150 -> prefix_blocks = ceil(150/64) = 3 -> 3*64 = 192 tokens.
     # M_full = floor(500/64) = 7 -> user_blocks = 7 - 3 = 4 -> 256 tokens.
     # partial_tail = 500 % 64 = 52 -> user_total = 256 + 52 = 308.
@@ -89,7 +89,7 @@ def test_init_turn_0_with_tool_and_system_prefix_split():
         seed="t:0",
     )
     roles = [s.role for s in r._segments]
-    assert roles == ["system", "user"]  # tool+system merged per spec §4.3 (P19)
+    assert roles == ["system", "user"]  # tool+system merged per spec §4.3
     assert r._segments[0].content_token_count == 192
     assert r._segments[1].content_token_count == 308
     # Block-aligned merged prefix: holds full block content for blocks 1,2,3.
@@ -125,12 +125,12 @@ def test_init_turn_0_zero_partial_tail_no_tail_marker():
 
 
 def test_init_turn_0_combines_tool_and_system_into_single_system():
-    """P19: tool+system must emit exactly ONE role="system" segment.
+    """tool+system must emit exactly ONE role="system" segment.
 
     Some serving stacks reject multiple adjacent system messages, so the
     reconstructor merges trace-level tool_tokens and system_tokens into a
-    single system segment whose hash-block range covers what the two
-    pre-P19 segments covered together.
+    single system segment whose hash-block range covers what two separate
+    segments would otherwise cover.
     """
     bs = 64
     in_tokens = 1000
@@ -321,9 +321,9 @@ def test_truncate_beyond_total_blocks_no_op():
 
 def test_truncate_at_boundary_strips_partial_tail():
     """At a boundary cut, the trailing ``prev_partial_tail`` tokens are
-    stripped. Post-P17 the only trailing tokens past ``block_count * bs``
-    are the partial tail (block-aligned segments eliminate asst-block-
-    rounding overhead at segment boundaries)."""
+    stripped. The only trailing tokens past ``block_count * bs`` are the
+    partial tail (block-aligned segments eliminate asst-block-rounding
+    overhead at segment boundaries)."""
     bs = 64
     block_count = 1
     partial_tail = 36  # superseded by next turn's tiling
@@ -613,7 +613,7 @@ def test_advance_token_level_slicing_asst_user_split():
 
 
 # ---------------------------------------------------------------------------
-# P17 — byte-exact sum + hash-content stability
+# Byte-exact sum + hash-content stability
 # ---------------------------------------------------------------------------
 
 
@@ -712,7 +712,7 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
     # actual recorded content; we emit 64+72=136. The 14-token asst over-claim
     # is structural (block-alignment up of asst). curr_in_tokens = 200 doesn't
     # equal sum here because asst is block-aligned UP, which is the accepted
-    # P17 trade-off ("recorded asst content is local; reconstructor emits
+    # trade-off ("recorded asst content is local; reconstructor emits
     # block-aligned content"). In the prev-turn-tail-aligned case (the
     # everyday case where prev_in is already block-aligned via init_turn_0
     # block-aligning everything), the over-claim shows up only on asst.
@@ -722,8 +722,8 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
 
 def test_hash_content_stability_across_segments():
     """A given ``hash_id`` decodes to identical tokens across every segment
-    it appears in. P17 drops the BPE-stable terminator stamp, restoring this
-    invariant: the tokens for each cached block are emitted unmodified."""
+    it appears in. There is no BPE-stable terminator stamp on the trailing
+    tokens — each cached block's tokens are emitted unmodified."""
     r = _make_recon()
     # turn 0: hash_ids = [1, 2, 3], block-aligned to 192 tokens (no partial_tail).
     r.init_turn_0(
@@ -751,7 +751,7 @@ def test_hash_content_stability_across_segments():
 def test_hash_content_stability_terminator_field_unused():
     """Setting ``bpe_stable_terminator_tokens`` has no effect on emitted
     segment tokens — the reconstructor algorithm does not consume the field
-    (P17 dropped the terminator stamp to preserve hash-content stability)."""
+    (no terminator stamp is applied; hash-content stability is preserved)."""
     r_no_term = _make_recon(terminator_tokens=[])
     r_no_term.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=192, tool_tokens=0, system_tokens=0, seed="t:0"
@@ -769,7 +769,7 @@ def test_hash_content_stability_terminator_field_unused():
 
 
 # ---------------------------------------------------------------------------
-# P18 — prefix-stability invariant: surviving segments are strict prefixes
+# Prefix-stability invariant: surviving segments are strict prefixes
 # ---------------------------------------------------------------------------
 
 

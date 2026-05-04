@@ -103,10 +103,8 @@ class MultiRunOrchestrator:
 
         The ``AggregateConfidenceJsonExporter`` pops these underscore-prefixed
         keys to compute ``submission_valid`` / ``submission_invalid_reasons``.
-        Pre-#699 this stamping happened in ``cli_runner._run_multi_benchmark``
-        around an explicit ``aggregate_result``; that hook point is gone now
-        that aggregation lives inside the orchestrator, so we stamp here —
-        after the strategy has produced ``aggregate`` and before export.
+        Stamped here after the strategy has produced ``aggregate`` and
+        before export.
 
         No-op when ``user_config.scenario`` is None.
         """

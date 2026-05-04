@@ -326,7 +326,7 @@ def test_all_seven_invariants_unsafe_override_warns_and_invalidates(
 
 
 # ---------------------------------------------------------------------------
-# Test: list-shape --concurrency (parameter sweep, #699) is rejected by lock.
+# Test: list-shape --concurrency (parameter sweep) is rejected by lock.
 # A locked scenario describes one fixed configuration; sweeping concurrency
 # would multiply it into N runs with diverging settings, which violates the
 # "one scenario = one spec" contract.

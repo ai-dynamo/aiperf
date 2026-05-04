@@ -382,7 +382,9 @@ async def test_register_then_dispatch_fail_rolls_back_sticky_refcount():
     assert sticky.release_child_routing.call_count == 1, (
         "rollback path must release sticky exactly once per failed FORK child"
     )
-    assert orch.stats.children_errored == 1
+    # ``dispatch_first=False`` is stop-condition refusal, not an error.
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_errored == 0
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +451,10 @@ async def test_orchestrator_handles_dispatch_first_turn_returning_falsy():
     )
 
     await orch.intercept(_mk_credit("root", "corr-root", 0))
-    assert orch.stats.children_errored == 1
+    # ``_dispatch_first_turn`` wraps with ``bool()``: None -> False, treated
+    # as stop-condition refusal (truncated), not an error.
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_errored == 0
     assert sticky.release_child_routing.call_count == 1
 
 
@@ -657,9 +662,10 @@ def test_pre_session_child_routing_key_falls_back_to_own_correlation():
 @pytest.mark.asyncio
 async def test_pre_session_dispatch_failure_still_records_branch():
     """If dispatch_first_turn returns False during pre-session dispatch,
-    children_errored++ but the branch is STILL added to
-    _pre_dispatched_branches so the per-turn intercept doesn't try to
-    dispatch it again on the parent's turn-0 credit return."""
+    children_truncated++ (stop-condition refusal, not an error) but the
+    branch is STILL added to _pre_dispatched_branches so the per-turn
+    intercept doesn't try to dispatch it again on the parent's turn-0
+    credit return."""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["early"],
@@ -677,7 +683,8 @@ async def test_pre_session_dispatch_failure_still_records_branch():
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     await orch.dispatch_pre_session_branches()
-    assert orch.stats.children_errored == 1
+    assert orch.stats.children_errored == 0
+    assert orch.stats.children_truncated == 1
     assert ("root", "root:pre") in orch._pre_dispatched_branches
 
     await orch.intercept(_mk_credit("root", "corr-root", 0))

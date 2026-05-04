@@ -64,6 +64,7 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
   "zstandard>=0.25.0",
+  "crick~=0.0.8",
 ]
 
 # CLI Entrypoints
@@ -180,6 +181,10 @@ filterwarnings = [
     "ignore:There is no current event loop:DeprecationWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
     "ignore:unclosed file:ResourceWarning",
+    # sentencepiece 0.2.1 ships SWIG-generated bindings whose builtin types
+    # lack __module__; fixed upstream only when sentencepiece publishes a
+    # SWIG regen. Drop this filter when sentencepiece > 0.2.1 lands.
+    "ignore:builtin type Swig(PyObject|PyPacked|varlink) has no __module__ attribute:DeprecationWarning",
 ]
 
 [tool.codespell]

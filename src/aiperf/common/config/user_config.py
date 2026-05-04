@@ -1141,7 +1141,7 @@ class UserConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_accuracy_config(self) -> Self:
         """Validate accuracy benchmarking configuration."""
-        # Stub: validation logic will be added when accuracy mode is implemented
+        # Stub: accuracy mode currently has no validation rules.
         return self
 
     scenario: Annotated[

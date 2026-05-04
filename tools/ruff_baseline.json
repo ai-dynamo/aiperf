@@ -219,11 +219,6 @@
     ],
     [
       "ANN201",
-      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
-      "TimesliceMetricResultsProcessor.get_timeslice_index"
-    ],
-    [
-      "ANN201",
       "src/aiperf/ui/dashboard/aiperf_textual_app.py",
       "AIPerfTextualApp.on_worker_update"
     ],
@@ -609,28 +604,8 @@
     ],
     [
       "BLE001",
-      "src/aiperf/post_processors/metric_results_processor.py",
-      "MetricResultsProcessor.process_result"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/metric_results_processor.py",
-      "MetricResultsProcessor.update_derived_metrics"
-    ],
-    [
-      "BLE001",
       "src/aiperf/post_processors/raw_record_writer_processor.py",
       "RawRecordWriterProcessor.buffered_write"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/record_export_results_processor.py",
-      "RecordExportResultsProcessor.process_result"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
-      "TimesliceMetricResultsProcessor.update_derived_metrics"
     ],
     [
       "BLE001",
@@ -641,11 +616,6 @@
       "BLE001",
       "src/aiperf/records/inference_result_parser.py",
       "InferenceResultParser.parse_request_record"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/records/records_manager.py",
-      "RecordsManager.__init__"
     ],
     [
       "BLE001",
@@ -1184,11 +1154,6 @@
     ],
     [
       "C901",
-      "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
-    ],
-    [
-      "C901",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1589,6 +1554,11 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/common/validators/orchestrator_v1.py",
+      "validate_for_orchestrator_v1"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
       "render_comparison_text"
     ],
@@ -1736,11 +1706,6 @@
       "PLR0915",
       "src/aiperf/plot/handlers/single_run_handlers.py",
       "PercentileBandsHandler.create_plot"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
     ],
     [
       "PLR0915",

@@ -25,6 +25,7 @@ from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import RampConfig, Ramper, RampType
 from aiperf.timing.strategies.core import RateSettableProtocol
+from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -116,6 +117,31 @@ class PhaseRunner(TaskManagerMixin):
                     "expected_num_sessions": len(metadata.conversations),
                 }
             )
+
+        # For AGENTIC_REPLAY WARMUP, the phase config built from user_config sets
+        # ``total_expected_requests = loadgen.concurrency`` as a placeholder. The
+        # actual warmup credit count equals the number of trajectories built by
+        # ``TrajectorySource``, which is ``min(concurrency, pool_size)`` minus
+        # any traces skipped because they have <2 turns. When the actual count is
+        # below ``concurrency``, ``CreditCounter.is_final_credit`` never fires,
+        # the runner's ``all_credits_sent_event`` is never set, and warmup hangs
+        # forever. Re-anchor the target to the real trajectory count so the
+        # standard ``SendingCompleteStopCondition`` + event path works without
+        # relying on the strategy's belt-and-suspenders ``mark_sending_complete``
+        # call (which only flips lifecycle state, not the wait event).
+        if (
+            config.timing_mode == TimingMode.AGENTIC_REPLAY
+            and config.phase == CreditPhase.WARMUP
+            and isinstance(conversation_source, TrajectorySource)
+        ):
+            trajectory_count = len(conversation_source.trajectories)
+            if (
+                trajectory_count > 0
+                and trajectory_count != config.total_expected_requests
+            ):
+                self._config = self._config.model_copy(
+                    update={"total_expected_requests": trajectory_count}
+                )
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager

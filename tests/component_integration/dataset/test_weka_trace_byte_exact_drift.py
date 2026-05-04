@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Byte-exact ISL drift contract — CI-enforced (Plan task P13).
+"""Byte-exact ISL drift contract — CI-enforced.
 
 Promotes the manual receipt at ``tools/weka_byte_exact_verify.py`` into a
 component-tier-enforced invariant: load a real ``PromptGenerator`` wired to
@@ -12,11 +12,11 @@ per-turn drift against the recorded ``in[k]`` is bounded by
 Drift bound rationale
 =====================
 
-Post-P17 the reconstructor guarantees ``sum(len(seg.tokens)) == in[k]``
-exactly per turn (block-aligned segment sizes; no terminator stamp).
-The recorded ``in[k]`` was measured against Claude's tokenizer + chat
-template, while aiperf re-tokenizes against the user-selected target
-tokenizer (Qwen3-0.6B in this run). Remaining drift sources:
+The reconstructor guarantees ``sum(len(seg.tokens)) == in[k]`` exactly per
+turn (block-aligned segment sizes; no terminator stamp). The recorded
+``in[k]`` was measured against Claude's tokenizer + chat template, while
+aiperf re-tokenizes against the user-selected target tokenizer (Qwen3-0.6B
+in this run). Remaining drift sources:
 
 1. **BPE-on-join residual at segment seams** — when aiperf joins
    ``raw_messages`` with `' '` and re-tokenizes, BPE merges across the
@@ -25,11 +25,11 @@ tokenizer (Qwen3-0.6B in this run). Remaining drift sources:
 2. **Cross-tokenizer translation residual** — recorded ``in[k]`` came
    from Claude's tokenizer; aiperf measures against Qwen3-0.6B.
 
-Empirical post-P17 measurement on the kv-cache-tester corpus: per-msg
-max 0.96, median 0.80; absolute drift n=41 median=6 mean=8.1 max=27.
-The corpus bound (``MAX_TOKENIZER_DIVERGENCE_PER_MSG``) is set to 3 —
-generous over the empirical max of ~1, tight enough that any structural
-regression which re-introduces 5+ token-per-msg drift would trip it.
+Empirical measurement on the kv-cache-tester corpus: per-msg max 0.96,
+median 0.80; absolute drift n=41 median=6 mean=8.1 max=27. The corpus
+bound (``MAX_TOKENIZER_DIVERGENCE_PER_MSG``) is set to 3 — generous over
+the empirical max of ~1, tight enough that any structural regression which
+re-introduces 5+ token-per-msg drift would trip it.
 
 Tier-1 fixtures use small ``in[k]`` (~200-400) and have intentionally
 inconsistent shapes (e.g. ``multi_model.json`` parent post-subagent
@@ -41,16 +41,13 @@ this scale. Tier 1 uses a separate, looser bound
 mask real corpus regressions, but the real correctness bound is
 enforced by tier 2.
 
-Historical bounds (loosened by structural drift sources we have since
-fixed): pre-P14 ~50, pre-P16 ~25, pre-P17 ~22.
-
 Tier 1 — ``test_byte_exact_isl_drift_simple_fixture`` /
 ``test_byte_exact_isl_drift_multi_model_fixture``:
   Run on every PR. Fixtures from ``tests/fixtures/weka_traces/``. Subagent
   conversations are skipped — see ``_verify_drift_bound``.
 
 Tier 2 — ``test_byte_exact_isl_drift_corpus_subset`` (``@pytest.mark.slow``):
-  Same 8 traces measured during P11's mock-server replay (see
+  Same 8 traces measured during the mock-server replay (see
   ``docs/tutorials/weka-byte-exact-replay-results.md``). Skips cleanly when
   ``artifacts/kv-cache-tester/traces/`` is absent.
 """
@@ -74,13 +71,13 @@ from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 pytestmark = pytest.mark.component_integration
 
 TOKENIZER_NAME = "Qwen/Qwen3-0.6B"
-"""Matches the tokenizer used in P11 mock-server replay and the manual
+"""Matches the tokenizer used in mock-server replay and the manual
 verification CLI; see ``tools/weka_byte_exact_verify.py``."""
 
 MAX_TOKENIZER_DIVERGENCE_PER_MSG = 3
 """Per-message ISL drift tolerance for the corpus subset (tier 2).
 Must equal the constant in ``tools/weka_byte_exact_verify.py``.
-Empirical post-P17: corpus per-msg max 0.96, median 0.80 across 41 turns.
+Empirical: corpus per-msg max 0.96, median 0.80 across 41 turns.
 3 leaves a generous margin without absorbing structural regressions."""
 
 FIXTURE_TIER_PER_MSG_BOUND = 25
@@ -104,8 +101,8 @@ CORPUS_SUBSET = (
     "trace_0187",
     "trace_0546",
 )
-"""Empirically measured under P11; preserved here so the bound can be
-re-justified against the same population."""
+"""Empirically measured against this corpus; preserved here so the bound
+can be re-justified against the same population."""
 
 CORPUS_MODELS = (
     "claude-opus-4-5-20251101",
@@ -113,11 +110,6 @@ CORPUS_MODELS = (
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-20250514",
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -173,11 +165,6 @@ def real_prompt_generator(real_qwen_tokenizer: Tokenizer) -> PromptGenerator:
         prefix_prompt=PrefixPromptConfig(pool_size=0, length=0),
     )
     return PromptGenerator(config, real_qwen_tokenizer)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_user_config(model_names: tuple[str, ...]) -> Any:
@@ -243,6 +230,12 @@ def _verify_drift_bound(
     requires walking the nested subagent entries; the spec punts on this
     in §6.2 (matches the manual CLI which keys by ``conversation_id``).
 
+    Weka now emits delta-encoded turns (``DELTAS_WITH_RESPONSES``); per-turn
+    ``raw_messages`` is only the newly appended region. The recorded ISL
+    is the byte length of the FULL chat prefix at that turn, so we
+    accumulate across turns (or reset on ``reset_context``) — this mirrors
+    what ``BaseEndpoint.build_messages`` does at request time.
+
     Returns ``(failures, abs_drifts, per_msg_drifts)`` so callers can re-
     summarise the per-message ratio that the bound is set against.
     """
@@ -257,12 +250,18 @@ def _verify_drift_bound(
         ins = recorded_per_trace.get(conv.session_id)
         if ins is None:
             continue
+        accumulated: list[dict] = []
         for k, turn in enumerate(conv.turns):
+            if turn.raw_messages is not None:
+                if getattr(turn, "reset_context", False):
+                    accumulated = list(turn.raw_messages)
+                else:
+                    accumulated = accumulated + list(turn.raw_messages)
             if k >= len(ins):
                 break
-            tokenized = _tokenize_messages(tokenizer, turn.raw_messages or [])
+            tokenized = _tokenize_messages(tokenizer, accumulated)
             recorded = ins[k]
-            n_msgs = len(turn.raw_messages or [])
+            n_msgs = len(accumulated)
             bound = per_msg_bound * max(n_msgs, 1)
             drift = abs(tokenized - recorded)
             drifts.append(drift)
@@ -381,7 +380,7 @@ def test_byte_exact_isl_drift_corpus_subset(
     real_prompt_generator: PromptGenerator,
     tmp_path: Path,
 ) -> None:
-    """Tier 2: 8-trace kv-cache-tester subset that backed P11's empirical baseline.
+    """Tier 2: 8-trace kv-cache-tester subset that backed the empirical baseline.
 
     Asserts the same drift bound holds across 41 turns (the figure measured
     in ``docs/tutorials/weka-byte-exact-replay-results.md``).
@@ -419,7 +418,7 @@ def test_byte_exact_isl_drift_corpus_subset(
     elapsed = time.perf_counter() - t0
 
     assert not failures, "byte-exact drift bound violated:\n  " + "\n  ".join(failures)
-    # P11 measured 41 comparable turns across this subset.
+    # 41 comparable turns measured across this subset.
     assert len(drifts) >= 30, (
         f"expected ~41 turn drifts; got {len(drifts)} (corpus may have changed)"
     )

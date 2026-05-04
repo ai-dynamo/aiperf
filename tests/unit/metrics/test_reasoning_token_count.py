@@ -11,7 +11,6 @@ from aiperf.metrics.types.reasoning_token_count import (
     TotalReasoningTokensMetric,
 )
 from tests.unit.metrics.conftest import (
-    create_metric_array,
     create_record,
     run_simple_metrics_pipeline,
 )
@@ -83,7 +82,7 @@ class TestTotalReasoningTokensMetric:
         """Test that TotalReasoningTokensMetric correctly sums all reasoning token counts"""
         metric = TotalReasoningTokensMetric()
         metric_results = MetricResultsDict()
-        metric_results[ReasoningTokenCountMetric.tag] = create_metric_array(values)
+        metric_results[ReasoningTokenCountMetric.tag] = sum(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum

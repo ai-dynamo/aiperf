@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Task 19 -- agentic_replay end-to-end happy-path component-integration tests.
+"""Agentic_replay end-to-end happy-path component-integration tests.
 
 Three tests:
 
@@ -24,23 +24,20 @@ Three tests:
    ``--timing-mode agentic_replay`` (no ``--scenario``): aggregate JSON omits
    the ``submission_valid`` field; the rest of the run still succeeds.
 
-Wiring scope (T19 final task):
-- ``cli_runner._run_multi_benchmark`` now stamps the validator-outcome
+Wiring scope:
+- ``cli_runner._run_multi_benchmark`` stamps the validator-outcome
   carrier keys (``_scenario_name``, ``_validator_submission_valid``,
   ``_validator_submission_invalid_reasons``) onto ``AggregateResult.metadata``
   from ``user_config._scenario_outcome``. The runtime totals
   (``_total_responses``, ``_context_overflow_count``) are stamped to ``0``
-  by default; a follow-up branch should populate them from the records-manager
-  or orchestrator runtime state once that counter exists.
+  by default.
 - The full e2e CLI pathway (``cli.run_sync('aiperf profile --scenario ...')``)
-  is *not* exercised here because ``PhaseOrchestrator`` currently constructs
-  a plain ``ConversationSource`` rather than a ``TrajectorySource``,
-  which would cause ``AgenticReplayStrategy`` to refuse construction at
-  startup. Wiring that handoff is a focused follow-up touching
-  ``phase_orchestrator.py`` (detect ``timing_mode == AGENTIC_REPLAY`` and
-  build the trajectory source instead). These tests pin the genuine
-  loader -> trajectory -> strategy -> aggregate -> exporter chain end-to-end at
-  the integration boundary above the orchestrator-construction seam.
+  is *not* exercised here because ``PhaseOrchestrator`` constructs a plain
+  ``ConversationSource`` rather than a ``TrajectorySource``, which would
+  cause ``AgenticReplayStrategy`` to refuse construction at startup. These
+  tests pin the genuine loader -> trajectory -> strategy -> aggregate ->
+  exporter chain end-to-end at the integration boundary above the
+  orchestrator-construction seam.
 """
 
 from __future__ import annotations
@@ -229,8 +226,17 @@ def _install_inproc_pool(monkeypatch, loader) -> None:
         def __init__(self, num_workers, init_fn, init_args) -> None:
             init_fn(init_args[0])
 
-        def imap(self, fn, items):
+        def imap(self, fn, items, chunksize=1):
             return [fn(it) for it in items]
+
+        def close(self) -> None:
+            return None
+
+        def join(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            return None
 
         def __enter__(self):
             return self
@@ -333,7 +339,7 @@ def _make_aggregate_with_carriers(
     total_responses: int,
     context_overflow_count: int,
 ) -> AggregateResult:
-    """Build an AggregateResult carrying the post-T19 cli_runner stamps.
+    """Build an AggregateResult carrying the cli_runner stamps.
 
     This mirrors the wiring added in cli_runner._run_multi_benchmark: when
     ``--scenario`` is set, the validator outcome flows through these

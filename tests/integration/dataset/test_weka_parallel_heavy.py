@@ -294,7 +294,7 @@ def test_scope_isolation_same_hash_id_different_traces(
 ):
     """The ``hash_id_scope:'local'`` invariant: the same hash_id appearing in
     two different trace files must produce different content. Otherwise
-    cross-trace replay inflates KV-cache hit rates (bug P21)."""
+    cross-trace replay inflates KV-cache hit rates."""
     corpus = _make_corpus_dir(tmp_path, 2, "simple.json")
     convs = _convert(corpus, force_parallel=True, workers=2, monkeypatch=monkeypatch)
     a = next(
@@ -320,8 +320,11 @@ def test_stress_500_simple_traces(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     for c in convs:
         assert len(c.turns) == 2
         for turn in c.turns:
-            assert turn.texts and turn.texts[0].contents
-            assert len(turn.texts[0].contents[0]) > 0
+            # weka loader populates raw_messages (the chat-shape message array
+            # consumed by ChatEndpoint.build_messages); turn.texts is left
+            # empty because no consumer reads it when raw_messages is set.
+            assert turn.raw_messages
+            assert all(m.get("content") for m in turn.raw_messages)
 
 
 def test_stress_mixed_fixtures_1000(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

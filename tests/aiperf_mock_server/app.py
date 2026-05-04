@@ -59,10 +59,25 @@ from aiperf_mock_server.utils import (
     with_error_injection,
 )
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+
+class ORJSONResponse(Response):
+    """Minimal orjson-backed Response subclass for raw-dict payloads.
+
+    The mock server builds raw dicts (not Pydantic models), so we use this
+    to keep the orjson fast path without going through FastAPI's
+    Pydantic-driven serialization.
+    """
+
+    media_type = "application/json"
+
+    def render(self, content: Any) -> bytes:
+        return orjson.dumps(content)
+
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0

@@ -27,7 +27,7 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
-        if exporter_config.results is None:
+        if exporter_config.results is None or not exporter_config.results.records:
             self._metrics_by_tag = {}
         else:
             self._metrics_by_tag = {r.tag: r for r in exporter_config.results.records}

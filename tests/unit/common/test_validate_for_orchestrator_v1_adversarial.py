@@ -134,10 +134,12 @@ def test_validator_accepts_unicode_branch_id():
     validate_for_orchestrator_v1(md)
 
 
-# --- 5. Repeated same branch_id on one turn dedupes --------------------------
+# --- 5. Repeated same branch_id on one turn rejected ------------------------
 
 
-def test_validator_accepts_repeated_same_branch_id_on_one_turn():
+def test_validator_rejects_repeated_same_branch_id_on_one_turn():
+    """Two SPAWN_JOIN prereqs on the same gated turn referencing the same
+    branch_id is an authoring duplicate and rejected at load time."""
     md = _one_conv_with(
         prereqs=[
             TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="r:0"),
@@ -145,7 +147,10 @@ def test_validator_accepts_repeated_same_branch_id_on_one_turn():
         ],
         branches=[_ok_branch()],
     )
-    validate_for_orchestrator_v1(md)
+    with pytest.raises(
+        ValueError, match="duplicate SPAWN_JOIN prerequisite for branch_id 'r:0'"
+    ):
+        validate_for_orchestrator_v1(md)
 
 
 # --- 6. Empty dataset metadata passes ----------------------------------------

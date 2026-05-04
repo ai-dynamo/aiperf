@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.common.scenario.base import (
     EmptyTracePoolError,
+    InsufficientTrajectoriesError,
     ScenarioLockError,
     ScenarioSpec,
     ScenarioViolation,
@@ -14,6 +15,7 @@ from aiperf.common.scenario.validator import ValidationOutcome, validate_scenari
 
 __all__ = [
     "EmptyTracePoolError",
+    "InsufficientTrajectoriesError",
     "SCENARIOS",
     "ScenarioLockError",
     "ScenarioSpec",

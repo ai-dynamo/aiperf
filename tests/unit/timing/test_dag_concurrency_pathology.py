@@ -589,7 +589,9 @@ async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(monkey
     should be aborted exactly once (or at most once per orchestrator
     semantics). Sibling cascades must not double-abort the parent.
     """
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
     cs = _mk_source(_simple_spawn_metadata(3))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -753,8 +755,11 @@ def test_stop_condition_applies_to_dag_children_truth_table():
 
 
 @pytest.mark.asyncio
-async def test_pre_session_dispatch_first_turn_returns_false_counts_errored():
-    """``issued`` is False ⇒ orchestrator should treat as errored child."""
+async def test_pre_session_dispatch_first_turn_returns_false_counts_truncated():
+    """``issued`` is False ⇒ stop-condition refusal (e.g. ``--request-count``
+    cap), not an error. The orchestrator should tally as
+    ``children_truncated``, matching the semantics already used by
+    ``on_child_stopped``."""
     pre_branch = ConversationBranchInfo(
         branch_id="root:pre",
         child_conversation_ids=["early"],
@@ -776,7 +781,8 @@ async def test_pre_session_dispatch_first_turn_returns_false_counts_errored():
     await orch.dispatch_pre_session_branches()
 
     assert orch.stats.children_spawned == 0
-    assert orch.stats.children_errored == 1
+    assert orch.stats.children_errored == 0
+    assert orch.stats.children_truncated == 1
     # Branch still recorded as pre-dispatched (current semantics).
     assert ("root", "root:pre") in orch._pre_dispatched_branches
 

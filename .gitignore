@@ -52,3 +52,6 @@ src/aiperf/_build_info.py
 .cursor/*
 !.cursor/rules/
 .worktrees/
+
+# dev/benchmarks output dir — local benchmark runs, not committed
+dev/benchmarks/results/

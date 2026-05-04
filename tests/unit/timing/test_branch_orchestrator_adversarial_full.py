@@ -41,6 +41,7 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     PrerequisiteKind,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -375,7 +376,7 @@ async def test_vacuous_gate_trap_does_not_fire_before_second_branch_registers():
 async def test_cleanup_during_fail_fast_cascade_no_exception(monkeypatch):
     """Trigger fail-fast then call cleanup; verify no exception, full clear,
     and idempotent on a second call."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
     cs = _mk_source(_fan_in_metadata())
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -615,15 +616,13 @@ async def test_branch_with_empty_children_list_is_graceful():
 # ---------------------------------------------------------------------------
 
 
-def test_duplicate_branch_id_on_same_turn_triggers_assert_in_prereq_index():
-    """Duplicate ``(branch_id, gated_idx)`` on a spawning turn is rejected by
-    validator. Bypass: declare same branch_id twice on turn 0 with two
-    DIFFERENT TurnPrerequisite consumers on the same gated turn. The
-    orchestrator's defensive ``assert`` in ``_build_prereq_index`` catches
-    it."""
-    # Turn 0 declares branch_ids=[X, X] (duplicate). Turn 1 references X via
-    # two SPAWN_JOIN prereqs. Both prereqs share the same (branch_id, gated_idx)
-    # tuple, hitting the duplicate-entry assert.
+def test_duplicate_branch_id_on_same_turn_tolerated_at_orchestrator_layer():
+    """The orchestrator no longer asserts on duplicate ``(branch_id,
+    gated_turn)`` entries in ``_prereq_index`` — the validator owns that
+    invariant via ``validate_for_orchestrator_v1``. This test exercises
+    the orchestrator's now-tolerant construction path with raw input that
+    bypasses the validator (e.g., direct test fixtures), confirming the
+    duplicate is silently accepted."""
     branch = ConversationBranchInfo(
         branch_id="dup",
         child_conversation_ids=["c1"],
@@ -643,8 +642,7 @@ def test_duplicate_branch_id_on_same_turn_triggers_assert_in_prereq_index():
         [branch],
     )
     cs = _mk_source([root, _mk_conv("c1", [TurnMetadata()], [])])
-    with pytest.raises(AssertionError, match="Duplicate SPAWN_JOIN entry"):
-        BranchOrchestrator(conversation_source=cs, credit_issuer=MagicMock())
+    BranchOrchestrator(conversation_source=cs, credit_issuer=MagicMock())
 
 
 # ---------------------------------------------------------------------------
@@ -980,7 +978,7 @@ async def test_multi_consumer_fail_fast_aborts_parent_and_drops_all_gates(
     """Phase 3: same branch feeds 3 gates; child errors with fail-fast.
     Parent's ENTIRE future_joins entry is dropped (all 3 gates) plus the
     active join. Parent + every orphan aborted."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["c1", "c2"],
@@ -1098,7 +1096,7 @@ async def test_fail_fast_cascade_drops_all_future_gates(monkeypatch):
     """Two SPAWNs from turn 0 each registering at different gates (T=2 and
     T=5). One child errors under fail-fast; both gates and both branches'
     children are aborted."""
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
     branch_a = ConversationBranchInfo(
         branch_id="root:0:A",
         child_conversation_ids=["a1"],

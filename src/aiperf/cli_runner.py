@@ -52,7 +52,7 @@ def run_system_controller(
     """Run the system controller with the given configuration.
 
     If num_profile_runs > 1 OR parameter sweep is detected, runs multi-run orchestration.
-    Otherwise, runs a single benchmark (backward compatibility).
+    Otherwise, runs a single benchmark.
     """
     is_sweep = user_config.loadgen.get_sweep_parameter() is not None
     is_multi_run = user_config.loadgen.num_profile_runs > 1
@@ -70,7 +70,7 @@ def _run_single_benchmark(
     user_config: UserConfig,
     service_config: ServiceConfig,
 ) -> None:
-    """Run a single benchmark (original behavior)."""
+    """Run a single benchmark."""
 
     # NOTE: On macOS, when using the Textual UI with multiprocessing, terminal corruption
     # (ASCII garbage, freezing) can occur when mouse events interfere with child processes.
@@ -196,14 +196,6 @@ def _sum_runtime_response_counts(
     counter for context-overflow errors detected by the runtime classifier.
 
     Returns ``(0, 0)`` when no successful runs exist.
-
-    NOTE: After main's #699 refactor, aggregation moved inside
-    ``MultiRunOrchestrator.execute_and_export`` and ``_run_multi_benchmark``
-    no longer touches an ``aggregate_result``. This helper is preserved for
-    the existing component-integration regression test
-    (``test_context_overflow_runtime_gate.py``); restoring scenario
-    submission stamping requires re-wiring inside the orchestrator API,
-    which is tracked as a separate followup.
     """
     total_responses = 0
     context_overflow_count = 0

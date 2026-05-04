@@ -4,6 +4,7 @@
 import pytest
 
 from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
+from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
     RequestInfo,
@@ -257,3 +258,126 @@ class TestBaseEndpointAbstractMethods:
 
         with pytest.raises(TypeError):
             IncompleteEndpoint(model_endpoint=test_model_endpoint)
+
+
+class TestBuildMessagesResetContext:
+    """Tests for ``BaseEndpoint.build_messages`` ``reset_context`` semantics."""
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    @staticmethod
+    def _turn(messages: list[dict], reset: bool = False) -> Turn:
+        return Turn(raw_messages=messages, reset_context=reset)
+
+    def test_all_reset_false_accumulates_across_turns(self, endpoint):
+        """Default behavior: every turn extends the message list."""
+        turns = [
+            self._turn([{"role": "system", "content": "sys"}]),
+            self._turn([{"role": "user", "content": "u1"}]),
+            self._turn(
+                [
+                    {"role": "assistant", "content": "a1"},
+                    {"role": "user", "content": "u2"},
+                ]
+            ),
+        ]
+        result = endpoint.build_messages(turns)
+        assert result == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+        ]
+
+    def test_single_reset_true_discards_prior_messages(self, endpoint):
+        """A turn with ``reset_context=True`` drops everything accumulated so far."""
+        turns = [
+            self._turn([{"role": "system", "content": "sys"}]),
+            self._turn([{"role": "user", "content": "u1"}]),
+            self._turn(
+                [
+                    {"role": "system", "content": "new-sys"},
+                    {"role": "user", "content": "fresh"},
+                ],
+                reset=True,
+            ),
+        ]
+        result = endpoint.build_messages(turns)
+        assert result == [
+            {"role": "system", "content": "new-sys"},
+            {"role": "user", "content": "fresh"},
+        ]
+
+    def test_reset_then_extend_sequence_FFTF(self, endpoint):
+        """[F, F, T, F] yields turn[2].raw_messages + turn[3].raw_messages."""
+        turn0 = self._turn(
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "u0"},
+            ]
+        )
+        turn1 = self._turn(
+            [
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u1"},
+            ]
+        )
+        turn2 = self._turn(
+            [
+                {"role": "system", "content": "sys2"},
+                {"role": "user", "content": "u2"},
+            ],
+            reset=True,
+        )
+        turn3 = self._turn(
+            [
+                {"role": "assistant", "content": "a3"},
+                {"role": "user", "content": "u3"},
+            ]
+        )
+
+        result = endpoint.build_messages([turn0, turn1, turn2, turn3])
+        assert result == [
+            {"role": "system", "content": "sys2"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a3"},
+            {"role": "user", "content": "u3"},
+        ]
+        # Confirm 4 messages total (2 per turn × 2 turns post-reset).
+        assert len(result) == 4
+
+    def test_reset_does_not_mutate_source_raw_messages(self, endpoint):
+        """``list(turn.raw_messages)`` copies — appending to the result must not leak back."""
+        seed = [{"role": "system", "content": "sys"}]
+        turn0 = self._turn([{"role": "user", "content": "u0"}])
+        turn1 = self._turn(seed, reset=True)
+        turn2 = self._turn([{"role": "user", "content": "u2"}])
+
+        result = endpoint.build_messages([turn0, turn1, turn2])
+        assert result == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u2"},
+        ]
+        # Source list on turn1 must remain length-1 after build_messages.
+        assert seed == [{"role": "system", "content": "sys"}]
+        assert turn1.raw_messages == [{"role": "system", "content": "sys"}]
+
+    def test_reset_on_first_turn_is_equivalent_to_no_reset(self, endpoint):
+        """A reset on turn[0] has nothing to discard; behaves like a normal extend."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u"},
+        ]
+        with_reset = endpoint.build_messages([self._turn(msgs, reset=True)])
+        without_reset = endpoint.build_messages([self._turn(msgs, reset=False)])
+        assert with_reset == without_reset == msgs
+
+    def test_reset_context_default_is_false(self):
+        """``Turn.reset_context`` defaults to False — purely additive field."""
+        t = Turn(raw_messages=[{"role": "user", "content": "x"}])
+        assert t.reset_context is False

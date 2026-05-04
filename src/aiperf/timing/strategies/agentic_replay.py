@@ -181,11 +181,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
-        # fires once all in-flight credits return (the warmup barrier). Belt-
-        # and-suspenders alongside total_expected_requests=loadgen.concurrency
-        # in the warmup CreditPhaseConfig: handles the pool_size < concurrency
-        # case where the count target would never be reached.
-        self.lifecycle.mark_sending_complete()
+        # fires once all in-flight credits return (the warmup barrier).
+        # Normally redundant with the phase's count-based path: PhaseRunner
+        # re-anchors ``total_expected_requests`` to the actual trajectory count
+        # at __init__, so ``CreditCounter.is_final_credit`` flips on the last
+        # dispatched credit and ``CreditIssuer`` already fires
+        # ``all_credits_sent_event`` + freezes counts. Kept as a guarded fallback
+        # for defense-in-depth; the ``is_sending_complete`` guard avoids the
+        # double-transition ValueError when the count path won the race.
+        if not self.lifecycle.is_sending_complete:
+            self.lifecycle.mark_sending_complete()
 
     async def _execute_profiling(self) -> None:
         """Resume each trajectory at ``k_i + 1`` to seed the steady state.

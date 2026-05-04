@@ -92,8 +92,8 @@ def _derive_timing_mode_explicit(user_config: Any) -> bool:
     """True iff the user explicitly drove `_timing_mode` selection.
 
     Reads `model_fields_set` on the relevant sub-configs. Falls back to the
-    legacy `_timing_mode_explicitly_set` attribute for MagicMock test fixtures
-    that pre-date the model_fields_set wiring.
+    `_timing_mode_explicitly_set` attribute that some MagicMock test fixtures
+    stamp directly.
     """
     loadgen = getattr(user_config, "loadgen", None)
     loadgen_fields = getattr(loadgen, "model_fields_set", None)
@@ -107,7 +107,7 @@ def _derive_timing_mode_explicit(user_config: Any) -> bool:
         name in input_fields for name in _INPUT_TIMING_MODE_DRIVERS
     ):
         return True
-    # Legacy fallback: MagicMock test fixtures stamp this directly.
+    # Fallback: MagicMock test fixtures stamp this directly.
     return bool(getattr(user_config, "_timing_mode_explicitly_set", False))
 
 
@@ -126,7 +126,7 @@ def validate_scenario(
         timing_mode_explicit: When provided, overrides the auto-derivation of
             "did the user explicitly set timing-mode-driving fields?". The
             production caller computes this from `model_fields_set` and passes
-            it in; tests/legacy callers may omit it to use auto-derivation.
+            it in; test callers may omit it to use auto-derivation.
     """
     scenario_name = getattr(user_config, "scenario", None)
     if scenario_name is None:
@@ -278,9 +278,9 @@ def validate_scenario(
                 )
             )
 
-    # Reject parameter sweeps for fixed-spec scenarios. Since #699 widened
-    # `--concurrency` to accept comma-separated lists for sweeping, list-shape
-    # values must be rejected here — a scenario locks one fixed configuration
+    # Reject parameter sweeps for fixed-spec scenarios. `--concurrency`
+    # accepts comma-separated lists for sweeping; list-shape values must be
+    # rejected here — a scenario locks one fixed configuration
     # and a sweep would multiply it into N runs with diverging settings.
     concurrency = getattr(user_config.loadgen, "concurrency", None)
     if isinstance(concurrency, list):

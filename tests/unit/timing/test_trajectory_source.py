@@ -4,7 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.scenario.base import (
+    EmptyTracePoolError,
+)
 from aiperf.timing.trajectory_source import TrajectorySource
 
 
