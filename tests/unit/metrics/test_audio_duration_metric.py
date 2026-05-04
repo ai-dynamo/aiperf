@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.audio_duration_metric import AudioDurationMetric
@@ -58,5 +58,5 @@ class TestAudioDurationMetric:
         metric = AudioDurationMetric()
         assert metric.tag == "audio_duration"
         assert metric.header == "Audio Duration"
-        assert MetricFlags.NO_CONSOLE in metric.flags
+        assert metric.console_group == MetricConsoleGroup.NONE
         assert MetricFlags.SUPPORTS_AUDIO_ONLY in metric.flags

@@ -15,7 +15,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
-from aiperf.common.enums import CreditPhase, MetricFlags
+from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
 from aiperf.common.models import (
     ErrorDetails,
@@ -220,9 +220,9 @@ async def generate_realtime_metrics(
 def filter_display_metrics(raw_metrics: list[MetricResult]) -> list[MetricResult]:
     """Filter out hidden metrics for realtime display.
 
-    Drops anything flagged ``INTERNAL``, ``EXPERIMENTAL``, ``NO_CONSOLE``,
-    or ``ERROR_ONLY`` — matches the contract used by the dashboard's
-    realtime view (``RealtimeMetricsDashboard.on_realtime_metrics``).
+    Drops anything flagged ``INTERNAL``, ``EXPERIMENTAL``, or ``ERROR_ONLY``,
+    plus anything with ``console_group=NONE`` — matches the contract used by
+    the dashboard's realtime view (``RealtimeMetricsDashboard.on_realtime_metrics``).
 
     Unregistered tags (plugin/external metrics without a ``MetricRegistry``
     entry) pass through unchanged so a third-party metric is still surfaced.
@@ -230,16 +230,15 @@ def filter_display_metrics(raw_metrics: list[MetricResult]) -> list[MetricResult
     from aiperf.metrics.metric_registry import MetricRegistry, MetricTypeError
 
     hidden_flags = (
-        MetricFlags.INTERNAL
-        | MetricFlags.EXPERIMENTAL
-        | MetricFlags.NO_CONSOLE
-        | MetricFlags.ERROR_ONLY
+        MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL | MetricFlags.ERROR_ONLY
     )
     display_metrics: list[MetricResult] = []
     for m in raw_metrics:
         try:
             metric_cls = MetricRegistry.get_class(m.tag)
             if metric_cls.flags.has_any_flags(hidden_flags):
+                continue
+            if metric_cls.console_group == MetricConsoleGroup.NONE:
                 continue
         except MetricTypeError:
             # Unregistered tag (plugin/external metric): include as-is

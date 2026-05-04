@@ -6,6 +6,7 @@ from abc import ABC
 from typing import ClassVar, Generic, get_args, get_origin
 
 from aiperf.common.enums import (
+    MetricConsoleGroup,
     MetricFlags,
     MetricType,
     MetricUnitT,
@@ -36,6 +37,9 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     - short_header_hide_unit: If True, the unit will not be displayed in the Dashboard short header.
     - display_order: The display order in the ConsoleExporter. Lower numbers are displayed first. None means unordered after any ordered metrics.
     - flags: The flags of the metric that determine how and when it is computed and displayed.
+    - console_group: The console display group for the metric. `MetricConsoleGroup.NONE` hides
+      the metric from the console output (equivalent to the legacy `NO_CONSOLE` flag); other values
+      group the metric into a section of the console output.
     - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
     """
 
@@ -48,6 +52,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     display_unit: ClassVar[MetricUnitT | None] = None
     display_order: ClassVar[int | None] = None
     flags: ClassVar[MetricFlags] = MetricFlags.NONE
+    console_group: ClassVar[MetricConsoleGroup] = MetricConsoleGroup.DEFAULT
     required_metrics: ClassVar[set[MetricTagT] | None] = None
 
     # Auto-derived attributes

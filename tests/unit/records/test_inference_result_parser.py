@@ -398,14 +398,11 @@ class TestServerTokenCount:
                 completion_tokens=completion_tokens, reasoning_tokens=reasoning_tokens
             )
         ]
-        reasoning_count = setup_inference_parser._extract_server_reasoning_token_count(
+        token_counts = await setup_inference_parser._compute_server_token_counts(
             responses
         )
-        result = setup_inference_parser._extract_server_output_token_count(
-            responses, reasoning_count
-        )
 
-        assert result == expected_output
+        assert token_counts.output == expected_output
 
     async def test_warning_when_no_usage_provided(
         self, server_token_parser, request_record

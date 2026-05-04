@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.input_sequence_length_metric import (
@@ -80,7 +80,7 @@ class TestTotalInputSequenceLengthMetric:
             MetricFlags.TOKENIZES_INPUT_ONLY
         )
         assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
-        assert TotalInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert TotalInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
         assert TotalInputSequenceLengthMetric.missing_flags(MetricFlags.INTERNAL)
 
 
@@ -115,7 +115,7 @@ class TestErrorInputSequenceLengthMetric:
         """Test that ErrorInputSequenceLengthMetric has correct flags"""
         assert ErrorInputSequenceLengthMetric.tag == "error_isl"
         assert ErrorInputSequenceLengthMetric.has_flags(MetricFlags.ERROR_ONLY)
-        assert ErrorInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert ErrorInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
 
 
 class TestTotalErrorInputSequenceLengthMetric:
@@ -140,4 +140,6 @@ class TestTotalErrorInputSequenceLengthMetric:
         """Test that TotalErrorInputSequenceLengthMetric has correct metadata"""
         assert TotalErrorInputSequenceLengthMetric.tag == "total_error_isl"
         assert TotalErrorInputSequenceLengthMetric.has_flags(MetricFlags.ERROR_ONLY)
-        assert TotalErrorInputSequenceLengthMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert (
+            TotalErrorInputSequenceLengthMetric.console_group == MetricConsoleGroup.NONE
+        )
