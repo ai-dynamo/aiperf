@@ -155,10 +155,17 @@ class TestExpandSweep:
             sweep={
                 "type": "scenarios",
                 "runs": [
-                    {"name": "low", "benchmark": {"phases": [{"name": "default", "concurrency": 2}]}},
+                    {
+                        "name": "low",
+                        "benchmark": {
+                            "phases": [{"name": "default", "concurrency": 2}]
+                        },
+                    },
                     {
                         "name": "high",
-                        "benchmark": {"phases": [{"name": "default", "concurrency": 64}]},
+                        "benchmark": {
+                            "phases": [{"name": "default", "concurrency": 64}]
+                        },
                     },
                 ],
             }

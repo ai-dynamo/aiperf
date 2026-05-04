@@ -11,7 +11,6 @@ trimmed to one cell. CR JSON saved on completion.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import re
 import subprocess
@@ -31,7 +30,9 @@ CONCURRENCY = 500_000
 ISL = 128
 OSL = 128
 CONNECTIONS_PER_WORKER = 2500
-WORKERS_PER_POD = 20  # 200 workers / 20 = 10 pods (avoid >150 service registration cliff)
+WORKERS_PER_POD = (
+    20  # 200 workers / 20 = 10 pods (avoid >150 service registration cliff)
+)
 ENTRIES = 1000
 REQUESTS = 2_000_000
 

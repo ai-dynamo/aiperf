@@ -822,7 +822,9 @@ class TestOptionalTelemetryHeaders:
             exporter = self._make_exporter(mock_user_config, telemetry)
             await exporter.export()
 
-            content = (mock_user_config.benchmark.artifacts.profile_export_csv_file).read_text()
+            content = (
+                mock_user_config.benchmark.artifacts.profile_export_csv_file
+            ).read_text()
 
             for expected in expected_headers:
                 assert expected in content, f"Expected '{expected}' in CSV"

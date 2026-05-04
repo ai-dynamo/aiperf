@@ -21,14 +21,26 @@ CSV_OUT = REPO / "dev/results/sweep-rs-isl-scale-analysis.csv"
 NAME_RE = re.compile(r"^sweep-rs-c(\d+)-i(\d+)-o(\d+)$")
 
 OUT_FIELDS = [
-    "concurrency", "isl", "osl",
-    "entries", "requests", "completed",
-    "records_success", "records_error",
-    "errors", "error_rate",
-    "duration_s", "benchmark_duration_s",
-    "rps", "output_token_throughput",
-    "ctrl_records_mib", "ctrl_dataset_mib", "ctrl_total_mib",
-    "worker_pod_count", "workers_sum_mib", "workers_avg_per_pod_mib",
+    "concurrency",
+    "isl",
+    "osl",
+    "entries",
+    "requests",
+    "completed",
+    "records_success",
+    "records_error",
+    "errors",
+    "error_rate",
+    "duration_s",
+    "benchmark_duration_s",
+    "rps",
+    "output_token_throughput",
+    "ctrl_records_mib",
+    "ctrl_dataset_mib",
+    "ctrl_total_mib",
+    "worker_pod_count",
+    "workers_sum_mib",
+    "workers_avg_per_pod_mib",
     "workers_max_per_pod_mib",
     "operator_mib",
     "total_no_mock_mib",
@@ -110,32 +122,34 @@ def main() -> int:
         op = int(lr["operator_peak_mib"])
         mock = int(lr["mock_peak_mib"])
 
-        out.append({
-            "concurrency": key[0],
-            "isl": key[1],
-            "osl": key[2],
-            "entries": lr["entries"],
-            "requests": lr["requests"],
-            "completed": completed,
-            "records_success": cr.get("records_success", ""),
-            "records_error": cr.get("records_error", ""),
-            "errors": cr.get("errors", ""),
-            "error_rate": cr.get("error_rate", ""),
-            "duration_s": lr["duration_s"],
-            "benchmark_duration_s": bench_dur,
-            "rps": round(rps, 2) if rps else None,
-            "output_token_throughput": otps,
-            "ctrl_records_mib": int(lr["ctrl_peak_records_mib"]),
-            "ctrl_dataset_mib": int(lr["ctrl_peak_dataset_mib"]),
-            "ctrl_total_mib": ctrl_total,
-            "worker_pod_count": int(lr["worker_pod_count"]),
-            "workers_sum_mib": wkr_sum,
-            "workers_avg_per_pod_mib": int(lr["workers_peak_avg_per_pod_mib"]),
-            "workers_max_per_pod_mib": int(lr["workers_peak_max_per_pod_mib"]),
-            "operator_mib": op,
-            "total_no_mock_mib": ctrl_total + wkr_sum + op,
-            "mock_mib": mock,
-        })
+        out.append(
+            {
+                "concurrency": key[0],
+                "isl": key[1],
+                "osl": key[2],
+                "entries": lr["entries"],
+                "requests": lr["requests"],
+                "completed": completed,
+                "records_success": cr.get("records_success", ""),
+                "records_error": cr.get("records_error", ""),
+                "errors": cr.get("errors", ""),
+                "error_rate": cr.get("error_rate", ""),
+                "duration_s": lr["duration_s"],
+                "benchmark_duration_s": bench_dur,
+                "rps": round(rps, 2) if rps else None,
+                "output_token_throughput": otps,
+                "ctrl_records_mib": int(lr["ctrl_peak_records_mib"]),
+                "ctrl_dataset_mib": int(lr["ctrl_peak_dataset_mib"]),
+                "ctrl_total_mib": ctrl_total,
+                "worker_pod_count": int(lr["worker_pod_count"]),
+                "workers_sum_mib": wkr_sum,
+                "workers_avg_per_pod_mib": int(lr["workers_peak_avg_per_pod_mib"]),
+                "workers_max_per_pod_mib": int(lr["workers_peak_max_per_pod_mib"]),
+                "operator_mib": op,
+                "total_no_mock_mib": ctrl_total + wkr_sum + op,
+                "mock_mib": mock,
+            }
+        )
 
     out.sort(key=lambda r: (r["isl"], r["concurrency"], r["osl"]))
     with CSV_OUT.open("w", newline="") as f:
@@ -144,9 +158,11 @@ def main() -> int:
         w.writerows(out)
     print(f"wrote {CSV_OUT.relative_to(REPO)}")
     print()
-    hdr = (f"{'conc':>5} {'isl':>8} {'osl':>5}  {'rps':>7} {'tok/s':>8}  "
-           f"{'rec-ok':>6} {'rec-er':>6}  {'ds':>4} {'rm':>4} {'ctrl':>5} "
-           f"{'wkr-mx':>6} {'mock':>4}  {'tot':>5}")
+    hdr = (
+        f"{'conc':>5} {'isl':>8} {'osl':>5}  {'rps':>7} {'tok/s':>8}  "
+        f"{'rec-ok':>6} {'rec-er':>6}  {'ds':>4} {'rm':>4} {'ctrl':>5} "
+        f"{'wkr-mx':>6} {'mock':>4}  {'tot':>5}"
+    )
     print(hdr)
     print("-" * len(hdr))
     for r in out:

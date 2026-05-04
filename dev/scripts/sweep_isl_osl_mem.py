@@ -64,14 +64,28 @@ CELLS: list[tuple[int, int, int, int]] = [
 ]
 
 CTRL_CONTAINERS = [
-    "records-manager", "event-bus-proxy", "api", "dataset-manager",
-    "timing-manager", "control-plane", "results-sidecar",
-    "server-metrics-manager", "gpu-telemetry-manager",
+    "records-manager",
+    "event-bus-proxy",
+    "api",
+    "dataset-manager",
+    "timing-manager",
+    "control-plane",
+    "results-sidecar",
+    "server-metrics-manager",
+    "gpu-telemetry-manager",
 ]
 
 FIELDNAMES = [
-    "concurrency", "isl", "osl", "requests", "workers",
-    "phase", "duration_s", "rps", "output_tokens_per_second", "completed",
+    "concurrency",
+    "isl",
+    "osl",
+    "requests",
+    "workers",
+    "phase",
+    "duration_s",
+    "rps",
+    "output_tokens_per_second",
+    "completed",
     # Controller pod
     "ctrl_peak_records_mib",
     "ctrl_peak_total_mib",
@@ -94,8 +108,15 @@ def kubectl(*args: str, check: bool = True) -> str:
     return res.stdout
 
 
-def manifest(name: str, image: str, concurrency: int, isl: int, osl: int,
-             requests: int, workers: int) -> str:
+def manifest(
+    name: str,
+    image: str,
+    concurrency: int,
+    isl: int,
+    osl: int,
+    requests: int,
+    workers: int,
+) -> str:
     return textwrap.dedent(f"""
         apiVersion: aiperf.nvidia.com/v1alpha1
         kind: AIPerfJob
@@ -162,7 +183,14 @@ def top_pods(ns: str) -> list[tuple[str, str, float]]:
 
 def cr_status(name: str) -> dict:
     out = kubectl(
-        "-n", NS_BENCH, "get", "aiperfjob", name, "-o", "json", check=False,
+        "-n",
+        NS_BENCH,
+        "get",
+        "aiperfjob",
+        name,
+        "-o",
+        "json",
+        check=False,
     )
     if not out:
         return {}
@@ -181,8 +209,9 @@ class PeakSampler:
     def sample(self) -> None:
         bench = top_pods(NS_BENCH)
         for pod, container, mib in bench:
-            if not pod.startswith(f"aiperf-{self.job_name}-") and \
-               not pod.startswith("aiperf-mock-server-"):
+            if not pod.startswith(f"aiperf-{self.job_name}-") and not pod.startswith(
+                "aiperf-mock-server-"
+            ):
                 continue
             key = (pod, container)
             self.bench_peaks[key] = max(self.bench_peaks.get(key, 0.0), mib)
@@ -193,8 +222,11 @@ class PeakSampler:
 
     def summarize(self) -> dict:
         ctrl_pod = next(
-            (p for (p, _c) in self.bench_peaks
-             if p.startswith(f"aiperf-{self.job_name}-controller-")),
+            (
+                p
+                for (p, _c) in self.bench_peaks
+                if p.startswith(f"aiperf-{self.job_name}-controller-")
+            ),
             None,
         )
         ctrl_peaks = {c: 0.0 for c in CTRL_CONTAINERS}
@@ -243,8 +275,9 @@ class PeakSampler:
         }
 
 
-def make_row(concurrency: int, isl: int, osl: int, requests: int, workers: int,
-             **extra) -> dict:
+def make_row(
+    concurrency: int, isl: int, osl: int, requests: int, workers: int, **extra
+) -> dict:
     row = {k: 0 for k in FIELDNAMES}
     row["concurrency"] = concurrency
     row["isl"] = isl
@@ -258,20 +291,33 @@ def make_row(concurrency: int, isl: int, osl: int, requests: int, workers: int,
     return row
 
 
-def run_one(name: str, image: str, concurrency: int, isl: int, osl: int,
-            requests: int, workers: int) -> dict:
-    print(f"\n=== {name} (concurrency={concurrency}, isl={isl}, osl={osl}, "
-          f"requests={requests}, workers={workers}) ===")
+def run_one(
+    name: str,
+    image: str,
+    concurrency: int,
+    isl: int,
+    osl: int,
+    requests: int,
+    workers: int,
+) -> dict:
+    print(
+        f"\n=== {name} (concurrency={concurrency}, isl={isl}, osl={osl}, "
+        f"requests={requests}, workers={workers}) ==="
+    )
 
     yaml_text = manifest(name, image, concurrency, isl, osl, requests, workers)
     p = subprocess.run(
         ["kubectl", "--context", CTX, "apply", "-f", "-"],
-        input=yaml_text, capture_output=True, text=True, check=False,
+        input=yaml_text,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if p.returncode != 0:
         print(f"  apply FAILED: {p.stderr.strip()}", file=sys.stderr)
-        return make_row(concurrency, isl, osl, requests, workers,
-                        phase="ApplyError", duration_s=-1)
+        return make_row(
+            concurrency, isl, osl, requests, workers, phase="ApplyError", duration_s=-1
+        )
     print(p.stdout.strip())
 
     start = time.monotonic()
@@ -305,13 +351,22 @@ def run_one(name: str, image: str, concurrency: int, isl: int, osl: int,
     summary = final.get("summary") or {}
     rps = summary.get("throughput_rps")
     out_tps = summary.get("output_tokens_per_second")
-    progress = (final.get("phases") or {}).get("profiling", {}).get(
-        "requestsCompleted", 0,
+    progress = (
+        (final.get("phases") or {})
+        .get("profiling", {})
+        .get(
+            "requestsCompleted",
+            0,
+        )
     )
 
     summary_row = sampler.summarize()
     row = make_row(
-        concurrency, isl, osl, requests, workers,
+        concurrency,
+        isl,
+        osl,
+        requests,
+        workers,
         phase=final.get("phase", ""),
         duration_s=round(duration, 1),
         rps=rps,
@@ -337,8 +392,11 @@ def run_one(name: str, image: str, concurrency: int, isl: int, osl: int,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", required=True,
-                    help="Operator-side image, e.g. nvcr.io/.../aiperf:k8s-multi-...")
+    ap.add_argument(
+        "--image",
+        required=True,
+        help="Operator-side image, e.g. nvcr.io/.../aiperf:k8s-multi-...",
+    )
     ap.add_argument("--out", default="dev/results/sweep-isl-osl-mem.csv")
     args = ap.parse_args()
 
@@ -346,14 +404,22 @@ def main() -> int:
     for c, isl, osl, req in CELLS:
         workers = -(-c // CONNECTIONS_PER_WORKER)
         name = f"sweep-iom-c{c:05d}-i{isl:04d}-o{osl:04d}"
-        kubectl("-n", NS_BENCH, "delete", "aiperfjob", name,
-                "--ignore-not-found=true", check=False)
+        kubectl(
+            "-n",
+            NS_BENCH,
+            "delete",
+            "aiperfjob",
+            name,
+            "--ignore-not-found=true",
+            check=False,
+        )
         try:
             row = run_one(name, args.image, c, isl, osl, req, workers)
         except Exception as e:  # noqa: BLE001
             print(f"  unexpected error on {name}: {e}", file=sys.stderr)
-            row = make_row(c, isl, osl, req, workers,
-                           phase="UnexpectedError", duration_s=-1)
+            row = make_row(
+                c, isl, osl, req, workers, phase="UnexpectedError", duration_s=-1
+            )
         rows.append(row)
 
         with open(args.out, "w", newline="") as f:

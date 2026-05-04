@@ -93,12 +93,21 @@ class TestToAIPerfConfig:
         config = converter.to_aiperf_config()
 
         assert config.get_model_names() == ["gpt-4"]
-        assert "http://api.example.com/v1/chat/completions" in config.benchmark.endpoint.urls
+        assert (
+            "http://api.example.com/v1/chat/completions"
+            in config.benchmark.endpoint.urls
+        )
         assert any(p.name == "profiling" for p in config.benchmark.phases)
         assert (
-            next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 500
+            next(
+                p for p in config.benchmark.phases if p.name == "profiling"
+            ).concurrency
+            == 500
         )
-        assert next(p for p in config.benchmark.phases if p.name == "profiling").requests == 1000
+        assert (
+            next(p for p in config.benchmark.phases if p.name == "profiling").requests
+            == 1000
+        )
 
     def test_kubernetes_service_run_type(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -420,7 +429,10 @@ class TestApplyWorkerConfig:
         config = converter.to_aiperf_config()
         num_pods = apply_worker_config(config, 50)
         assert num_pods >= 1
-        assert config.benchmark.runtime.workers == num_pods * config.benchmark.runtime.workers_per_pod
+        assert (
+            config.benchmark.runtime.workers
+            == num_pods * config.benchmark.runtime.workers_per_pod
+        )
 
     def test_record_processors_set(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -484,7 +496,9 @@ class TestEnvVarExpansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert config.benchmark.endpoint.urls == ["http://fallback-host:9000/v1/chat/completions"]
+        assert config.benchmark.endpoint.urls == [
+            "http://fallback-host:9000/v1/chat/completions"
+        ]
 
     def test_missing_env_var_no_default_raises(self) -> None:
         from aiperf.config.loader import MissingEnvironmentVariableError
@@ -559,7 +573,12 @@ class TestJinja2Expansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 16
+        assert (
+            next(
+                p for p in config.benchmark.phases if p.name == "profiling"
+            ).concurrency
+            == 16
+        )
 
     def test_derived_value_from_other_field(self) -> None:
         spec = _expansion_spec(
@@ -577,8 +596,16 @@ class TestJinja2Expansion:
         )
         converter = AIPerfJobSpecConverter(spec, "job", "default")
         config = converter.to_aiperf_config()
-        assert next(p for p in config.benchmark.phases if p.name == "profiling").concurrency == 8
-        assert next(p for p in config.benchmark.phases if p.name == "profiling").requests == 80
+        assert (
+            next(
+                p for p in config.benchmark.phases if p.name == "profiling"
+            ).concurrency
+            == 8
+        )
+        assert (
+            next(p for p in config.benchmark.phases if p.name == "profiling").requests
+            == 80
+        )
 
     def test_variables_key_not_passed_to_pydantic(self) -> None:
         """variables section must be stripped before model_validate (extra='forbid')."""

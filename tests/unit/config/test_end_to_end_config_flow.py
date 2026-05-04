@@ -672,7 +672,9 @@ profiling:
         config = load_config_from_string(yaml_str)
         assert [p.name for p in config.benchmark.phases] == ["warmup", "profiling"]
         assert (
-            next(p for p in config.benchmark.phases if p.name == "warmup").exclude_from_results
+            next(
+                p for p in config.benchmark.phases if p.name == "warmup"
+            ).exclude_from_results
             is True
         )
         plan = build_benchmark_plan(config)

@@ -99,7 +99,9 @@ class TestMetricsJsonExporter:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -247,7 +249,9 @@ class TestMetricsJsonExporter:
                 mock_generate.assert_called_once()
 
                 # Verify file contains the returned content
-                expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+                expected_file = (
+                    mock_user_config.benchmark.artifacts.profile_export_json_file
+                )
                 with open(expected_file) as f:
                     actual_content = f.read()
 
@@ -275,7 +279,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -318,7 +324,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -345,7 +353,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -415,7 +425,9 @@ class TestMetricsJsonExporterTelemetry:
             # Should not raise exception despite missing metrics
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             assert expected_file.exists()
 
             with open(expected_file) as f:
@@ -477,7 +489,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -513,7 +527,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -572,7 +588,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -654,7 +672,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
@@ -715,7 +735,9 @@ class TestMetricsJsonExporterTelemetry:
             exporter = MetricsJsonExporter(exporter_config)
             await exporter.export()
 
-            expected_file = mock_user_config.benchmark.artifacts.profile_export_json_file
+            expected_file = (
+                mock_user_config.benchmark.artifacts.profile_export_json_file
+            )
             with open(expected_file) as f:
                 data = json.load(f)
 
