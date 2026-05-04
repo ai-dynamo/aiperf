@@ -72,18 +72,21 @@ class MetricResult(JsonMetricResult):
         `count` is omitted for non-RECORD metrics (derived/aggregate scalars),
         where it would trivially be 1 and risks being misread as the request
         count. Tags from other registries (e.g. GPU telemetry) are not in
-        MetricRegistry; those keep `count` as-is.
+        MetricRegistry; those keep `count` as-is. Future MetricType members
+        also keep `count` by default — opt them in here explicitly.
         """
         from aiperf.common.enums import MetricType
         from aiperf.metrics.metric_registry import MetricRegistry
 
         metric_class = MetricRegistry.get_class_or_none(self.tag)
-        is_scalar = metric_class is not None and metric_class.type != MetricType.RECORD
+        is_scalar = metric_class is not None and metric_class.type in {
+            MetricType.AGGREGATE,
+            MetricType.DERIVED,
+        }
 
         result = JsonMetricResult(
             unit=self.unit,
             count=None if is_scalar else self.count,
-            sum=self.sum,
         )
         for stat in STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
