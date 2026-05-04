@@ -32,11 +32,11 @@ _MINIMAL_CONFIG_KWARGS = {
         {"name": "default", "type": "concurrency", "requests": 100, "concurrency": 1}
     ],
     "runtime": {"ui": "simple"},
-    "random_seed": 42,
 }
 
 
 def _make_config(**overrides) -> BenchmarkConfig:
+    overrides.pop("random_seed", None)
     kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
     return BenchmarkConfig(**kwargs)
 

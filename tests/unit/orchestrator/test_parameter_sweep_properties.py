@@ -14,7 +14,7 @@ Architectural mapping (main -> HEAD):
   per-cell strategy is ``FixedTrialsStrategy`` only.
 - ``UserConfig.loadgen.concurrency`` -> ``AIPerfConfig.phases[i].concurrency``
   (with magic-list -> sweep-block promotion in the v1->v2 converter).
-- Variation labels: ``concurrency_10`` -> ``phases.profiling.concurrency=10``.
+- Variation labels: ``concurrency_10`` -> ``benchmark.phases.profiling.concurrency=10``.
 - Seed derivation: ``base_seed + variation.index`` is now applied by
   ``_apply_sweep_seed_derivation`` in ``config/loader/plan.py``.
 """
@@ -66,24 +66,26 @@ def _make_config(
     ``phases.profiling.concurrency``. Otherwise sets a scalar.
     """
     payload: dict[str, Any] = {
-        "models": ["test-model"],
-        "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
-        "datasets": [
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 10,
-                "prompts": {"isl": 32, "osl": 16},
-            }
-        ],
-        "phases": [
-            {
-                "name": "profiling",
-                "type": "concurrency",
-                "requests": 5,
-                "concurrency": concurrency if isinstance(concurrency, int) else 1,
-            }
-        ],
+        "benchmark": {
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 10,
+                    "prompts": {"isl": 32, "osl": 16},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 5,
+                    "concurrency": concurrency if isinstance(concurrency, int) else 1,
+                }
+            ],
+        },
         "multi_run": {
             "num_runs": num_runs,
             "parameter_sweep_same_seed": parameter_sweep_same_seed,
@@ -96,14 +98,14 @@ def _make_config(
     if isinstance(concurrency, list):
         payload["sweep"] = {
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": concurrency},
+            "variables": {"benchmark.phases.profiling.concurrency": concurrency},
         }
     return AIPerfConfig(**payload)
 
 
 def _profiling_concurrency(cfg: Any) -> int:
     """Extract concurrency from the profiling phase of a BenchmarkConfig."""
-    for phase in cfg.benchmark.phases:
+    for phase in cfg.phases:
         if phase.name == "profiling":
             return phase.concurrency
     raise AssertionError("no profiling phase on resolved config")
@@ -172,7 +174,7 @@ class TestProperty1PBT:
         """The i-th variation's values dict carries the i-th concurrency."""
         plan = build_benchmark_plan(_make_config(concurrency))
 
-        actual = [v.values["phases.profiling.concurrency"] for v in plan.variations]
+        actual = [v.values["benchmark.phases.profiling.concurrency"] for v in plan.variations]
         assert actual == concurrency
 
 
@@ -249,17 +251,20 @@ class TestProperty3DuplicateValuesPBT:
         # validation that may dedup on the dict path. The pure expansion is
         # what the orchestrator iterates over.
         data = {
-            "phases": [{"name": "profiling", "concurrency": 1}],
+            "benchmark": {
+                "phases": [{"name": "profiling", "concurrency": 1}],
+            },
             "sweep": {
                 "type": "grid",
-                "variables": {"phases.profiling.concurrency": concurrency},
+                "variables": {"benchmark.phases.profiling.concurrency": concurrency},
             },
         }
         expanded = expand_sweep(data)
 
         assert len(expanded) == len(concurrency)
         actual = [
-            variation_dict["phases"][0]["concurrency"] for variation_dict, _ in expanded
+            variation_dict["benchmark"]["phases"][0]["concurrency"]
+            for variation_dict, _ in expanded
         ]
         assert actual == concurrency
 
@@ -592,15 +597,15 @@ class TestGroupResultsByVariationPBT:
                 label=f"run-{c}",
                 success=True,
                 summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
-                variation_label=f"phases.profiling.concurrency={c}",
-                variation_values={"phases.profiling.concurrency": c},
+                variation_label=f"benchmark.phases.profiling.concurrency={c}",
+                variation_values={"benchmark.phases.profiling.concurrency": c},
                 trial_index=0,
             )
             for c in concurrency
         ]
         groups = _group_results_by_variation(results)
 
-        keyed = [dict(key)["phases.profiling.concurrency"] for key in groups]
+        keyed = [dict(key)["benchmark.phases.profiling.concurrency"] for key in groups]
         assert keyed == concurrency
         assert all(len(group) == 1 for group in groups.values())
 
@@ -620,8 +625,8 @@ class TestGroupResultsByVariationPBT:
                 label=f"run-{c}-t{t}",
                 success=True,
                 summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
-                variation_label=f"phases.profiling.concurrency={c}",
-                variation_values={"phases.profiling.concurrency": c},
+                variation_label=f"benchmark.phases.profiling.concurrency={c}",
+                variation_values={"benchmark.phases.profiling.concurrency": c},
                 trial_index=t,
             )
             for c in concurrency
