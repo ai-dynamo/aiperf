@@ -93,7 +93,7 @@ def _make_run(**config_overrides) -> BenchmarkRun:
     config = _make_config(**config_overrides)
     return BenchmarkRun(
         benchmark_id="test",
-        cfg=config,
+        cfg=config.benchmark,
         artifact_dir=Path("/tmp/test"),
     )
 
