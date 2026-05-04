@@ -11,7 +11,7 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
 from tests.unit.dataset.loader.conftest import _make_run
 
-# Common base fields for creating AIPerfConfig in tests
+# Common base benchmark-body fields for creating AIPerfConfig in tests
 _BASE = dict(
     models=["test-model"],
     endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
@@ -373,7 +373,7 @@ class TestBailianTraceDatasetLoader:
 
         synthesis = {"max_isl": max_isl} if max_isl is not None else {}
         config = AIPerfConfig(
-            **{
+            benchmark={
                 **_BASE,
                 "datasets": [
                     {
@@ -417,7 +417,7 @@ class TestBailianTraceDatasetLoader:
 
         synthesis = {"max_osl": max_osl} if max_osl is not None else {}
         config = AIPerfConfig(
-            **{
+            benchmark={
                 **_BASE,
                 "datasets": [
                     {
@@ -642,7 +642,7 @@ def _make_synthesis_config(
     if max_isl is not None:
         synthesis["max_isl"] = max_isl
     return AIPerfConfig(
-        **{
+        benchmark={
             **_BASE,
             "datasets": [
                 {

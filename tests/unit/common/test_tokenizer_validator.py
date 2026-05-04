@@ -25,21 +25,21 @@ from aiperf.common.tokenizer_validator import (
 def mock_user_config() -> MagicMock:
     """Create a mock BenchmarkConfig with tokenizer-requiring endpoint.
 
-    Uses k8s's BenchmarkConfig surface: get_model_names() and
-    get_default_dataset() are methods, not attributes; endpoint.type is a
-    string; tokenizer is a sub-config.
+    `validate_tokenizer_early` consumes a BenchmarkConfig directly (the
+    body of the envelope), so the mock exposes flat attributes:
+    ``config.endpoint.type``, ``config.tokenizer.name``, etc.
     """
     config = MagicMock()
-    config.benchmark.endpoint.type = "openai_chat"
-    config.benchmark.endpoint.use_server_token_count = False
+    config.endpoint.type = "openai_chat"
+    config.endpoint.use_server_token_count = False
     config.get_model_names.return_value = ["gpt-4o", "gpt-4o-mini"]
     # Default to synthetic dataset so server-token-count skip does not trigger
     default_dataset = MagicMock()
     default_dataset.type = "synthetic"
     config.get_default_dataset.return_value = default_dataset
-    config.benchmark.tokenizer.name = None
-    config.benchmark.tokenizer.trust_remote_code = False
-    config.benchmark.tokenizer.revision = "main"
+    config.tokenizer.name = None
+    config.tokenizer.trust_remote_code = False
+    config.tokenizer.revision = "main"
     return config
 
 
@@ -66,7 +66,7 @@ class TestValidatorTiktokenShortCircuit:
     def test_builtin_skips_alias_resolution(
         self, mock_user_config, mock_logger
     ) -> None:
-        mock_user_config.benchmark.tokenizer.name = BUILTIN_TOKENIZER_NAME
+        mock_user_config.tokenizer.name = BUILTIN_TOKENIZER_NAME
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
             result = validate_tokenizer_early(mock_user_config, mock_logger)
@@ -81,7 +81,7 @@ class TestValidatorTiktokenShortCircuit:
     def test_tiktoken_encoding_names_skip_alias_resolution(
         self, mock_user_config, mock_logger, encoding_name: str
     ) -> None:
-        mock_user_config.benchmark.tokenizer.name = encoding_name
+        mock_user_config.tokenizer.name = encoding_name
 
         with patch.object(Tokenizer, "resolve_alias") as mock_resolve:
             result = validate_tokenizer_early(mock_user_config, mock_logger)
@@ -253,7 +253,7 @@ class TestValidatorSkipsPrefetchEntirely:
     def test_builtin_tokenizer_skips_prefetch(
         self, mock_user_config, mock_logger
     ) -> None:
-        mock_user_config.benchmark.tokenizer.name = BUILTIN_TOKENIZER_NAME
+        mock_user_config.tokenizer.name = BUILTIN_TOKENIZER_NAME
 
         with (
             patch.object(Tokenizer, "resolve_alias"),
@@ -269,7 +269,7 @@ class TestValidatorSkipsPrefetchEntirely:
         self, mock_user_config, mock_logger
     ) -> None:
         # cl100k_base is a tiktoken encoding; validator must not prefetch it.
-        mock_user_config.benchmark.tokenizer.name = "cl100k_base"
+        mock_user_config.tokenizer.name = "cl100k_base"
 
         with (
             patch.object(Tokenizer, "resolve_alias"),
@@ -289,7 +289,7 @@ class TestValidatorFakeModelFallback:
     def test_all_fake_models_skip_alias_resolution_and_prefetch(
         self, mock_user_config, mock_logger
     ) -> None:
-        mock_user_config.benchmark.tokenizer.name = None
+        mock_user_config.tokenizer.name = None
         mock_user_config.get_model_names.return_value = ["mock-llama", "test-model"]
 
         with (
@@ -312,7 +312,7 @@ class TestValidatorFakeModelFallback:
     def test_mixed_fake_and_real_models_resolve_only_real(
         self, mock_user_config, mock_logger
     ) -> None:
-        mock_user_config.benchmark.tokenizer.name = None
+        mock_user_config.tokenizer.name = None
         mock_user_config.get_model_names.return_value = [
             "mock-llama",
             "Qwen/Qwen3-0.6B",
@@ -346,7 +346,7 @@ class TestValidatorFakeModelFallback:
         self, mock_user_config, mock_logger
     ) -> None:
         """Explicit --tokenizer wins, even if --model is placeholder-shaped."""
-        mock_user_config.benchmark.tokenizer.name = "Qwen/Qwen3-0.6B"
+        mock_user_config.tokenizer.name = "Qwen/Qwen3-0.6B"
         mock_user_config.get_model_names.return_value = ["mock-llama"]
 
         resolution = MagicMock()
