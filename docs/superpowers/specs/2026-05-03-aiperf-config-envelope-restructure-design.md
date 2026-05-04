@@ -73,7 +73,7 @@ Sweep expansion only ever merges into the `benchmark:` subtree (for body overrid
 
 ## Non-trivial design choices
 
-### Where each field lives, settled
+### Where each field lives, settled (target state)
 
 ```
 envelope (top-level YAML keys, AIPerfConfig fields):
@@ -89,13 +89,20 @@ benchmark body (BenchmarkConfig fields, all under `benchmark:` in YAML):
   runtime, logging, metrics, accuracy
 ```
 
-`variables` and `random_seed` move from `BenchmarkConfig` to envelope because they're cross-variation by nature: variables are the Jinja context that scenario `runs[i]` overlay into, and random_seed is the base from which per-variation seeds derive (`_apply_sweep_seed_derivation`).
+Today's location: `variables` and `random_seed` live on `BenchmarkConfig` (`src/aiperf/config/config.py:324-345`); under the new shape they move up to envelope because they're cross-variation by nature: `variables` is the Jinja context that scenario `runs[i]` overlay into, and `random_seed` is the base from which per-variation seeds derive (`_apply_sweep_seed_derivation`).
 
 Everything else stays under `benchmark:` regardless of whether it's "commonly swept." Splitting based on access frequency or sweep frequency was considered and rejected — it produces an arbitrary line that has no clean conceptual story for scenario overlay (does a scenario `runs[i].runtime: {workers: 10}` overlay envelope-level `runtime`? Probably not, but the asymmetry is impossible to explain). The whole point of the restructure is mental clarity: envelope = sweep machinery and overlays; body = the swept thing. Anything else at envelope dilutes that contract.
 
-### Verbosity at call sites
+### `MultiRunConfig` ambiguity (in-process vs k8s)
 
-This restructure adds `.benchmark.` to ~344 call sites that read body fields (`config.endpoint` → `config.benchmark.endpoint`, etc.). Most are in tests; production sites are roughly 130. The longest reads (e.g. `config.benchmark.endpoint.streaming` inside hot service paths) get the standard local-alias pattern:
+Two `MultiRunConfig` classes exist today, with different field surfaces:
+
+- **In-process** (`src/aiperf/config/_models_benchmark.py:27`) — full surface: `num_runs`, `cooldown_seconds`, `confidence_level`, `set_consistent_seed`, `disable_warmup_after_first`, `convergence_*`, `parameter_sweep_*`, `mode`, `adaptive_search`, `post_process`, `sla_filters`.
+- **K8s CRD** (`src/aiperf/kubernetes/sweep_models.py:52`) — leaner surface: `trials`, `cooldown_seconds`, `auto_set_seed`, `disable_warmup_after_first`, `mode`, `adaptive_search`.
+
+Plan A's envelope `multi_run` field uses the **in-process** `MultiRunConfig` (full surface), as today's `AIPerfConfig.multi_run` already does. The K8s `AIPerfSweepSpec.multi_run` keeps its leaner CRD-side type — they're different surfaces serving different consumers (CRD has a curated subset for cluster-side wire shape; in-process has the full surface for local config). Plan A does NOT unify them. If Plan C (the `AIPerfJob`/`AIPerfRun` CRD restructure) chooses to harmonize, it does so as part of that work.
+
+This restructure adds `.benchmark.` to ~335 call sites that read body fields (`config.endpoint` → `config.benchmark.endpoint`, etc.). Empirical breakdown via `grep -rE "(\b[a-z_]*config\b|\bcfg\b)\.(models|endpoint|datasets|phases)\b"`: ~125 in `src/aiperf/`, ~210 in `tests/`. The longest reads (e.g. `config.benchmark.endpoint.streaming` inside hot service paths) get the standard local-alias pattern:
 
 ```python
 def setup(self, config: AIPerfConfig) -> None:
@@ -190,6 +197,8 @@ See docs/tutorials/migrating-config.md for examples, or run:
 
 The detector triggers when any of `BODY_KEYS = {models, endpoint, datasets, phases, artifacts, slos, tokenizer, gpu_telemetry, server_metrics, runtime, logging, metrics, accuracy}` appears at the top level. Loader fails fast before any other validation so the error is unambiguous.
 
+`variables` and `random_seed` are intentionally NOT in `BODY_KEYS`: they're envelope-level in the new shape, so a top-level `variables:` or `random_seed:` is valid envelope syntax (no migration needed for those keys specifically). A user with a pre-restructure flat config that has only top-level `variables`/`random_seed` and no body keys could load on the new shape without re-indenting — but in practice every real config has body keys, so they hit the migration error first.
+
 ### Migration script
 
 `tools/migrate_config_yaml.py` (single-purpose, ~150 lines):
@@ -202,7 +211,7 @@ The detector triggers when any of `BODY_KEYS = {models, endpoint, datasets, phas
 
 ### Test fixtures
 
-~200 YAML strings + a smaller number of programmatic `AIPerfConfig(...)` constructions across `tests/`. The migration script handles YAML strings (find triple-quoted YAML literals in `*.py`, parse, rewrite, splice back). Programmatic constructions are manual edits — they need the new constructor shape `AIPerfConfig(benchmark=BenchmarkConfig(...), ...)`.
+~200 YAML strings (rough estimate; counts vary depending on whether nested fixtures and dataset/checkpoint YAML are included) + a smaller number of programmatic `AIPerfConfig(...)` constructions across `tests/`. The migration script handles YAML strings (find triple-quoted YAML literals in `*.py`, parse, rewrite, splice back). Programmatic constructions are manual edits — they need the new constructor shape `AIPerfConfig(benchmark=BenchmarkConfig(...), ...)`.
 
 ### Tutorials
 
@@ -220,16 +229,16 @@ Same hard-cut policy. Operator startup detects old-shape AIPerfJob CRs (those wi
   - `AIPerfConfig` rewritten to envelope shape (drop `BenchmarkConfig` inheritance, gain `benchmark`, `variables`, `random_seed` fields; keep `sweep`, `multi_run`).
   - `BenchmarkConfig` loses `variables` and `random_seed` fields (move to envelope).
   - The class-level docstrings explain the split.
+  - **Existing `AIPerfConfig` `model_validator(mode="after")` validators** (`validate_sweep_no_dashboard_ui`, `validate_sweep_same_seed_requires_seed`, `validate_sweep_cooldown_nonneg`, `validate_sweep_flags_require_sweep` — `config.py:503-609`) read body fields like `self.runtime.ui` and `self.multi_run.parameter_sweep_*`. After the split, the body reads become `self.benchmark.runtime.ui`. Validators stay on `AIPerfConfig`.
 
 - `src/aiperf/config/_benchmark_normalizers.py`
-  - Singular→plural normalizers (`dataset:` → `datasets:`, `model:` → `models:`, flat `phases:` → list) move from any `AIPerfConfig.model_validator(mode="before")` location to `BenchmarkConfig.model_validator(mode="before")` since they operate on body fields.
-  - The mutual-exclusivity validators (`dataset` vs `datasets`, `model` vs `models`) stay where they are (on BenchmarkConfig).
+  - **No move needed.** The `model_validator(mode="before")` that calls `normalize_benchmark_input` already lives on `BenchmarkConfig` (`src/aiperf/config/config.py:351-359`), not on `AIPerfConfig`. Singular→plural normalizers (`dataset:` → `datasets:`, `model:` → `models:`, flat `phases:` → list) and mutual-exclusivity validators stay where they are. Once `AIPerfConfig` drops the `BenchmarkConfig` inheritance, the normalizer simply runs against `BenchmarkConfig` instances directly (which is its current behavior).
 
 ### Loader
 
 - `src/aiperf/config/loader/core.py`
   - `load_config_from_string` adds the flat-shape detector + migration error before any other parsing.
-  - Jinja context-builder updated to flatten envelope `variables:` AND benchmark body, with body fields aliased at the top level (existing alias behavior, just keyed off the new shape).
+  - Jinja context-builder updated to flatten envelope `variables:` AND benchmark body. Body fields stay aliased at the top level for template ergonomics — this is a **behavior change** in `build_template_context` (`src/aiperf/config/loader/jinja.py:66-96`): today the recursion would produce `benchmark.endpoint.urls[0]` only; under the new shape we also alias body keys at top level (`endpoint.urls[0]`) to preserve user templates from gaining typing burden. The `_flatten_into_context` helper grows a "lift body keys to top level" pass for the `benchmark.*` subtree.
 
 - `src/aiperf/config/loader/plan.py`
   - `build_benchmark_plan(config: AIPerfConfig)` simplifies: `configs = [config.benchmark]` for non-sweep, expand-sweep+per-variation render for sweep. The "strip multi_run from variation_dict" code path goes away.
@@ -278,9 +287,9 @@ Same hard-cut policy. Operator startup detects old-shape AIPerfJob CRs (those wi
 
 ### Service-side call sites
 
-- ~344 sites across `src/aiperf/` and `tests/` reading `config.X` for body fields gain `.benchmark.` prefix. Mechanical grep+replace.
+- ~335 sites across `src/aiperf/` and `tests/` reading `config.X` for body fields gain `.benchmark.` prefix. Mechanical grep+replace.
 - Long reads inside hot paths use the local-alias pattern (`bench = config.benchmark`).
-- Production count: ~130 sites. Test count: ~210 sites. The migration script handles YAML literals in tests; programmatic constructions are manual edits.
+- Production count: ~125 sites. Test count: ~210 sites. The migration script handles YAML literals in tests; programmatic constructions are manual edits.
 
 ### Tests
 
