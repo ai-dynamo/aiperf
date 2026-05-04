@@ -113,7 +113,7 @@ class TestRunBenchmark:
     ):
         """Test that an error is raised when explicitly using dashboard UI with multi-run."""
         for cfg in plan_multi_run.configs:
-            cfg.benchmark.runtime.ui = UIType.DASHBOARD
+            cfg.runtime.ui = UIType.DASHBOARD
 
         with pytest.raises(
             ValueError, match="Dashboard UI is not supported with sweep/multi-run mode"
@@ -129,7 +129,7 @@ class TestRunBenchmark:
     ):
         """Test that no warning is logged when using simple UI with multi-run."""
         for cfg in plan_multi_run.configs:
-            cfg.benchmark.runtime.ui = UIType.SIMPLE
+            cfg.runtime.ui = UIType.SIMPLE
 
         run_benchmark(plan_multi_run)
 
@@ -664,8 +664,8 @@ class TestConfigureTokenizerPreload:
 
         monkeypatch.delenv("AIPERF_PRELOAD_TOKENIZERS", raising=False)
         run = _make_run()
-        run.cfg.benchmark.models.items = []
-        run.cfg.benchmark.tokenizer = None
+        run.cfg.models.items = []
+        run.cfg.tokenizer = None
         _configure_tokenizer_preload(run)
         import os as _os
 

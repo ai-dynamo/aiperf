@@ -159,13 +159,13 @@ class TestImageGenerator:
     def test_init_with_config(self, base_config):
         """Test ImageGenerator initialization with valid config."""
         generator = ImageGenerator(_make_run(base_config))
-        assert generator.run.cfg == base_config
+        assert generator.run.cfg == base_config.benchmark
         assert hasattr(generator, "logger")
 
     def test_init_with_different_configs(self, various_configs):
         """Test initialization with various config parameters."""
         generator = ImageGenerator(_make_run(various_configs))
-        assert generator.run.cfg == various_configs
+        assert generator.run.cfg == various_configs.benchmark
 
     @patch(
         "aiperf.dataset.generator.image.utils.encode_image",

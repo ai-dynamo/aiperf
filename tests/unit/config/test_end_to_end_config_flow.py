@@ -234,7 +234,9 @@ benchmark:
 
         assert len(variations) == 3
         concurrencies = [
-            next(p for p in v[0]["phases"] if p["name"] == "default")["concurrency"]
+            next(p for p in v[0]["benchmark"]["phases"] if p["name"] == "default")[
+                "concurrency"
+            ]
             for v in variations
         ]
         assert concurrencies == [8, 16, 32]
@@ -627,17 +629,17 @@ class TestFlatConfigYaml:
 
     def test_minimal_flat_config(self) -> None:
         yaml_str = textwrap.dedent("""\
-model: test-model
 benchmark:
+  model: test-model
   endpoint:
     url: http://localhost:8000/v1/chat/completions
-dataset:
-  isl: 512
-  osl: 128
-profiling:
-  type: concurrency
-  requests: 10
-  concurrency: 1
+  dataset:
+    isl: 512
+    osl: 128
+  profiling:
+    type: concurrency
+    requests: 10
+    concurrency: 1
 """)
         config = load_config_from_string(yaml_str)
         assert "default" in [d.name for d in config.benchmark.datasets]
@@ -645,8 +647,8 @@ profiling:
 
     def test_warmup_profiling_flat_config(self) -> None:
         yaml_str = textwrap.dedent("""\
-model: test-model
 benchmark:
+  model: test-model
   endpoint:
     url: http://localhost:8000/v1/chat/completions
   datasets:
@@ -658,16 +660,16 @@ benchmark:
       isl: {mean: 550, stddev: 50}
       osl: {mean: 150, stddev: 25}
       entries: 500
-warmup:
-  type: concurrency
-  dataset: warmup
-  requests: 100
-  concurrency: 8
-profiling:
-  type: concurrency
-  dataset: profiling
-  requests: 10
-  concurrency: 1
+  warmup:
+    type: concurrency
+    dataset: warmup
+    requests: 100
+    concurrency: 8
+  profiling:
+    type: concurrency
+    dataset: profiling
+    requests: 10
+    concurrency: 1
 """)
         config = load_config_from_string(yaml_str)
         assert [p.name for p in config.benchmark.phases] == ["warmup", "profiling"]

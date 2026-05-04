@@ -137,7 +137,7 @@ class TestBuildV1Overrides:
         )
         out = build_v1_overrides(user)
         assert out["sweep"]["type"] == "grid"
-        assert "datasets.main.prompts.isl" in out["sweep"]["variables"]
+        assert "benchmark.datasets.main.prompts.isl" in out["sweep"]["variables"]
 
     def test_service_config_ui_lands_on_runtime_block(self) -> None:
         """Service-level CLI flags go through build_logging_runtime."""
@@ -220,17 +220,19 @@ class TestResolveConfig:
         p = tmp_path / "base.yaml"
         p.write_text(
             """
-model: m
-endpoint:
-  url: http://yaml
-  type: chat
-dataset:
-  type: synthetic
-  prompts: {isl: 64, osl: 32}
-phases:
-  type: concurrency
-  concurrency: 4
-  requests: 30
+benchmark:
+  model: m
+  endpoint:
+    url: http://yaml
+    type: chat
+  dataset:
+    type: synthetic
+    prompts: {isl: 64, osl: 32}
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 4
+      requests: 30
 """
         )
         return p

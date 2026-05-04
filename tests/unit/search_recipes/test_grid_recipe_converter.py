@@ -30,8 +30,8 @@ def test_grid_recipe_populates_sweep_variables_through_converter():
     # Grid recipes drive a sweep, so AIPerfConfig.sweep is populated.
     assert aiperf.sweep is not None
     assert aiperf.sweep.type == "grid"
-    assert "phases.profiling.concurrency" in aiperf.sweep.variables
-    values = aiperf.sweep.variables["phases.profiling.concurrency"]
+    assert "benchmark.phases.profiling.concurrency" in aiperf.sweep.variables
+    values = aiperf.sweep.variables["benchmark.phases.profiling.concurrency"]
     assert values[0] == 1
     assert values[-1] == 1000
 
@@ -53,7 +53,7 @@ def test_grid_recipe_does_not_set_adaptive_search():
 def test_prefill_ttft_curve_through_converter():
     user = _user(search_recipe="prefill-ttft-curve", isl_min=512, isl_max=4096)
     aiperf = convert_user_to_aiperf(user, _service())
-    isl_path = "datasets.main.prompts.isl"
+    isl_path = "benchmark.datasets.main.prompts.isl"
     assert aiperf.sweep is not None
     assert isl_path in aiperf.sweep.variables
     assert aiperf.sweep.variables[isl_path][0] == 512
@@ -79,9 +79,9 @@ def test_grid_recipe_dataset_path_targets_converter_actual_dataset_name():
     user = _user(search_recipe="prefill-ttft-curve", isl_min=512, isl_max=4096)
     aiperf = convert_user_to_aiperf(user, _service())
     # Exactly one dataset, named "main".
-    assert len(aiperf.datasets) == 1
-    assert aiperf.datasets[0].name == "main"
+    assert len(aiperf.benchmark.datasets) == 1
+    assert aiperf.benchmark.datasets[0].name == "main"
     # And the sweep variable's dotted path resolves to that same dataset.
-    expected_path = "datasets.main.prompts.isl"
+    expected_path = "benchmark.datasets.main.prompts.isl"
     assert aiperf.sweep is not None
     assert expected_path in aiperf.sweep.variables

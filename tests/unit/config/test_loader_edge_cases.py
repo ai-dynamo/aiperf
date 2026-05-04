@@ -279,7 +279,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [1, 2]},
+                "variables": {"benchmark.phases.default.concurrency": [1, 2]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -309,7 +309,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [4, 8, 16]},
+                "variables": {"benchmark.phases.default.concurrency": [4, 8, 16]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -347,7 +347,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [1]},
+                "variables": {"benchmark.phases.default.concurrency": [1]},
             }
         )
         plan = build_benchmark_plan(config)
