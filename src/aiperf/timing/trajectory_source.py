@@ -23,7 +23,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from aiperf.common.models import DatasetMetadata
-from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.scenario.base import (
+    EmptyTracePoolError,
+    InsufficientTrajectoriesError,
+)
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.conversation_source import ConversationSource, SampledSession
 
@@ -74,19 +77,26 @@ class TrajectorySource(ConversationSource):
 
         self._random_seed = random_seed
         pool_size = len(dataset_metadata.conversations)
-        if concurrency > pool_size:
-            _logger.warning(
-                "Concurrency %d exceeds trace pool size %d; trajectories capped at pool size, "
-                "PROFILING phase will recycle traces to fill remaining sessions.",
-                concurrency,
-                pool_size,
-            )
-        self._target_size = min(concurrency, pool_size)
+        self._concurrency = concurrency
+        self._pool_size = pool_size
+        # Build trajectories up to the user-requested concurrency. If we can't
+        # fill that many lanes from the pool (either pool < concurrency, or
+        # too many traces are too short to split into warmup+profiling), the
+        # post-build check below rejects the run instead of silently capping
+        # effective load below --concurrency.
+        self._target_size = concurrency
         self.trajectories: list[Trajectory] = self._build_trajectories()
 
         if not self.trajectories:
             raise EmptyTracePoolError(
                 "Trajectories empty after skipping invalid traces; pool exhausted."
+            )
+
+        if len(self.trajectories) < concurrency:
+            raise InsufficientTrajectoriesError(
+                concurrency=concurrency,
+                usable_trajectories=len(self.trajectories),
+                pool_size=pool_size,
             )
 
     def _build_trajectories(self) -> list[Trajectory]:
@@ -135,12 +145,6 @@ class TrajectorySource(ConversationSource):
                 k_i = int(rng.integers(low=0, high=k_max + 1))
             trajectories.append(Trajectory(conversation_id=cid, start_turn_index=k_i))
 
-        if len(trajectories) < self._target_size:
-            _logger.warning(
-                "Trajectory count %d is smaller than concurrency %d (pool partially exhausted during selection).",
-                len(trajectories),
-                self._target_size,
-            )
         return trajectories
 
     def session_for(

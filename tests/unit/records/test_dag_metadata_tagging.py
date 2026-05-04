@@ -135,6 +135,7 @@ class TestBranchStatsExport:
             "parents_resumed": 0,
             "parents_failed_due_to_child_error": 0,
             "joins_suppressed": 0,
+            "children_truncated": 0,
         }
 
     def test_branch_stats_dict_helper(self):
@@ -153,6 +154,7 @@ class TestBranchStatsExport:
             "parents_resumed": 3,
             "parents_failed_due_to_child_error": 0,
             "joins_suppressed": 0,
+            "children_truncated": 0,
         }
 
     def test_branch_stats_roundtrip_through_profile_results(self):

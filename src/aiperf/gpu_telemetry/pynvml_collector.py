@@ -321,6 +321,13 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         """
         await self._collect_and_process_metrics()
 
+    async def collect_and_process_metrics(self) -> None:
+        """Public wrapper matching BaseMetricsCollectorMixin interface.
+
+        Called by GPUTelemetryManager for baseline capture and final state capture.
+        """
+        await self._collect_and_process_metrics()
+
     async def _collect_and_process_metrics(self) -> None:
         """Collect metrics from all GPUs and send via callback.
 

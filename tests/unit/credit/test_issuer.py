@@ -888,18 +888,14 @@ class TestDispatchFirstTurn:
     async def test_dispatch_first_turn_returns_true_on_saturation_no_rollback(
         self, credit_issuer, mock_concurrency, mock_router, caplog
     ):
-        """When ``try_issue_credit`` returns ``None`` (no concurrency slot),
-        ``dispatch_first_turn`` treats this as transient back-pressure and
-        returns ``True`` (no orchestrator rollback) while logging a warning.
-
-        Returning False would cause the orchestrator to release gate/refcount
-        bookkeeping for the child, which in turn would hang the parent's
-        join — the orchestrator's contract is "rollback only on hard refusal".
-        Slot saturation is transient, so suppress rollback and surface the
-        back-pressure in logs.
+        """When the prefill slot is saturated, ``dispatch_child_turn``
+        (the path ``dispatch_first_turn`` now wraps) returns False and the
+        caller rolls back — saturation and gate-refusal share a single
+        rollback signal so the issuer's ``bool`` contract stays simple.
+        Children that lose the rollback are released via the
+        orchestrator's ``on_child_stopped`` path, not by suppressing
+        rollback at the issuer layer.
         """
-        import logging
-
         from aiperf.common.models import ConversationMetadata, TurnMetadata
         from aiperf.timing.conversation_source import SampledSession
 
@@ -918,15 +914,8 @@ class TestDispatchFirstTurn:
             parent_correlation_id="parent-xid",
         )
 
-        with caplog.at_level(logging.WARNING):
-            result = await credit_issuer.dispatch_first_turn(session)
+        result = await credit_issuer.dispatch_first_turn(session)
 
-        assert result is True
-        # No credit was actually sent (try_issue_credit returned None because
-        # the prefill slot was unavailable).
+        assert result is False
+        # No credit was actually sent (slot acquisition failed).
         mock_router.send_credit.assert_not_called()
-        # Back-pressure visible in logs.
-        assert any(
-            "no concurrency slot" in r.getMessage() and "child-xid" in r.getMessage()
-            for r in caplog.records
-        )

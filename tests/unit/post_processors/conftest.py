@@ -49,7 +49,6 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -339,21 +338,48 @@ def setup_mock_registry_sequences(
 
 def create_results_processor_with_metrics(
     user_config: UserConfig, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
-
-    Args:
-        user_config: User configuration for the processor
-        metrics: list of metric classes
-
-    Returns:
-        Configured MetricResultsProcessor instance
+):
+    """Deprecated: ``MetricResultsProcessor`` is no longer in the codebase.
+    Tests should migrate to ``MetricsAccumulator``.
     """
+    raise NotImplementedError(
+        "create_results_processor_with_metrics is deprecated; "
+        "MetricResultsProcessor was removed in favor of MetricsAccumulator. "
+        "Update the test to construct MetricsAccumulator directly."
+    )
 
-    processor = MetricResultsProcessor(user_config)
-    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
-    return processor
+
+def create_accumulator_with_metrics(
+    user_config: UserConfig, *metrics: type[BaseMetric]
+):
+    """Construct a :class:`MetricsAccumulator` pre-configured with ``metrics``.
+
+    Replaces the deprecated ``create_results_processor_with_metrics`` helper.
+    Bypasses ``_setup_metrics`` / ``MetricRegistry`` so individual tests can
+    drive the accumulator with synthetic metric classes without registering
+    them globally.
+    """
+    from aiperf.metrics.accumulator import MetricsAccumulator
+
+    accumulator = MetricsAccumulator(user_config=user_config)
+    accumulator._tags_to_types = {metric.tag: metric.type for metric in metrics}
+    accumulator._metric_classes = {metric.tag: metric for metric in metrics}
+    accumulator._aggregation_kinds = {
+        metric.tag: metric.aggregation_kind
+        for metric in metrics
+        if hasattr(metric, "aggregation_kind")
+    }
+    return accumulator
+
+
+def _make_run(config: UserConfig, artifact_dir: Path | None = None) -> UserConfig:
+    """Compatibility shim that returns the config unchanged.
+
+    ``MetricsAccumulator`` takes ``user_config: UserConfig`` directly, so
+    ``_make_run(cfg)`` is just an identity function for tests still written
+    against an older constructor signature.
+    """
+    return config
 
 
 @pytest.fixture
@@ -373,9 +399,6 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr("aiperf.metrics.metric_registry.MetricRegistry", mock_registry)
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
-    )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
     )
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 

@@ -7,7 +7,7 @@ Each test exercises the full
 JSON-decode path so the stamping behavior is verified end-to-end through
 the JSON output that ships in `profile_export_aiperf_aggregate.json`.
 
-Wiring contract (introduced as part of Task 17, deferred from Task 7):
+Wiring contract:
 - Scenario name and validator outcome are passed via underscore-prefixed
   keys on `AggregateResult.metadata`:
     * `_scenario_name`
@@ -20,10 +20,10 @@ Wiring contract (introduced as part of Task 17, deferred from Task 7):
   `_build_run_metadata_dict()` to emit the final
   `submission_valid` / `submission_invalid_reasons` fields.
 
-Real e2e wiring of these keys from `cli_runner.py`/orchestrator/scenario
-validator into AggregateResult.metadata is deferred to Task 19 (the e2e
-task). These tests pin the helper-and-exporter integration that Task 19
-will then end-to-end verify.
+These tests pin the helper-and-exporter integration; the matching
+loader -> trajectory -> strategy -> aggregate -> exporter chain is
+exercised end-to-end by ``test_agentic_replay_e2e.py`` and the CLI-surface
+test ``test_agentic_replay_cli_e2e.py``.
 """
 
 import json

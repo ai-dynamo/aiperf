@@ -6,13 +6,11 @@ Same (benchmark_id, recycle_pass, trajectory_index, trace_id) always yields
 the same digest - reproducible across reruns. Position controls whitespace
 placement, not the digest itself.
 
-The four-dimensional tuple matches v2's collision-free design
-(`../kv-cache-tester-v2/src/aiperf/timing/strategies/agentic_load.py:101`):
-adding ``trace_id`` to the digest input ensures every (recycle_pass, lane,
-trace) combination is unique by construction. Without ``trace_id``, two
-different traces landing on the same ``(recycle_pass, lane)`` tuple at
-different points in time would produce the same marker — empirically a 33%
-collision rate at MVP scale.
+Adding ``trace_id`` to the four-dimensional digest input ensures every
+(recycle_pass, lane, trace) combination is unique by construction. Without
+``trace_id``, two different traces landing on the same ``(recycle_pass, lane)``
+tuple at different points in time would produce the same marker — empirically
+a 33% collision rate at MVP scale.
 """
 
 import hashlib

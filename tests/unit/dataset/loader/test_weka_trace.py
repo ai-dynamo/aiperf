@@ -132,19 +132,44 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     assert conv.turns[0].timestamp == 0.0
     assert conv.turns[1].timestamp == 5000.0
     assert conv.turns[1].delay == pytest.approx(5000.0)
-    # Back-compat texts field still carries the synthesized full-prompt string —
-    # post-consolidation the worker derives it from the stub tokenizer's
-    # `decode.side_effect = lambda toks: f"<dec:{len(toks)}>"`, where len(toks)
-    # equals the request's input_length (200 for the simple fixture's turn 0).
-    assert conv.turns[0].texts[0].contents[0].startswith("<dec:200")
-    # Multi-segment shape: turn 0 should have system + user roles (no asst);
-    # turn 1 should additionally include an assistant segment.
+    # weka loader populates only ``Turn.raw_messages`` (the multi-message chat
+    # form consumed by ChatEndpoint.build_messages). ``Turn.texts`` is left
+    # at its default empty list — a separate full-prompt decode previously
+    # populated it but no consumer reads it for chat-shape traces, so the
+    # decode was removed.
+    assert conv.turns[0].texts == []
+    # Weka now emits delta-encoded turns. Turn 0 carries the full initial
+    # state (system + user). Turn 1 may either be a strict append (just
+    # asst + user_k) or a full re-emit (reset_context=True) if the LCP
+    # truncate disturbed an emitted segment — both forms are valid; we
+    # assert on the accumulated wire shape instead.
     turn_0_roles = [m["role"] for m in conv.turns[0].raw_messages]
     assert "user" in turn_0_roles
     assert "assistant" not in turn_0_roles
+    assert conv.turns[0].reset_context is False
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
     assert "assistant" in turn_1_roles
     assert "user" in turn_1_roles
+    # If turn 1 was a strict append, system stays in turn 0 only; if it
+    # was a reset, turn 1 carries the full state including system. Either
+    # is correct under DELTAS_WITH_RESPONSES semantics.
+    if conv.turns[1].reset_context:
+        assert "system" in turn_1_roles
+    else:
+        assert "system" not in turn_1_roles
+    # Accumulated state across both turns (mimicking what
+    # BaseEndpoint.build_messages produces at request time) must contain
+    # the full message-array prefix.
+    accumulated: list[dict] = []
+    for t in conv.turns:
+        if t.reset_context:
+            accumulated = list(t.raw_messages)
+        else:
+            accumulated.extend(t.raw_messages)
+    accumulated_roles = [m["role"] for m in accumulated]
+    assert "system" in accumulated_roles
+    assert "assistant" in accumulated_roles
+    assert "user" in accumulated_roles
 
 
 def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
@@ -299,7 +324,7 @@ def test_orphaned_subagent_is_dropped_when_preceding_turn_filtered(monkeypatch):
     assert parent.branches == []
 
 
-# --- P21: hash content scoped per (trace_id, hash_id) ---
+# --- Hash content scoped per (trace_id, hash_id) ---
 
 
 def _real_pg():

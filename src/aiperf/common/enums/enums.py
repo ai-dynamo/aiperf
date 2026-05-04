@@ -120,8 +120,8 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
       sticky-routes to the parent's worker (prefix-cache locality). Used by
       aiperf's native DAG conversation-forking semantics.
     - ``SPAWN``: child starts with a fresh context, free routing. Used for
-      kv-cache-tester-v2-style agentic sub-agent scenarios where the child
-      is a distinct agent invocation, not a continuation.
+      agentic sub-agent scenarios where the child is a distinct agent
+      invocation, not a continuation.
     """
 
     FORK = "fork"
@@ -347,6 +347,7 @@ class MessageType(CaseInsensitiveStrEnum):
     METRIC_RECORDS = "metric_records"
     PARSED_INFERENCE_RESULTS = "parsed_inference_results"
     PROCESSING_STATS = "processing_stats"
+    PROCESS_ALL_RESULTS = "process_all_results"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
@@ -509,8 +510,8 @@ class SubagentType(CaseInsensitiveStrEnum):
     """Optional sub-agent classification carried on DAG Conversation nodes.
 
     Used for DAG-benchmark bucket metrics and future routing policies. Unused
-    by core aiperf today; present so manifests authored for kv-cache-tester-v2
-    can round-trip through aiperf models without validation errors.
+    by core aiperf today; present so externally-authored manifests can
+    round-trip through aiperf models without validation errors.
     """
 
     EXPLORE = "explore"

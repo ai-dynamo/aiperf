@@ -4,6 +4,7 @@
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import (
@@ -13,6 +14,7 @@ from aiperf.common.constants import (
 )
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
+from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -106,6 +108,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
         self._slice_duration: float | None = user_config.output.slice_duration
+        # Lightweight timestamp storage for query_time_range() (analyzer support)
+        self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -124,7 +128,19 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Args:
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
+        self._timestamps_ns.append(record.timestamp_ns)
         self._server_metrics_hierarchy.add_record(record)
+
+    async def process_record(self, record: ServerMetricsRecord) -> None:
+        """``AccumulatorProtocol``-compatible alias for ``process_server_metrics_record``."""
+        await self.process_server_metrics_record(record)
+
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        if len(self._timestamps_ns) == 0:
+            return np.array([], dtype=bool)
+        ts = self._timestamps_ns.data
+        return (ts >= start_ns) & (ts < end_ns)
 
     async def export_results(
         self,

@@ -1101,7 +1101,6 @@ def _make_accuracy_user_config(
     )
 
 
-@pytest.mark.asyncio
 class TestAccuracyModeSamplingGuards:
     """_load_accuracy_dataset rejects sampling modes that break session_num→problem mapping."""
 

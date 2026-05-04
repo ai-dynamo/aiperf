@@ -44,7 +44,7 @@ class LoadGeneratorConfig(BaseConfig):
         """Parse comma-separated concurrency values from CLI input.
 
         Converts comma-separated strings like "10,20,30" into lists [10, 20, 30].
-        Single values like "10" or 10 remain as integers for backward compatibility.
+        Single values like "10" or 10 remain as integers.
 
         Args:
             v: Input value from CLI (can be int, str, list[int], or None)

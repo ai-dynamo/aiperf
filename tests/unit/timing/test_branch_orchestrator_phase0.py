@@ -11,9 +11,6 @@ data model):
 - ``BranchOrchestrator.intercept`` dispatches the gated join turn immediately
   when every ``start_branch_child`` call fails (no children landed), instead
   of registering a dead pending join that hangs the parent.
-- ``BranchOrchestrator._prereq_index`` raises on duplicate entries instead of
-  silently dropping (defense-in-depth against future loaders that skip
-  ``validate_for_orchestrator_v1``).
 """
 
 from __future__ import annotations
@@ -188,35 +185,3 @@ async def test_intercept_all_children_failed_with_gate_does_not_hang():
     assert orch.stats.parents_resumed == 1
     assert orch.stats.children_errored == 2
     assert orch.stats.children_spawned == 0
-
-
-# ============================================================
-# 0.4. _prereq_index duplicate assertion (defense-in-depth)
-# ============================================================
-
-
-def test_prereq_index_duplicate_entry_raises():
-    """Two SPAWN_JOIN prereqs on the same gated turn referencing the same
-    branch_id would be an authoring duplicate; the orchestrator asserts."""
-    branch = ConversationBranchInfo(
-        branch_id="b:0",
-        child_conversation_ids=["c"],
-        mode=ConversationBranchMode.SPAWN,
-    )
-    # Two prereq entries on the SAME gated turn pointing at the same branch.
-    conv = _mk_conv(
-        "conv-dup",
-        [
-            TurnMetadata(branch_ids=["b:0"]),
-            TurnMetadata(
-                prerequisites=[
-                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b:0"),
-                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b:0"),
-                ]
-            ),
-        ],
-        [branch],
-    )
-    cs = _mk_source([conv])
-    with pytest.raises(AssertionError, match="Duplicate SPAWN_JOIN entry"):
-        BranchOrchestrator(conversation_source=cs, credit_issuer=MagicMock())

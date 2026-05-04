@@ -283,11 +283,33 @@ class CreditCallbackHandler:
 
         # Strategy dispatch (queue next turn of the same session). Normally
         # gated behind ``can_send_any_turn``; however, for DAG-spawned
-        # descendants (``credit.agent_depth > 0``) we must always queue the
-        # next turn — the phase-level sending-complete flag is driven by
-        # root sampling exhaustion, not by DAG work.
-        if credit.agent_depth > 0 or handler.stop_checker.can_send_any_turn():
+        # descendants (``credit.agent_depth > 0``) the next turn is gated
+        # behind ``can_send_child_turn`` instead — the phase-level
+        # sending-complete flag is driven by root sampling exhaustion, not
+        # by DAG work, but the global ``--request-count`` cap still
+        # applies. When the cap blocks a non-final child continuation, we
+        # notify the orchestrator (``on_child_stopped``) so the parent's
+        # join still drains instead of deadlocking on a child whose
+        # remaining turns will never be issued. Final-turn child returns
+        # are always passed through (the strategy is a no-op for them, but
+        # observer hooks still need to fire).
+        is_child = credit.agent_depth > 0
+        if not is_child:
+            if handler.stop_checker.can_send_any_turn():
+                await handler.strategy.handle_credit_return(credit)
+        elif credit.is_final_turn or handler.stop_checker.can_send_child_turn():
             await handler.strategy.handle_credit_return(credit)
+        elif self._branch_orchestrator is not None:
+            try:
+                await self._branch_orchestrator.on_child_stopped(
+                    credit.x_correlation_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning(
+                    lambda exc=exc: f"BranchOrchestrator on_child_stopped "
+                    f"hook failed for x_correlation_id="
+                    f"{credit.x_correlation_id}: {exc}"
+                )
 
         # WARMUP terminal-failure accumulation. AgenticReplayStrategy exposes
         # ``record_warmup_failure(trace_id)``; PhaseRunner calls

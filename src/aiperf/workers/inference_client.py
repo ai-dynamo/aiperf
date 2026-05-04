@@ -232,6 +232,11 @@ class InferenceClient(AIPerfLifecycleMixin):
         record.model_name = turn_model or self.model_endpoint.primary_model_name
 
         max_tokens = request_info.turns[-1].max_tokens if request_info.turns else None
+        audio_duration_seconds = (
+            request_info.turns[-1].audio_duration_seconds
+            if request_info.turns
+            else None
+        )
 
         record.request_info = RecordContext(
             credit_num=request_info.credit_num,
@@ -245,6 +250,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             parent_correlation_id=request_info.parent_correlation_id,
             payload_bytes=request_info.payload_bytes,
             max_tokens=max_tokens,
+            audio_duration_seconds=audio_duration_seconds,
             cache_bust_marker=request_info.cache_bust_marker,
             cache_bust_target=request_info.cache_bust_target,
             # system_message / user_context_message stay on RequestInfo —

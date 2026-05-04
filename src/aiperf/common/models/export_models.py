@@ -94,11 +94,38 @@ class TimesliceData(AIPerfBaseModel):
 
     Contains metrics for one time slice with dynamic metric fields
     added via Pydantic's extra="allow" setting.
+
+    Field semantics for ``start_ns`` / ``end_ns`` / ``is_complete`` mirror
+    ``server_metrics_models.BaseTimeslice`` so inference and server-metrics
+    timeslice exports share the same wire format. ``start_ns`` and ``end_ns``
+    are nullable in this wire model only as a Pydantic concession; in
+    practice the exporter always populates both from the source
+    :class:`TimesliceResult`. Partial timeslices (typically the final slice
+    when the run ends mid-window) are flagged via ``is_complete=False`` and
+    should be excluded from aggregate statistics to avoid skewing rate
+    calculations.
+
+    Slice ordering is conveyed by position in the parent ``timeslices`` array;
+    no explicit index field is emitted (matches the BaseTimeslice shape).
     """
 
     model_config = ConfigDict(extra="allow")
 
-    timeslice_index: int
+    start_ns: int | None = Field(
+        default=None,
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None or True for complete timeslices covering the full configured duration. "
+        "Partial slices should be excluded from aggregate statistics. "
+        "None by default to save space in JSON exports (treated as complete).",
+    )
 
 
 class TimesliceCollectionExportData(AIPerfBaseModel):

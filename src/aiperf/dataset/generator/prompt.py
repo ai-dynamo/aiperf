@@ -399,7 +399,7 @@ class PromptGenerator(BaseGenerator):
                 # different trace file (different trace_id scope) produces
                 # different tokens. Trace loaders set the trace_id once per
                 # file in BaseTraceDatasetLoader.load_dataset and clear
-                # ``self._cache`` between files. See P21 / P22 fix notes.
+                # ``self._cache`` between files.
                 self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
                 self._cache[hash_id] = sample_tokens_from_corpus(
                     self._tokenized_corpus,

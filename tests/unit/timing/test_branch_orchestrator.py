@@ -242,6 +242,56 @@ async def test_leaf_for_unknown_child_is_noop():
 
 
 @pytest.mark.asyncio
+async def test_branch_orchestrator_child_stopped_decrements_pending_join():
+    """on_child_stopped: when a child's continuation is cap-blocked, the
+    parent's pending join must still drain so the join turn fires; the
+    child is tallied under children_truncated, not children_completed."""
+    cs = MagicMock()
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    sticky_router = MagicMock()
+    orch = BranchOrchestrator(
+        conversation_source=cs, credit_issuer=issuer, sticky_router=sticky_router
+    )
+    pending = _mk_pending_for_parent(
+        "parent",
+        gated_turn_index=1,
+        prereq_key="SPAWN_JOIN:b",
+        outstanding={"cA"},
+    )
+    pending.is_blocked = True
+    orch._active_joins["parent"] = pending
+    orch._child_to_join["cA"] = [
+        ChildJoinEntry(
+            parent_correlation_id="parent",
+            gated_turn_index=1,
+            prereq_key="SPAWN_JOIN:b",
+        )
+    ]
+    orch._child_modes = {"cA": ConversationBranchMode.FORK}
+    orch._descendant_counts["parent"] = 2  # root + 1 child
+
+    await orch.on_child_stopped("cA")
+
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_completed == 0
+    # Pending join drained: parent removed and join turn dispatched.
+    assert "parent" not in orch._active_joins
+    assert issuer.dispatch_join_turn.await_count == 1
+    # FORK sticky refcount released.
+    sticky_router.release_child_routing.assert_called_once_with("parent")
+
+
+@pytest.mark.asyncio
+async def test_child_stopped_for_unknown_child_is_noop():
+    orch = BranchOrchestrator(
+        conversation_source=MagicMock(), credit_issuer=MagicMock()
+    )
+    await orch.on_child_stopped("unknown")
+    assert orch.stats.children_truncated == 0
+
+
+@pytest.mark.asyncio
 async def test_dispatch_join_turn_raises_when_issuer_lacks_method():
     orch = BranchOrchestrator(
         conversation_source=MagicMock(), credit_issuer=MagicMock(spec=[])
@@ -258,7 +308,9 @@ async def test_dispatch_join_turn_raises_when_issuer_lacks_method():
 
 @pytest.mark.asyncio
 async def test_child_error_decrements_join_when_not_fail_fast(monkeypatch):
-    monkeypatch.delenv("AIPERF_DAG_FAIL_FAST", raising=False)
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", False)
 
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock(return_value=True)
@@ -293,7 +345,9 @@ async def test_child_error_decrements_join_when_not_fail_fast(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_child_error_fail_fast_aborts_parent(monkeypatch):
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
 
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock()
@@ -392,7 +446,10 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
     # No gate -> intercept returns False. Only the successful child stays tracked.
     assert await orch.intercept(credit) is False
     assert orch.stats.children_spawned == 1
-    assert orch.stats.children_errored == 1
+    # ``dispatch_first_turn`` returning False is stop-condition refusal
+    # (slots saturated), not an error — tally as truncated.
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_errored == 0
     assert "child-a" in orch._child_to_join
     assert "child-b" not in orch._child_to_join
     # register_child_routing fired for both children; release fired for the one
@@ -460,11 +517,6 @@ async def test_spawn_mode_branch_does_not_register_sticky_routing():
     # Leaf-reached must also NOT release anything because register didn't fire.
     await orch.on_child_leaf_reached("child-spawn-a")
     assert sticky_router.release_child_routing.call_count == 0
-
-
-# ============================================================
-# has_pending_branch_work / cleanup coverage
-# ============================================================
 
 
 def test_has_pending_branch_work_empty_orchestrator():

@@ -169,6 +169,47 @@ def _inject_marker_into_first_user_turn(
             return
 
 
+def _find_first_system_message(turn_list: list[Turn]) -> list[dict] | None:
+    """Return the raw_messages list whose first dict has ``role == "system"``, or None.
+
+    Walks ``turn_list`` forward and returns the first ``raw_messages`` whose
+    leading dict is a system-role message. Used by cache-bust system-target
+    injection so it works for both single-turn message-array mode (system
+    lives in ``turn_list[-1]``, which is also ``turn_list[0]``) and
+    accumulating delta mode (system in ``turn_list[0]``, deltas in
+    ``turn_list[1..]``).
+    """
+    for turn in turn_list:
+        raw = turn.raw_messages
+        if raw and isinstance(raw[0], dict) and raw[0].get("role") == "system":
+            return raw
+    return None
+
+
+def _find_first_user_turn(turn_list: list[Turn]) -> Turn | None:
+    """Return the first turn whose payload carries the conversation's initial
+    user message, or None.
+
+    Walks ``turn_list`` forward. A turn qualifies when it has any
+    ``raw_messages`` entry with ``role == "user"``, or when ``texts`` is
+    non-empty (synthetic-Turn path). If no turn matches but at least one turn
+    has neither ``raw_messages`` nor ``texts`` (truly empty synthetic Turn,
+    e.g. before any prompt has been generated), returns that first empty
+    turn so a marker-only-text seed path still resolves.
+    """
+    empty_synthetic: Turn | None = None
+    for turn in turn_list:
+        if turn.raw_messages:
+            for msg in turn.raw_messages:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    return turn
+        elif turn.texts:
+            return turn
+        elif empty_synthetic is None:
+            empty_synthetic = turn
+    return empty_synthetic
+
+
 def _inject_marker_into_first_user_text(
     turn: Turn, marker: str, *, is_prefix: bool
 ) -> None:
@@ -193,6 +234,26 @@ def _inject_marker_into_first_user_text(
     first.contents[0] = (marker + existing) if is_prefix else (existing + marker)
 
 
+def _inject_marker_at_first_user(
+    turn_list: list[Turn], marker: str, *, is_prefix: bool
+) -> None:
+    """Inject ``marker`` at the first user turn (raw_messages or texts).
+
+    Wraps the lookup + dispatch shared by SYSTEM_* fallback (sub-path 3
+    in :func:`_apply_cache_bust`) and the FIRST_TURN_* path. No-op when
+    there is no user-bearing turn at all.
+    """
+    user_turn = _find_first_user_turn(turn_list)
+    if user_turn is None:
+        return
+    if user_turn.raw_messages:
+        _inject_marker_into_first_user_turn(
+            user_turn.raw_messages, marker, is_prefix=is_prefix
+        )
+    else:
+        _inject_marker_into_first_user_text(user_turn, marker, is_prefix=is_prefix)
+
+
 def _apply_cache_bust(
     session: UserSession,
     credit: Credit,
@@ -200,14 +261,20 @@ def _apply_cache_bust(
 ) -> str | None:
     """Dispatch cache-bust marker injection for a single credit.
 
-    Mutates ``session.turn_list[-1].raw_messages`` in-place when the marker
-    attaches to the trace's pre-rendered messages. Returns the (possibly
-    modified) ``system_message`` string for the caller to forward into
-    request building.
+    Mutates the appropriate turn's ``raw_messages`` (or ``texts``) in-place
+    when the marker attaches to the trace's pre-rendered messages. Returns
+    the (possibly modified) ``system_message`` string for the caller to
+    forward into request building.
+
+    The system / first-user lookups walk ``turn_list`` forward rather than
+    indexing ``[-1]``, so this works under both ``MESSAGE_ARRAY_WITH_RESPONSES``
+    (single-turn ``turn_list``) and ``DELTAS_WITH_RESPONSES`` (accumulating
+    ``turn_list`` where the system role lives in ``turn_list[0]`` and later
+    deltas start with the prior assistant response).
 
     SYSTEM_* fallback: when ``target`` is ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX``
     and there is no system message anywhere (neither a Conversation-level
-    ``system_message`` nor a leading ``role=="system"`` entry in
+    ``system_message`` nor a leading ``role=="system"`` entry in any turn's
     ``raw_messages``), the marker is routed to the first user turn with the
     same prefix/suffix orientation — i.e. SYSTEM_PREFIX falls back to a
     first-user-turn prefix, SYSTEM_SUFFIX falls back to a first-user-turn
@@ -232,8 +299,10 @@ def _apply_cache_bust(
         # Three sub-paths with intentionally different semantics:
         #   1. Conversation-level system_message present:  marker injected
         #      every turn (string mutation re-applied per credit).
-        #   2. raw_messages[0].role == "system":            marker injected
-        #      every turn (raw mutation re-applied per credit).
+        #   2. raw_messages first dict has role=="system": marker injected
+        #      every turn (raw mutation re-applied per credit). Under deltas
+        #      that dict lives in turn_list[0]; under message-array it lives
+        #      in turn_list[-1] (same single turn).
         #   3. No system anywhere -> first-user-turn fallback: marker injected
         #      ONLY on turn_index == 0. Subsequent turns inherit via the
         #      inference server's prefix-cache hit, matching FIRST_TURN_*
@@ -241,33 +310,15 @@ def _apply_cache_bust(
         #      every credit and fragment the cache key.
         if system_message is not None:
             return _apply_cache_bust_to_system_message(system_message, marker, target)
-        applied_to_raw_system = False
-        if session.turn_list:
-            raw = session.turn_list[-1].raw_messages
-            if raw and isinstance(raw[0], dict) and raw[0].get("role") == "system":
-                _inject_marker_into_raw_messages(raw, marker, is_prefix=is_prefix)
-                applied_to_raw_system = True
-        if not applied_to_raw_system and credit.turn_index == 0 and session.turn_list:
-            # Sub-path 3: no system anywhere -> first-user-turn (turn_index==0
-            # only, see comment above). Same orientation as the SYSTEM_* target:
-            # SYSTEM_PREFIX -> first-user-turn prefix; SYSTEM_SUFFIX -> suffix.
-            last_turn = session.turn_list[-1]
-            raw = last_turn.raw_messages
-            if raw:
-                _inject_marker_into_first_user_turn(raw, marker, is_prefix=is_prefix)
-            else:
-                _inject_marker_into_first_user_text(
-                    last_turn, marker, is_prefix=is_prefix
-                )
+        raw_system = _find_first_system_message(session.turn_list)
+        if raw_system is not None:
+            _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
+        elif credit.turn_index == 0:
+            _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
         return system_message
 
-    if credit.turn_index == 0 and session.turn_list:
-        last_turn = session.turn_list[-1]
-        raw = last_turn.raw_messages
-        if raw:
-            _inject_marker_into_first_user_turn(raw, marker, is_prefix=is_prefix)
-        else:
-            _inject_marker_into_first_user_text(last_turn, marker, is_prefix=is_prefix)
+    if credit.turn_index == 0:
+        _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
     return system_message
 
 

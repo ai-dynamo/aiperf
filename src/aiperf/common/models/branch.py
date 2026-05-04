@@ -3,7 +3,7 @@
 
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from aiperf.common.enums import ConversationBranchMode, SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -13,10 +13,9 @@ class ConversationBranchInfo(AIPerfBaseModel):
     """Describes a DAG branch from a parent turn to one or more child conversations.
 
     A single primitive unifies aiperf's native FORK semantics (child inherits
-    parent turn_list + sticky-routes to parent worker) with
-    kv-cache-tester-v2-style SPAWN semantics (fresh context, free routing).
-    The ``mode`` field discriminates the two; 95% of the orchestration code is
-    mode-agnostic.
+    parent turn_list + sticky-routes to parent worker) with SPAWN semantics
+    (fresh context, free routing). The ``mode`` field discriminates the two;
+    95% of the orchestration code is mode-agnostic.
     """
 
     branch_id: str = Field(
@@ -48,14 +47,26 @@ class ConversationBranchInfo(AIPerfBaseModel):
 
     @field_validator("is_background")
     @classmethod
-    def _validate_background(cls, v, info):
+    def _validate_background(cls, v: bool, info: ValidationInfo) -> bool:
         if v and info.data.get("mode") == ConversationBranchMode.FORK:
-            raise ValueError("is_background=True is invalid for FORK mode")
+            raise ValueError(
+                "is_background=True is only valid in SPAWN mode (fire-and-forget "
+                "sub-agent dispatch). FORK children must rejoin their parent, so "
+                "they cannot be background. Either drop is_background or change "
+                "mode to SPAWN."
+            )
         return v
 
     @field_validator("subagent_type")
     @classmethod
-    def _validate_subagent_type(cls, v, info):
+    def _validate_subagent_type(
+        cls, v: SubagentType | None, info: ValidationInfo
+    ) -> SubagentType | None:
         if v is not None and info.data.get("mode") == ConversationBranchMode.FORK:
-            raise ValueError("subagent_type cannot be set for FORK mode")
+            raise ValueError(
+                "subagent_type is a SPAWN-only classification (used for "
+                "agentic-benchmark bucket metrics). FORK children inherit the "
+                "parent's role; they have no subagent_type. Drop the field or "
+                "change mode to SPAWN."
+            )
         return v

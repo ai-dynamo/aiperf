@@ -36,3 +36,24 @@ class DataExporterProtocol(Protocol):
     def get_export_info(self) -> FileExportInfo: ...
 
     async def export(self) -> None: ...
+
+
+@runtime_checkable
+class ArtifactPublisherProtocol(Protocol):
+    """Protocol for artifact publishers that upload exported files to remote storage.
+
+    Artifact publishers run after all data and stream exporters have completed.
+    They receive the full list of exported file paths and upload them to remote
+    storage backends (S3, GCS, Azure Blob, etc.).
+    """
+
+    def __init__(self, exporter_config: ExporterConfig) -> None: ...
+
+    async def publish(self, artifacts: list[FileExportInfo]) -> None:
+        """Upload artifacts to remote storage.
+
+        Args:
+            artifacts: File paths and their types from all exporters.
+                       Publishers may filter by export_type or publish all.
+        """
+        ...

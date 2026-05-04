@@ -3,6 +3,11 @@
   "violations": [
     [
       "file-size",
+      "src/aiperf/analysis/sweepline.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -153,6 +158,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/metrics/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/metrics/column_store.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/metrics/types/http_trace_metrics.py",
       ""
     ],
@@ -218,6 +233,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/plugin/schema/schemas.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/inference_result_parser.py",
       ""
     ],
@@ -270,6 +290,16 @@
       "file-size",
       "src/aiperf/workers/worker.py",
       ""
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
     ],
     [
       "function-size",
@@ -500,6 +530,11 @@
       "function-size",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._collect_gpu_metrics"
+    ],
+    [
+      "function-size",
+      "src/aiperf/metrics/accumulator.py",
+      "MetricsAccumulator._compute_timeslices"
     ],
     [
       "function-size",
@@ -1100,6 +1135,21 @@
       "function-size",
       "src/aiperf/workers/worker.py",
       "Worker.__init__"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_stats.py",
+      "compute_active_weighted_stats"
     ],
     [
       "keyword-only-args",

@@ -46,6 +46,11 @@ def _init_worker(
         revision: The specific model version to use.
     """
     global _worker_tokenizer, _worker_tokenizer_key
+
+    from aiperf.dataset.loader.parallel_convert import _install_hard_exit_on_sigterm
+
+    _install_hard_exit_on_sigterm()
+
     requested_key = (tokenizer_name, trust_remote_code, revision)
     if _worker_tokenizer is None or _worker_tokenizer_key != requested_key:
         # The main process already downloaded and cached the tokenizer, so force

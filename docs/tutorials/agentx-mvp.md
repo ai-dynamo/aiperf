@@ -271,9 +271,12 @@ A few wrinkles worth knowing:
   KV-cache prefix work done during warmup transfers into measurement
   instead of being thrown away. (If `phase` were folded into the digest,
   warmup would prime a prefix the profiling phase never sees.)
-- **Tiny corpora are fine.** If your concurrency is bigger than the corpus,
-  you'll see a startup warning, the trajectory count will equal the corpus
-  size, and recycle will fill the gap.
+- **Concurrency must fit your corpus.** AIPerf rejects runs at startup when
+  `--concurrency` exceeds the number of usable trajectories (pool size minus
+  traces too short to split into a warmup + profiling turn): each lane is
+  pinned to a distinct trajectory, so the requested concurrency simply cannot
+  be honoured. Pick a `--concurrency` that fits your corpus, or use a larger
+  trace corpus.
 - **Profiling ends** when `--benchmark-duration` elapses. Anything in flight
   finishes during a cooldown window and is included in the metrics; nothing
   *new* starts after the duration ends.

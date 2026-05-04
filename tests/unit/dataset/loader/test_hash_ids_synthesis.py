@@ -11,9 +11,9 @@ from aiperf.dataset.loader.hash_ids_synthesis import (
 
 def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
     """Non-empty hash_ids requests build a token sequence then go through
-    ``parallel_decode``. The previous implementation also kept a per-process
-    decoded-string cache; that was removed (P23) because real-workload hit
-    rate was effectively zero and the cache leaked memory.
+    ``parallel_decode``. There is no per-process decoded-string cache in
+    this path — real-workload hit rate was effectively zero and a cache
+    would leak memory.
     """
     pg = MagicMock()
     pg.tokenizer.resolved_name = "test-tok"

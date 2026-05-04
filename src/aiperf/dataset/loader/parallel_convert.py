@@ -80,6 +80,8 @@ def _init_worker(args: _WorkerInitArgs) -> None:
 
     from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
 
+    _install_hard_exit_on_sigterm()
+
     # The main process already downloaded and cached the tokenizer, so force
     # offline mode to skip network requests and alias resolution.
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -225,6 +227,82 @@ def _set_daemon(daemon: bool) -> None:
         mp.current_process()._config["daemon"] = daemon
 
 
+def _install_hard_exit_on_sigterm() -> None:
+    """Replace the worker's SIGTERM handler with ``os._exit(0)``.
+
+    Backstop for the rayon-thread-pool wedge: ``pool.terminate()`` (used by
+    ``Pool.__exit__`` and as the fallback path in ``_shutdown_pool``) sends
+    SIGTERM, but Python's default unwind invokes finalizers that block on
+    ``rayon`` threads inside the CoW-shared HF tokenizer. Workers are
+    stateless — the parent owns shared memory and persists results — so
+    ``os._exit(0)`` is the right behavior on SIGTERM: skip finalizers, drop
+    in-flight work (which terminate semantically discards anyway), exit
+    immediately.
+
+    Called from each pool's ``_init_worker``, after ``shared_memory``
+    attachment but before any tokenizer use. ``signal.signal`` only works
+    on the main thread of the main interpreter, so we swallow ``ValueError``
+    when ``_init_worker`` is invoked directly from a unit test on a
+    secondary thread (xdist worker, asyncio loop, etc.) — the handler is a
+    backstop for live worker processes, not a correctness requirement.
+    """
+    import contextlib
+    import signal
+
+    def _hard_exit(_signum, _frame):  # noqa: ANN001
+        os._exit(0)
+
+    with contextlib.suppress(ValueError):
+        signal.signal(signal.SIGTERM, _hard_exit)
+
+
+# How long to wait for graceful pool shutdown before falling back to SIGKILL.
+# Workers exit promptly on the close()+sentinel path, so 10s is generous; the
+# fallback only fires if a worker is genuinely wedged.
+_POOL_JOIN_TIMEOUT_S: float = 10.0
+
+
+def _shutdown_pool(pool, *, timeout_s: float = _POOL_JOIN_TIMEOUT_S) -> None:
+    """Drain a ``multiprocessing.Pool`` without the SIGTERM teardown hang.
+
+    The default ``with Pool(...) as pool:`` exit calls ``pool.terminate()``,
+    which SIGTERMs every worker. AIPerf trace-loader workers carry a
+    CoW-shared HF tokenizer with a Rust ``rayon`` thread pool whose threads
+    do not unwind on SIGTERM, so ``terminate()``+``join()`` wedges
+    indefinitely after the imap loop ends (the entire CLI hangs ~5 minutes
+    until a downstream timeout).
+
+    Graceful path: ``close()`` lets each worker drain its task queue, hit
+    the pool's normal sentinel, and exit via ``os._exit``; ``join()`` then
+    returns promptly. We still fall back to ``terminate()`` if a worker
+    hangs anyway, bounded by ``timeout_s`` so a stuck worker never blocks
+    the whole CLI. The terminate fallback runs ``join`` in a thread because
+    ``Pool.join`` itself has no timeout argument.
+    """
+    import threading
+
+    pool.close()
+
+    done = threading.Event()
+
+    def _wait():
+        try:
+            pool.join()
+        finally:
+            done.set()
+
+    waiter = threading.Thread(target=_wait, daemon=True)
+    waiter.start()
+    if done.wait(timeout=timeout_s):
+        return
+
+    pool.terminate()
+    # Bound the SIGTERM path too — if rayon threads block join even after
+    # SIGTERM, we accept the leak rather than hang the CLI. The leaked
+    # workers exit with the parent.
+    done.wait(timeout=timeout_s)
+
+
 def parallel_convert(
     sessions: list[tuple[str, list[dict]]],
     *,
@@ -290,11 +368,12 @@ def parallel_convert(
                 trust_remote_code=trust_remote_code,
                 revision=revision,
             )
-            with get_loader_mp_context(
+            pool = get_loader_mp_context(
                 preload_tokenizer=tokenizer_name,
                 trust_remote_code=trust_remote_code,
                 revision=revision,
-            ).Pool(workers, _init_worker, (init_args,)) as pool:
+            ).Pool(workers, _init_worker, (init_args,))
+            try:
                 # imap preserves submission order (unlike imap_unordered)
                 for batch_result in pool.imap(_process_batch, batches):
                     for sid, turns in batch_result:
@@ -310,6 +389,9 @@ def parallel_convert(
                                 for ts, delay, prompt, max_tokens in turns
                             ],
                         )
+            finally:
+                # Avoid the SIGTERM teardown wedge — see ``_shutdown_pool``.
+                _shutdown_pool(pool)
         finally:
             if was_daemon:
                 _set_daemon(True)

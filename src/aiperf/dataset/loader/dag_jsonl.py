@@ -60,7 +60,7 @@ class DagJsonlLoader(BaseFileLoader):
       parent's accumulated message context and sticky-route to the parent's
       worker (prefix-cache locality).
     - ``spawns: [session_id, ...]`` — SPAWN-mode branches. Children start with
-      a fresh context and route freely (kv-cache-tester-v2-style semantics).
+      a fresh context and route freely.
 
     Both shorthands may appear on the same turn; they desugar into separate
     ``ConversationBranchInfo`` entries with distinct ``branch_id``s.
@@ -183,10 +183,10 @@ class DagJsonlLoader(BaseFileLoader):
             out.extend(convs)
         return out
 
-    # --- Legacy / standalone API ---------------------------------------------
+    # --- Standalone API ------------------------------------------------------
 
     def load(self) -> list[Conversation]:
-        """Legacy helper used by tests and offline tooling."""
+        """Helper used by tests and offline tooling."""
         data = self.load_dataset()
         return self.convert_to_conversations(data)
 

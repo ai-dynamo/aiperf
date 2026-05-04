@@ -37,7 +37,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
+from aiperf.common.types import JsonObject, MetricTagT
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -164,15 +164,63 @@ class MetricRecordMetadata(AIPerfBaseModel):
     )
 
 
+class TimesliceResult(AIPerfBaseModel):
+    """Per-timeslice results: window bounds + metric results.
+
+    Combines ``start_ns`` / ``end_ns`` / ``is_complete`` with the metric
+    results computed for that slice. Stored in chronological order in
+    :attr:`ProfileResults.timeslices`; position in the parent list is the
+    slice's chronological index, matching the ``BaseTimeslice`` wire shape.
+
+    ``is_complete`` is ``None`` for fully-closed windows (space-efficient
+    default matching ``BaseTimeslice``) and ``False`` for the trailing
+    partial window when the benchmark stopped before the next slice
+    boundary. Partial slices should be excluded from aggregate statistics
+    to avoid skewing rate calculations.
+
+    Metric results are keyed by metric tag for direct lookup. The
+    JSON/CSV exporters flatten them to per-tag fields in the wire format.
+    """
+
+    start_ns: int = Field(
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int = Field(
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None for complete timeslices covering the full configured duration.",
+    )
+    metric_results: dict[MetricTagT, MetricResult] = Field(
+        default_factory=dict,
+        description="Metric results computed for this timeslice's window, "
+        "keyed by metric tag.",
+    )
+
+    @field_validator("metric_results", mode="before")
+    @classmethod
+    def _coerce_metric_results(cls, value: Any) -> Any:
+        """Accept ``list[MetricResult]`` for ergonomic construction and rekey
+        by ``tag``. Existing dict input passes through unchanged."""
+        if isinstance(value, list):
+            return {r.tag: r for r in value}
+        return value
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
+    timeslices: list[TimesliceResult] | None = Field(
         default=None,
-        description="The timeslice metric results of the profile (if using timeslice mode)",
+        description="Per-timeslice results in chronological order. Each entry "
+        "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
+        "with its metric results. Position in the list is the slice's "
+        "chronological index.",
     )
     total_expected: int | None = Field(
         default=None,
@@ -573,6 +621,14 @@ class RecordContext(AIPerfBaseModel):
         "record-enrichment time so the record processor (``osl_mismatch`` "
         "metric) reads it directly off the record without the full ``turns`` "
         "list on the wire.",
+    )
+    audio_duration_seconds: float | None = Field(
+        default=None,
+        description="``audio_duration_seconds`` from the originating turn. "
+        "Populated at record-enrichment time so the record processor "
+        "(``audio_duration`` / ``rtfx`` metrics) reads it directly off the "
+        "record without the full ``turns`` list on the wire. None for "
+        "non-ASR requests.",
     )
 
     # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------

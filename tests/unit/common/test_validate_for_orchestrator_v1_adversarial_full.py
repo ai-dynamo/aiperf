@@ -567,6 +567,39 @@ def test_duplicate_branch_id_on_same_turn_rejected():
 
 
 # ---------------------------------------------------------------------------
+# 34b. Duplicate SPAWN_JOIN prereq on the same gated turn (Phase 2 rule)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_prereq_branch_id_on_same_gated_turn_rejected():
+    """Two TurnPrerequisite entries on the same gated turn referencing the
+    same branch_id is an authoring duplicate; the orchestrator's prereq
+    index would otherwise carry duplicate (branch_id, gated_turn_idx)
+    tuples. Rejected at load time."""
+    b = ConversationBranchInfo(
+        branch_id="b:0",
+        child_conversation_ids=["c"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    md = _md(
+        [b],
+        [
+            TurnMetadata(branch_ids=["b:0"]),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b:0"),
+                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="b:0"),
+                ]
+            ),
+        ],
+    )
+    with pytest.raises(
+        ValueError, match="duplicate SPAWN_JOIN prerequisite for branch_id 'b:0'"
+    ):
+        validate_for_orchestrator_v1(md)
+
+
+# ---------------------------------------------------------------------------
 # 35. Empty dataset
 # ---------------------------------------------------------------------------
 

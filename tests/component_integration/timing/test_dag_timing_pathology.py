@@ -772,7 +772,7 @@ async def test_phase_shutdown_with_stuck_child_fail_fast(monkeypatch) -> None:
     cs = _mk_source([root, *children])
     issuer = _mk_issuer()
 
-    monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true")
+    monkeypatch.setattr("aiperf.common.environment.Environment.DAG.FAIL_FAST", True)
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
     assert orch.has_pending_branch_work()

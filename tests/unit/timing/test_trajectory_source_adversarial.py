@@ -14,7 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.scenario.base import (
+    EmptyTracePoolError,
+    InsufficientTrajectoriesError,
+)
 from aiperf.timing.trajectory_source import TrajectorySource
 
 
@@ -36,20 +39,23 @@ def _sampler_for(ids: list[str]) -> MagicMock:
     return sampler
 
 
-def test_pool_one_concurrency_ten_yields_one_trajectory_with_warning(caplog):
+def test_pool_one_concurrency_ten_raises_insufficient_trajectories():
     md = _make_dataset_metadata({"only": 5})
     sampler = _sampler_for(["only"])
 
-    with caplog.at_level(logging.WARNING):
-        src = TrajectorySource(
+    with pytest.raises(InsufficientTrajectoriesError) as exc_info:
+        TrajectorySource(
             dataset_metadata=md,
             dataset_sampler=sampler,
             concurrency=10,
             random_seed=42,
         )
 
-    assert len(src.trajectories) == 1
-    assert any("exceeds trace pool size" in rec.getMessage() for rec in caplog.records)
+    assert exc_info.value.concurrency == 10
+    assert exc_info.value.usable_trajectories == 1
+    assert exc_info.value.pool_size == 1
+    assert "concurrency 10" in str(exc_info.value)
+    assert "trajectory count 1" in str(exc_info.value)
 
 
 def test_empty_pool_raises_at_construction():

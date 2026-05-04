@@ -271,50 +271,44 @@ class CreditIssuer:
     async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
         """Dispatch the first turn of a mid-run DAG child session.
 
-        Thin wrapper around ``try_issue_credit`` so the orchestrator has a
-        single, intention-revealing entry point for child dispatch. The
-        session-slot / stop-condition bypasses live in ``try_issue_credit``,
-        keyed on ``turn.agent_depth > 0``.
+        Thin wrapper around ``dispatch_child_turn`` that builds the
+        first ``TurnToSend`` from the sampled session.
 
-        Back-pressure handling:
-            ``try_issue_credit`` returns ``None`` when no concurrency slot
-            is currently available. For DAG children that signal would
-            otherwise drop the child silently — the orchestrator has
-            already committed bookkeeping (gates, refcounts) for it. We
-            therefore treat ``None`` the same as ``True`` (do not roll
-            back) and surface a warning so the back-pressure is visible
-            in logs. The credit was not actually issued in this case;
-            future work (or the strategy's own retry path) will need to
-            re-attempt. Returning False here would cause the orchestrator
-            to roll back gate/refcount state and hang the parent's join.
-
-        Returns:
-            True if the credit was issued OR slots were saturated (no
-            rollback). False only when a stop condition declined the
-            dispatch (legitimate cancel/duration-elapsed path).
+        Returns True if the credit was sent on the wire (orchestrator
+        should expect a return), False otherwise (orchestrator should
+        roll back its tracking via ``BranchOrchestrator.on_child_stopped``
+        / per-child rollback).
         """
-        turn = sampled_session.build_first_turn()
-        result = await self.try_issue_credit(turn)
-        if result is None:
-            # No slot available — surface so we can observe sustained
-            # back-pressure on DAG dispatch. We intentionally do NOT roll
-            # back orchestrator bookkeeping; the caller's contract is
-            # "rollback only on hard refusal", and saturation is transient.
-            _logger.warning(
-                lambda: f"dispatch_first_turn: no concurrency slot for "
-                f"child x_correlation_id={turn.x_correlation_id!r} "
-                f"(agent_depth={turn.agent_depth}); not rolling back"
-            )
-            return True
-        # ``result`` is True (issued) or False (stop-condition declined).
-        # Both are non-rolling-back from the orchestrator's perspective:
-        # True is the success case; False means the phase chose to
-        # decline (cancel / duration-elapsed) and the credit really
-        # won't be sent — but the orchestrator still wants to keep
-        # gates/refcounts so other in-flight children can drain
-        # cleanly. Roll-back is reserved for the explicit None case
-        # above (and even there we now suppress it).
-        return result is True or result is False
+        return await self.dispatch_child_turn(sampled_session.build_first_turn())
+
+    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
+        """Dispatch a DAG child turn (first or continuation).
+
+        Returns True if the credit was sent on the wire (caller should
+        expect a return), False otherwise (caller should roll back its
+        tracking via ``BranchOrchestrator.on_child_stopped``).
+
+        We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
+        False (which conflates "gate refused, not issued" with "issued,
+        was final credit") by inlining the child issuance path here:
+        gate check, non-blocking prefill-slot acquisition, then
+        ``_issue_credit_internal``. Children skip session-slot
+        acquisition (they inherit the parent's slot). The dispatch is
+        non-blocking on prefill (``try_acquire_prefill_slot``) — the
+        orchestrator drains via ``on_child_stopped`` rather than
+        waiting on a slot, matching the prior semantics.
+        """
+        can_proceed_fn = self._stop_checker.can_send_child_turn
+        if not can_proceed_fn():
+            return False
+        # Children inherit the parent's session slot; only acquire
+        # prefill (non-blocking, matches the orchestrator's rollback model).
+        if not self._concurrency_manager.try_acquire_prefill_slot(
+            self._phase, can_proceed_fn
+        ):
+            return False
+        await self._issue_credit_internal(turn)
+        return True
 
     async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
         """Dispatch a parent's gated turn after all its children complete.

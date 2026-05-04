@@ -12,7 +12,7 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricResult, TimesliceResult
 from aiperf.common.models.export_models import TimesliceCollectionExportData
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
@@ -35,71 +35,82 @@ def mock_user_config():
 
 
 @pytest.fixture
-def sample_timeslice_metric_results():
-    """Create sample timeslice metric results."""
-    return {
-        0: [
-            MetricResult(
-                tag="time_to_first_token",
-                header="Time to First Token",
-                unit="ms",
-                avg=45.2,
-                min=12.1,
-                max=89.3,
-                p50=44.0,
-                p90=78.0,
-                p99=88.0,
-                std=15.2,
-            ),
-            MetricResult(
-                tag="inter_token_latency",
-                header="Inter Token Latency",
-                unit="ms",
-                avg=5.1,
-                min=2.3,
-                max=12.4,
-                p50=4.8,
-                p90=9.2,
-                p99=11.8,
-                std=2.1,
-            ),
-        ],
-        1: [
-            MetricResult(
-                tag="time_to_first_token",
-                header="Time to First Token",
-                unit="ms",
-                avg=48.5,
-                min=15.2,
-                max=92.1,
-                p50=47.3,
-                p90=82.4,
-                p99=90.5,
-                std=16.1,
-            ),
-            MetricResult(
-                tag="inter_token_latency",
-                header="Inter Token Latency",
-                unit="ms",
-                avg=5.4,
-                min=2.5,
-                max=13.1,
-                p50=5.1,
-                p90=9.8,
-                p99=12.3,
-                std=2.3,
-            ),
-        ],
-    }
+def sample_timeslices():
+    """Create sample timeslices.
+
+    Shape: list[TimesliceResult] — chronological order, position == index.
+    """
+    return [
+        TimesliceResult(
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+            metric_results=[
+                MetricResult(
+                    tag="time_to_first_token",
+                    header="Time to First Token",
+                    unit="ms",
+                    avg=45.2,
+                    min=12.1,
+                    max=89.3,
+                    p50=44.0,
+                    p90=78.0,
+                    p99=88.0,
+                    std=15.2,
+                ),
+                MetricResult(
+                    tag="inter_token_latency",
+                    header="Inter Token Latency",
+                    unit="ms",
+                    avg=5.1,
+                    min=2.3,
+                    max=12.4,
+                    p50=4.8,
+                    p90=9.2,
+                    p99=11.8,
+                    std=2.1,
+                ),
+            ],
+        ),
+        TimesliceResult(
+            start_ns=2_000_000_000,
+            end_ns=3_000_000_000,
+            metric_results=[
+                MetricResult(
+                    tag="time_to_first_token",
+                    header="Time to First Token",
+                    unit="ms",
+                    avg=48.5,
+                    min=15.2,
+                    max=92.1,
+                    p50=47.3,
+                    p90=82.4,
+                    p99=90.5,
+                    std=16.1,
+                ),
+                MetricResult(
+                    tag="inter_token_latency",
+                    header="Inter Token Latency",
+                    unit="ms",
+                    avg=5.4,
+                    min=2.5,
+                    max=13.1,
+                    p50=5.1,
+                    p90=9.8,
+                    p99=12.3,
+                    std=2.3,
+                ),
+            ],
+        ),
+    ]
 
 
 @pytest.fixture
-def mock_results_with_timeslices(sample_timeslice_metric_results):
+def mock_results_with_timeslices(sample_timeslices):
     """Create mock results with timeslice data."""
 
     class MockResultsWithTimeslices:
         def __init__(self):
-            self.timeslice_metric_results = sample_timeslice_metric_results
+            self.timeslices = sample_timeslices
             self.records = []
             self.start_ns = None
             self.end_ns = None
@@ -116,7 +127,7 @@ def mock_results_without_timeslices():
 
     class MockResultsNoTimeslices:
         def __init__(self):
-            self.timeslice_metric_results = None
+            self.timeslices = None
             self.records = []
             self.start_ns = None
             self.end_ns = None
@@ -244,15 +255,30 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
             assert isinstance(data["timeslices"], list)
 
     def test_generate_content_timeslices_have_index(self, mock_user_config):
-        """Verify each timeslice object has timeslice_index field."""
-        timeslice_results = {
-            i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0)]
+        """Verify the JSON timeslices array preserves chronological order.
+
+        Slice ordering is now conveyed by position in the array — there's no
+        explicit timeslice_index field (matches BaseTimeslice wire format).
+        """
+        timeslice_results = [
+            TimesliceResult(
+                start_ns=i * 1_000_000_000,
+                end_ns=(i + 1) * 1_000_000_000,
+                metric_results=[
+                    MetricResult(
+                        tag="metric",
+                        header="Metric",
+                        unit="ms",
+                        avg=float(10 + i),
+                    )
+                ],
+            )
             for i in range(3)
-        }
+        ]
 
         class MockResults:
             def __init__(self):
-                self.timeslice_metric_results = timeslice_results
+                self.timeslices = timeslice_results
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -276,31 +302,38 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             data = json.loads(content)
 
-            indices = [ts["timeslice_index"] for ts in data["timeslices"]]
-            assert indices == [0, 1, 2]
+            # No timeslice_index field; ordering comes from array position.
+            assert len(data["timeslices"]) == 3
+            for i, ts in enumerate(data["timeslices"]):
+                assert "timeslice_index" not in ts
+                assert ts["metric"]["avg"] == pytest.approx(10.0 + i)
 
     def test_generate_content_includes_metrics_dynamically(self, mock_user_config):
         """Verify JSON has fields for all metrics at timeslice level."""
-        timeslice_results = {
-            0: [
-                MetricResult(
-                    tag="time_to_first_token",
-                    header="Time to First Token",
-                    unit="ms",
-                    avg=45.0,
-                ),
-                MetricResult(
-                    tag="inter_token_latency",
-                    header="Inter Token Latency",
-                    unit="ms",
-                    avg=5.0,
-                ),
-            ]
-        }
+        timeslice_results = [
+            TimesliceResult(
+                start_ns=0,
+                end_ns=1,
+                metric_results=[
+                    MetricResult(
+                        tag="time_to_first_token",
+                        header="Time to First Token",
+                        unit="ms",
+                        avg=45.0,
+                    ),
+                    MetricResult(
+                        tag="inter_token_latency",
+                        header="Inter Token Latency",
+                        unit="ms",
+                        avg=5.0,
+                    ),
+                ],
+            )
+        ]
 
         class MockResults:
             def __init__(self):
-                self.timeslice_metric_results = timeslice_results
+                self.timeslices = timeslice_results
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -330,22 +363,26 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
     def test_generate_content_uses_json_result_format(self, mock_user_config):
         """Verify uses JsonMetricResult format."""
-        timeslice_results = {
-            0: [
-                MetricResult(
-                    tag="metric",
-                    header="Metric",
-                    unit="ms",
-                    avg=45.0,
-                    min=10.0,
-                    max=90.0,
-                )
-            ]
-        }
+        timeslice_results = [
+            TimesliceResult(
+                start_ns=0,
+                end_ns=1,
+                metric_results=[
+                    MetricResult(
+                        tag="metric",
+                        header="Metric",
+                        unit="ms",
+                        avg=45.0,
+                        min=10.0,
+                        max=90.0,
+                    )
+                ],
+            )
+        ]
 
         class MockResults:
             def __init__(self):
-                self.timeslice_metric_results = timeslice_results
+                self.timeslices = timeslice_results
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -377,20 +414,36 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
     def test_generate_content_different_metrics_per_timeslice(self, mock_user_config):
         """Verify each timeslice can have different metrics."""
-        timeslice_results = {
-            0: [
-                MetricResult(tag="metric_a", header="Metric A", unit="ms", avg=10.0),
-                MetricResult(tag="metric_b", header="Metric B", unit="ms", avg=20.0),
-            ],
-            1: [
-                MetricResult(tag="metric_b", header="Metric B", unit="ms", avg=25.0),
-                MetricResult(tag="metric_c", header="Metric C", unit="ms", avg=30.0),
-            ],
-        }
+        timeslice_results = [
+            TimesliceResult(
+                start_ns=0,
+                end_ns=1,
+                metric_results=[
+                    MetricResult(
+                        tag="metric_a", header="Metric A", unit="ms", avg=10.0
+                    ),
+                    MetricResult(
+                        tag="metric_b", header="Metric B", unit="ms", avg=20.0
+                    ),
+                ],
+            ),
+            TimesliceResult(
+                start_ns=1,
+                end_ns=2,
+                metric_results=[
+                    MetricResult(
+                        tag="metric_b", header="Metric B", unit="ms", avg=25.0
+                    ),
+                    MetricResult(
+                        tag="metric_c", header="Metric C", unit="ms", avg=30.0
+                    ),
+                ],
+            ),
+        ]
 
         class MockResults:
             def __init__(self):
-                self.timeslice_metric_results = timeslice_results
+                self.timeslices = timeslice_results
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -518,14 +571,20 @@ class TestTimesliceMetricsJsonExporterIntegration:
     @pytest.mark.asyncio
     async def test_export_with_many_timeslices(self, mock_user_config):
         """Verify export with 50 timeslices."""
-        timeslice_results = {
-            i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0 * i)]
+        timeslice_results = [
+            TimesliceResult(
+                start_ns=i * 1_000_000_000,
+                end_ns=(i + 1) * 1_000_000_000,
+                metric_results=[
+                    MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0 * i)
+                ],
+            )
             for i in range(50)
-        }
+        ]
 
         class MockResults:
             def __init__(self):
-                self.timeslice_metric_results = timeslice_results
+                self.timeslices = timeslice_results
                 self.records = []
                 self.start_ns = None
                 self.end_ns = None
@@ -551,3 +610,33 @@ class TestTimesliceMetricsJsonExporterIntegration:
                 data = json.load(f)
 
             assert len(data["timeslices"]) == 50
+
+    def test_generate_content_includes_window_timestamps(
+        self, mock_results_with_timeslices, mock_user_config
+    ):
+        """Verify start_ns and end_ns appear in each timeslice JSON entry."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mock_user_config.output.artifact_directory = Path(temp_dir)
+
+            config = ExporterConfig(
+                results=mock_results_with_timeslices,
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+
+            exporter = TimesliceMetricsJsonExporter(config)
+            content = exporter._generate_content()
+
+            data = json.loads(content)
+
+            ts0 = data["timeslices"][0]
+            ts1 = data["timeslices"][1]
+
+            assert ts0["start_ns"] == 1_000_000_000
+            assert ts0["end_ns"] == 2_000_000_000
+            assert ts1["start_ns"] == 2_000_000_000
+            assert ts1["end_ns"] == 3_000_000_000
+            # is_complete=None should be omitted via exclude_none
+            assert "is_complete" not in ts0
+            assert "is_complete" not in ts1

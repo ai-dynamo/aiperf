@@ -194,6 +194,33 @@ class ServiceConfig(BaseConfig):
         ),
     ] = None
 
+    stats_interval: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1000.0,
+            description=(
+                "Interval in seconds between realtime stats publishes (dashboards "
+                "and the per-tick log block). 0 disables the log block while "
+                "dashboards continue to poll. Defaults to 5s under --ui dashboard, "
+                "30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL."
+            ),
+        ),
+        CLIParameter(
+            name=("--stats-interval",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def apply_stats_interval(self) -> Self:
+        """Write --stats-interval through to Environment.UI.REALTIME_METRICS_INTERVAL."""
+        if self.stats_interval is not None:
+            from aiperf.common.environment import Environment
+
+            Environment.UI.REALTIME_METRICS_INTERVAL = self.stats_interval
+        return self
+
     @model_validator(mode="after")
     def validate_api_host_requires_port(self) -> Self:
         """Validate that --api-host is not set without --api-port."""

@@ -90,21 +90,20 @@ def test_hash_coherence_within_loader(loader_for_corpus):
     """Within a single trace scope, every occurrence of the same hash_id
     decodes to the identical token sequence.
 
-    P21 changed the cache lifecycle: ``convert_to_conversations`` clears the
-    int-keyed ``_cache`` between scopes (per-trace and per-subagent) and once
-    more in a ``finally`` block, so post-call the cache is empty. Coherence is
-    therefore verified per-scope by reseating the hash-id RNG to a known scope
-    and exercising the decoder twice for each observed hash_id.
+    The cache lifecycle: ``convert_to_conversations`` clears the int-keyed
+    ``_cache`` between scopes (per-trace and per-subagent) and once more in
+    a ``finally`` block, so post-call the cache is empty. Coherence is
+    therefore verified per-scope by reseating the hash-id RNG to a known
+    scope and exercising the decoder twice for each observed hash_id.
     """
     loader = loader_for_corpus
     convs = loader.convert_to_conversations(loader.load_dataset())
 
     # The post-call cache must be empty: holding any trace's content past
-    # convert_to_conversations would re-introduce the cross-trace cache leak
-    # that P21 removed.
+    # convert_to_conversations would re-introduce a cross-trace cache leak.
     assert loader.prompt_generator._cache == {}, (
         "convert_to_conversations did not clear the block cache on exit; "
-        "P21 contract regressed."
+        "per-scope cache contract regressed."
     )
 
     # Collect every distinct hash_id observed across the corpus from the

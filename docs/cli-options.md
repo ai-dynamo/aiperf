@@ -1103,6 +1103,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
+
 <hr/>
 
 ## `aiperf plot`
@@ -1172,7 +1177,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 

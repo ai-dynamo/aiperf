@@ -291,7 +291,6 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
     from aiperf.common.models import (
         Conversation,
         ConversationBranchInfo,
-        Text,
         Turn,
         TurnPrerequisite,
     )
@@ -322,7 +321,7 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
         trace_id = result["trace_id"]
         parent_conv = Conversation(
             session_id=trace_id,
-            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
         )
         for t in result["parent_turns"]:
             parent_conv.turns.append(
@@ -331,8 +330,8 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
                     delay=t["delay"],
                     model=t["model"],
                     max_tokens=t["max_tokens"],
-                    texts=[Text(name="text", contents=[t["prompt"]])],
                     raw_messages=t["raw_messages"],
+                    reset_context=t["reset_context"],
                 )
             )
         for branch in result["branches"]:
@@ -358,7 +357,7 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
         for child in result["children"]:
             child_conv = Conversation(
                 session_id=child["session_id"],
-                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
             )
             for t in child["turns"]:
                 child_conv.turns.append(
@@ -367,8 +366,8 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
                         delay=t["delay"],
                         model=t["model"],
                         max_tokens=t["max_tokens"],
-                        texts=[Text(name="text", contents=[t["prompt"]])],
                         raw_messages=t["raw_messages"],
+                        reset_context=t["reset_context"],
                     )
                 )
             parallel_convs.append(child_conv)

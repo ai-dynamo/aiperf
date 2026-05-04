@@ -137,8 +137,25 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
         # Per-turn prerequisite checks.
         for idx, turn in enumerate(conv.turns):
             loc = f"conversation '{conv.conversation_id}' turn {idx}"
+            seen_prereq_branch_ids: set[str] = set()
             for prereq in turn.prerequisites:
                 _check_prereq_fields(prereq, loc)
+                # Duplicate-prereq check: two TurnPrerequisite entries on the
+                # same gated turn referencing the same branch_id is always an
+                # authoring bug — the orchestrator's prereq index would
+                # otherwise carry duplicate (branch_id, gated_turn_idx) tuples.
+                if (
+                    prereq.branch_id is not None
+                    and prereq.branch_id in seen_prereq_branch_ids
+                ):
+                    raise ValueError(
+                        f"{loc}: duplicate SPAWN_JOIN prerequisite for "
+                        f"branch_id '{prereq.branch_id}' on the same gated "
+                        f"turn; each branch_id may appear at most once in a "
+                        f"turn's prerequisites"
+                    )
+                if prereq.branch_id is not None:
+                    seen_prereq_branch_ids.add(prereq.branch_id)
                 # SPAWN_JOIN must reference a branch on an earlier turn of the same conversation.
                 if prereq.branch_id is None or prereq.branch_id not in branches_by_id:
                     raise NotImplementedError(

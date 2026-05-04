@@ -722,8 +722,6 @@ class CodingContentGenerator(BaseGenerator):
         self._tokenized_corpus = self._tool_pool
         self._corpus_size = len(self._tool_pool)
 
-    # -- BaseGenerator interface --
-
     def generate(
         self,
         mean: int | None = None,
@@ -739,8 +737,6 @@ class CodingContentGenerator(BaseGenerator):
         num_tokens = self.calculate_num_tokens(mean, stddev)
         return self.generate_prompt(num_tokens)
 
-    # -- PromptGenerator-compatible interface --
-
     def generate_prompt(self, num_tokens: int) -> str:
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
@@ -751,8 +747,6 @@ class CodingContentGenerator(BaseGenerator):
         stddev: int | None = None,
     ) -> int:
         return self._length_rng.sample_positive_normal_integer(mean, stddev)
-
-    # -- Pool building --
 
     def _ensure_text_pool(self) -> list[int]:
         if self._text_pool is None:
@@ -797,8 +791,6 @@ class CodingContentGenerator(BaseGenerator):
         if end_idx > pool_size:
             tokens += pool[: end_idx - pool_size]
         return tokens
-
-    # -- Cache support (same pattern as PromptGenerator) --
 
     def _generate_cached_prompt(
         self,
@@ -848,8 +840,6 @@ class CodingContentGenerator(BaseGenerator):
             final_prompt.extend(self._cache[hash_id])
 
         return final_prompt
-
-    # -- Template generators --
 
     def _gen_python_code(self) -> str:
         return self._template_rng.choice(
@@ -3205,8 +3195,6 @@ COMMIT;
                     "We need this for the release on Friday — keep it simple.",
                 )
             )
-
-    # -- Multi-turn conversation generators --
 
     def _gen_coding_conversation(self) -> str:
         r = self._template_rng

@@ -77,7 +77,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -87,6 +86,7 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     PrerequisiteKind,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.models.branch_stats import BranchStats
 
 __all__ = [
@@ -229,7 +229,7 @@ class BranchOrchestrator:
         # children are not dispatched a second time when the parent's
         # turn 0 credit returns.
         self._pre_dispatched_branches: set[tuple[str, str]] = set()
-        self._fail_fast = os.getenv("AIPERF_DAG_FAIL_FAST", "false").lower() == "true"
+        self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
         self.stats = BranchStats()
         # Pre-built index: (conv_id, spawning_turn_idx) -> list of
@@ -274,19 +274,6 @@ class BranchOrchestrator:
                     key = (conv.conversation_id, spawning_idx)
                     bucket = self._prereq_index.setdefault(key, [])
                     entry = (prereq.branch_id, gated_idx, prereq_key)
-                    # Duplicate-tuple check: identical (branch_id, gated_idx)
-                    # authored twice on the same spawning turn would mean
-                    # the same prereq was declared twice — rejected as a
-                    # defense-in-depth measure.
-                    assert not any(
-                        existing[0] == entry[0] and existing[1] == entry[1]
-                        for existing in bucket
-                    ), (
-                        f"Duplicate SPAWN_JOIN entry for conversation "
-                        f"'{conv.conversation_id}' branch '{prereq.branch_id}' "
-                        f"gated_turn={gated_idx}; should have been rejected by "
-                        "validate_for_orchestrator_v1"
-                    )
                     bucket.append(entry)
                     # Phase 3 fan-in seed: track every prereq_key feeding
                     # this (conv_id, gated_idx) so gate creation knows the
@@ -300,9 +287,7 @@ class BranchOrchestrator:
 
         Public so the credit-callback handler can probe whether a returning
         credit will trigger DAG dispatch (used to defer phase-completion
-        signalling). The leading underscore was removed when this became a
-        cross-module call site; previously callers reached past the
-        underscore with a bare ``except`` to swallow defensive errors.
+        signalling).
         """
         meta = self._cs.get_metadata(credit.conversation_id)
         if credit.turn_index >= len(meta.turns):
@@ -379,7 +364,12 @@ class BranchOrchestrator:
                     if issued:
                         self.stats.children_spawned += 1
                     else:
-                        self.stats.children_errored += 1
+                        # ``dispatch_first_turn`` -> ``dispatch_child_turn``
+                        # only returns False under stop-condition refusal
+                        # (``can_send_child_turn`` False or no prefill slot
+                        # under ``--request-count`` cap). Exceptions are
+                        # caught above. Tally as truncated, not errored.
+                        self.stats.children_truncated += 1
                 self._pre_dispatched_branches.add(
                     (conv.conversation_id, branch.branch_id)
                 )
@@ -587,7 +577,32 @@ class BranchOrchestrator:
                 self._sticky_router.release_child_routing(parent_corr)
             if parent_corr in self._descendant_counts:
                 self._descendant_counts[parent_corr] -= 1
-            self.stats.children_errored += 1
+            # Three-way classification of non-True gather results:
+            #   * BaseException -> genuine error (mirror commit 05d02720b
+            #     which fixed the analogous bug in
+            #     ``dispatch_pre_session_branches``).
+            #   * False -> ``dispatch_child_turn`` stop-condition refusal
+            #     (``can_send_child_turn`` False or no prefill slot under
+            #     ``--request-count`` cap); not an error.
+            #   * None -> issuer suppressed silently; observable no-op.
+            if isinstance(result, BaseException):
+                logger.error(
+                    "dispatch_first_turn failed for child %s",
+                    child_corr,
+                    exc_info=result,
+                )
+                self.stats.children_errored += 1
+            elif result is False:
+                self.stats.children_truncated += 1
+            elif result is None:
+                pass
+            else:
+                logger.warning(
+                    "dispatch_first_turn returned unexpected value %r for child %s",
+                    result,
+                    child_corr,
+                )
+                self.stats.children_errored += 1
             self.stats.children_spawned -= 1
 
         # If no children at all landed (all failed), check for gates that
@@ -815,6 +830,29 @@ class BranchOrchestrator:
         if not entries:
             return
         self.stats.children_completed += 1
+        await self._handle_child_done(child_x_correlation_id, entries)
+
+    async def on_child_stopped(self, child_x_correlation_id: str) -> None:
+        """Called when a child's continuation is blocked by a stop condition.
+
+        The ``CreditCallbackHandler`` invokes this when a non-final child
+        return arrives but ``can_send_child_turn`` is False — typically the
+        ``--request-count`` cap has been reached. The child has already
+        completed at least one turn (we're on its return path), but its
+        remaining turns will not be issued. To prevent the parent's join
+        from deadlocking, we treat the child as effectively done here:
+        same cleanup as ``on_child_leaf_reached`` but tallied under
+        ``children_truncated`` instead of ``children_completed`` so the
+        observability stays accurate. Idempotent and safe under late or
+        duplicate calls (children that have already drained are silently
+        ignored).
+        """
+        if self._cleaning_up:
+            return
+        entries = self._child_to_join.get(child_x_correlation_id)
+        if not entries:
+            return
+        self.stats.children_truncated += 1
         await self._handle_child_done(child_x_correlation_id, entries)
 
     async def _handle_child_done(

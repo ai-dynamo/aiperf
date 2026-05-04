@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.enums import MetricFlags
-from aiperf.common.exceptions import ConsoleExporterDisabled
+from aiperf.common.exceptions import ConsoleExporterDisabled, MetricTypeError
 from aiperf.common.models import MetricResult
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -26,8 +26,10 @@ class HttpTraceConsoleExporter(ConsoleMetricsExporter):
             )
 
     def _should_show(self, record: MetricResult) -> bool:
-        metric_class = MetricRegistry.get_class(record.tag)
-        # Only show HTTP trace metrics
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return False
         return metric_class.has_flags(MetricFlags.HTTP_TRACE_ONLY)
 
     def _get_title(self) -> str:

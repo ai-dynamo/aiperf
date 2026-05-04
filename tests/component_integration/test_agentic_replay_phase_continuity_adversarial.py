@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Task 18 — agentic_replay cross-phase state continuity adversarial tests.
+"""Agentic_replay cross-phase state continuity adversarial tests.
 
 Spec §8.4.7. Each test exercises the WARMUP -> PROFILING boundary by sharing
 a single ``TrajectorySource`` between two freshly-constructed
@@ -12,7 +12,7 @@ full CLI run) because the invariants under test are about *state survival*:
 ``TrajectorySource`` is constructed once at TimingManager scope, and
 ``AgenticReplayStrategy`` is constructed fresh per phase but reads from the
 same source. End-to-end CLI coverage of the agentic_replay scenario lives in
-the Task 19 e2e test (``test_agentic_replay_e2e.py``).
+the e2e test (``test_agentic_replay_e2e.py``).
 """
 
 from __future__ import annotations
@@ -310,9 +310,7 @@ class TestWarmupAbortMidTrajectoriesCleansUp:
         assert failed.conversation_id in exc_info.value.failed_trace_ids
 
         # Manually clear trajectories to simulate the PhaseRunner abort path
-        # that drops trajectory state when WARMUP fails. (PhaseRunner wiring
-        # for this is tracked under T11/T19; for now the abort behavior is
-        # validated by directly observing the empty-trajectory guard below.)
+        # that drops trajectory state when WARMUP fails.
         source.trajectories = []
 
         # If a PROFILING strategy were ever (incorrectly) constructed after a

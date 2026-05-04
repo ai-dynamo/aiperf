@@ -127,22 +127,24 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
             f"Unable to detect the value type for {cls.__name__}. Please check the generic type parameter."
         )
 
-    def _require_valid_record(self, record: ParsedResponseRecord) -> None:
+    @classmethod
+    def _require_valid_record(cls, record: ParsedResponseRecord) -> None:
         """Check that the record is valid."""
-        if (not record or not record.valid) and not self.has_flags(
+        if (not record or not record.valid) and not cls.has_flags(
             MetricFlags.ERROR_ONLY
         ):
             raise NoMetricValue(
-                f"{type(self).__name__}: parsed response record is missing or "
-                "marked invalid (record is None or record.valid is False); "
-                "cannot extract a metric value from it."
+                f"{cls.__name__} cannot compute a value from this "
+                "record: record is missing or marked invalid, and this "
+                "metric is not flagged ERROR_ONLY"
             )
 
-    def _check_metrics(self, metrics: MetricRecordDict | MetricResultsDict) -> None:
+    @classmethod
+    def _check_metrics(cls, metrics: MetricRecordDict | MetricResultsDict) -> None:
         """Check that the required metrics are available."""
-        if self.required_metrics is None:
+        if cls.required_metrics is None:
             return
-        for tag in self.required_metrics:
+        for tag in cls.required_metrics:
             if tag not in metrics:
                 raise NoMetricValue(f"Missing required metric: '{tag}'")
 

@@ -11,8 +11,9 @@ loader-produced trace pool size in ``TrajectorySource`` /
 - concurrency == pool_size: every trace becomes a trajectory; recycle queue
   starts EMPTY and the just-finished trace_id is reused via the
   put-then-pop-on-empty path in ``_spawn_from_recycle_or_id``.
-- concurrency > pool_size: trajectories cap at pool_size and a WARNING is
-  emitted from ``TrajectorySource.__init__``.
+- concurrency > pool_size: ``TrajectorySource.__init__`` rejects the
+  configuration with ``InsufficientTrajectoriesError`` rather than silently
+  capping load below the requested concurrency.
 - traces with 0 turns are skipped at trajectory-selection time with a per-trace
   WARNING; an entirely-empty pool raises ``EmptyTracePoolError`` from the
   ``TrajectorySource`` constructor before any strategy is built.
@@ -32,7 +33,10 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
-from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.scenario.base import (
+    EmptyTracePoolError,
+    InsufficientTrajectoriesError,
+)
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
@@ -98,13 +102,27 @@ def _make_dataset_with_zero_turn_traces(
     both kinds during selection.
     """
     convs: list[ConversationMetadata] = []
-    for i in range(valid_count):
-        turns = [
-            TurnMetadata(timestamp_ms=None, delay_ms=None) for _ in range(valid_turns)
-        ]
-        convs.append(ConversationMetadata(conversation_id=f"valid_{i}", turns=turns))
-    for j in range(zero_count):
-        convs.append(ConversationMetadata(conversation_id=f"empty_{j}", turns=[]))
+    valid_remaining = valid_count
+    zero_remaining = zero_count
+    valid_idx = 0
+    zero_idx = 0
+    while valid_remaining or zero_remaining:
+        if zero_remaining and (zero_idx <= valid_idx or valid_remaining == 0):
+            convs.append(
+                ConversationMetadata(conversation_id=f"empty_{zero_idx}", turns=[])
+            )
+            zero_idx += 1
+            zero_remaining -= 1
+        else:
+            turns = [
+                TurnMetadata(timestamp_ms=None, delay_ms=None)
+                for _ in range(valid_turns)
+            ]
+            convs.append(
+                ConversationMetadata(conversation_id=f"valid_{valid_idx}", turns=turns)
+            )
+            valid_idx += 1
+            valid_remaining -= 1
     return DatasetMetadata(
         conversations=convs, sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL
     )
@@ -333,44 +351,39 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
 
 
 # =============================================================================
-# Test 3: concurrency > pool_size -> caps + emits WARNING
+# Test 3: concurrency > pool_size -> InsufficientTrajectoriesError at __init__
 # =============================================================================
 
 
-def test_concurrency_exceeds_pool_caps_at_pool_size_with_warning(caplog) -> None:
-    """concurrency > pool_size: trajectory count caps at pool_size with WARNING."""
+def test_concurrency_exceeds_pool_raises_insufficient_trajectories() -> None:
+    """concurrency > pool_size: TrajectorySource rejects the configuration up front."""
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
     sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
 
-    with caplog.at_level(logging.WARNING, logger="aiperf.timing.trajectory_source"):
-        source = TrajectorySource(
+    with pytest.raises(InsufficientTrajectoriesError) as exc_info:
+        TrajectorySource(
             dataset_metadata=dataset,
             dataset_sampler=sampler,
             concurrency=15,
             random_seed=7,
         )
 
-    assert len(source.trajectories) == 4, "trajectory count must cap at pool size"
-
-    matching = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-        and "Concurrency 15 exceeds trace pool size 4" in r.getMessage()
-    ]
-    assert matching, (
-        "expected a WARNING about concurrency exceeding trace pool size; "
-        f"got records={[r.getMessage() for r in caplog.records]}"
-    )
+    assert exc_info.value.concurrency == 15
+    assert exc_info.value.usable_trajectories == 4
+    assert exc_info.value.pool_size == 4
+    msg = str(exc_info.value)
+    assert "concurrency 15" in msg
+    assert "trajectory count 4" in msg
+    assert "--concurrency" in msg
 
 
 # =============================================================================
-# Test 4: concurrency == pool_size at boundary -> no over-cap warning
+# Test 4: concurrency == pool_size at boundary -> no error
 # =============================================================================
 
 
 def test_concurrency_equals_pool_size_at_boundary(caplog) -> None:
-    """At the boundary concurrency == pool_size, no over-cap WARNING is emitted."""
+    """At the boundary concurrency == pool_size, construction succeeds cleanly."""
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
     sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
 
@@ -389,17 +402,8 @@ def test_concurrency_equals_pool_size_at_boundary(caplog) -> None:
         for r in caplog.records
         if r.levelno == logging.WARNING and "exceeds trace pool size" in r.getMessage()
     ]
-    pool_partial = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "pool partially exhausted" in r.getMessage()
-    ]
     assert not over_cap, (
         f"no over-cap warning expected at the boundary; got {[r.getMessage() for r in over_cap]}"
-    )
-    assert not pool_partial, (
-        f"no partial-exhaustion warning expected at the boundary; got "
-        f"{[r.getMessage() for r in pool_partial]}"
     )
 
 
@@ -411,9 +415,11 @@ def test_concurrency_equals_pool_size_at_boundary(caplog) -> None:
 def test_mixed_validity_pool_skips_zero_turn_traces_with_warning(caplog) -> None:
     """Zero-turn traces are skipped at trajectory selection with a per-trace WARNING.
 
-    With 5 trace slots (3 valid x 2 turns + 2 empty) and concurrency=5,
-    ``_build_trajectories`` has ``max_attempts = 5 * 2 = 10`` so every trace
-    is visited; trajectories must contain only the 3 valid trace_ids.
+    With 5 trace slots (3 valid x 2 turns + 2 empty) and concurrency=3 (matching
+    the usable count), ``_build_trajectories`` visits every trace and emits a
+    per-trace WARNING for each zero-turn skip; trajectories contain only the 3
+    valid trace_ids and the post-build ``InsufficientTrajectoriesError`` guard
+    does not trip.
     """
     dataset = _make_dataset_with_zero_turn_traces(
         valid_count=3, zero_count=2, valid_turns=2
@@ -426,7 +432,7 @@ def test_mixed_validity_pool_skips_zero_turn_traces_with_warning(caplog) -> None
         source = TrajectorySource(
             dataset_metadata=dataset,
             dataset_sampler=sampler,
-            concurrency=5,
+            concurrency=3,
             random_seed=3,
         )
 
