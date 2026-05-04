@@ -456,6 +456,9 @@ For disaggregated prefill/decode deployments, these metrics track KV cache trans
 
 TensorRT-LLM (trtllm) is NVIDIA's high-performance inference engine optimized for NVIDIA GPUs. These metrics focus on request latency and completion tracking.
 
+> [!IMPORTANT]
+> **TRT-LLM exposes Prometheus at a non-standard path.** By default `trtllm-serve` serves an iteration-stats JSON array at `/metrics` (not Prometheus exposition format). The metrics below are only available when the server is launched with `return_perf_metrics: true` in `extra_llm_api_options.yaml`, which mounts the proper Prometheus exposition at `/prometheus/metrics`. AIPerf detects the JSON response on `/metrics`, probes the alt path automatically, and swaps the collector's URL on success — see [Compatibility & auto-disable](server-metrics.md#compatibility--auto-disable).
+
 ### Request Latency
 
 | Metric | Type | Unit | Labels | Histogram Buckets | Description |

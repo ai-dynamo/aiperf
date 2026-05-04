@@ -11,6 +11,7 @@ from prometheus_client.parser import text_string_to_metric_families
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.mixins import BaseMetricsCollectorMixin
 from aiperf.common.mixins.base_metrics_collector_mixin import FetchResult
 from aiperf.common.models import ErrorDetails
@@ -119,6 +120,10 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         # Keep track of metrics we have already seen (logged once) to avoid spamming the logs
         self._seen_metadata_metrics = set()
         self._seen_summary_metrics = set()
+        # When True, the active endpoint URL has already been swapped (or the
+        # probe was attempted unsuccessfully) — never probe twice for the same
+        # collector instance.
+        self._prometheus_fallback_attempted: bool = False
 
     async def _collect_and_process_metrics(self) -> None:
         """Collect metrics from Prometheus endpoint and process them into ServerMetricsRecord objects.
@@ -130,16 +135,92 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         2. Parses Prometheus-format data into ServerMetricsRecord objects
         3. Sends records via callback (via mixin's _send_records_via_callback)
 
+        On the first IncompatibleMetricsEndpointError (typical trigger:
+        TRT-LLM serves an iteration-stats JSON array at ``/metrics``), the
+        collector probes ``<base>/prometheus/metrics`` once. If that path
+        returns valid Prometheus exposition, the collector swaps its
+        endpoint URL there and continues — the user gets metrics without
+        having to manually move the URL. If the fallback also fails, the
+        original IncompatibleMetricsEndpointError propagates so the base
+        mixin's ``collect_and_process_metrics`` wrapper can auto-disable.
+
         Uses HTTP trace timing to capture precise request lifecycle timestamps for
         accurate correlation with client request timestamps.
 
         Raises:
-            Exception: Any exception from fetch or parse is logged and re-raised
+            IncompatibleMetricsEndpointError: When neither the original URL
+                nor the ``/prometheus/metrics`` fallback yields parseable
+                Prometheus data. The base mixin catches this and disables
+                the collector for the remainder of the run.
         """
+        try:
+            await self._fetch_parse_send()
+        except IncompatibleMetricsEndpointError:
+            if not self._should_probe_prometheus_fallback():
+                raise
+            await self._probe_prometheus_fallback_or_reraise()
+
+    async def _fetch_parse_send(self) -> None:
+        """Single fetch+parse+dispatch cycle against the current endpoint URL."""
         fetch_result = await self._fetch_metrics_text()
         record = self._parse_metrics_to_records(fetch_result)
         if record:
             await self._send_records_via_callback([record])
+
+    def _should_probe_prometheus_fallback(self) -> bool:
+        """The fallback probe runs at most once and only when the active URL
+        ends with ``/metrics`` (so we have a deterministic alternate path to
+        try). URLs that already point at ``/prometheus/metrics`` or that use
+        a non-standard suffix are left untouched."""
+        return (
+            not self._prometheus_fallback_attempted
+            and self._endpoint_url.endswith("/metrics")
+            and not self._endpoint_url.endswith("/prometheus/metrics")
+        )
+
+    async def _probe_prometheus_fallback_or_reraise(self) -> None:
+        """Attempt ``<base>/prometheus/metrics`` once. On success, swap the
+        collector's URL and dispatch the record from the alt endpoint. On
+        failure, restore the original URL and re-raise as
+        ``IncompatibleMetricsEndpointError`` so the base mixin can auto-disable.
+
+        Probe failures from any cause — 404 (path not mounted because
+        ``return_perf_metrics`` is unset), connection-refused, transient HTTP
+        errors, or another non-Prometheus body at the alt path — are all
+        funneled into ``IncompatibleMetricsEndpointError``. Without this
+        translation, a 404 on ``/prometheus/metrics`` would surface as
+        ``aiohttp.ClientResponseError`` and bypass the auto-disable wrapper,
+        causing the collector to keep retrying the (still-broken) original
+        URL on every subsequent scrape interval.
+        """
+        self._prometheus_fallback_attempted = True
+        original_url = self._endpoint_url
+        candidate_url = original_url.removesuffix("/metrics") + "/prometheus/metrics"
+        self.info(
+            f"Endpoint {original_url!r} returned non-Prometheus content; "
+            f"probing fallback {candidate_url!r} (TRT-LLM compatibility path)."
+        )
+        self._endpoint_url = candidate_url
+        # Reset response-hash dedup so the alt endpoint's first response is
+        # not mistaken for a duplicate of the previous /metrics body.
+        self._last_response_hash = None
+        try:
+            await self._fetch_parse_send()
+        except IncompatibleMetricsEndpointError:
+            self._endpoint_url = original_url
+            raise
+        except Exception as e:
+            self._endpoint_url = original_url
+            raise IncompatibleMetricsEndpointError(
+                f"Prometheus fallback {candidate_url!r} also failed ({e!r}); "
+                f"original endpoint {original_url!r} returned non-Prometheus "
+                f"content. For TRT-LLM, set 'return_perf_metrics: true' in "
+                f"extra_llm_api_options.yaml to enable Prometheus exposition "
+                f"at /prometheus/metrics."
+            ) from e
+        self.info(
+            f"Prometheus fallback succeeded; collector swapped to {candidate_url!r}."
+        )
 
     def _parse_metrics_to_records(
         self, fetch_result: FetchResult
@@ -159,7 +240,9 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             ServerMetricsRecord | None: ServerMetricsRecord containing complete snapshot.
                 Returns None if fetch_result.text is empty
         Raises:
-            ValueError: If parsing fails
+            IncompatibleMetricsEndpointError: If the body cannot be parsed as
+                Prometheus exposition format (e.g. TRT-LLM serves an
+                iteration-stats JSON array at the same path).
         """
         trace_timing = fetch_result.trace_timing
 
@@ -222,8 +305,11 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
                         samples=samples,
                     )
         except ValueError as e:
-            self.warning(f"Failed to parse Prometheus metrics - invalid format: {e!r}")
-            raise
+            body_preview = (fetch_result.text or "")[:200]
+            raise IncompatibleMetricsEndpointError(
+                f"endpoint did not return valid Prometheus exposition format "
+                f"({e}); body sample: {body_preview!r}"
+            ) from e
 
         # Suppress empty snapshots to reduce I/O noise
         if not metrics_dict:

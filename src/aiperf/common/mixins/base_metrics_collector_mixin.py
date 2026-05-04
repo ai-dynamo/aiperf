@@ -16,6 +16,7 @@ from typing import Generic, TypeVar
 
 import aiohttp
 
+from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
@@ -213,6 +214,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         self._trace_timing: dict[object, HttpTraceTiming] = {}
         # Hash of last response for deduplication
         self._last_response_hash: int | None = None
+        # Set when the endpoint is determined to be structurally non-Prometheus
+        # (see IncompatibleMetricsEndpointError). Subsequent collection cycles
+        # short-circuit so we don't spam parse failures at the scrape interval.
+        self._endpoint_disabled: bool = False
         super().__init__(**kwargs)
 
     @property
@@ -426,11 +431,43 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         - Logs errors if no callback configured
         - Prevents exceptions from crashing the background collection task
 
+        IncompatibleMetricsEndpointError is treated as a terminal classification
+        for the endpoint: the collector is marked disabled, a single warning is
+        logged, the error is reported once via the error callback, and all
+        subsequent calls short-circuit. This avoids the "30min benchmark
+        becomes 8hr" failure mode where a non-Prometheus endpoint (e.g. the
+        TRT-LLM iteration-stats JSON at /metrics) drove the scrape loop into
+        a parse-error spiral.
+
         This error handling enables collectors to recover from transient failures
         (network blips, server restarts) and continue collecting on the next interval.
         """
+        if self._endpoint_disabled:
+            return
         try:
             await self._collect_and_process_metrics()
+        except IncompatibleMetricsEndpointError as e:
+            # `_collect_metrics_loop` fires `execute_async` every interval
+            # without awaiting prior cycles; under TRT-LLM /metrics latency
+            # several scrape coroutines can be in flight when the first one
+            # raises, all reaching this except block. Synchronously
+            # check-and-set the flag (no awaits before the set) so only the
+            # first arrival logs and notifies — the rest short-circuit.
+            if self._endpoint_disabled:
+                return
+            self._endpoint_disabled = True
+            self.warning(
+                f"Disabling server metrics collection for {self._endpoint_url}: "
+                f"{e}. To suppress this warning, pass --no-server-metrics."
+            )
+            if self._error_callback:
+                try:
+                    await self._error_callback(
+                        ErrorDetails.from_exception(e),
+                        self.id,
+                    )
+                except Exception as callback_error:
+                    self.error(f"Failed to send error via callback: {callback_error}")
         except Exception as e:
             if self._error_callback:
                 try:
@@ -488,6 +525,17 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 self._endpoint_url, trace_request_ctx=trace_ctx
             ) as response:
                 response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                # Prometheus exposition is text/plain; servers like TRT-LLM
+                # serve a JSON iteration-stats array at /metrics, which the
+                # Prometheus parser cannot interpret. Reject up front so the
+                # caller can auto-disable instead of looping on parse errors.
+                if content_type.startswith("application/json"):
+                    raise IncompatibleMetricsEndpointError(
+                        f"endpoint {self._endpoint_url!r} returned non-Prometheus "
+                        f"content-type {content_type!r}; expected text/plain "
+                        f"(Prometheus exposition format)"
+                    )
                 text = await response.text()
 
             timing = self._trace_timing.pop(trace_ctx, HttpTraceTiming())
