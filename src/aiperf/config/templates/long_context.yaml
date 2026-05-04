@@ -20,8 +20,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-70B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -99,13 +97,14 @@ benchmark:
     sliceDuration: 60
 
 # Monitor GPU memory usage
-gpuTelemetry:
-  enabled: true
-  urls:
-    - http://localhost:9400/metrics
+  model: meta-llama/Llama-3.1-70B-Instruct
+  gpuTelemetry:
+    enabled: true
+    urls:
+      - http://localhost:9400/metrics
 
-serverMetrics:
-  enabled: true
-  urls:
-    - http://localhost:8000/metrics
-  formats: [json, csv]
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]

@@ -20,8 +20,6 @@
 
 randomSeed: 42
 
-model: BAAI/bge-small-en-v1.5
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/embeddings
@@ -85,3 +83,4 @@ benchmark:
     dir: ./artifacts/embeddings
     summary: [json]
     records: [jsonl, csv]
+  model: BAAI/bge-small-en-v1.5

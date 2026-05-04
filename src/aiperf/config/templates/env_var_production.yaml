@@ -33,8 +33,6 @@
 
 randomSeed: ${BENCHMARK_SEED:42}
 
-model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
-
 benchmark:
   endpoint:
     url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
@@ -52,33 +50,38 @@ benchmark:
     dir: ${ARTIFACTS_DIR:./artifacts/production}
     summary: [json]
     records: [jsonl, csv]
-dataset:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+  dataset:
   # Production-realistic: lognormal ISL (right-skewed, most requests short)
   # with clamped output to prevent runaway generations
-  type: synthetic
-  entries: 2000
-  prompts:
-    isl:
-      peaks:
-        - {mean: 256, median: 214, weight: 70}
-        - {mean: 2048, median: 1891, weight: 30}
-    osl: {mean: 256, median: 226}
+    type: synthetic
+    entries: 2000
+    prompts:
+      isl:
+        peaks:
+          - {mean: 256, median: 214, weight: 70}
+          - {mean: 2048, median: 1891, weight: 30}
+      osl: {mean: 256, median: 226}
+  warmup:
+    type: concurrency
+    requests: 100
+    concurrency: 8
 
-warmup:
-  type: concurrency
-  requests: 100
-  concurrency: 8
+  profiling:
+    type: gamma
+    rate: ${TARGET_RATE:30.0}
+    smoothness: 1.5
+    duration: ${DURATION:300}
+    concurrency: ${MAX_CONCURRENCY:64}
+    rateRamp: 30
+    seamless: true
+    gracePeriod: 60
 
-profiling:
-  type: gamma
-  rate: ${TARGET_RATE:30.0}
-  smoothness: 1.5
-  duration: ${DURATION:300}
-  concurrency: ${MAX_CONCURRENCY:64}
-  rateRamp: 30
-  seamless: true
-  gracePeriod: 60
-
+  serverMetrics:
+    enabled: true
+    urls:
+      - ${METRICS_URL:http://localhost:8000/metrics}
+    formats: [json, csv]
 multiRun:
   numRuns: ${NUM_RUNS:3}
   cooldownSeconds: ${COOLDOWN:30.0}
@@ -87,8 +90,3 @@ multiRun:
   disableWarmupAfterFirst: true
 
 
-serverMetrics:
-  enabled: true
-  urls:
-    - ${METRICS_URL:http://localhost:8000/metrics}
-  formats: [json, csv]

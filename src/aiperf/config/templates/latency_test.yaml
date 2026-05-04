@@ -25,8 +25,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -39,18 +37,16 @@ benchmark:
     summary: [json]
     records: [jsonl, csv]
     sliceDuration: 30 # 30-second windows to see if latency drifts over time
-dataset:
-  type: synthetic
-  entries: 3000
-  isl: {mean: 256, stddev: 50}
-  osl: {mean: 128, stddev: 25}
-
-# "profiling:" is shorthand for phases: { profiling: { ... } }
-# (warmup/profiling at top level auto-wrap into phases)
-profiling:
-  type: poisson
-  duration: 120
-  rate: 20.0          # Target QPS — tune this to your server's capacity
-  concurrency: 100    # Safety cap to prevent unbounded queue growth
-  gracePeriod: 60
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: synthetic
+    entries: 3000
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 128, stddev: 25}
+  profiling:
+    type: poisson
+    duration: 120
+    rate: 20.0        # Target QPS — tune this to your server's capacity
+    concurrency: 100  # Safety cap to prevent unbounded queue growth
+    gracePeriod: 60
 

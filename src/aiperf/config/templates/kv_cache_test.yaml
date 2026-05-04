@@ -34,8 +34,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -90,8 +88,9 @@ benchmark:
     records: [jsonl, csv]
     sliceDuration: 30 # Watch for cache warm-up — early slices should be slower
 
-serverMetrics:
-  enabled: true
-  urls:
-    - http://localhost:8000/metrics
-  formats: [json, csv]
+  model: meta-llama/Llama-3.1-8B-Instruct
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv]

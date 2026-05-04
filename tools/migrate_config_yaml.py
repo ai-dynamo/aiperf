@@ -33,17 +33,26 @@ from typing import Any
 from ruamel.yaml import YAML
 
 # Body fields that move under `benchmark:` in the new envelope shape.
+# Includes both canonical names AND the shortcut singulars/aliases that
+# AIPerfConfig hoists to the long-form during validation (model -> models,
+# dataset -> datasets[0], warmup/profiling -> phases[name=warmup/profiling]).
 BODY_KEYS = frozenset(
     {
         "models",
+        "model",
         "endpoint",
         "datasets",
+        "dataset",
         "phases",
+        "warmup",
+        "profiling",
         "artifacts",
         "slos",
         "tokenizer",
         "gpu_telemetry",
+        "gpuTelemetry",
         "server_metrics",
+        "serverMetrics",
         "runtime",
         "logging",
         "metrics",
@@ -53,7 +62,7 @@ BODY_KEYS = frozenset(
 
 # Envelope fields that stay at top level. `benchmark` is the new wrapper key.
 ENVELOPE_KEYS = frozenset(
-    {"sweep", "multi_run", "variables", "random_seed", "benchmark"}
+    {"sweep", "multi_run", "multiRun", "variables", "random_seed", "randomSeed", "benchmark"}
 )
 
 # Allowed grid sweep variable path prefixes.

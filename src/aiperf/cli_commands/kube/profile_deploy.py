@@ -305,14 +305,7 @@ async def deploy_via_operator(
     kube_console.save_last_benchmark(name, namespace, name=kube_options.name)
 
     if detach:
-        ctx_flag = (
-            f" --kube-context {kube_options.kube_context}"
-            if kube_options.kube_context
-            else ""
-        )
-        kube_console.print_info(
-            f"Detached. Watch with: aiperf kube watch {name}{ctx_flag}"
-        )
+        _print_detach_hint(name, kube_options)
         return
 
     from aiperf.kubernetes.attach import watch_job
@@ -323,4 +316,18 @@ async def deploy_via_operator(
         timeout=600,
         kubeconfig=kube_options.kubeconfig,
         kube_context=kube_options.kube_context,
+    )
+
+
+def _print_detach_hint(name: str, kube_options: KubeOptions) -> None:
+    """Print the `aiperf kube watch` invocation that re-attaches to the job."""
+    from aiperf.kubernetes import console as kube_console
+
+    ctx_flag = (
+        f" --kube-context {kube_options.kube_context}"
+        if kube_options.kube_context
+        else ""
+    )
+    kube_console.print_info(
+        f"Detached. Watch with: aiperf kube watch {name}{ctx_flag}"
     )

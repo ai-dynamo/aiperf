@@ -28,8 +28,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -48,15 +46,16 @@ benchmark:
     dir: ./artifacts/composed_dataset
     summary: [json]
     records: [jsonl, csv]
-dataset:
-  type: composed
-  source:
-    type: file
-    path: ./data/prompts.jsonl
-    format: single_turn
-    sampling: shuffle  # Randomize prompt order each run
-  augment:
-    osl: {mean: 256, stddev: 50}
-    oslMode: fill  # Respect existing OSL if present, fill missing ones
-  entries: 1000    # Recycle prompts if file has fewer than 1000 lines
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: composed
+    source:
+      type: file
+      path: ./data/prompts.jsonl
+      format: single_turn
+      sampling: shuffle # Randomize prompt order each run
+    augment:
+      osl: {mean: 256, stddev: 50}
+      oslMode: fill # Respect existing OSL if present, fill missing ones
+    entries: 1000  # Recycle prompts if file has fewer than 1000 lines
 

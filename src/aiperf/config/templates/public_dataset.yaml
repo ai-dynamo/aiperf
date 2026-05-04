@@ -22,8 +22,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -35,22 +33,23 @@ benchmark:
     dir: ./artifacts/public_dataset
     summary: [json]
     records: [jsonl, csv]
-dataset:
-  type: public
-  dataset: sharegpt
-  entries: 1000     # Sample 1000 conversations (full dataset is ~90K)
-  sampling: shuffle  # Randomize order for diverse workload per run
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: public
+    dataset: sharegpt
+    entries: 1000   # Sample 1000 conversations (full dataset is ~90K)
+    sampling: shuffle # Randomize order for diverse workload per run
 
-warmup:
-  type: concurrency
-  requests: 50
-  concurrency: 8
+  warmup:
+    type: concurrency
+    requests: 50
+    concurrency: 8
 
-profiling:
-  type: concurrency
-  requests: 1000
-  concurrency: 32
-  seamless: true
-  duration: 300
-  gracePeriod: 120  # Multi-turn conversations need time to finish all turns
+  profiling:
+    type: concurrency
+    requests: 1000
+    concurrency: 32
+    seamless: true
+    duration: 300
+    gracePeriod: 120 # Multi-turn conversations need time to finish all turns
 

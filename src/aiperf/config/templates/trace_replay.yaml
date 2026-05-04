@@ -28,8 +28,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -50,21 +48,22 @@ benchmark:
     records: [jsonl, csv]
     sliceDuration: 30 # See how latency varies across the trace timeline
 
-dataset:
-  type: file
-  path: ./data/production_trace.jsonl
-  format: mooncake_trace
-  sampling: sequential
-  synthesis:
-    speedupRatio: 2.0           # Replay at 2x speed (halves all timestamps)
-    prefixLenMultiplier: 1.0    # Scale prefix branch lengths in radix tree (1.0 = no change)
-    promptLenMultiplier: 1.0    # Scale unique prompt lengths (2.0 = double all prompts)
-    maxIsl: 8192                # Drop requests with input_length > 8K
-    maxOsl: 2048                # Cap output_length at 2K (doesn't drop, just clamps)
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: file
+    path: ./data/production_trace.jsonl
+    format: mooncake_trace
+    sampling: sequential
+    synthesis:
+      speedupRatio: 2.0         # Replay at 2x speed (halves all timestamps)
+      prefixLenMultiplier: 1.0  # Scale prefix branch lengths in radix tree (1.0 = no change)
+      promptLenMultiplier: 1.0  # Scale unique prompt lengths (2.0 = double all prompts)
+      maxIsl: 8192              # Drop requests with input_length > 8K
+      maxOsl: 2048              # Cap output_length at 2K (doesn't drop, just clamps)
 
 # fixed_schedule doesn't need requests/duration — it stops when the trace ends
-serverMetrics:
-  enabled: true
-  urls:
-    - http://localhost:8000/metrics
-  formats: [json, csv, parquet]
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://localhost:8000/metrics
+    formats: [json, csv, parquet]

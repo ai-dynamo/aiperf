@@ -23,8 +23,6 @@
 
 randomSeed: 42
 
-model: openai/whisper-large-v3
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/audio/transcriptions
@@ -84,3 +82,4 @@ benchmark:
     dir: ./artifacts/audio_multimodal
     summary: [json]
     records: [jsonl, csv]
+  model: openai/whisper-large-v3

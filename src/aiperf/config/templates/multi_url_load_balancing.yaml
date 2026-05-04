@@ -23,8 +23,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     urls:
@@ -41,32 +39,32 @@ benchmark:
     dir: ./artifacts/multi_url
     summary: [json]
     records: [jsonl, csv]
-dataset:
-  type: synthetic
-  entries: 10000
-  prompts:
-    isl: {mean: 512, stddev: 100}
-    osl: {mean: 256, stddev: 50}
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: synthetic
+    entries: 10000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}
+  warmup:
+    type: concurrency
+    requests: 200        # 50 per server
+    concurrency: 16
 
-warmup:
-  type: concurrency
-  requests: 200          # 50 per server
-  concurrency: 16
-
-profiling:
-  type: concurrency
-  duration: 300
-  concurrency: 256       # 64 per server
-  concurrencyRamp: 60    # Gradual ramp avoids overwhelming cold servers
-  gracePeriod: 120
+  profiling:
+    type: concurrency
+    duration: 300
+    concurrency: 256     # 64 per server
+    concurrencyRamp: 60  # Gradual ramp avoids overwhelming cold servers
+    gracePeriod: 120
 
 
 # Scrape all replicas to compare per-server behavior
-serverMetrics:
-  enabled: true
-  urls:
-    - http://server1:8000/metrics
-    - http://server2:8000/metrics
-    - http://server3:8000/metrics
-    - http://server4:8000/metrics
-  formats: [json, csv]
+  serverMetrics:
+    enabled: true
+    urls:
+      - http://server1:8000/metrics
+      - http://server2:8000/metrics
+      - http://server3:8000/metrics
+      - http://server4:8000/metrics
+    formats: [json, csv]

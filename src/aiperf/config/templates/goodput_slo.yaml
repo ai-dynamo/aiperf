@@ -22,8 +22,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000
@@ -79,9 +77,10 @@ benchmark:
     summary: [json]
     records: [jsonl, csv]
     sliceDuration: 30
-dataset:
-  type: synthetic
-  entries: 5000
-  prompts:
-    isl: {mean: 512, stddev: 100}
-    osl: {mean: 256, stddev: 50}
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: synthetic
+    entries: 5000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}

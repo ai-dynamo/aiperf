@@ -19,8 +19,6 @@
 
 randomSeed: 42
 
-model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
-
 benchmark:
   endpoint:
     url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
@@ -59,6 +57,7 @@ benchmark:
     dir: ./artifacts/workload_profiles
     summary: [json]
     records: [jsonl, csv]
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 sweep:
   type: scenarios
   runs:

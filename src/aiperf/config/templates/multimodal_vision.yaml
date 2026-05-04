@@ -23,8 +23,6 @@
 
 randomSeed: 42
 
-model: llava-hf/llava-1.5-7b-hf
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -77,3 +75,4 @@ benchmark:
     dir: ./artifacts/multimodal_vision
     summary: [json]
     records: [jsonl]
+  model: llava-hf/llava-1.5-7b-hf

@@ -24,8 +24,6 @@
 
 randomSeed: 42
 
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
   endpoint:
     url: http://localhost:8000/v1/chat/completions
@@ -40,25 +38,26 @@ benchmark:
     dir: ./artifacts/multi_turn
     summary: [json]
     records: [jsonl, csv]
-dataset:
-  type: synthetic
-  entries: 500
-  prompts:
-    isl: {mean: 200, stddev: 50}    # Per-turn user message length
-    osl: {mean: 300, stddev: 75}    # Per-turn assistant response length
-  turns: {mean: 5, stddev: 2}       # ~5 turns per conversation (context grows each turn)
-  turnDelay: {mean: 2000, stddev: 500}  # 2s average think time between turns (ms)
-  turnDelayRatio: 1.0                    # Set < 1 to speed up, > 1 to slow down
+  model: meta-llama/Llama-3.1-8B-Instruct
+  dataset:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 200, stddev: 50}  # Per-turn user message length
+      osl: {mean: 300, stddev: 75}  # Per-turn assistant response length
+    turns: {mean: 5, stddev: 2}     # ~5 turns per conversation (context grows each turn)
+    turnDelay: {mean: 2000, stddev: 500} # 2s average think time between turns (ms)
+    turnDelayRatio: 1.0                  # Set < 1 to speed up, > 1 to slow down
 
-warmup:
-  type: concurrency
-  sessions: 10
-  concurrency: 4
+  warmup:
+    type: concurrency
+    sessions: 10
+    concurrency: 4
 
-profiling:
-  type: concurrency
-  sessions: 100
-  concurrency: 20
-  duration: 300
-  gracePeriod: 120  # Multi-turn sessions can take a while to complete all turns
+  profiling:
+    type: concurrency
+    sessions: 100
+    concurrency: 20
+    duration: 300
+    gracePeriod: 120 # Multi-turn sessions can take a while to complete all turns
 
