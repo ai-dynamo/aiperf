@@ -22,16 +22,26 @@ class TestBodyEnvelopePartition:
         assert BODY_KEYS.isdisjoint(ENVELOPE_KEYS)
 
     def test_body_keys_match_spec(self):
+        # Includes shortcut singulars (model/dataset/warmup/profiling) and
+        # camelCase aliases (gpuTelemetry/serverMetrics) so half-migrated
+        # templates with hoisted shortcuts land cleanly under benchmark: on
+        # re-run; see tools/migrate_config_yaml.py docstring.
         assert {
             "models",
+            "model",
             "endpoint",
             "datasets",
+            "dataset",
             "phases",
+            "warmup",
+            "profiling",
             "artifacts",
             "slos",
             "tokenizer",
             "gpu_telemetry",
+            "gpuTelemetry",
             "server_metrics",
+            "serverMetrics",
             "runtime",
             "logging",
             "metrics",
@@ -42,8 +52,10 @@ class TestBodyEnvelopePartition:
         assert {
             "sweep",
             "multi_run",
+            "multiRun",
             "variables",
             "random_seed",
+            "randomSeed",
             "benchmark",
         } == ENVELOPE_KEYS
 
