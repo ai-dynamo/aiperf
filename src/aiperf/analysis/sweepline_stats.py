@@ -12,6 +12,7 @@ from aiperf.analysis.sweepline import (
     SweepLineStats,
     _step_lookup,
 )
+from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.models import MetricResult
 
 
@@ -179,6 +180,7 @@ def metric_result_from_sweep_line_stats(
     stats: SweepLineStats,
     *,
     scale: float = 1.0,
+    console_group: MetricConsoleGroup = MetricConsoleGroup.EFFECTIVE,
 ) -> MetricResult:
     """Build a MetricResult from compute_time_weighted_stats output."""
     return MetricResult(
@@ -193,4 +195,5 @@ def metric_result_from_sweep_line_stats(
         p95=stats.p95 * scale,
         p99=stats.p99 * scale,
         std=stats.std * scale,
+        console_group=console_group,
     )
