@@ -15,8 +15,6 @@ from aiperf.plugin.enums import AccuracyBenchmarkType, AccuracyGraderType
 class AccuracyConfig(BaseConfig):
     """Configuration for accuracy benchmarking mode."""
 
-    _CLI_GROUP = Groups.ACCURACY
-
     benchmark: Annotated[
         AccuracyBenchmarkType | None,
         Field(
@@ -25,7 +23,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-benchmark",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = None
 
@@ -39,7 +37,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-tasks",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = None
 
@@ -53,7 +51,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-n-shots",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = None
 
@@ -65,7 +63,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-enable-cot",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = False
 
@@ -78,7 +76,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-grader",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = None
 
@@ -90,7 +88,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-system-prompt",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = None
 
@@ -102,7 +100,7 @@ class AccuracyConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--accuracy-verbose",),
-            group=_CLI_GROUP,
+            group=Groups.ACCURACY,
         ),
     ] = False
 

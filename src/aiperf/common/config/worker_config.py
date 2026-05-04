@@ -13,8 +13,6 @@ from aiperf.common.config.groups import Groups
 class WorkersConfig(BaseConfig):
     """Worker configuration."""
 
-    _CLI_GROUP = Groups.WORKERS
-
     min: Annotated[
         int | None,
         Field(
@@ -34,6 +32,6 @@ class WorkersConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--workers-max", "--max-workers"),
-            group=_CLI_GROUP,
+            group=Groups.WORKERS,
         ),
     ] = WorkersDefaults.MAX

@@ -175,6 +175,8 @@ navigation:
     path: reference/list-metric-aggregation.md
   - page: Vendor Usage Field Reference
     path: reference/vendor-usage-fields.md
+  - page: JSON Export Schema
+    path: reference/json-export-schema.md
 
 - section: Server Metrics
   collapsed: true

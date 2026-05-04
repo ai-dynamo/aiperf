@@ -118,6 +118,99 @@ class TestMetricsJsonExporter:
             #     output_dir
             # )
 
+    @pytest.mark.asyncio
+    async def test_json_export_count_sum_per_metric_type(self, mock_user_config):
+        """End-to-end: record metric carries count+sum, derived/aggregate omit count.
+
+        Drives the full exporter pipeline (MetricResult -> to_json_result ->
+        JsonExportData -> model_dump_json) so the registry-driven type lookup,
+        the count-strip rule, and the exclude_none serialization are all
+        exercised together. Regression guard for schema 1.1 semantics.
+        """
+        records = [
+            MetricResult(  # RECORD: keeps both count and sum
+                tag="request_latency",
+                header="Request Latency",
+                unit="ms",
+                avg=50.0,
+                min=10.0,
+                max=90.0,
+                p50=48.0,
+                p99=89.0,
+                std=12.0,
+                count=100,
+                sum=5000.0,
+            ),
+            MetricResult(  # DERIVED: count must be stripped
+                tag="request_throughput",
+                header="Request Throughput",
+                unit="requests/sec",
+                avg=1.5,
+                count=1,
+            ),
+            MetricResult(  # AGGREGATE: count must be stripped
+                tag="request_count",
+                header="Request Count",
+                unit="requests",
+                avg=20.0,
+                count=1,
+            ),
+        ]
+
+        class _Results:
+            def __init__(self, recs):
+                self.metrics = recs
+                self.start_ns = None
+                self.end_ns = None
+
+            @property
+            def records(self):
+                return self.metrics
+
+            @property
+            def has_results(self):
+                return True
+
+            @property
+            def was_cancelled(self):
+                return False
+
+            @property
+            def error_summary(self):
+                return []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_user_config.output.artifact_directory = output_dir
+            exporter_config = ExporterConfig(
+                results=_Results(records),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        # Schema bump landed
+        assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
+        assert JsonExportData.SCHEMA_VERSION == "1.1"
+
+        # Record metric: count and sum are present
+        assert raw["request_latency"]["count"] == 100
+        assert raw["request_latency"]["sum"] == 5000.0
+
+        # Derived: count omitted via exclude_none, value lives in avg
+        assert "count" not in raw["request_throughput"]
+        assert "sum" not in raw["request_throughput"]
+        assert raw["request_throughput"]["avg"] == 1.5
+
+        # Aggregate: same rule
+        assert "count" not in raw["request_count"]
+        assert raw["request_count"]["avg"] == 20.0
+
     def test_metrics_json_exporter_inherits_from_base(self, mock_user_config):
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""
         with tempfile.TemporaryDirectory() as temp_dir:
