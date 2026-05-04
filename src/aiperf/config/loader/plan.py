@@ -19,26 +19,16 @@ from aiperf.config.loader.jinja import (
 def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     """Build a BenchmarkPlan from a validated AIPerfConfig.
 
-    Expands sweep variations and extracts multi_run settings, OR — when
-    config.multi_run.adaptive_search is set — produces a single-config plan
-    with plan.adaptive_search populated. Sweep + adaptive_search are mutually exclusive.
+    Sweep + adaptive_search are mutually exclusive. When sweep is
+    present, expands variations on the envelope dict and validates each
+    variation's body as a BenchmarkConfig. When sweep is absent, the
+    plan carries the single config.benchmark.
     """
     from aiperf.config.sweep import SweepVariation
 
-    adaptive_search = (
-        config.multi_run.adaptive_search
-    )  # already typed AdaptiveSearchConfig | None
-    post_process = config.multi_run.post_process  # PostProcessSpec | None
-    sla_filters = list(config.multi_run.sla_filters)
-
+    adaptive_search = config.multi_run.adaptive_search
     config_dict = config.model_dump(mode="json", exclude_none=True, exclude_unset=True)
     sweep_dict = config_dict.pop("sweep", None)
-    multi_run = config_dict.pop("multi_run", {})
-    multi_run.pop(
-        "adaptive_search", None
-    )  # propagated separately as `adaptive_search` kwarg
-    multi_run.pop("post_process", None)  # propagated separately
-    multi_run.pop("sla_filters", None)  # propagated separately
 
     if sweep_dict is not None and adaptive_search is not None:
         raise ValueError(
@@ -47,13 +37,68 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
             "Drop the sweep block to use BO, or drop the --search-* flags."
         )
 
-    if adaptive_search is not None:
-        # BO path: single base config, single placeholder variation. The
-        # planner synthesizes per-iteration variations during execution.
-        configs = [BenchmarkConfig.model_validate(config_dict)]
+    if adaptive_search is not None or sweep_dict is None:
+        configs = [config.benchmark.model_copy(deep=True)]
         variations = [SweepVariation(index=0, label="base", values={})]
     else:
-        configs, variations = _expand_grid_variations(config_dict, sweep_dict)
+        configs, variations = _expand_envelope_variations(config_dict, sweep_dict)
+
+    return _assemble_plan_from_aiperf_config(config, configs, variations)
+
+
+def _expand_envelope_variations(
+    config_dict: dict[str, Any],
+    sweep_dict: dict[str, Any],
+) -> tuple[list[BenchmarkConfig], list[Any]]:
+    """Expand the sweep block into per-variation BenchmarkConfigs.
+
+    Operates on the envelope dict: each variation has its own benchmark
+    subtree (post-merge for scenarios, post-grid-write for grids).
+    Re-renders Jinja per variation against the merged context, then
+    validates the rendered benchmark subtree as a BenchmarkConfig.
+    """
+    from aiperf.config.sweep import SweepVariation, expand_sweep
+
+    config_dict = dict(config_dict)
+    config_dict["sweep"] = sweep_dict
+    expanded = expand_sweep(config_dict)
+
+    configs: list[BenchmarkConfig] = []
+    variations: list[SweepVariation] = []
+    for variation_dict, variation_meta in expanded:
+        variation_dict.pop("sweep", None)
+        variation_dict.pop("multi_run", None)
+        context = build_template_context(variation_dict)
+        variation_dict = render_jinja2_templates(variation_dict, context)
+        bench_dict = variation_dict.get("benchmark", {})
+        configs.append(BenchmarkConfig.model_validate(bench_dict))
+        variations.append(variation_meta)
+    if not variations:
+        variations = [SweepVariation(index=0, label="base", values={})]
+    return configs, variations
+
+
+def _assemble_plan_from_aiperf_config(
+    config: AIPerfConfig,
+    configs: list[BenchmarkConfig],
+    variations: list[Any],
+) -> BenchmarkPlan:
+    """Assemble a BenchmarkPlan from envelope-level execution settings.
+
+    Reads ``config.multi_run`` (and seed-derivation rules) at the envelope
+    level. Shared by every dispatch path in ``build_benchmark_plan`` so
+    the plan-kwargs surface stays one place.
+    """
+    adaptive_search = config.multi_run.adaptive_search
+    post_process = config.multi_run.post_process
+    sla_filters = list(config.multi_run.sla_filters)
+
+    multi_run = config.multi_run.model_dump(
+        mode="json", exclude_none=True, exclude_unset=True
+    )
+    multi_run.pop("adaptive_search", None)
+    multi_run.pop("post_process", None)
+    multi_run.pop("sla_filters", None)
 
     plan_kwargs: dict[str, Any] = dict(
         configs=configs,
@@ -84,35 +129,6 @@ def build_benchmark_plan(config: AIPerfConfig) -> BenchmarkPlan:
     if adaptive_search is None:
         _apply_sweep_seed_derivation(plan, config)
     return plan
-
-
-def _expand_grid_variations(
-    config_dict: dict[str, Any],
-    sweep_dict: dict[str, Any] | None,
-) -> tuple[list[BenchmarkConfig], list[Any]]:
-    """Expand the (optional) sweep block into per-variation BenchmarkConfigs.
-
-    Returns the parallel ``(configs, variations)`` lists. Re-renders Jinja2
-    templates per variation so sweep-overridden values propagate. Falls back
-    to a single ``base`` variation when no sweep is present.
-    """
-    from aiperf.config.sweep import SweepVariation, expand_sweep
-
-    if sweep_dict is not None:
-        config_dict["sweep"] = sweep_dict
-    expanded = expand_sweep(config_dict)
-    configs: list[BenchmarkConfig] = []
-    variations: list[Any] = []
-    for variation_dict, variation_meta in expanded:
-        variation_dict.pop("sweep", None)
-        variation_dict.pop("multi_run", None)
-        context = build_template_context(variation_dict)
-        variation_dict = render_jinja2_templates(variation_dict, context)
-        configs.append(BenchmarkConfig.model_validate(variation_dict))
-        variations.append(variation_meta)
-    if not variations:
-        variations = [SweepVariation(index=0, label="base", values={})]
-    return configs, variations
 
 
 def _apply_sweep_seed_derivation(plan: BenchmarkPlan, config: AIPerfConfig) -> None:
