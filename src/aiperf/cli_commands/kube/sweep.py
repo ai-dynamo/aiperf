@@ -204,16 +204,34 @@ def _build_sweep_cr_dict(
             or benchmark_raw.pop("multi_run", None)
             or benchmark_raw.pop("multiRun", None)
         )
+        envelope_variables = cr_spec.pop("variables", None)
         bench_dict = benchmark_raw
     else:
         sweep_cfg = raw.pop("sweep", None)
         multirun_cfg_from_yaml = raw.pop("multi_run", None) or raw.pop("multiRun", None)
-        bench_dict = raw
+        # Pull envelope-level `variables:` (used as Jinja context) before
+        # picking the body subtree.
+        envelope_variables = raw.pop("variables", None)
+        # Envelope-shape YAML (post-restructure) wraps body fields under a
+        # top-level `benchmark:` key. Drill into that so `bench_dict` holds the
+        # body keys directly, matching the legacy flat-shape handling.
+        if isinstance(raw.get("benchmark"), dict) and not (
+            "models" in raw or "model" in raw or "endpoint" in raw
+        ):
+            bench_dict = raw["benchmark"]
+        else:
+            bench_dict = raw
 
     # Render Jinja2 / ${ENV_VAR} in the benchmark portion before submission so
     # unresolved `{{ ... }}` literals never trip AIPerfSweepSpec.model_validate
     # below or reach the operator. Mirrors `aiperf kube profile -f`'s pipeline.
-    bench_dict = expand_config_dict(bench_dict)
+    if envelope_variables:
+        wrapped = {"variables": envelope_variables, **bench_dict}
+        wrapped = expand_config_dict(wrapped)
+        wrapped.pop("variables", None)
+        bench_dict = wrapped
+    else:
+        bench_dict = expand_config_dict(bench_dict)
 
     # Deep-merge explicitly-set CLI flags (e.g. `--search-recipe`,
     # `--ttft-sla-ms`, `--streaming`) onto the YAML before validation. Recipe

@@ -428,7 +428,7 @@ def test_build_sweep_cr_dict_grid_recipe_lifts_to_spec_sweep(tmp_path: Path) -> 
         convergence_threshold=0.05,
     )
     assert "sweep" in cr["spec"], "recipe-driven sweep must hoist to spec.sweep"
-    assert "phases.profiling.concurrency" in cr["spec"]["sweep"]["variables"]
+    assert "benchmark.phases.profiling.concurrency" in cr["spec"]["sweep"]["variables"]
     bench = cr["spec"]["template"]["spec"]["benchmark"]
     assert "sweep" not in bench, "sweep must NOT be embedded in benchmark"
 
@@ -1116,22 +1116,23 @@ def test_build_sweep_cr_dict_renders_jinja_in_benchmark(tmp_path: Path) -> None:
 variables:
   base_concurrency: 30
   multiplier: 4
-models: [Qwen/Qwen3-0.6B]
-endpoint:
-  urls: [http://localhost:8000/v1/chat/completions]
-  type: chat
-  streaming: true
-datasets:
-  - {name: main, type: synthetic}
-phases:
-  - name: profiling
-    type: concurrency
-    duration: 5
-    concurrency: "{{ base_concurrency * multiplier }}"
+benchmark:
+  models: [Qwen/Qwen3-0.6B]
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+    type: chat
+    streaming: true
+  datasets:
+    - {name: main, type: synthetic}
+  phases:
+    - name: profiling
+      type: concurrency
+      duration: 5
+      concurrency: "{{ base_concurrency * multiplier }}"
 sweep:
   type: grid
   variables:
-    random_seed: [1, 2]
+    benchmark.phases.profiling.duration: [5, 10]
 """
     )
     cr = sweep_cmd._build_sweep_cr_dict(

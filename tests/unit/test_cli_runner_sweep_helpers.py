@@ -38,7 +38,6 @@ _MINIMAL_CONFIG_KWARGS = {
             "concurrency": 1,
         }
     ],
-    "random_seed": 42,
 }
 
 
