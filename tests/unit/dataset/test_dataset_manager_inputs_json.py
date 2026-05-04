@@ -91,7 +91,7 @@ class TestDatasetManagerInputsJsonGeneration:
         tmp_path: Path,
     ):
         """Test file creation in correct location and valid JSON output."""
-        populated_dataset_manager.run.cfg.benchmark.artifacts.dir = tmp_path
+        populated_dataset_manager.run.cfg.artifacts.dir = tmp_path
 
         await populated_dataset_manager._generate_inputs_json_file()
 

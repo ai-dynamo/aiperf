@@ -99,7 +99,7 @@ def _make_processor(
     proc._tokenizer_bundles = {}
     proc._tokenizer_ready = MagicMock()
     proc.run = MagicMock()
-    proc.run.cfg.benchmark.runtime.uses_worker_group_manager = has_dealer
+    proc.run.cfg.runtime.uses_worker_group_manager = has_dealer
     proc.run.cfg.output.export_level = export_level
     proc._children = children or []
     proc.records_processors = []

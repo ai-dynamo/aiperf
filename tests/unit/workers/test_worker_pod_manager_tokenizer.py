@@ -30,7 +30,7 @@ async def test_prefetch_publishes_group_tokenizer_ready(
     mgr._publish_group_message = AsyncMock(side_effect=published.append)
     mgr._unique_tokenizer_names = MagicMock(return_value=["gpt2", "bert-base-uncased"])
     mgr._tokenizer_dest_root = MagicMock(return_value=tmp_path)
-    mgr.run.cfg.benchmark.runtime.dataset_api_base_url = "http://api"
+    mgr.run.cfg.runtime.dataset_api_base_url = "http://api"
     mgr.service_id = "wgm-0"
 
     await wpm.WorkerGroupManagerBase._prefetch_tokenizers(mgr)

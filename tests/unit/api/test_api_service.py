@@ -1098,7 +1098,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory.exists.return_value = False
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get("/api/results/list")
         assert response.status_code == 200
@@ -1123,7 +1123,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get("/api/results/list")
         assert response.status_code == 200
@@ -1154,7 +1154,7 @@ class TestResultsFileEndpoints:
         write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -1177,7 +1177,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get(
             "/api/results/files/profile_export.json",
@@ -1201,7 +1201,7 @@ class TestResultsFileEndpoints:
         write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -1223,7 +1223,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].run.cfg.benchmark.artifacts = mock_output
+        mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
 
         response = api_test_client.get(
             "/api/results/files/metrics.json",

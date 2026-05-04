@@ -148,7 +148,7 @@ class TestBailianTraceDatasetLoader:
         if end_offset is not None:
             load_kwargs["end_offset"] = end_offset
         return AIPerfConfig(
-            **{
+            benchmark={
                 **_BASE,
                 "datasets": [
                     {

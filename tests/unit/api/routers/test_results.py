@@ -194,7 +194,7 @@ class TestResultsListEndpoint:
     ) -> None:
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path / "nonexistent"
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -213,7 +213,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -240,7 +240,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -266,7 +266,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         payload = response.json()
@@ -289,7 +289,7 @@ class TestResultsListEndpoint:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         names = {f["name"] for f in response.json()["files"]}
@@ -309,7 +309,7 @@ class TestResultsFileEndpoints:
         write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -330,7 +330,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/profile_export_aiperf.json")
         assert response.status_code == 404
@@ -350,7 +350,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/checkpoints/cp0.json",
@@ -371,7 +371,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/profile_export.json",
@@ -390,7 +390,7 @@ class TestResultsFileEndpoints:
         write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -407,7 +407,7 @@ class TestResultsFileEndpoints:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/metrics.json",
@@ -445,7 +445,7 @@ class TestResultsFileContentType:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             f"/api/results/files/{filename}",
@@ -466,7 +466,7 @@ class TestResultsFileContentType:
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.benchmark.artifacts = mock_output
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/data.json",

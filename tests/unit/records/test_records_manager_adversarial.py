@@ -174,10 +174,10 @@ def _make_manager(
 
     # `run.cfg` surface used by background tasks.
     mgr.run = MagicMock()
-    mgr.run.cfg.benchmark.runtime.api_port = api_port
-    mgr.run.cfg.benchmark.runtime.service_run_type = service_run_type
+    mgr.run.cfg.runtime.api_port = api_port
+    mgr.run.cfg.runtime.service_run_type = service_run_type
     mgr.run.cfg.ui_type = ui_type
-    mgr.run.cfg.benchmark.artifacts.profile_export_partial_json_file = "/tmp/checkpoint.json"
+    mgr.run.cfg.artifacts.profile_export_partial_json_file = "/tmp/checkpoint.json"
 
     # Bind requested methods. We bind on demand because some tests want to
     # mock these as AsyncMocks instead.

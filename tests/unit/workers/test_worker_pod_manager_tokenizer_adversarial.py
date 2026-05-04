@@ -137,10 +137,10 @@ async def test_prefetch_tokenizers_strips_api_dataset_suffix(monkeypatch) -> Non
     monkeypatch.setattr(wpm, "download_tokenizer", fake_download_tokenizer)
 
     mgr = MagicMock()
-    mgr.run.cfg.benchmark.runtime.dataset_api_base_url = (
+    mgr.run.cfg.runtime.dataset_api_base_url = (
         "http://aiperf-smoke-controller-0-0:9090/api/dataset"
     )
-    mgr.run.cfg.benchmark.runtime.service_run_type = "kubernetes"
+    mgr.run.cfg.runtime.service_run_type = "kubernetes"
     mgr.service_id = "wgm-0"
     mgr._unique_tokenizer_names = MagicMock(return_value=["gpt2"])
     mgr._tokenizer_dest_root = MagicMock(
@@ -176,8 +176,8 @@ async def test_prefetch_tokenizers_logs_lifecycle_transitions(monkeypatch) -> No
 
     info_calls: list[str] = []
     mgr = MagicMock()
-    mgr.run.cfg.benchmark.runtime.dataset_api_base_url = "http://x:9090/api/dataset"
-    mgr.run.cfg.benchmark.runtime.service_run_type = "kubernetes"
+    mgr.run.cfg.runtime.dataset_api_base_url = "http://x:9090/api/dataset"
+    mgr.run.cfg.runtime.service_run_type = "kubernetes"
     mgr.service_id = "wgm-0"
     mgr._unique_tokenizer_names = MagicMock(return_value=["gpt2"])
     mgr._tokenizer_dest_root = MagicMock(

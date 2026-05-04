@@ -520,7 +520,7 @@ class TestDatasetHandling:
     ) -> None:
         """Dataset data and index downloads should start concurrently."""
         manager = worker_group_manager
-        manager.run.cfg.benchmark.runtime.dataset_api_base_url = (
+        manager.run.cfg.runtime.dataset_api_base_url = (
             "http://controller/api/dataset"
         )
         monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
@@ -560,7 +560,7 @@ class TestDatasetHandling:
     ) -> None:
         """A failure in either parallel download should retry the whole dataset fetch."""
         manager = worker_group_manager
-        manager.run.cfg.benchmark.runtime.dataset_api_base_url = (
+        manager.run.cfg.runtime.dataset_api_base_url = (
             "http://controller/api/dataset"
         )
         monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
@@ -598,7 +598,7 @@ class TestDatasetHandling:
     ) -> None:
         """Test missing dataset_api_base_url raises RuntimeError."""
         manager = worker_group_manager
-        manager.run.cfg.benchmark.runtime.dataset_api_base_url = None
+        manager.run.cfg.runtime.dataset_api_base_url = None
 
         with pytest.raises(RuntimeError, match="dataset_api_base_url"):
             await manager._download_dataset()
