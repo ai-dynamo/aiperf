@@ -67,7 +67,14 @@
           }
         },
         "watchNamespaces": { "type": "array", "items": { "type": "string" } },
-        "tmpSizeLimit": { "type": "string" }
+        "tmpSizeLimit": { "type": "string" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": { "type": "integer", "minimum": 0 }
+          }
+        }
       },
       "required": ["replicas"]
     },
