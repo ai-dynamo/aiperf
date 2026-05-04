@@ -70,7 +70,7 @@ The current schema version is exported as the top-level `schema_version` field o
 `aiperf` writes additional JSON files when `--num-profile-runs >= 2`:
 
 - `profile_export_aiperf_aggregate.json` — confidence aggregation across runs. Per-metric blocks have a different shape (`mean`, `std`, `cv`, `se`, `ci_low`, `ci_high`, `t_critical`, `unit`) and own their own `schema_version` (`AggregateConfidenceJsonExporter.SCHEMA_VERSION`, currently `"1.0"`).
-- `profile_export_aiperf_collated.json` — per-request values pooled across runs. Uses its own `schema_version` (`"1.0.0"`).
+- `profile_export_aiperf_collated.json` — pools per-request values from all runs into a single population, then emits combined percentiles (`mean`, `std`, `p50`, `p90`, `p95`, `p99`, `count`) under a `combined` key plus a `per_run` list of run-level summaries. Uses its own `schema_version` (`"1.0.0"`).
 
 The `schema_version` documented on this page applies only to `profile_export_aiperf.json`. The other files evolve on their own cadence.
 
