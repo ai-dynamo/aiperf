@@ -20,7 +20,7 @@ class TestShareGPTLoader:
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         run = BenchmarkRun(
             benchmark_id="test",
-            cfg=user_config,
+            cfg=user_config.benchmark,
             artifact_dir=Path("/tmp/test"),
         )
         return ShareGPTLoader(run, tokenizer)

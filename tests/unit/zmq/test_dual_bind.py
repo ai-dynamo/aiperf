@@ -18,7 +18,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CommAddress, LifecycleState
-from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkRun
 from aiperf.config.zmq import (
     ZMQDualBindConfig,
     ZMQDualBindProxyConfig,
@@ -702,7 +702,7 @@ class _DualBindServiceFixtures:
         run = self._make_base_config()
         dual_bind = ZMQDualBindConfig(ipc_path=tmp_path, tcp_host="0.0.0.0")
         monkeypatch.setattr(
-            AIPerfConfig, "comm_config", property(lambda self: dual_bind)
+            BenchmarkConfig, "comm_config", property(lambda self: dual_bind)
         )
         return run
 
@@ -715,7 +715,7 @@ class _DualBindServiceFixtures:
             controller_host="controller.default.svc",
         )
         monkeypatch.setattr(
-            AIPerfConfig, "comm_config", property(lambda self: dual_bind)
+            BenchmarkConfig, "comm_config", property(lambda self: dual_bind)
         )
         return run
 

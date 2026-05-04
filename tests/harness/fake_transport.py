@@ -142,7 +142,7 @@ class FakeTransport(BaseTransport):
 
     def get_url(self, request_info: RequestInfo) -> str:
         """Return fake URL (not actually used since we bypass HTTP)."""
-        return self.run.cfg.benchmark.endpoint.urls[0]
+        return self.run.cfg.endpoint.urls[0]
 
     # =========================================================================
     # Helper methods to reduce duplication
@@ -249,7 +249,7 @@ class FakeTransport(BaseTransport):
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
         """Route request to appropriate handler based on endpoint type."""
-        endpoint_type = self.run.cfg.benchmark.endpoint.type
+        endpoint_type = self.run.cfg.endpoint.type
 
         # Handle cancellation by running request in a task and cancelling it
         if request_info.cancel_after_ns is not None:
@@ -392,7 +392,7 @@ class FakeTransport(BaseTransport):
 
     async def _do_streaming(self, inp: HandlerInput) -> RequestRecord:
         """Handle streaming completion requests (chat, text, TGI)."""
-        if self.run.cfg.benchmark.endpoint.streaming:
+        if self.run.cfg.endpoint.streaming:
             include_usage = getattr(inp.req, "include_usage", False)
             stream = inp.stream_fn(inp.ctx, inp.endpoint_path, include_usage)
             return await self._stream_to_record(

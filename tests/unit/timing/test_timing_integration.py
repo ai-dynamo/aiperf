@@ -34,7 +34,7 @@ class TestTimingConfigurationIntegration:
                 ],
             }
         )
-        tcfg = TimingConfig.from_config(config)
+        tcfg = TimingConfig.from_config(config.benchmark)
         assert tcfg.phase_configs[0].total_expected_requests == 100
 
     def test_fixed_schedule_phase_uses_fixed_schedule_mode(self) -> None:
@@ -46,7 +46,7 @@ class TestTimingConfigurationIntegration:
                 ],
             }
         )
-        tcfg = TimingConfig.from_config(config)
+        tcfg = TimingConfig.from_config(config.benchmark)
         assert tcfg.phase_configs[0].timing_mode == TimingMode.FIXED_SCHEDULE
 
     def test_poisson_phase_uses_request_rate_mode(self) -> None:
@@ -63,7 +63,7 @@ class TestTimingConfigurationIntegration:
                 ],
             }
         )
-        tcfg = TimingConfig.from_config(config)
+        tcfg = TimingConfig.from_config(config.benchmark)
         assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
         assert tcfg.phase_configs[0].total_expected_requests == 10
 
@@ -81,7 +81,7 @@ class TestTimingConfigurationIntegration:
                 ],
             }
         )
-        tcfg = TimingConfig.from_config(config)
+        tcfg = TimingConfig.from_config(config.benchmark)
         assert tcfg.phase_configs[0].total_expected_requests == 42
 
     def test_duration_based_phase_has_no_request_count(self) -> None:
@@ -98,6 +98,6 @@ class TestTimingConfigurationIntegration:
                 ],
             }
         )
-        tcfg = TimingConfig.from_config(config)
+        tcfg = TimingConfig.from_config(config.benchmark)
         assert tcfg.phase_configs[0].total_expected_requests is None
         assert tcfg.phase_configs[0].timing_mode == TimingMode.REQUEST_RATE
