@@ -18,6 +18,52 @@ from aiperf.config.loader.jinja import (
     render_jinja2_templates,
 )
 
+# Body fields that must live under `benchmark:` in the envelope shape.
+_BODY_KEYS = frozenset(
+    {
+        "models",
+        "endpoint",
+        "datasets",
+        "phases",
+        "artifacts",
+        "slos",
+        "tokenizer",
+        "gpu_telemetry",
+        "server_metrics",
+        "runtime",
+        "logging",
+        "metrics",
+        "accuracy",
+    }
+)
+
+
+def _reject_flat_shape(data: dict[str, Any], file_path: Path | str | None) -> None:
+    """Raise ConfigurationError if the YAML uses pre-restructure flat shape.
+
+    Triggered when any body field appears at the top level. `variables` and
+    `random_seed` are envelope-level in the new shape and do NOT trigger.
+    """
+    flat = sorted(_BODY_KEYS & set(data.keys()))
+    if not flat:
+        return
+    raise ConfigurationError(
+        f"This config uses the pre-restructure flat shape (got top-level "
+        f"keys: {flat}). Body fields must be nested under a top-level "
+        f"`benchmark:` key, alongside envelope keys (`sweep`, `multi_run`, "
+        f"`variables`, `random_seed`). To migrate:\n\n"
+        f"  benchmark:\n"
+        f"    models: [...]\n"
+        f"    endpoint:\n"
+        f"      urls: [...]\n"
+        f"    phases: [...]\n"
+        f"  # sweep / multi_run / variables stay at top level\n\n"
+        f"Or run: uv run python tools/migrate_config_yaml.py "
+        f"{file_path or '<path>'} --in-place\n"
+        f"See docs/tutorials/migrating-config.md for examples.",
+        file_path=file_path,
+    )
+
 
 def load_config(
     file_path: Path | str,
@@ -176,6 +222,7 @@ def load_config_from_string(
         >>> config = load_config_from_string(yaml_str)
     """
     data = _parse_yaml_mapping(yaml_content, file_path)
+    _reject_flat_shape(data, file_path)
 
     # Substitute environment variables
     if substitute_env:
@@ -220,6 +267,7 @@ def load_config_dict(
         ) from e
 
     data = _parse_yaml_mapping(content, file_path)
+    _reject_flat_shape(data, file_path)
     if substitute_env:
         data = substitute_env_vars(data, file_path)
     context = build_template_context(data)
