@@ -168,6 +168,8 @@ navigation:
         path: ../pages-dev/reference/conversation-context-mode.md
       - page: List-Metric Aggregation
         path: ../pages-dev/reference/list-metric-aggregation.md
+      - page: JSON Export Schema
+        path: ../pages-dev/reference/json-export-schema.md
   - section: Server Metrics
     collapsed: true
     contents:
