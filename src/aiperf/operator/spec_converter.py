@@ -339,6 +339,11 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
     suitable for name generation and CLI validation without polluting it
     with placeholder host names.
 
+    Envelope-level keys (``variables``, ``random_seed``) may live either at
+    ``spec.<key>`` or inside ``spec.benchmark.<key>`` (a CR-author
+    convenience for keeping Jinja vars next to the body they template). Both
+    locations are lifted to the envelope before validation.
+
     Args:
         spec: AIPerfJob spec dict (from CR's ``spec`` key).
 
@@ -348,4 +353,12 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
     benchmark = spec.get("benchmark") or {}
     config_dict = copy.deepcopy(benchmark)
     config_dict = expand_config_dict(config_dict)
-    return AIPerfConfig.model_validate({"benchmark": config_dict})
+    envelope: dict[str, Any] = {}
+    for key in ("variables", "random_seed", "randomSeed"):
+        if key in config_dict:
+            envelope_key = "random_seed" if key == "randomSeed" else key
+            envelope[envelope_key] = config_dict.pop(key)
+        if key in spec:
+            envelope_key = "random_seed" if key == "randomSeed" else key
+            envelope.setdefault(envelope_key, spec[key])
+    return AIPerfConfig.model_validate({"benchmark": config_dict, **envelope})

@@ -106,6 +106,10 @@ def build_overrides(
     AIPerf templates use either `model:` / `models:` and `endpoint.url:` /
     `endpoint.urls:` interchangeably; this inspects `content` to pick the form
     actually present so the override lands on the same key the template declared.
+
+    Body keys can live either under the `benchmark:` envelope key (the v2
+    canonical shape), hoisted at the top level (shortcut), or in both places.
+    For each override, prefer wherever the matching key is already present.
     """
     import yaml as _yaml
 
@@ -114,13 +118,44 @@ def build_overrides(
         return overrides
 
     raw = _yaml.safe_load(content) or {}
+    body = raw.get("benchmark") if isinstance(raw.get("benchmark"), dict) else None
+
+    def _set_under(key_path: str, container: str, value: Any) -> None:
+        """Place `value` under `key_path` ('a.b' -> nested) within `container`
+        (either '' for top-level or 'benchmark')."""
+        target = overrides
+        if container == "benchmark":
+            target = overrides.setdefault("benchmark", {})
+        parts = key_path.split(".")
+        for part in parts[:-1]:
+            target = target.setdefault(part, {})
+        target[parts[-1]] = value
+
     if model:
-        key = "model" if "model" in raw else "models"
-        overrides[key] = model if key == "model" else [model]
+        # Prefer wherever the key already lives.
+        if "model" in raw or "models" in raw:
+            container = ""
+            src = raw
+        elif body and ("model" in body or "models" in body):
+            container = "benchmark"
+            src = body
+        else:
+            container = "benchmark" if body is not None else ""
+            src = body or raw
+        key = "model" if "model" in src else "models"
+        _set_under(key, container, model if key == "model" else [model])
     if url:
-        ep = raw.get("endpoint", {})
+        if "endpoint" in raw and isinstance(raw["endpoint"], dict):
+            container = ""
+            ep = raw["endpoint"]
+        elif body and isinstance(body.get("endpoint"), dict):
+            container = "benchmark"
+            ep = body["endpoint"]
+        else:
+            container = "benchmark" if body is not None else ""
+            ep = {}
         url_key = "url" if "url" in ep else "urls"
-        overrides.setdefault("endpoint", {})[url_key] = (
-            url if url_key == "url" else [url]
+        _set_under(
+            f"endpoint.{url_key}", container, url if url_key == "url" else [url]
         )
     return overrides

@@ -315,7 +315,12 @@ def test_check_config_file_for_sweep_keys_plain_yaml_with_sweep_key_exits(
 
 
 def _jinja_aiperfjob_cr_yaml() -> str:
-    """A minimal AIPerfJob CR YAML using Jinja2 templates for concurrency/requests."""
+    """A minimal AIPerfJob CR YAML using Jinja2 templates for concurrency/requests.
+
+    `variables:` lives inside `spec.benchmark` to follow the AIPerfJob CRD
+    convention: spec_converter lifts envelope-level keys (variables,
+    random_seed) out of `benchmark` before validating against BenchmarkConfig.
+    """
     return (
         "apiVersion: aiperf.nvidia.com/v1alpha1\n"
         "kind: AIPerfJob\n"

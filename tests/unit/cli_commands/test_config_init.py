@@ -40,8 +40,11 @@ class TestGenerate:
         init_config(output=output_file)
 
         parsed = _parse(output_file.read_text())
-        assert "model" in parsed or "models" in parsed
-        assert "endpoint" in parsed
+        # Body keys live under the `benchmark:` envelope key (or via the
+        # top-level `model:` shortcut hoist that survives in some templates).
+        body = parsed.get("benchmark", parsed)
+        assert "model" in parsed or "models" in parsed or "model" in body or "models" in body
+        assert "endpoint" in body
 
     def test_unknown_template_exits_with_message(self, capsys) -> None:
         with pytest.raises(SystemExit):
@@ -77,17 +80,22 @@ class TestOverrides:
         init_config(template="minimal", model="custom-llm", output=output_file)
 
         parsed = _parse(output_file.read_text())
-        assert parsed["model"] == "custom-llm"
+        # `model:` may be hoisted at the top level (shortcut) or nested under
+        # `benchmark:`; either is correct so long as the override applied.
+        model_value = parsed.get("model") or parsed.get("benchmark", {}).get("model")
+        assert model_value == "custom-llm"
         # No plural key leaked in.
         assert "models" not in parsed
+        assert "models" not in parsed.get("benchmark", {})
 
     def test_url_override_on_singular_template(self, tmp_path: Path) -> None:
         output_file = tmp_path / "out.yaml"
         init_config(template="minimal", url="http://svc:8000", output=output_file)
 
         parsed = _parse(output_file.read_text())
-        assert parsed["endpoint"]["url"] == "http://svc:8000"
-        assert "urls" not in parsed["endpoint"]
+        body = parsed.get("benchmark", parsed)
+        assert body["endpoint"]["url"] == "http://svc:8000"
+        assert "urls" not in body["endpoint"]
 
     def test_both_overrides_simultaneously(self, tmp_path: Path) -> None:
         output_file = tmp_path / "out.yaml"
@@ -99,8 +107,10 @@ class TestOverrides:
         )
 
         parsed = _parse(output_file.read_text())
-        assert parsed["model"] == "custom-llm"
-        assert parsed["endpoint"]["url"] == "http://svc:8000"
+        body = parsed.get("benchmark", parsed)
+        model_value = parsed.get("model") or body.get("model")
+        assert model_value == "custom-llm"
+        assert body["endpoint"]["url"] == "http://svc:8000"
 
     def test_no_overrides_leaves_template_values_intact(self, tmp_path: Path) -> None:
         output_file = tmp_path / "out.yaml"

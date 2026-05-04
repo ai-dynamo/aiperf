@@ -87,9 +87,9 @@ class TestGenerateBenchmarkName:
         phase = MagicMock()
         phase.type = phase_type
         config = MagicMock()
-        config.get_model_names.return_value = [model]
+        # Helper reads through the envelope: config.benchmark.{get_model_names,endpoint,phases}.
+        config.benchmark.get_model_names.return_value = [model]
         config.benchmark.endpoint.type = endpoint_type
-        # phases is now list[PhaseConfig]; first-phase access is config.benchmark.phases[0]
         config.benchmark.phases = [phase]
         return config
 

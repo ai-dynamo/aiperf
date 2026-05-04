@@ -67,7 +67,7 @@ class TestPrepareDirectDeploy:
         revalidated = MagicMock()
         revalidated_phase = MagicMock()
         revalidated_phase.concurrency = 8
-        revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.phases = [revalidated_phase]
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 4
@@ -113,7 +113,7 @@ class TestPrepareDirectDeploy:
         revalidated_phase = MagicMock()
         revalidated_phase.concurrency = 1
         revalidated = MagicMock()
-        revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.phases = [revalidated_phase]
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 1
@@ -150,7 +150,7 @@ class TestPrepareDirectDeploy:
         revalidated_phase = MagicMock()
         revalidated_phase.concurrency = 1
         revalidated = MagicMock()
-        revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.phases = [revalidated_phase]
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 1
@@ -200,7 +200,7 @@ class TestPrepareDirectDeploy:
         revalidated_phase = MagicMock()
         revalidated_phase.concurrency = concurrency
         revalidated = MagicMock()
-        revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.phases = [revalidated_phase]
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = connections_per_worker

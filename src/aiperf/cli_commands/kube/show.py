@@ -59,7 +59,15 @@ def show(
         # runs expand_config_dict (env vars + Jinja2) then AIPerfConfig
         # validation, and deliberately skips K8s runtime injection.
         config = extract_benchmark_config(spec)
-        rendered_benchmark = yaml.safe_load(dump_config(config)).get("benchmark", {})
+        rendered_full = yaml.safe_load(dump_config(config))
+        rendered_benchmark = rendered_full.get("benchmark", {})
+        # Preserve envelope-level keys that the CR author may have placed
+        # inside spec.benchmark (variables, random_seed) — re-emit them where
+        # they were originally so a round-tripped CR keeps the same shape.
+        original_benchmark = spec.get("benchmark") or {}
+        for key in ("variables", "random_seed", "randomSeed"):
+            if key in original_benchmark and key in rendered_full:
+                rendered_benchmark[key] = rendered_full[key]
 
         doc["spec"]["benchmark"] = rendered_benchmark
         # width=inf prevents yaml from soft-wrapping long strings (image refs,

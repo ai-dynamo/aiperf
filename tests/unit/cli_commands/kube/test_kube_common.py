@@ -135,12 +135,14 @@ class TestGenerateBenchmarkName:
     def test_uses_first_phase_only(self) -> None:
         """Multiple phases — only the first contributes to the name."""
         config = SimpleNamespace(
-            get_model_names=lambda: ["qwen3"],
-            endpoint=SimpleNamespace(type="openai"),
-            phases=[
-                SimpleNamespace(type="warmup"),
-                SimpleNamespace(type="throughput"),
-            ],
+            benchmark=SimpleNamespace(
+                get_model_names=lambda: ["qwen3"],
+                endpoint=SimpleNamespace(type="openai"),
+                phases=[
+                    SimpleNamespace(type="warmup"),
+                    SimpleNamespace(type="throughput"),
+                ],
+            ),
         )
         name = generate_benchmark_name(config)
         assert "warmup" in name
