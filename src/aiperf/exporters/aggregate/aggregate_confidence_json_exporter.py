@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """JSON exporter for confidence aggregate results."""
 
+from typing import ClassVar
+
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 
@@ -14,8 +16,13 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
     Design:
     - Reuses JsonExportData and JsonMetricResult models
     - Uses same serialization approach as MetricsJsonExporter
-    - Ensures consistency: schema version, AIPerf version, format
+    - Owns its own SCHEMA_VERSION because the per-metric shape (mean, std, cv,
+      se, ci_low, ci_high, t_critical) differs from the regular profile export
+      and evolves on its own cadence.
     """
+
+    # Bump on breaking changes to the aggregate-confidence on-disk shape only.
+    SCHEMA_VERSION: ClassVar[str] = "1.0"
 
     def get_file_name(self) -> str:
         """Return JSON file name.
@@ -62,9 +69,12 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         except Exception:
             aiperf_version = "unknown"
 
-        # Create base export data with standard metadata
+        # Create base export data with standard metadata. Note we use this
+        # exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
+        # because the aggregate file's per-metric shape evolves independently
+        # from the regular profile export.
         export_data = JsonExportData(
-            schema_version=JsonExportData.SCHEMA_VERSION,
+            schema_version=self.SCHEMA_VERSION,
             aiperf_version=aiperf_version,
         )
 
