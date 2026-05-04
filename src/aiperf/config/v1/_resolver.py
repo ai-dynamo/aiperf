@@ -46,6 +46,7 @@ def resolve_config(
         Fully resolved `AIPerfConfig` ready for downstream use.
     """
     from aiperf.config.v1.converter import (
+        _apply_consistent_seed_default,
         _wrap_under_envelope,
         convert_user_to_aiperf,
     )
@@ -61,6 +62,11 @@ def resolve_config(
     if overrides:
         overrides = _wrap_under_envelope(overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    # Apply --set-consistent-seed=True default-seed-42 to the merged shape:
+    # neither the YAML nor explicit CLI flags supplied a seed, but
+    # set_consistent_seed (the default) still promises one. See
+    # converter._apply_consistent_seed_default.
+    _apply_consistent_seed_default(merged)
     return AIPerfConfig.model_validate(merged)
 
 

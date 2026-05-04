@@ -48,6 +48,34 @@ if TYPE_CHECKING:
 # Envelope keys that stay at top level. Everything else moves under `benchmark:`.
 _ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed", "benchmark"}
 
+# Legacy default applied when --set-consistent-seed is True (the v1 CLI
+# default) and the user didn't pass --random-seed. Lives at the converter
+# layer (not on AIPerfConfig) so programmatic AIPerfConfig users keep
+# entropy-based semantics when they construct the config directly.
+_DEFAULT_CONSISTENT_SEED = 42
+
+
+def _apply_consistent_seed_default(nested: dict[str, Any]) -> None:
+    """Restore --set-consistent-seed=True's default-seed-42 contract.
+
+    The v1 ``--set-consistent-seed`` flag (default True) promises in its
+    docstring: when no explicit ``--random-seed`` is set, default the seed
+    to 42 so multi-trial runs produce identical workloads for valid
+    statistical comparison. This was lost when seed plumbing moved off
+    ``BenchmarkConfig`` onto ``BenchmarkPlan.variation_seeds`` (Plan A
+    Task 8), so per-variation seeds came back ``None`` and trials silently
+    diverged.
+
+    Mutates ``nested`` in place: when the multi_run dict has
+    ``set_consistent_seed=True`` (or omits it, defaulting True) and the
+    envelope has no ``random_seed``, sets ``random_seed=42``. Idempotent
+    when an explicit seed is already present.
+    """
+    multi_run_dict = nested.get("multi_run") or {}
+    set_consistent_seed = multi_run_dict.get("set_consistent_seed", True)
+    if set_consistent_seed and nested.get("random_seed") is None:
+        nested["random_seed"] = _DEFAULT_CONSISTENT_SEED
+
 
 def _wrap_under_envelope(v2_dict: dict[str, Any]) -> dict[str, Any]:
     """Partition a flat-shaped v2 dict into envelope shape.
@@ -272,6 +300,7 @@ def convert_user_to_aiperf(user: UserConfig, service: ServiceConfig) -> AIPerfCo
     _assemble_optional(nested, user, recipe_output=recipe_output)
     _apply_recipe_sweep_variables(nested, recipe_output, user)
     _promote_magic_lists_to_sweep_block(nested)
+    _apply_consistent_seed_default(nested)
 
     nested = _wrap_under_envelope(nested)
     return AIPerfConfig(**nested)

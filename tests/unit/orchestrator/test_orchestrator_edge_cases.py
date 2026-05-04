@@ -9,9 +9,9 @@ tests/unit/orchestrator/test_local_executor.py with the Task 7/8 split
 
 from pathlib import Path
 
-import pytest
-
 from aiperf.config import BenchmarkConfig
+from aiperf.config.v1 import ServiceConfig, UserConfig
+from aiperf.config.v1.converter import convert_user_to_aiperf
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import FixedTrialsStrategy
 
@@ -45,6 +45,25 @@ def _make_config(**overrides: object) -> BenchmarkConfig:
     return BenchmarkConfig(**kwargs)
 
 
+def _make_user_config(**loadgen_overrides: object) -> UserConfig:
+    """Build a v1 UserConfig fixture for converter-shape seed assertions.
+
+    The legacy strategy-level `auto_set_seed` toggled
+    `FixedTrialsStrategy._ensure_random_seed`, which is now a no-op stub.
+    The equivalent contract lives at the v1 converter layer
+    (`--set-consistent-seed` + envelope `random_seed`); converter tests
+    replace what these strategy tests used to assert.
+    """
+    loadgen: dict[str, object] = {"concurrency": 1, "request_count": 10}
+    loadgen.update(loadgen_overrides)
+    return UserConfig.model_validate(
+        {
+            "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+            "loadgen": loadgen,
+        }
+    )
+
+
 # ============================================================
 # Strategy: seed handling, warmup, config isolation
 # ============================================================
@@ -53,26 +72,36 @@ def _make_config(**overrides: object) -> BenchmarkConfig:
 class TestFixedTrialsStrategyEdgeCases:
     """Verify seed handling, warmup removal, config isolation."""
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
     def test_seed_set_when_none_and_auto_true(self) -> None:
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2, auto_set_seed=True)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed == FixedTrialsStrategy.DEFAULT_SEED
+        """--set-consistent-seed=True (default) + no --random-seed yields envelope seed=42."""
+        cfg = convert_user_to_aiperf(
+            _make_user_config(num_profile_runs=2), ServiceConfig()
+        )
+        assert cfg.random_seed == FixedTrialsStrategy.DEFAULT_SEED
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
     def test_seed_preserved_when_already_set(self) -> None:
-        config = _make_config(random_seed=123)
-        strategy = FixedTrialsStrategy(num_trials=2, auto_set_seed=True)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed == 123
+        """Explicit --random-seed=123 takes precedence over the consistent-seed default."""
+        user = UserConfig.model_validate(
+            {
+                "endpoint": {"model_names": ["m"], "urls": ["http://x"]},
+                "input": {"random_seed": 123},
+                "loadgen": {
+                    "concurrency": 1,
+                    "request_count": 10,
+                    "num_profile_runs": 2,
+                },
+            }
+        )
+        cfg = convert_user_to_aiperf(user, ServiceConfig())
+        assert cfg.random_seed == 123
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
     def test_seed_not_set_when_auto_false(self) -> None:
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2, auto_set_seed=False)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed is None
+        """--no-set-consistent-seed disables the default; envelope seed stays None."""
+        cfg = convert_user_to_aiperf(
+            _make_user_config(num_profile_runs=2, set_consistent_seed=False),
+            ServiceConfig(),
+        )
+        assert cfg.random_seed is None
 
     def test_warmup_removed_on_subsequent_runs(self) -> None:
         config = _make_config()
@@ -126,14 +155,19 @@ class TestFixedTrialsStrategyEdgeCases:
         assert any(p.name == "main" for p in run.phases)
         assert any(p.name == "cooldown_phase" for p in run.phases)
 
-    @pytest.mark.skip(reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete")
     def test_config_deep_copy_when_seed_set(self) -> None:
-        """Mutating returned config must not affect the original when auto_set_seed modifies it."""
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2, auto_set_seed=True)
-        result = strategy.get_next_config(config, [])
-        result.random_seed = 999
-        assert config.random_seed is None
+        """Converter returns a fresh AIPerfConfig; mutating it doesn't affect inputs.
+
+        Replaces the legacy `FixedTrialsStrategy.get_next_config` deep-copy assertion;
+        the new layer is the converter, which constructs a brand-new validated
+        AIPerfConfig from the v1 UserConfig.
+        """
+        user = _make_user_config(num_profile_runs=2)
+        cfg = convert_user_to_aiperf(user, ServiceConfig())
+        assert cfg.random_seed == FixedTrialsStrategy.DEFAULT_SEED
+        cfg2 = convert_user_to_aiperf(user, ServiceConfig())
+        # Two converter calls return independent objects, not aliases.
+        assert cfg is not cfg2
 
     def test_config_deep_copy_when_warmup_disabled(self) -> None:
         """Warmup removal must not affect the original config."""
