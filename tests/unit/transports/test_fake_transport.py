@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for FakeTransport."""
 
+import orjson
 import pytest
 from aiperf_mock_server.config import MockServerConfig
 
@@ -200,8 +201,6 @@ class TestFakeTransportEmbedding:
 
         assert record.status == 200
         # Response should contain all 3 embeddings
-        import orjson
-
         response_data = orjson.loads(record.responses[0].text)
         assert len(response_data["data"]) == 3
 
@@ -228,8 +227,6 @@ class TestFakeTransportEmbedding:
         record = await transport.send_request(request_info, payload)
 
         assert record.status == 200
-        import orjson
-
         response_data = orjson.loads(record.responses[0].text)
         assert response_data["texts"] == ["Hello", "World"]
         assert len(response_data["embeddings"]["float"]) == 2
@@ -261,7 +258,5 @@ class TestFakeTransportRanking:
         record = await transport.send_request(request_info, payload)
 
         assert record.status == 200
-        import orjson
-
         response_data = orjson.loads(record.responses[0].text)
         assert "rankings" in response_data

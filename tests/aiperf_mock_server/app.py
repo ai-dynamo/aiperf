@@ -39,6 +39,7 @@ from aiperf_mock_server.metrics_utils import (
     track_request,
 )
 from aiperf_mock_server.models import (
+    BaseEmbeddingRequest,
     ChatCompletionRequest,
     CohereEmbedRequest,
     CohereRerankRequest,
@@ -323,7 +324,7 @@ def _build_cohere_embedding_response_data(
     """Build Cohere /v2/embed response data."""
     embedding_dim = req.output_dimension or 768
     vectors = [
-        generate_embedding(text, dim=embedding_dim) for text in req.embedding_inputs
+        generate_embedding(text, dim=embedding_dim) for text in req.normalized_inputs
     ]
 
     response: dict[str, Any] = {
@@ -346,13 +347,13 @@ def _build_cohere_embedding_response_data(
 
 
 async def _handle_embedding_request(
-    req: EmbeddingRequest | CohereEmbedRequest,
+    req: BaseEmbeddingRequest,
     endpoint: str,
     start_time: float,
 ) -> tuple[RequestCtx, list[str]]:
     """Handle shared embedding request timing and metrics."""
     ctx = make_ctx(req, endpoint, start_time)
-    inputs = req.inputs if isinstance(req, EmbeddingRequest) else req.embedding_inputs
+    inputs = req.normalized_inputs
 
     with track_request(endpoint, req.model):
         await _wait_for_processing(

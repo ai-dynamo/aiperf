@@ -72,17 +72,18 @@ class TestEmbeddingRequest:
     )
     def test_inputs_property(self, input_data, expected):
         req = EmbeddingRequest(model="test", input=input_data)
+        assert req.normalized_inputs == expected
         assert req.inputs == expected
 
 
 class TestCohereEmbedRequest:
     """Tests for CohereEmbedRequest model."""
 
-    def test_embedding_inputs_from_texts(self):
+    def test_normalized_inputs_from_texts(self):
         req = CohereEmbedRequest(model="test", texts=["text1", "text2"])
-        assert req.embedding_inputs == ["text1", "text2"]
+        assert req.normalized_inputs == ["text1", "text2"]
 
-    def test_embedding_inputs_from_mixed_inputs(self):
+    def test_normalized_inputs_from_mixed_inputs(self):
         req = CohereEmbedRequest(
             model="test",
             inputs=[
@@ -97,7 +98,9 @@ class TestCohereEmbedRequest:
                 }
             ],
         )
-        assert req.embedding_inputs == ["A photo of a cat data:image/png;base64,abc123"]
+        assert req.normalized_inputs == [
+            "A photo of a cat data:image/png;base64,abc123"
+        ]
 
 
 class TestRankingRequest:

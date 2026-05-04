@@ -71,26 +71,38 @@ class CompletionRequest(BaseCompletionRequest):
         return "\n".join(str(p) for p in self.prompt if p)
 
 
-class EmbeddingRequest(BaseModel):
-    """Request model for embedding endpoints."""
+class BaseEmbeddingRequest(BaseModel):
+    """Mock-server helper: canonical text inputs for shared embedding handlers."""
 
     model: str
+
+    @property
+    def normalized_inputs(self) -> list[str]:
+        """Flatten request body to strings used for latency and token accounting."""
+        raise NotImplementedError
+
+
+class EmbeddingRequest(BaseEmbeddingRequest):
+    """Request model for embedding endpoints."""
+
     input: str | list[str]
 
     @property
+    def normalized_inputs(self) -> list[str]:
+        """Normalize OpenAI `input` to a list of strings."""
+        if isinstance(self.input, str):
+            return [self.input]
+        return [str(x) for x in self.input]
+
+    @property
     def inputs(self) -> list[str]:
-        """Get inputs as list (normalizes single string to list)."""
-        return (
-            [self.input]
-            if isinstance(self.input, str)
-            else [str(x) for x in self.input]
-        )
+        """Alias for OpenAI-style naming; same as ``normalized_inputs``."""
+        return self.normalized_inputs
 
 
-class CohereEmbedRequest(BaseModel):
+class CohereEmbedRequest(BaseEmbeddingRequest):
     """Request model for Cohere /v2/embed endpoint."""
 
-    model: str
     texts: list[str] | None = None
     images: list[str] | None = None
     inputs: list[dict[str, Any]] | None = None
@@ -100,8 +112,8 @@ class CohereEmbedRequest(BaseModel):
     truncate: str | None = None
 
     @property
-    def embedding_inputs(self) -> list[str]:
-        """Normalize Cohere inputs into a flat list for mock processing."""
+    def normalized_inputs(self) -> list[str]:
+        """Flatten Cohere texts, images, or multimodal `inputs` for mock processing."""
         if self.texts is not None:
             return [str(text) for text in self.texts]
 

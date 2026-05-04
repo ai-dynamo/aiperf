@@ -58,7 +58,7 @@ class CohereEmbeddingsEndpoint(BaseEmbeddingsEndpoint):
                         {"type": "image_url", "image_url": {"url": image}},
                     ]
                 }
-                for text, image in zip(texts, images, strict=False)
+                for text, image in zip(texts, images, strict=True)
             ]
 
         return [

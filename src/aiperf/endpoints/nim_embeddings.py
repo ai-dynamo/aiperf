@@ -39,7 +39,7 @@ class NIMEmbeddingsEndpoint(EmbeddingsEndpoint):
                     f"Got {len(texts)} texts and {len(images)} images."
                 )
             inputs: list[Any] = [
-                f"{text} {image}" for text, image in zip(texts, images, strict=False)
+                f"{text} {image}" for text, image in zip(texts, images, strict=True)
             ]
         elif images:
             inputs = images

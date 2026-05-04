@@ -185,6 +185,36 @@ class TestCohereEmbeddingsEndpoint:
         assert payload["output_dimension"] == 256
         assert payload["truncate"] == "END"
 
+    def test_format_payload_extra_embedding_types_overrides_default(self):
+        """endpoint.extra embedding_types must win over the default float injection."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.COHERE_EMBEDDINGS,
+            model_name="cohere-embeddings-model",
+            extra=[("embedding_types", ["int8"])],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            CohereEmbeddingsEndpoint, model_endpoint
+        )
+        turn = Turn(texts=[Text(contents=["Test"])], model="cohere-embeddings-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["embedding_types"] == ["int8"]
+
+    def test_format_payload_empty_turn(self, endpoint, model_endpoint):
+        """No texts and no images still produce a Cohere-shaped payload (empty texts)."""
+        turn = Turn(model="cohere-embeddings-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["model"] == "cohere-embeddings-model"
+        assert payload["embedding_types"] == ["float"]
+        assert payload["texts"] == []
+        assert "inputs" not in payload
+        assert "images" not in payload
+
     def test_format_payload_model_fallback(self, endpoint, model_endpoint):
         """Turn model should fall back to the endpoint's primary model."""
         turn = Turn(texts=[Text(contents=["Test"])], model=None)

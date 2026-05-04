@@ -401,11 +401,7 @@ class FakeTransport(BaseTransport):
 
     async def _do_embedding(self, inp: HandlerInput) -> RequestRecord:
         """Handle embedding requests."""
-        inputs = (
-            inp.req.embedding_inputs
-            if hasattr(inp.req, "embedding_inputs")
-            else inp.req.inputs
-        )
+        inputs = inp.req.normalized_inputs
         await _wait_for_processing(
             self.config.embedding_base_latency,
             self.config.embedding_per_input_latency,
