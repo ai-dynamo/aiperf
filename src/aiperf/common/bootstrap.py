@@ -232,7 +232,7 @@ async def _run_service(
     from aiperf.common import random_generator as rng
 
     rng.reset()
-    rng.init(run.cfg.random_seed)
+    rng.init(run.random_seed)
 
     has_errors = await _drive_service_lifecycle(service, error_queue)
 

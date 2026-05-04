@@ -24,7 +24,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         super().__init__(run, tokenizer)
 
         # Use dataset-specific random seed or fall back to global
-        seed = self.dataset_config.random_seed or run.cfg.random_seed
+        seed = self.dataset_config.random_seed or run.random_seed
         self.session_id_generator = SessionIDGenerator(seed=seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
         self._passages_token_rng = rng.derive("dataset.rankings.passages.tokens")

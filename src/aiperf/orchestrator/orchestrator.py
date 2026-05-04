@@ -211,6 +211,9 @@ class MultiRunOrchestrator:
                 trial=trial,
                 label=label,
                 artifact_dir=artifact_dir,
+                random_seed=plan.variation_seeds[var_idx]
+                if var_idx < len(plan.variation_seeds)
+                else None,
             )
             logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
             result = await executor.execute(run)
@@ -436,6 +439,9 @@ class MultiRunOrchestrator:
                 trial=trial,
                 label=label,
                 artifact_dir=artifact_dir,
+                random_seed=plan.variation_seeds[var_idx]
+                if var_idx < len(plan.variation_seeds)
+                else None,
             )
             logger.info(f"[v{var_idx} t{trial}] Executing {label}...")
             result = await executor.execute(run)

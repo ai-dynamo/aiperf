@@ -35,7 +35,7 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         # Create session ID generator (deterministic when seed is set)
         dataset_config = run.cfg.get_default_dataset()
         self.session_id_generator = SessionIDGenerator(
-            seed=dataset_config.random_seed or run.cfg.random_seed
+            seed=dataset_config.random_seed or run.random_seed
         )
 
     @classmethod

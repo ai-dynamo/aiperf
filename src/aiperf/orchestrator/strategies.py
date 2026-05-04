@@ -196,24 +196,16 @@ class FixedTrialsStrategy(ExecutionStrategy):
     def validate_config(self, config: BenchmarkConfig) -> None:
         """Validate that config is suitable for this strategy.
 
-        For FixedTrialsStrategy with multiple trials, warns if random seed
-        is not set and auto_set_seed is disabled, as this may result in
-        different workloads across runs.
+        For FixedTrialsStrategy, seed handling moved to the envelope/plan
+        layer (`AIPerfConfig.random_seed` -> `BenchmarkPlan.variation_seeds`).
+        Strategies no longer mutate per-config seeds; the orchestrator
+        threads `plan.variation_seeds[i]` into each `BenchmarkRun`.
 
         Args:
             config: Benchmark configuration to validate
         """
-        if (
-            self.num_trials > 1
-            and config.random_seed is None
-            and not self.auto_set_seed
-        ):
-            logger.warning(
-                "No random seed specified and auto_set_seed is disabled. "
-                "This may result in different workloads across runs, "
-                "making confidence statistics less meaningful. "
-                "Consider setting --random-seed explicitly."
-            )
+        # No-op: kept for subclass override surface.
+        return
 
     def should_continue(self, results: list[RunResult]) -> bool:
         """Continue until we've run num_trials."""
@@ -224,19 +216,15 @@ class FixedTrialsStrategy(ExecutionStrategy):
     ) -> BenchmarkConfig:
         """Return config for next trial.
 
-        For first trial: ensure random seed is set (for workload consistency).
         For subsequent trials: optionally disable warmup based on strategy settings.
+        Seed handling moved to BenchmarkPlan.variation_seeds (envelope-level);
+        the orchestrator threads it into BenchmarkRun.random_seed at construction.
 
         Warmup behavior is controlled by disable_warmup_after_first:
         - True (default): Only first run has warmup, subsequent runs measure steady-state
         - False: All runs include warmup (useful for long cooldowns or cold-start testing)
         """
         config = base_config
-
-        # Ensure seed is set for all trials when auto_set_seed is enabled
-        # This ensures the seed persists across all runs
-        if self.auto_set_seed:
-            config = self._ensure_random_seed(config)
 
         # Subsequent trials: optionally disable warmup
         if len(results) > 0 and self.disable_warmup_after_first:
@@ -320,24 +308,12 @@ class FixedTrialsStrategy(ExecutionStrategy):
         return base_dir / "aggregate"
 
     def _ensure_random_seed(self, config: BenchmarkConfig) -> BenchmarkConfig:
-        """Ensure config has random seed set.
+        """Deprecated: seed flows through BenchmarkPlan.variation_seeds.
 
-        Auto-sets seed if not specified for multi-run consistency.
-
-        Args:
-            config: Base configuration
-
-        Returns:
-            Configuration with random seed set
+        Returns the config unchanged. Kept as a stub so external callers
+        importing this method don't break; will be removed in a follow-up
+        once tests are migrated.
         """
-        if config.random_seed is None:
-            logger.info(
-                f"No --random-seed specified. Using default seed {self.DEFAULT_SEED} "
-                f"for multi-run consistency. All runs will use identical workloads."
-            )
-            config = config.model_copy(deep=True)
-            config.random_seed = self.DEFAULT_SEED
-
         return config
 
     def _disable_warmup(self, config: BenchmarkConfig) -> BenchmarkConfig:

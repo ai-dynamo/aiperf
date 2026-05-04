@@ -44,6 +44,13 @@ class BenchmarkPlan(BaseModel):
         default_factory=list,
         description="Parallel to configs: metadata per sweep variation.",
     )
+    variation_seeds: list[int | None] = Field(
+        default_factory=list,
+        description="Per-variation random seed (None when no base seed set). "
+        "Length matches `configs`/`variations`. Variation 0 inherits the "
+        "envelope `random_seed`; variation N gets `random_seed + N` unless "
+        "`parameter_sweep_same_seed` is True.",
+    )
     trials: Annotated[
         int,
         Field(
@@ -327,6 +334,12 @@ class BenchmarkRun(BaseModel):
     ]
     artifact_dir: Path = Field(description="Directory for this run's artifacts.")
     label: str = Field(default="", description="Human-readable run label.")
+    random_seed: int | None = Field(
+        default=None,
+        description="Random seed for this run (sourced from "
+        "BenchmarkPlan.variation_seeds at construction time). None when "
+        "no envelope-level random_seed was set.",
+    )
     resolved: ResolvedConfig = Field(
         default_factory=ResolvedConfig,
         description="Runtime-computed state populated after construction.",

@@ -126,28 +126,27 @@ def _assemble_plan_from_aiperf_config(
         if key in multi_run and multi_run[key] is not None:
             plan_kwargs[key] = multi_run[key]
     plan = BenchmarkPlan(**plan_kwargs)
-    if adaptive_search is None:
-        _apply_sweep_seed_derivation(plan, config)
+    _apply_sweep_seed_derivation(plan, config)
     return plan
 
 
 def _apply_sweep_seed_derivation(plan: BenchmarkPlan, config: AIPerfConfig) -> None:
-    """Derive a unique random_seed per sweep variation when not pinned.
+    """Populate plan.variation_seeds from the envelope random_seed.
 
-    If ``parameter_sweep_same_seed`` is False (the default), each variation
-    after the first gets ``base_seed + variation.index`` so independent
-    samples don't degenerate to identical workloads. When the user pinned
-    same-seed, leaves seeds untouched. Variation-0 always keeps the base
-    seed so single-config runs are unaffected.
+    Variation 0 carries the base seed; variation N gets ``base + N``
+    unless ``parameter_sweep_same_seed`` is True (in which case all
+    variations share the base seed). When ``random_seed`` is None on
+    the envelope, all entries are None.
     """
-    if plan.parameter_sweep_same_seed or not plan.is_sweep:
-        return
     base_seed = config.random_seed
-    if base_seed is None:
-        return
-    for variation_idx, cfg in enumerate(plan.configs):
-        if variation_idx > 0:
-            cfg.random_seed = base_seed + variation_idx
+    plan.variation_seeds = []
+    for variation_idx in range(len(plan.configs)):
+        if base_seed is None:
+            plan.variation_seeds.append(None)
+        elif plan.parameter_sweep_same_seed or not plan.is_sweep:
+            plan.variation_seeds.append(base_seed)
+        else:
+            plan.variation_seeds.append(base_seed + variation_idx)
 
 
 def load_benchmark_plan(

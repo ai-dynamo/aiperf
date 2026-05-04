@@ -55,7 +55,8 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     _preflight_endpoint_ready(plan)
 
     if plan.is_single_run:
-        run = _make_benchmark_run(plan.configs[0])
+        seed = plan.variation_seeds[0] if plan.variation_seeds else None
+        run = _make_benchmark_run(plan.configs[0], random_seed=seed)
         _run_single_benchmark(run)
     else:
         _run_multi_benchmark(plan)
@@ -172,6 +173,7 @@ def _make_benchmark_run(
     benchmark_id: str | None = None,
     trial: int = 0,
     artifact_dir: Path | None = None,
+    random_seed: int | None = None,
 ) -> BenchmarkRun:
     """Wrap a BenchmarkConfig into a BenchmarkRun."""
     from aiperf.config import BenchmarkRun
@@ -181,6 +183,7 @@ def _make_benchmark_run(
         cfg=config,
         trial=trial,
         artifact_dir=artifact_dir or config.artifacts.dir,
+        random_seed=random_seed,
     )
 
 

@@ -18,7 +18,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
     def __init__(self, run: BenchmarkRun, tokenizer: Tokenizer | None):
         super().__init__(run, tokenizer)
         # Use dataset-specific random seed or fall back to global
-        seed = self.dataset_config.random_seed or run.cfg.random_seed
+        seed = self.dataset_config.random_seed or run.random_seed
         self.session_id_generator = SessionIDGenerator(seed=seed)
 
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")

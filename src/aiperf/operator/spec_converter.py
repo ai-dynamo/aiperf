@@ -230,6 +230,7 @@ def build_benchmark_run(
         artifact_dir=Path(run_config.get("artifacts", {}).get("dir", "/results")),
         label="",
         variation=None,
+        random_seed=run_config.get("random_seed"),
     )
 
 

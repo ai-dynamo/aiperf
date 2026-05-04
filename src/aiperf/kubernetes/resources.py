@@ -342,6 +342,7 @@ class KubernetesDeployment(AIPerfBaseModel):
                 benchmark_id=self.job_id,
                 cfg=self.config,
                 artifact_dir=Path("/results"),
+                random_seed=self.config.random_seed,
             )
 
     @field_validator("job_id")

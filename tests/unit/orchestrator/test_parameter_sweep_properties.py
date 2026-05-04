@@ -110,8 +110,8 @@ def _profiling_concurrency(cfg: Any) -> int:
 
 
 def _per_variation_seeds(plan: BenchmarkPlan) -> list[int | None]:
-    """Project plan.configs to the random_seed of each variation."""
-    return [cfg.random_seed for cfg in plan.configs]
+    """Project plan.variation_seeds (parallel to plan.configs)."""
+    return list(plan.variation_seeds)
 
 
 # Distinct, modest-magnitude positives keep AIPerfConfig validators happy
