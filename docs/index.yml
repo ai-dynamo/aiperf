@@ -141,6 +141,8 @@ navigation:
       path: tutorials/ui-types.md
     - page: Using Local Tokenizers Without HuggingFace
       path: tutorials/local-tokenizer.md
+    - page: Migrating to the Envelope Config Shape
+      path: tutorials/migrating-config.md
     - page: "Random Number Generation & Reproducibility"
       path: reproducibility.md
 

@@ -116,6 +116,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ### Configuration
 - [YAML Config Reference](docs/tutorials/yaml-config.md) - Complete guide to the YAML config system
+- [Migrating to the Envelope Config Shape](docs/tutorials/migrating-config.md) - Move flat YAML configs onto the envelope shape
 - [Distribution Types](docs/tutorials/distributions.md) - Statistical distributions for workload modeling
 - [Sweeps and Multi-Run](docs/tutorials/sweeps.md) - Parameter sweeps and confidence intervals
 - [Adaptive Search Tutorial](docs/tutorials/adaptive-search.md) - Bayesian-Optimization walkthrough for finding the best point without grid enumeration

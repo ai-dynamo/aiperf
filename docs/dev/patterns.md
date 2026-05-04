@@ -227,6 +227,27 @@ class Record(AIPerfBaseModel):
 
 Adding a new execution backend = subclass `RunExecutor`, implement `execute(run)` returning a `RunResult` and `derive_id(plan, var_idx, trial)` returning a stable id. The orchestrator code is unchanged.
 
+### Reading body fields from `AIPerfConfig`
+
+`AIPerfConfig` is an envelope; body fields live at `.benchmark.`. For functions that read multiple body fields, alias once at the top:
+
+```python
+def configure_workers(config: AIPerfConfig) -> WorkerSettings:
+    bench = config.benchmark
+    return WorkerSettings(
+        endpoint=bench.endpoint.urls[0],
+        streaming=bench.endpoint.streaming,
+        request_count=bench.phases[0].requests,
+    )
+```
+
+For functions that only need the body (no envelope-level access), narrow the parameter type:
+
+```python
+def render_dataset_prompt(bench: BenchmarkConfig, idx: int) -> str:
+    return bench.datasets[0].prompts.template.format(idx=idx)
+```
+
 ## Message Pattern
 
 Messages require `message_type` field and handler decorator:

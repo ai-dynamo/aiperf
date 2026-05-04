@@ -144,6 +144,32 @@ The `AIPerfSweep` CRD owns child `AIPerfJob` CRs via `ownerReferences` to orches
 
 **Adaptive outer loop (BO).** When `--search-space` is set, `MultiRunOrchestrator.execute` dispatches to `execute_adaptive_search`, which drives a pluggable `SearchPlanner` (currently `BayesianSearchPlanner` backed by `skopt`). Each iteration the planner proposes a `BenchmarkConfig` materialized as a synthesized `SweepVariation`, the orchestrator runs `plan.trials` benchmarks at it via the same `_run_independent_cell` used by grid mode, and feeds results back. A separate `search_history.json` is written incrementally next to `sweep_aggregate/`; the existing post-hoc aggregator handles BO results unchanged because `aggregate_sweep_and_export` groups by the stamped `variation_values`. BO runs both in-process (`aiperf profile --search-*`) and cluster-side via `AIPerfSweep` CRs that include a `multi_run.adaptive_search` block — `sweep_controller/main.py` instantiates the same `BayesianSearchPlanner` and the K8s executor creates one `AIPerfJob` per iteration; the kopf operator side stays BO-agnostic. See [docs/sweeping/bayesian-optimization.md](sweeping/bayesian-optimization.md) and [docs/kubernetes/sweeps.md](kubernetes/sweeps.md#adaptive-search-bayesian-optimization).
 
+### Envelope vs Benchmark Body
+
+`AIPerfConfig` is an envelope wrapping a `BenchmarkConfig`:
+
+```python
+class AIPerfConfig(BaseConfig):
+    benchmark: BenchmarkConfig          # the swept body
+    sweep: SweepConfig | None = None    # variation generator
+    multi_run: MultiRunConfig           # trial / convergence config
+    variables: dict[str, Any]            # Jinja context
+    random_seed: int | None              # base seed for per-variation derivation
+```
+
+The split mirrors `AIPerfSweep` on the K8s side: cross-variation machinery (sweep, multi_run, variables, random_seed) at envelope level; the swept benchmark body as a separate concern. Sweep expansion only ever merges into the `benchmark:` subtree; envelope fields are constant across variations.
+
+When code reads body fields, the local-alias pattern keeps call sites concise:
+
+```python
+def setup(self, config: AIPerfConfig) -> None:
+    bench = config.benchmark
+    if bench.endpoint.streaming:
+        ...
+```
+
+YAML configs follow the same shape — see [docs/tutorials/migrating-config.md](tutorials/migrating-config.md) for examples.
+
 ## How AIPerf Works
 
 ### Credit System & Request Timing

@@ -93,6 +93,23 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 3. Validate with `make validate-plugin-schemas`
 4. Use via `plugins.get_class(PluginType.X, 'name')`
 
+## Adding a New Config Field
+
+`AIPerfConfig` is an envelope; `BenchmarkConfig` is the swept body.
+
+- **Does the field vary per sweep variation?** -> add it to `BenchmarkConfig` (`src/aiperf/config/config.py`).
+- **Is it cross-variation machinery?** (Jinja context, sweep config, seed, multi-run trial settings.) -> add it to `AIPerfConfig` envelope.
+
+YAML configs follow the same shape: body keys nest under `benchmark:`; envelope keys (`sweep`, `multi_run`, `variables`, `random_seed`) stay at top level.
+
+Reading body fields:
+
+```python
+bench = config.benchmark
+if bench.endpoint.streaming:
+    ...
+```
+
 ## Kubernetes
 
 The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiperf/kubernetes/`, and `src/aiperf/cli_commands/kube/`. Key patterns:
