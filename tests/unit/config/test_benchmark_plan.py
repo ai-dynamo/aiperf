@@ -242,7 +242,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [8, 16, 32]},
+                "variables": {"benchmark.phases.default.concurrency": [8, 16, 32]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -261,10 +261,17 @@ class TestBuildBenchmarkPlan:
             sweep={
                 "type": "scenarios",
                 "runs": [
-                    {"name": "low", "phases": [{"name": "default", "concurrency": 2}]},
+                    {
+                        "name": "low",
+                        "benchmark": {
+                            "phases": [{"name": "default", "concurrency": 2}]
+                        },
+                    },
                     {
                         "name": "high",
-                        "phases": [{"name": "default", "concurrency": 64}],
+                        "benchmark": {
+                            "phases": [{"name": "default", "concurrency": 64}]
+                        },
                     },
                 ],
             }
@@ -287,7 +294,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [8, 16]},
+                "variables": {"benchmark.phases.default.concurrency": [8, 16]},
             },
             multi_run={"num_runs": 3},
         )
@@ -302,7 +309,7 @@ class TestBuildBenchmarkPlan:
         config = _make_aiperf_config(
             sweep={
                 "type": "grid",
-                "variables": {"phases.default.concurrency": [8]},
+                "variables": {"benchmark.phases.default.concurrency": [8]},
             }
         )
         plan = build_benchmark_plan(config)
@@ -382,8 +389,9 @@ class TestConfigHierarchy:
         assert config.multi_run.num_runs == 1
 
     def test_aiperf_is_benchmark_config(self) -> None:
+        """AIPerfConfig is an envelope: its body is a BenchmarkConfig instance."""
         config = _make_aiperf_config()
-        assert isinstance(config, BenchmarkConfig)
+        assert isinstance(config.benchmark, BenchmarkConfig)
 
     @pytest.mark.parametrize(
         "extra_field, extra_value",
@@ -403,7 +411,7 @@ class TestConfigHierarchy:
         "config_factory",
         [
             param(lambda: BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS), id="benchmark-config"),
-            param(lambda: _make_aiperf_config(), id="aiperf-config"),
+            param(lambda: _make_aiperf_config().benchmark, id="aiperf-config"),
         ],
     )  # fmt: skip
     def test_validators_work(self, config_factory: object) -> None:
@@ -414,8 +422,8 @@ class TestConfigHierarchy:
     def test_benchmark_config_normalizes_models(self) -> None:
         """model_validator normalizes string models to ModelsAdvanced."""
         config = _make_benchmark_config()
-        assert len(config.benchmark.models.items) == 1
-        assert config.benchmark.models.items[0].name == "test-model"
+        assert len(config.models.items) == 1
+        assert config.models.items[0].name == "test-model"
 
     def test_benchmark_config_benchmark_id_property(self) -> None:
         config = _make_benchmark_config()
@@ -451,7 +459,7 @@ class TestLoadBenchmarkPlanYAMLRoundTrip:
 
     def test_full_multi_run_block_from_yaml(self, tmp_path: Path) -> None:
         yaml_data = {
-            **_MINIMAL_CONFIG_KWARGS,
+            "benchmark": dict(_MINIMAL_CONFIG_KWARGS),
             "multi_run": {
                 "num_runs": 5,
                 "cooldown_seconds": 2.5,
@@ -470,7 +478,7 @@ class TestLoadBenchmarkPlanYAMLRoundTrip:
         assert plan.disable_warmup_after_first is False
 
     def test_minimal_yaml_no_multi_run_defaults(self, tmp_path: Path) -> None:
-        path = self._write_yaml(tmp_path, _MINIMAL_CONFIG_KWARGS)
+        path = self._write_yaml(tmp_path, {"benchmark": dict(_MINIMAL_CONFIG_KWARGS)})
         plan = load_benchmark_plan(path, substitute_env=False)
 
         assert plan.trials == 1

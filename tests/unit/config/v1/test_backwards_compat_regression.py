@@ -188,7 +188,7 @@ def test_v1_invocation_produces_expected_aiperf_config(
     cfg = convert_user_to_aiperf(user, service)
 
     for path, expected in assertions.items():
-        actual = _resolve(cfg, path)
+        actual = _resolve(cfg.benchmark, path)
         assert _matches(actual, expected), (
             f"At {path}: expected {expected!r}, got {actual!r}"
         )

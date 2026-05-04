@@ -134,7 +134,7 @@ class TestDCGMFaker:
         metrics = dcgm_faker.generate()
         assert 'gpu="0"' in metrics
         assert 'gpu="1"' in metrics
-        assert f'modelName="{dcgm_faker.cfg.benchmark.model}"' in metrics
+        assert f'modelName="{dcgm_faker.cfg.model}"' in metrics
 
     def test_generate_deterministic_with_seed(self):
         faker1 = DCGMFaker(gpu_name="h200", num_gpus=2, seed=123)
@@ -210,7 +210,7 @@ class TestDCGMFakerTelemetryCollector:
         # Verify metadata is correctly parsed
         for i, record in enumerate(records):
             gpu = faker.gpus[i]
-            assert record.gpu_model_name == gpu.cfg.benchmark.model
+            assert record.gpu_model_name == gpu.cfg.model
             assert record.hostname == faker.hostname
             assert record.gpu_uuid == gpu.uuid
             assert record.pci_bus_id == gpu.pci_bus_id
