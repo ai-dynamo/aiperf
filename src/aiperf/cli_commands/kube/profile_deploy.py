@@ -295,8 +295,10 @@ async def deploy_via_operator(
         name=name,
         namespace=namespace,
         image=kube_options.image,
-        endpoint_url=config.endpoint.urls[0] if config.endpoint.urls else None,
-        model_names=config.get_model_names(),
+        endpoint_url=config.benchmark.endpoint.urls[0]
+        if config.benchmark.endpoint.urls
+        else None,
+        model_names=config.benchmark.get_model_names(),
         connections_per_worker=spec.get("connectionsPerWorker"),
     )
 

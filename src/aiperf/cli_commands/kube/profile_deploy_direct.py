@@ -83,7 +83,9 @@ def _prepare_direct_deploy(
     )
 
     config_dict = config.model_dump(mode="json", exclude_none=True)
-    apply_k8s_runtime_config(config_dict, name, namespace)
+    benchmark_dict = config_dict.get("benchmark", {})
+    apply_k8s_runtime_config(benchmark_dict, name, namespace)
+    config_dict["benchmark"] = benchmark_dict
     config = AIPerfConfig.model_validate(config_dict)
 
     deploy_config = kube_options.to_deployment_config()
@@ -95,7 +97,7 @@ def _prepare_direct_deploy(
         )
 
     concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
+        (getattr(phase, "concurrency", 1) or 1 for phase in config.benchmark.phases),
         default=1,
     )
     total_workers = max(
@@ -178,8 +180,10 @@ async def deploy_direct(
         worker_replicas=num_pods,
         config=config,
         deployment=deploy_config,
-        model_names=config.get_model_names(),
-        endpoint_url=config.endpoint.urls[0] if config.endpoint.urls else None,
+        model_names=config.benchmark.get_model_names(),
+        endpoint_url=config.benchmark.endpoint.urls[0]
+        if config.benchmark.endpoint.urls
+        else None,
     )
     effective_ns = deployment.effective_namespace
     manifests = deployment.get_all_manifests()
@@ -194,8 +198,10 @@ async def deploy_direct(
         name=name,
         namespace=effective_ns,
         image=kube_options.image,
-        endpoint_url=config.endpoint.urls[0] if config.endpoint.urls else None,
-        model_names=config.get_model_names(),
+        endpoint_url=config.benchmark.endpoint.urls[0]
+        if config.benchmark.endpoint.urls
+        else None,
+        model_names=config.benchmark.get_model_names(),
         connections_per_worker=deploy_config.connections_per_worker,
     )
 

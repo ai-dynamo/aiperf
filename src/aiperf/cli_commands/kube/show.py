@@ -59,7 +59,7 @@ def show(
         # runs expand_config_dict (env vars + Jinja2) then AIPerfConfig
         # validation, and deliberately skips K8s runtime injection.
         config = extract_benchmark_config(spec)
-        rendered_benchmark = yaml.safe_load(dump_config(config))
+        rendered_benchmark = yaml.safe_load(dump_config(config)).get("benchmark", {})
 
         doc["spec"]["benchmark"] = rendered_benchmark
         # width=inf prevents yaml from soft-wrapping long strings (image refs,

@@ -60,9 +60,9 @@ def validate_config(
         config = load_config(path, substitute_env=interpolate)
 
         print(f"✓ Configuration valid: {path}")
-        print(f"  Models: {config.get_model_names()}")
-        print(f"  Datasets: {[d.name for d in config.datasets]}")
-        print(f"  Phases: {[p.name for p in config.phases]}")
+        print(f"  Models: {config.benchmark.get_model_names()}")
+        print(f"  Datasets: {[d.name for d in config.benchmark.datasets]}")
+        print(f"  Phases: {[p.name for p in config.benchmark.phases]}")
 
 
 @config_app.command(name="show")

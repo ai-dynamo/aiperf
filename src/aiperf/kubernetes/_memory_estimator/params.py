@@ -20,7 +20,7 @@ from aiperf.kubernetes._memory_estimator.constants import (
 )
 
 if TYPE_CHECKING:
-    from aiperf.config.config import AIPerfConfig
+    from aiperf.config.config import AIPerfConfig, BenchmarkConfig
     from aiperf.config.phases import BasePhaseConfig
 
 
@@ -119,13 +119,14 @@ class MemoryEstimationParams:
             workers_per_pod: Workers per pod (None = use default).
             connections_per_worker: Connections per worker.
         """
-        topology = _derive_topology(config, total_workers, workers_per_pod)
-        max_conc, total_req, total_dur = _derive_load_profile(config)
-        ds = config.get_default_dataset()
+        bench = config.benchmark
+        topology = _derive_topology(bench, total_workers, workers_per_pod)
+        max_conc, total_req, total_dur = _derive_load_profile(bench)
+        ds = bench.get_default_dataset()
         isl, osl, turns, count = _extract_dataset_params(ds)
-        num_gpu_urls, est_gpus = _derive_gpu_telemetry(config)
-        num_sm_urls = _derive_server_metrics(config)
-        export_trace = _derive_http_trace(config)
+        num_gpu_urls, est_gpus = _derive_gpu_telemetry(bench)
+        num_sm_urls = _derive_server_metrics(bench)
+        export_trace = _derive_http_trace(bench)
 
         return cls(
             total_workers=total_workers,
@@ -139,8 +140,8 @@ class MemoryEstimationParams:
             avg_isl_tokens=isl,
             avg_osl_tokens=osl,
             max_turns=turns,
-            streaming=config.endpoint.streaming,
-            num_endpoints=len(config.endpoint.urls),
+            streaming=bench.endpoint.streaming,
+            num_endpoints=len(bench.endpoint.urls),
             connections_per_worker=connections_per_worker,
             num_gpus=est_gpus,
             gpu_sample_interval_s=1.0,
@@ -150,7 +151,7 @@ class MemoryEstimationParams:
             est_unique_metric_series=_DEFAULT_UNIQUE_METRIC_SERIES,
             est_histogram_metrics=_DEFAULT_HISTOGRAM_METRICS,
             est_histogram_buckets=_DEFAULT_HISTOGRAM_BUCKETS,
-            num_models=len(config.get_model_names()),
+            num_models=len(bench.get_model_names()),
             num_standard_metrics=_DEFAULT_NUM_STANDARD_METRICS,
             export_http_trace=export_trace,
         )
@@ -166,7 +167,7 @@ class _Topology:
 
 
 def _derive_topology(
-    config: AIPerfConfig, total_workers: int, workers_per_pod: int | None
+    config: BenchmarkConfig, total_workers: int, workers_per_pod: int | None
 ) -> _Topology:
     from aiperf.common.environment import Environment
     from aiperf.kubernetes.environment import K8sEnvironment
@@ -182,7 +183,7 @@ def _derive_topology(
     return _Topology(actual_wpp=actual_wpp, num_pods=num_pods, rp_per_pod=rp_per_pod)
 
 
-def _derive_load_profile(config: AIPerfConfig) -> tuple[int, int, float]:
+def _derive_load_profile(config: BenchmarkConfig) -> tuple[int, int, float]:
     """Return (max_concurrency, total_requests, total_duration_s) across phases."""
     max_conc = 1
     total_req = 0
@@ -195,17 +196,17 @@ def _derive_load_profile(config: AIPerfConfig) -> tuple[int, int, float]:
     return max_conc, total_req, total_dur
 
 
-def _derive_gpu_telemetry(config: AIPerfConfig) -> tuple[int, int]:
+def _derive_gpu_telemetry(config: BenchmarkConfig) -> tuple[int, int]:
     """Return (num_gpu_urls, estimated_total_gpus). Rough: 1-8 GPUs per endpoint."""
     num_gpu_urls = len(config.gpu_telemetry.urls) if config.gpu_telemetry.enabled else 0
     return num_gpu_urls, num_gpu_urls * 4 if num_gpu_urls else 0
 
 
-def _derive_server_metrics(config: AIPerfConfig) -> int:
+def _derive_server_metrics(config: BenchmarkConfig) -> int:
     return len(config.server_metrics.urls) if config.server_metrics.enabled else 0
 
 
-def _derive_http_trace(config: AIPerfConfig) -> bool:
+def _derive_http_trace(config: BenchmarkConfig) -> bool:
     if not hasattr(config.artifacts, "formats"):
         return False
     return "http_trace" in {

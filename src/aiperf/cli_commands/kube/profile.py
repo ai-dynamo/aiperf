@@ -102,13 +102,13 @@ def _build_cr_spec_and_config(raw: dict, kube_options: Any) -> tuple[dict, Any]:
     # Mirror aiperf/cli_commands/kube/show.py: replace the raw benchmark
     # block with a fully-rendered version derived from the validated
     # AIPerfConfig so unresolved Jinja templates never reach the operator.
-    spec["benchmark"] = yaml.safe_load(dump_config(config))
+    spec["benchmark"] = yaml.safe_load(dump_config(config)).get("benchmark", {})
 
     dc = kube_options.to_deployment_config()
     dc_dict = dc.model_dump(mode="json", by_alias=True, exclude_defaults=True)
 
     concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
+        (getattr(phase, "concurrency", 1) or 1 for phase in config.benchmark.phases),
         default=1,
     )
     dc_dict["connectionsPerWorker"] = max(

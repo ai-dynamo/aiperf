@@ -472,4 +472,3 @@ class ServiceMetadata(BaseModel):
         default=False,
         description="Whether the service can have multiple instances running in parallel.",
     )
-

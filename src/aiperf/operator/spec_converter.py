@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from aiperf.common.enums import AIPerfLogLevel, CommunicationType
 from aiperf.common.environment import Environment
 from aiperf.config import AIPerfConfig
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.loader import expand_config_dict
 from aiperf.kubernetes.environment import K8sEnvironment
@@ -34,14 +35,14 @@ logger = logging.getLogger(__name__)
 # Must match DeploymentConfig.connections_per_worker default.
 DEFAULT_CONNECTIONS_PER_WORKER = 100
 
-# AIPerfConfig field names — all keys that belong under spec.benchmark.
+# BenchmarkConfig field names — all keys that belong under spec.benchmark.
 # Used for validation to detect unknown benchmark fields. Includes camelCase
 # aliases (via BaseConfig's alias_generator) and shorthand aliases (model,
 # dataset, warmup, profiling) that normalize to canonical forms at parse time.
 CONFIG_FIELDS: frozenset[str] = (
-    frozenset(AIPerfConfig.model_fields.keys())
+    frozenset(BenchmarkConfig.model_fields.keys())
     | frozenset(
-        f.alias for f in AIPerfConfig.model_fields.values() if f.alias is not None
+        f.alias for f in BenchmarkConfig.model_fields.values() if f.alias is not None
     )
     | {"model", "dataset", "warmup", "profiling"}
 )
@@ -96,7 +97,7 @@ class AIPerfJobSpecConverter:
 
         config_dict = expand_config_dict(config_dict)
         apply_k8s_runtime_config(config_dict, self.job_id or self.name, self.namespace)
-        return AIPerfConfig.model_validate(config_dict)
+        return AIPerfConfig.model_validate({"benchmark": config_dict})
 
     def to_deployment_config(self) -> DeploymentConfig:
         """Convert CRD spec to DeploymentConfig.
@@ -247,8 +248,9 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
     Returns:
         Number of worker pods needed.
     """
+    runtime = config.benchmark.runtime
     default_workers_per_pod = (
-        config.runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
     )
 
     if total_workers <= default_workers_per_pod:
@@ -258,17 +260,17 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
         workers_per_pod = default_workers_per_pod
         num_pods = math.ceil(total_workers / workers_per_pod)
 
-    config.runtime.workers_per_pod = workers_per_pod
-    config.runtime.workers = num_pods * workers_per_pod
+    runtime.workers_per_pod = workers_per_pod
+    runtime.workers = num_pods * workers_per_pod
 
     # Respect user-provided record_processors_per_pod when set in the spec.
-    if config.runtime.record_processors_per_pod is None:
+    if runtime.record_processors_per_pod is None:
         rp_per_pod = max(
             1, workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
         )
-        config.runtime.record_processors_per_pod = rp_per_pod
-    rp_per_pod = config.runtime.record_processors_per_pod
-    config.runtime.record_processors = rp_per_pod * num_pods
+        runtime.record_processors_per_pod = rp_per_pod
+    rp_per_pod = runtime.record_processors_per_pod
+    runtime.record_processors = rp_per_pod * num_pods
 
     return num_pods
 
@@ -333,4 +335,4 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
     benchmark = spec.get("benchmark") or {}
     config_dict = copy.deepcopy(benchmark)
     config_dict = expand_config_dict(config_dict)
-    return AIPerfConfig.model_validate(config_dict)
+    return AIPerfConfig.model_validate({"benchmark": config_dict})

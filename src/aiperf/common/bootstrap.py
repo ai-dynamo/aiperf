@@ -103,8 +103,9 @@ def _build_run_if_missing(
         config = load_config_from_env()
     return BenchmarkRunCls(
         benchmark_id="standalone",
-        cfg=config,
-        artifact_dir=config.artifacts.dir,
+        cfg=config.benchmark,
+        artifact_dir=config.benchmark.artifacts.dir,
+        random_seed=config.random_seed,
     )
 
 

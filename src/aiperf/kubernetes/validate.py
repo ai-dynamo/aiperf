@@ -163,13 +163,13 @@ def validate_aiperf_config(
         result.errors.append(f"Config validation failed: {e}")
         return
 
-    if not config.get_model_names():
+    if not config.benchmark.get_model_names():
         result.errors.append("models: must not be empty")
 
-    if not config.endpoint.urls:
+    if not config.benchmark.endpoint.urls:
         result.errors.append("endpoint.urls: must not be empty")
 
-    for url in config.endpoint.urls:
+    for url in config.benchmark.endpoint.urls:
         if not url.startswith(("http://", "https://")):
             result.errors.append(
                 f"endpoint.urls: '{url}' must start with http:// or https://"

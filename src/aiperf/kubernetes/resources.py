@@ -340,7 +340,7 @@ class KubernetesDeployment(AIPerfBaseModel):
 
             self.run = BenchmarkRun(
                 benchmark_id=self.job_id,
-                cfg=self.config,
+                cfg=self.config.benchmark,
                 artifact_dir=Path("/results"),
                 random_seed=self.config.random_seed,
             )
@@ -421,8 +421,9 @@ class KubernetesDeployment(AIPerfBaseModel):
             image_pull_policy=self.deployment.image_pull_policy,
             resource_mode=self.deployment.resource_mode,
             worker_replicas=self.worker_replicas,
-            workers_per_pod=self.workers_per_pod or self.config.runtime.workers_per_pod,
-            record_processors_per_pod=self.config.runtime.record_processors_per_pod,
+            workers_per_pod=self.workers_per_pod
+            or self.config.benchmark.runtime.workers_per_pod,
+            record_processors_per_pod=self.config.benchmark.runtime.record_processors_per_pod,
             ttl_seconds=self.deployment.ttl_seconds_after_finished,
             keep_failed_pods=self.deployment.keep_failed_pods,
             pod_template=self.deployment.pod_template,

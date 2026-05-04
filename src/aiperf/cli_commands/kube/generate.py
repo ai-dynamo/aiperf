@@ -60,7 +60,9 @@ def _dump_raw_manifests(
     )
 
     config_dict = config.model_dump(mode="json", exclude_none=True)
-    apply_k8s_runtime_config(config_dict, name, namespace)
+    benchmark_dict = config_dict.get("benchmark", {})
+    apply_k8s_runtime_config(benchmark_dict, name, namespace)
+    config_dict["benchmark"] = benchmark_dict
     config = AIPerfConfig.model_validate(config_dict)
 
     deploy_config = kube_options.to_deployment_config()
@@ -71,7 +73,7 @@ def _dump_raw_manifests(
             K8sEnvironment.JOBSET.DIRECT_MODE_TTL_SECONDS
         )
     concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.phases),
+        (getattr(phase, "concurrency", 1) or 1 for phase in config.benchmark.phases),
         default=1,
     )
     total_workers = max(
@@ -101,7 +103,7 @@ def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
     mem_est = estimate_memory(
         config,
         total_workers=kube_options.workers,
-        workers_per_pod=config.runtime.workers_per_pod,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
         connections_per_worker=spec.get("connectionsPerWorker", 100),
     )
     # Banner is informational; route through stderr_console so the YAML on

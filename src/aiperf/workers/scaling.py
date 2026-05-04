@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING
 from aiperf.common.environment import Environment
 
 if TYPE_CHECKING:
-    from aiperf.config import AIPerfConfig
+    from aiperf.config import BenchmarkConfig
 
 
-def calculate_worker_count(config: AIPerfConfig) -> int:
+def calculate_worker_count(config: BenchmarkConfig) -> int:
     """Calculate the number of workers to spawn.
 
     Applies the same logic as WorkerManager.__init__:

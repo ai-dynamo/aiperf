@@ -44,9 +44,9 @@ def generate_benchmark_name(config: Any, *, suffix: str = "") -> str:
     """
     import re
 
-    model_name = config.get_model_names()[0].split("/")[-1].lower()
-    endpoint_type = str(config.endpoint.type)
-    first_phase = config.phases[0]
+    model_name = config.benchmark.get_model_names()[0].split("/")[-1].lower()
+    endpoint_type = str(config.benchmark.endpoint.type)
+    first_phase = config.benchmark.phases[0]
     phase_type = str(first_phase.type)
     parts = [model_name, endpoint_type, phase_type]
     if suffix:
@@ -77,7 +77,7 @@ def print_memory_estimate(
     mem_est = estimate_memory(
         config,
         total_workers=kube_options.workers,
-        workers_per_pod=config.runtime.workers_per_pod,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
         connections_per_worker=spec.get("connectionsPerWorker", 100),
     )
     rendered = format_estimate(mem_est)

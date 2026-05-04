@@ -229,8 +229,8 @@ def _build_sweep_cr_dict(
     # Validate via AIPerfConfig so v1->v2 shorthand promotions
     # (`model:`/`dataset:`/`phases:`) expand to the long-form the operator
     # expects -- matching the path `kube profile` takes for CR-shaped input.
-    config = AIPerfConfig.model_validate(bench_dict)
-    bench_dict = yaml.safe_load(dump_config(config))
+    config = AIPerfConfig.model_validate({"benchmark": bench_dict})
+    bench_dict = yaml.safe_load(dump_config(config)).get("benchmark", {})
 
     deployment = kube_options.to_deployment_config()
     deployment_dict = deployment.model_dump(

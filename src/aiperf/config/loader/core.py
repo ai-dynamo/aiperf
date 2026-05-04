@@ -372,28 +372,29 @@ def validate_config_file(file_path: Path | str) -> list[str]:
     # Check for potential issues
 
     # Warn if no profiling load configs
-    profiling_phases = config.get_profiling_phases()
+    profiling_phases = config.benchmark.get_profiling_phases()
     if not profiling_phases:
         warnings.append(
             "All phases have exclude_from_results=True. Final results will be empty."
         )
 
     # Warn if streaming disabled but TTFT goodput set
-    if config.slos:
-        if config.slos.time_to_first_token and not config.endpoint.streaming:
+    bench = config.benchmark
+    if bench.slos:
+        if bench.slos.time_to_first_token and not bench.endpoint.streaming:
             warnings.append(
                 "slos.time_to_first_token is set but streaming is disabled. "
                 "TTFT measurement requires streaming=true."
             )
-        if config.slos.inter_token_latency and not config.endpoint.streaming:
+        if bench.slos.inter_token_latency and not bench.endpoint.streaming:
             warnings.append(
                 "slos.inter_token_latency is set but streaming is disabled. "
                 "ITL measurement requires streaming=true."
             )
 
     # Warn if prefill_concurrency set without streaming
-    for phase in config.phases:
-        if phase.prefill_concurrency and not config.endpoint.streaming:
+    for phase in bench.phases:
+        if phase.prefill_concurrency and not bench.endpoint.streaming:
             warnings.append(
                 f"Load config '{phase.name}' has prefill_concurrency set but "
                 "streaming is disabled. Prefill concurrency requires streaming=true."
