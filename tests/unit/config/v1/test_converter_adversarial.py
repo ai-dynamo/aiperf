@@ -40,7 +40,7 @@ class TestMagicListPromotion:
             ]
         }
         _promote_magic_lists_to_sweep_block(nested)
-        assert nested["sweep"]["variables"] == {"phases.profiling.concurrency": [42]}
+        assert nested["sweep"]["variables"] == {"benchmark.phases.profiling.concurrency": [42]}
 
     def test_multiple_magic_lists_in_same_phase_promoted_together(self) -> None:
         """Both `concurrency` and `request_rate` (when list-shaped) lift in
@@ -59,8 +59,8 @@ class TestMagicListPromotion:
         _promote_magic_lists_to_sweep_block(nested)
         vars_ = nested["sweep"]["variables"]
         assert vars_ == {
-            "phases.profiling.concurrency": [1, 2, 4],
-            "phases.profiling.rate": [10, 20],
+            "benchmark.phases.profiling.concurrency": [1, 2, 4],
+            "benchmark.phases.profiling.rate": [10, 20],
         }
 
     def test_magic_list_merges_into_existing_sweep_block(self) -> None:
@@ -75,7 +75,7 @@ class TestMagicListPromotion:
         _promote_magic_lists_to_sweep_block(nested)
         vars_ = nested["sweep"]["variables"]
         assert vars_["random_seed"] == [1, 2, 3]
-        assert vars_["phases.profiling.concurrency"] == [1, 2]
+        assert vars_["benchmark.phases.profiling.concurrency"] == [1, 2]
 
     def test_no_magic_lists_leaves_sweep_unset(self) -> None:
         """When no phase field is list-shaped, the sweep block is NOT
@@ -266,7 +266,7 @@ class TestConvertUserToAiperfIntegration:
         cfg = convert_user_to_aiperf(user, ServiceConfig())
         assert cfg.sweep is not None
         # GridSweep dumps `variables: dict[str, list]`; key by full path.
-        assert "phases.profiling.concurrency" in cfg.sweep.variables
+        assert "benchmark.phases.profiling.concurrency" in cfg.sweep.variables
 
     def test_bo_recipe_lands_adaptive_search_with_sla_filters(self) -> None:
         """The whole point of `--search-recipe max-throughput-ttft-sla

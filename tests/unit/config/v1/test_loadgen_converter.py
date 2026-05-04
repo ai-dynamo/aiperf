@@ -31,7 +31,9 @@ def _convert(loadgen: dict | None = None, **extra) -> object:
 def test_concurrency_list_lifts_to_sweep_variables() -> None:
     cfg = _convert(loadgen={"concurrency": [10, 20, 30]})
     assert cfg.sweep is not None
-    assert cfg.sweep.variables == {"phases.profiling.concurrency": [10, 20, 30]}
+    assert cfg.sweep.variables == {
+        "benchmark.phases.profiling.concurrency": [10, 20, 30]
+    }
     # PhaseConfig assigned its own default (concurrency=1) since the list was
     # stripped before validation; expand_sweep overwrites this per variation.
     profiling_phase = next(p for p in cfg.benchmark.phases if p.name == "profiling")
@@ -41,7 +43,9 @@ def test_concurrency_list_lifts_to_sweep_variables() -> None:
 def test_concurrency_csv_string_lifts_to_sweep_variables() -> None:
     cfg = _convert(loadgen={"concurrency": "10,20,30"})
     assert cfg.sweep is not None
-    assert cfg.sweep.variables == {"phases.profiling.concurrency": [10, 20, 30]}
+    assert cfg.sweep.variables == {
+        "benchmark.phases.profiling.concurrency": [10, 20, 30]
+    }
 
 
 def test_concurrency_scalar_does_not_create_sweep() -> None:
@@ -69,8 +73,7 @@ def test_seed_derivation_independent_per_variation() -> None:
         input={"random_seed": 100},
     )
     plan = build_benchmark_plan(cfg)
-    seeds = [c.random_seed for c in plan.configs]
-    assert seeds == [100, 101, 102]
+    assert plan.variation_seeds == [100, 101, 102]
 
 
 def test_seed_derivation_same_seed_pinned() -> None:
@@ -79,8 +82,7 @@ def test_seed_derivation_same_seed_pinned() -> None:
         input={"random_seed": 100},
     )
     plan = build_benchmark_plan(cfg)
-    seeds = [c.random_seed for c in plan.configs]
-    assert seeds == [100, 100, 100]
+    assert plan.variation_seeds == [100, 100, 100]
 
 
 def test_repeated_sweep_mode_flows_through_to_multi_run() -> None:
