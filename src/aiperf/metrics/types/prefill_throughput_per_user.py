@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricOverTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
@@ -27,8 +27,8 @@ class PrefillThroughputPerUserMetric(BaseRecordMetric[float]):
         MetricFlags.STREAMING_TOKENS_ONLY
         | MetricFlags.TOKENIZES_INPUT_ONLY
         | MetricFlags.LARGER_IS_BETTER
-        | MetricFlags.NO_CONSOLE
     )
+    console_group = MetricConsoleGroup.NONE
     required_metrics = {
         InputSequenceLengthMetric.tag,
         TTFTMetric.tag,

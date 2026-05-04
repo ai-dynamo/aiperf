@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.common.enums import GenericMetricUnit, MetricFlags, MetricOverTimeUnit
+from aiperf.common.enums import (
+    GenericMetricUnit,
+    MetricConsoleGroup,
+    MetricFlags,
+    MetricOverTimeUnit,
+)
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -15,7 +20,8 @@ class NumImagesMetric(BaseRecordMetric[int]):
     header = "Number of Images"
     short_header = "Num Images"
     unit = GenericMetricUnit.IMAGES
-    flags = MetricFlags.SUPPORTS_IMAGE_ONLY | MetricFlags.NO_CONSOLE
+    flags = MetricFlags.SUPPORTS_IMAGE_ONLY
+    console_group = MetricConsoleGroup.NONE
 
     def _parse_record(
         self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
