@@ -66,27 +66,32 @@ def _flatten_into_context(obj: Any, prefix: str, context: dict[str, Any]) -> Non
 def build_template_context(data: dict[str, Any]) -> dict[str, Any]:
     """Build context for Jinja2 template rendering.
 
-    Creates a flattened context that allows both:
-    - Direct access: ``{{ concurrency }}``
-    - Dot notation access: ``{{ phases.test.concurrency }}``
+    Creates a flattened context that allows:
+    - Direct access: ``{{ concurrency }}`` (from ``variables`` block)
+    - Top-level body alias: ``{{ phases.profiling.rate }}`` (lifted from
+      ``benchmark.phases.profiling.rate``)
+    - Explicit envelope path: ``{{ benchmark.phases.profiling.rate }}``,
+      ``{{ variables.isl }}``
 
-    The ``variables`` section values are added at the top level for easy access.
-    Cross-references inside the ``variables`` block (e.g.
-    ``total_concurrency: "{{ a * b }}"``) are resolved in dependency order before
-    being added to the context, so later expressions like ``{{ total_concurrency }}``
-    see the computed value rather than the raw template.
+    The body-key alias preserves user templates from gaining a
+    ``benchmark.`` prefix when migrating from the pre-restructure flat
+    shape. Variables and benchmark live in different namespaces; the
+    aliases never collide because envelope-level field names
+    (``sweep``, ``multi_run``, ``variables``, ``random_seed``) don't
+    appear inside ``benchmark``.
     """
     context: dict[str, Any] = {}
     _flatten_into_context(data, "", context)
 
+    # Lift body keys to top level for backward-template-compatibility.
+    benchmark = data.get("benchmark")
+    if isinstance(benchmark, dict):
+        _flatten_into_context(benchmark, "", context)
+
     if "variables" in data and isinstance(data["variables"], dict):
-        # Variables can reference any flattened context entry except other
-        # variables-block names — those resolve in dep order via _resolve_variables_block.
         rest_ctx = {
             k: v for k, v in context.items() if k.split(".", 1)[0] != "variables"
         }
-        # Also strip top-level keys that mirror variable names so a raw template
-        # value isn't picked up before the dep graph resolves it.
         for key in data["variables"]:
             rest_ctx.pop(key, None)
         resolved = _resolve_variables_block(data["variables"], rest_ctx)
