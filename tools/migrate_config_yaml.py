@@ -62,7 +62,15 @@ BODY_KEYS = frozenset(
 
 # Envelope fields that stay at top level. `benchmark` is the new wrapper key.
 ENVELOPE_KEYS = frozenset(
-    {"sweep", "multi_run", "multiRun", "variables", "random_seed", "randomSeed", "benchmark"}
+    {
+        "sweep",
+        "multi_run",
+        "multiRun",
+        "variables",
+        "random_seed",
+        "randomSeed",
+        "benchmark",
+    }
 )
 
 # Allowed grid sweep variable path prefixes.

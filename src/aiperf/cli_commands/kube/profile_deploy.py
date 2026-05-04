@@ -328,6 +328,4 @@ def _print_detach_hint(name: str, kube_options: KubeOptions) -> None:
         if kube_options.kube_context
         else ""
     )
-    kube_console.print_info(
-        f"Detached. Watch with: aiperf kube watch {name}{ctx_flag}"
-    )
+    kube_console.print_info(f"Detached. Watch with: aiperf kube watch {name}{ctx_flag}")
