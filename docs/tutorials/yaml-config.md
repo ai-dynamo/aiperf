@@ -21,20 +21,20 @@ A minimal config needs four sections: a model name, an endpoint URL, a dataset, 
 ```yaml
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000
+benchmark:
+  endpoint:
+    url: http://localhost:8000
 
+  phases:
+    type: concurrency
+    concurrency: 8
+    requests: 100
 dataset:
   type: synthetic
   entries: 100
   prompts:
     isl: 512
     osl: 128
-
-phases:
-  type: concurrency
-  concurrency: 8
-  requests: 100
 ```
 
 Shorthand forms (`model` instead of `models`, `url` instead of `urls`, inline `phases` without a name) are normalized automatically. The rest of this guide uses the explicit forms.
@@ -47,35 +47,37 @@ Accepts a single string, a list, or advanced format with selection strategy.
 
 ```yaml
 # List of models (round-robin by default)
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
-  - mistralai/Mistral-7B-Instruct-v0.3
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
+    - mistralai/Mistral-7B-Instruct-v0.3
 
-endpoint:
-  urls: [http://localhost:8000/v1/chat/completions]
-  type: chat
-datasets:
-  - {name: default, type: synthetic, entries: 100}
-phases:
-  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+    type: chat
+  datasets:
+    - {name: default, type: synthetic, entries: 100}
+  phases:
+    - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 
 ---
 # Weighted routing
-models:
-  strategy: weighted
-  items:
-    - name: meta-llama/Llama-3.1-8B-Instruct
-      weight: 0.7
-    - name: mistralai/Mistral-7B-Instruct-v0.3
-      weight: 0.3
+benchmark:
+  models:
+    strategy: weighted
+    items:
+      - name: meta-llama/Llama-3.1-8B-Instruct
+        weight: 0.7
+      - name: mistralai/Mistral-7B-Instruct-v0.3
+        weight: 0.3
 
-endpoint:
-  urls: [http://localhost:8000/v1/chat/completions]
-  type: chat
-datasets:
-  - {name: default, type: synthetic, entries: 100}
-phases:
-  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
+  endpoint:
+    urls: [http://localhost:8000/v1/chat/completions]
+    type: chat
+  datasets:
+    - {name: default, type: synthetic, entries: 100}
+  phases:
+    - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
 
 ### Endpoints
@@ -83,26 +85,27 @@ phases:
 Configures server connection, API type, streaming, and authentication.
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat           # chat | completions | embeddings | rankings | template
-  streaming: true      # Required for TTFT measurement
-  timeout: 600.0       # Request timeout in seconds
-  api_key: sk-example
-  headers:
-    X-Request-ID: trace-abc-123
-  extra:
-    temperature: 0.7
-    top_p: 0.95
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat         # chat | completions | embeddings | rankings | template
+    streaming: true    # Required for TTFT measurement
+    timeout: 600.0     # Request timeout in seconds
+    api_key: sk-example
+    headers:
+      X-Request-ID: trace-abc-123
+    extra:
+      temperature: 0.7
+      top_p: 0.95
 
-datasets:
-  - {name: default, type: synthetic, entries: 100}
-phases:
-  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
+  datasets:
+    - {name: default, type: synthetic, entries: 100}
+  phases:
+    - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
 
 In production, replace any of the literal values above with `${VAR}` or `${VAR:default}` (e.g. `urls: [${INFERENCE_URL:http://localhost:8000/v1/chat/completions}]`, `api_key: ${OPENAI_API_KEY}`) and substitute at deploy time.
@@ -116,29 +119,31 @@ Datasets are a list of named data sources referenced by phases. The list is orde
 Generated prompts with configurable token length distributions.
 
 ```yaml
-datasets:
-  - name: main
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 100}
-      osl: {type: normal, mean: 256, stddev: 50}
-    sampling: shuffle    # sequential | random | shuffle
-    random_seed: 42
+benchmark:
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 100}
+        osl: {type: normal, mean: 256, stddev: 50}
+      sampling: shuffle  # sequential | random | shuffle
+      random_seed: 42
 ```
 
 Multi-turn conversations:
 
 ```yaml
-datasets:
-  - name: conversation
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {type: normal, mean: 200, stddev: 50}
-      osl: {type: normal, mean: 300, stddev: 75}
-    turns: {type: normal, mean: 5, stddev: 2}
-    turn_delay: {type: exponential, mean: 2000}  # ms between turns
+benchmark:
+  datasets:
+    - name: conversation
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: normal, mean: 200, stddev: 50}
+        osl: {type: normal, mean: 300, stddev: 75}
+      turns: {type: normal, mean: 5, stddev: 2}
+      turn_delay: {type: exponential, mean: 2000} # ms between turns
 ```
 
 ### File
@@ -146,13 +151,14 @@ datasets:
 Load prompts from a local JSONL file.
 
 ```yaml
-datasets:
-  - name: custom
-    type: file
-    path: ./data/prompts.jsonl
-    format: single_turn   # single_turn | multi_turn | mooncake_trace
-    sampling: sequential
-    entries: 500           # Limit to first 500 records
+benchmark:
+  datasets:
+    - name: custom
+      type: file
+      path: ./data/prompts.jsonl
+      format: single_turn # single_turn | multi_turn | mooncake_trace
+      sampling: sequential
+      entries: 500         # Limit to first 500 records
 ```
 
 ### Public
@@ -160,11 +166,12 @@ datasets:
 Auto-downloaded public benchmarking datasets.
 
 ```yaml
-datasets:
-  - name: sharegpt
-    type: public
-    dataset: sharegpt
-    entries: 1000
+benchmark:
+  datasets:
+    - name: sharegpt
+      type: public
+      dataset: sharegpt
+      entries: 1000
 ```
 
 ### Composed
@@ -172,18 +179,19 @@ datasets:
 Combines a file source with synthetic augmentation (e.g., applying OSL control to file-based prompts).
 
 ```yaml
-datasets:
-  - name: with_osl
-    type: composed
-    source:
-      type: file
-      path: ./data/prompts.jsonl
-      format: single_turn
-      sampling: shuffle
-    augment:
-      osl: {type: normal, mean: 256, stddev: 50}
-      osl_mode: fill   # fill (only if missing) | override (always replace)
-    entries: 1000
+benchmark:
+  datasets:
+    - name: with_osl
+      type: composed
+      source:
+        type: file
+        path: ./data/prompts.jsonl
+        format: single_turn
+        sampling: shuffle
+      augment:
+        osl: {type: normal, mean: 256, stddev: 50}
+        osl_mode: fill # fill (only if missing) | override (always replace)
+      entries: 1000
 ```
 
 ### Using Multiple Datasets
@@ -191,35 +199,36 @@ datasets:
 List each dataset with a `name` and reference it from phases. Phases that omit `dataset` use the first one.
 
 ```yaml
-datasets:
-  - name: warmup_data
-    type: synthetic
-    entries: 100
-    prompts: {isl: 256, osl: 64}
+benchmark:
+  datasets:
+    - name: warmup_data
+      type: synthetic
+      entries: 100
+      prompts: {isl: 256, osl: 64}
 
-  - name: profiling_data
-    type: synthetic
-    entries: 5000
-    prompts:
-      isl: {type: lognormal, mean: 512, sigma: 0.8}
-      osl: {type: normal, mean: 256, stddev: 50}
+    - name: profiling_data
+      type: synthetic
+      entries: 5000
+      prompts:
+        isl: {type: lognormal, mean: 512, sigma: 0.8}
+        osl: {type: normal, mean: 256, stddev: 50}
 
-phases:
-  - name: warmup
-    type: concurrency
-    dataset: warmup_data
-    requests: 100
-    concurrency: 8
-    exclude_from_results: true
+  phases:
+    - name: warmup
+      type: concurrency
+      dataset: warmup_data
+      requests: 100
+      concurrency: 8
+      exclude_from_results: true
 
-  - name: profiling
-    type: poisson
-    dataset: profiling_data
-    rate: 30.0
-    duration: 300
-    concurrency: 64
-    seamless: true
-    grace_period: 60
+    - name: profiling
+      type: poisson
+      dataset: profiling_data
+      rate: 30.0
+      duration: 300
+      concurrency: 64
+      seamless: true
+      grace_period: 60
 ```
 
 ## Phases
@@ -233,11 +242,12 @@ Every phase requires at least one stop condition: `requests`, `duration`, or `se
 Dispatch a new request immediately when a concurrency slot opens. No rate limiting.
 
 ```yaml
-phases:
-  - name: burst_test
-    type: concurrency
-    concurrency: 32
-    requests: 1000
+benchmark:
+  phases:
+    - name: burst_test
+      type: concurrency
+      concurrency: 32
+      requests: 1000
 ```
 
 ### poisson
@@ -245,13 +255,14 @@ phases:
 Rate-controlled with Poisson-distributed inter-arrival times (realistic traffic).
 
 ```yaml
-phases:
-  - name: realistic
-    type: poisson
-    rate: 50.0        # Requests per second
-    concurrency: 128  # Cap on in-flight requests
-    duration: 300     # Supports: 300, "5m", "2h"
-    grace_period: 60
+benchmark:
+  phases:
+    - name: realistic
+      type: poisson
+      rate: 50.0      # Requests per second
+      concurrency: 128 # Cap on in-flight requests
+      duration: 300   # Supports: 300, "5m", "2h"
+      grace_period: 60
 ```
 
 ### gamma
@@ -259,14 +270,15 @@ phases:
 Rate-controlled with tunable burstiness via `smoothness`.
 
 ```yaml
-phases:
-  - name: bursty
-    type: gamma
-    rate: 30.0
-    smoothness: 0.5   # <1 bursty, 1 = Poisson, >1 smooth
-    duration: 120
-    concurrency: 64
-    grace_period: 60
+benchmark:
+  phases:
+    - name: bursty
+      type: gamma
+      rate: 30.0
+      smoothness: 0.5 # <1 bursty, 1 = Poisson, >1 smooth
+      duration: 120
+      concurrency: 64
+      grace_period: 60
 ```
 
 ### constant
@@ -274,12 +286,13 @@ phases:
 Fixed inter-arrival time (deterministic, reproducible).
 
 ```yaml
-phases:
-  - name: deterministic
-    type: constant
-    rate: 10.0
-    duration: 60
-    concurrency: 32
+benchmark:
+  phases:
+    - name: deterministic
+      type: constant
+      rate: 10.0
+      duration: 60
+      concurrency: 32
 ```
 
 ### user_centric
@@ -287,13 +300,14 @@ phases:
 N simulated users sharing a global request rate. Requires multi-turn dataset.
 
 ```yaml
-phases:
-  - name: users
-    type: user_centric
-    rate: 20.0
-    users: 10
-    sessions: 50
-    duration: 300
+benchmark:
+  phases:
+    - name: users
+      type: user_centric
+      rate: 20.0
+      users: 10
+      sessions: 50
+      duration: 300
 ```
 
 ### fixed_schedule
@@ -301,11 +315,12 @@ phases:
 Replay requests at timestamps from a trace dataset. No stop condition required.
 
 ```yaml
-phases:
-  - name: replay
-    type: fixed_schedule
-    dataset: trace_data
-    auto_offset: true    # Normalize timestamps to start at 0
+benchmark:
+  phases:
+    - name: replay
+      type: fixed_schedule
+      dataset: trace_data
+      auto_offset: true  # Normalize timestamps to start at 0
 ```
 
 ### Common Phase Fields
@@ -327,22 +342,23 @@ phases:
 ### Warmup + Profiling Pattern
 
 ```yaml
-phases:
-  - name: warmup
-    type: concurrency
-    requests: 100
-    concurrency: 8
-    exclude_from_results: true
+benchmark:
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 100
+      concurrency: 8
+      exclude_from_results: true
 
-  - name: profiling
-    type: gamma
-    rate: 50.0
-    smoothness: 1.5
-    duration: 300
-    concurrency: 64
-    seamless: true
-    rate_ramp: 30s
-    grace_period: 60
+    - name: profiling
+      type: gamma
+      rate: 50.0
+      smoothness: 1.5
+      duration: 300
+      concurrency: 64
+      seamless: true
+      rate_ramp: 30s
+      grace_period: 60
 ```
 
 ## Distribution Types
@@ -535,11 +551,12 @@ Multi-run works with sweeps: each sweep variation gets `num_runs` repetitions wi
 Service Level Objectives define thresholds for "good" requests. A request counts toward goodput only if it meets ALL specified thresholds. Latency metrics are in milliseconds; `tokens_per_second` is a minimum.
 
 ```yaml
-slos:
-  request_latency: 5000        # Max 5s end-to-end
-  time_to_first_token: 500     # Max 500ms TTFT
-  inter_token_latency: 50      # Max 50ms between tokens
-  tokens_per_second: 20.0      # Min 20 tokens/sec output rate
+benchmark:
+  slos:
+    request_latency: 5000      # Max 5s end-to-end
+    time_to_first_token: 500   # Max 500ms TTFT
+    inter_token_latency: 50    # Max 50ms between tokens
+    tokens_per_second: 20.0    # Min 20 tokens/sec output rate
 ```
 
 Streaming must be enabled on the endpoint for TTFT and ITL measurement.
@@ -549,28 +566,28 @@ Streaming must be enabled on the endpoint for TTFT and ITL measurement.
 Use `${VAR}` syntax in any string value. Variables are resolved at config load time. The example below is a complete config using literal values that round-trips against `AIPerfConfig`; in production, replace any value with `${VAR}` (required) or `${VAR:default}` (optional with default) and substitute at deploy time.
 
 ```yaml
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  api_key: sk-example                    # ${OPENAI_API_KEY}
+benchmark:
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    api_key: sk-example                  # ${OPENAI_API_KEY}
 
-models:
-  - meta-llama/Llama-3.1-8B-Instruct     # ${MODEL_NAME:...}
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct   # ${MODEL_NAME:...}
 
 # Works in nested fields, numeric fields, and lists
+  datasets:
+    - {name: default, type: synthetic, entries: 100}
+
+  phases:
+    - name: profiling
+      type: gamma
+      dataset: default
+      rate: 30.0                         # ${TARGET_RATE:30.0}
+      duration: 300                      # ${DURATION:300}
+      concurrency: 64                    # ${MAX_CONCURRENCY:64}
 random_seed: 42                          # ${BENCHMARK_SEED:42}
-
-datasets:
-  - {name: default, type: synthetic, entries: 100}
-
-phases:
-  - name: profiling
-    type: gamma
-    dataset: default
-    rate: 30.0                           # ${TARGET_RATE:30.0}
-    duration: 300                        # ${DURATION:300}
-    concurrency: 64                      # ${MAX_CONCURRENCY:64}
 ```
 
 ## Artifacts
@@ -578,11 +595,12 @@ phases:
 Control output directory and export formats.
 
 ```yaml
-artifacts:
-  dir: ./artifacts/my_benchmark   # Output directory
-  summary: [json]                 # [json, yaml] or false
-  records: [jsonl, csv]           # [jsonl, csv] or false
-  slice_duration: 60              # Time-slice window in seconds
+benchmark:
+  artifacts:
+    dir: ./artifacts/my_benchmark # Output directory
+    summary: [json]               # [json, yaml] or false
+    records: [jsonl, csv]         # [jsonl, csv] or false
+    slice_duration: 60            # Time-slice window in seconds
 ```
 
 When `slice_duration` is set, AIPerf computes per-window statistics for trend analysis over time.
@@ -596,31 +614,33 @@ variables:
   base_concurrency: 16
   target_isl: 512
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: "{{ base_concurrency * 10 }}"    # 160
-    prompts:
-      isl: "{{ target_isl }}"                 # 512
-      osl: "{{ target_isl // 4 }}"            # 128
+benchmark:
+  datasets:
+    - name: main
+      type: synthetic
+      entries: "{{ base_concurrency * 10 }}"  # 160
+      prompts:
+        isl: "{{ target_isl }}"               # 512
+        osl: "{{ target_isl // 4 }}"          # 128
 
-phases:
-  - name: test
-    type: concurrency
-    concurrency: "{{ base_concurrency }}"      # 16
-    requests: "{{ base_concurrency * 100 }}"   # 1600
+  phases:
+    - name: test
+      type: concurrency
+      concurrency: "{{ base_concurrency }}"    # 16
+      requests: "{{ base_concurrency * 100 }}" # 1600
 ```
 
 Jinja2 templates also support self-referencing config values via dot notation:
 
 ```yaml
-phases:
-  - name: test
-    type: poisson
-    rate: 50.0
-    duration: 120
+benchmark:
+  phases:
+    - name: test
+      type: poisson
+      rate: 50.0
+      duration: 120
     # Reference another config value (phases are addressed by index in Jinja paths):
-    concurrency: "{{ phases[0].rate * 2 }}"  # 100
+      concurrency: "{{ phases[0].rate * 2 }}" # 100
 ```
 
 Templates render twice: once at load time (for validation) and again after sweep expansion (so sweep-injected values are available). This means Jinja2 and sweeps compose naturally.
@@ -630,23 +650,24 @@ Templates render twice: once at load time (for validation) and again after sweep
 The `template` endpoint type uses Jinja2 for custom request payloads. These are rendered at request time (not config load time), with different variables (`text`, `model`, `max_tokens`, etc.).
 
 ```yaml
-models:
-  - custom-llm
-endpoint:
-  urls:
-    - http://localhost:8000/generate
-  type: template
-  template:
-    body: |
-      {
-        "prompt": {{ text|tojson }},
-        "model": {{ model|tojson }},
-        "max_tokens": {{ max_tokens|tojson }}
-      }
-datasets:
-  - {name: default, type: synthetic, entries: 100}
-phases:
-  - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
+benchmark:
+  models:
+    - custom-llm
+  endpoint:
+    urls:
+      - http://localhost:8000/generate
+    type: template
+    template:
+      body: |
+        {
+          "prompt": {{ text|tojson }},
+          "model": {{ model|tojson }},
+          "max_tokens": {{ max_tokens|tojson }}
+        }
+  datasets:
+    - {name: default, type: synthetic, entries: 100}
+  phases:
+    - {name: profiling, type: concurrency, concurrency: 1, requests: 100}
 ```
 
 See the [Template Endpoint tutorial](template-endpoint.md) for complete examples.
@@ -658,78 +679,87 @@ This example combines distributions, scenario sweep, multi-run statistics, SLOs,
 ```yaml
 random_seed: 42                                    # ${BENCHMARK_SEED:42}
 
-models:
-  - meta-llama/Llama-3.1-8B-Instruct               # ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct             # ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions    # ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
-  type: chat
-  streaming: true
-  timeout: 600.0
-  api_key: ""                                      # ${API_KEY:}
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions  # ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
+    api_key: ""                                    # ${API_KEY:}
 
-datasets:
-  - name: warmup
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 256
-      osl: 64
+  datasets:
+    - name: warmup
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 256
+        osl: 64
 
-  - name: workload
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl:
-        peaks:
-          - {mean: 256, median: 200, weight: 70}
-          - {mean: 2048, median: 1800, weight: 30}
-      osl: {mean: 256, median: 200, min: 16, max: 2048}
+    - name: workload
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl:
+          peaks:
+            - {mean: 256, median: 200, weight: 70}
+            - {mean: 2048, median: 1800, weight: 30}
+        osl: {mean: 256, median: 200, min: 16, max: 2048}
 
-phases:
-  - name: warmup
-    type: concurrency
-    dataset: warmup
-    requests: 100
-    concurrency: 8
-    exclude_from_results: true
+  phases:
+    - name: warmup
+      type: concurrency
+      dataset: warmup
+      requests: 100
+      concurrency: 8
+      exclude_from_results: true
 
-  - name: profiling
-    type: gamma
-    dataset: workload
-    rate: 30.0
-    smoothness: 1.5
-    duration: 300                                  # ${DURATION:300}
-    concurrency: 64                                # ${MAX_CONCURRENCY:64}
-    rate_ramp: 30s
-    seamless: true
-    grace_period: 60
+    - name: profiling
+      type: gamma
+      dataset: workload
+      rate: 30.0
+      smoothness: 1.5
+      duration: 300                                # ${DURATION:300}
+      concurrency: 64                              # ${MAX_CONCURRENCY:64}
+      rate_ramp: 30s
+      seamless: true
+      grace_period: 60
 
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
+    inter_token_latency: 50
+    tokens_per_second: 20.0
+
+  artifacts:
+    dir: ./artifacts/production                    # ${ARTIFACTS_DIR:./artifacts/production}
+    summary: [json]
+    records: [jsonl, csv]
+    slice_duration: 60
 sweep:
   type: scenarios
   runs:
     - name: low_load
-      phases:
-        - name: profiling
-          rate: 10.0
-          concurrency: 32
+      benchmark:
+        phases:
+          - name: profiling
+            rate: 10.0
+            concurrency: 32
     - name: medium_load
-      phases:
-        - name: profiling
-          rate: 30.0
-          concurrency: 64
+      benchmark:
+        phases:
+          - name: profiling
+            rate: 30.0
+            concurrency: 64
     - name: high_load
-      phases:
-        - name: profiling
-          rate: 50.0
-          concurrency: 128
-
-slos:
-  request_latency: 10000
-  time_to_first_token: 1000
-  inter_token_latency: 50
-  tokens_per_second: 20.0
+      benchmark:
+        phases:
+          - name: profiling
+            rate: 50.0
+            concurrency: 128
 
 multi_run:
   num_runs: 3                                      # ${NUM_RUNS:3}
@@ -737,12 +767,6 @@ multi_run:
   confidence_level: 0.95
   set_consistent_seed: true
   disable_warmup_after_first: true
-
-artifacts:
-  dir: ./artifacts/production                      # ${ARTIFACTS_DIR:./artifacts/production}
-  summary: [json]
-  records: [jsonl, csv]
-  slice_duration: 60
 ```
 
 Run it:

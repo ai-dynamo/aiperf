@@ -24,41 +24,41 @@ A grid sweep takes one or more variables, each with a list of values, and runs e
 ### Example: Sweep Concurrency x Rate to Find Saturation
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 50}
-      osl: {type: normal, mean: 128, stddev: 25}
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 50}
+        osl: {type: normal, mean: 128, stddev: 25}
 
-phases:
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 10       # overridden by sweep
-    concurrency: 8 # overridden by sweep
-    grace_period: 30
+  phases:
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 10     # overridden by sweep
+      concurrency: 8 # overridden by sweep
+      grace_period: 30
 
+  artifacts:
+    dir: ./artifacts/saturation_sweep
+    summary: [json]
 sweep:
   type: grid
   variables:
-    phases.profiling.concurrency: [8, 32, 64, 128]
-    phases.profiling.rate: [10, 50, 100]
-
-artifacts:
-  dir: ./artifacts/saturation_sweep
-  summary: [json]
+    benchmark.phases.profiling.concurrency: [8, 32, 64, 128]
+    benchmark.phases.profiling.rate: [10, 50, 100]
 ```
 
 This produces `4 * 3 = 12` benchmark runs. Each variation overrides the dot-path fields on a deep copy of the base config. Because `phases:` is a list of named entries, the second segment of the dot-path (`profiling`) is matched against each phase's `name` field — so `phases.profiling.concurrency: 32` sets the `concurrency` field inside the phase whose `name` is `profiling`. Phases not mentioned in the override are inherited from the base unchanged.
@@ -72,70 +72,73 @@ A scenario sweep defines named configurations that are deep-merged onto the base
 ### Example: Compare Workload Profiles
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 50}
-      osl: {type: normal, mean: 128, stddev: 25}
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 50}
+        osl: {type: normal, mean: 128, stddev: 25}
 
-phases:
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 20
-    concurrency: 32
-    grace_period: 30
+  phases:
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 20
+      concurrency: 32
+      grace_period: 30
 
+  artifacts:
+    dir: ./artifacts/workload_comparison
+    summary: [json]
 sweep:
   type: scenarios
   runs:
     - name: short_chatbot
-      datasets:
-        - name: main
-          prompts:
-            isl: {type: normal, mean: 64, stddev: 10}
-            osl: {type: normal, mean: 32, stddev: 8}
-      phases:
-        - name: profiling
-          rate: 100
+      benchmark:
+        datasets:
+          - name: main
+            prompts:
+              isl: {type: normal, mean: 64, stddev: 10}
+              osl: {type: normal, mean: 32, stddev: 8}
+        phases:
+          - name: profiling
+            rate: 100
 
     - name: summarization
-      datasets:
-        - name: main
-          prompts:
-            isl: {type: normal, mean: 2048, stddev: 200}
-            osl: {type: normal, mean: 256, stddev: 50}
-      phases:
-        - name: profiling
-          concurrency: 16
-          rate: 10
+      benchmark:
+        datasets:
+          - name: main
+            prompts:
+              isl: {type: normal, mean: 2048, stddev: 200}
+              osl: {type: normal, mean: 256, stddev: 50}
+        phases:
+          - name: profiling
+            concurrency: 16
+            rate: 10
 
     - name: long_context_qa
-      datasets:
-        - name: main
-          prompts:
-            isl: {type: normal, mean: 8192, stddev: 500}
-            osl: {type: normal, mean: 512, stddev: 100}
-      phases:
-        - name: profiling
-          concurrency: 8
-          rate: 5
-
-artifacts:
-  dir: ./artifacts/workload_comparison
-  summary: [json]
+      benchmark:
+        datasets:
+          - name: main
+            prompts:
+              isl: {type: normal, mean: 8192, stddev: 500}
+              osl: {type: normal, mean: 512, stddev: 100}
+        phases:
+          - name: profiling
+            concurrency: 8
+            rate: 5
 ```
 
 Deep-merge means nested dicts are merged recursively, and `phases:` overrides are matched by `name` against the base's phase list — only fields you set on a named override are changed; everything else is inherited. In the `short_chatbot` scenario, `datasets.main.prompts` is replaced entirely because it is the leaf being overridden, while `datasets.main.type` and `datasets.main.entries` remain inherited from the base, and the `profiling` phase keeps its base `type`, `dataset`, `duration`, and `grace_period` while picking up the new `rate`. Each scenario's `name` field becomes its label in the output directory.
@@ -149,40 +152,40 @@ Distribution parameters are just nested fields in the config tree, so they can b
 Use a grid sweep to test three different input sequence lengths:
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl: 128  # overridden by sweep
-      osl: {type: normal, mean: 128, stddev: 25}
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl: 128 # overridden by sweep
+        osl: {type: normal, mean: 128, stddev: 25}
 
-phases:
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 30
-    concurrency: 32
-    grace_period: 30
+  phases:
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 30
+      concurrency: 32
+      grace_period: 30
 
+  artifacts:
+    dir: ./artifacts/isl_sweep
+    summary: [json]
 sweep:
   type: grid
   variables:
-    datasets.main.prompts.isl: [128, 512, 2048]
-
-artifacts:
-  dir: ./artifacts/isl_sweep
-  summary: [json]
+    benchmark.datasets.main.prompts.isl: [128, 512, 2048]
 ```
 
 This produces 3 runs, one per ISL value. Since ISL accepts both fixed integers and distribution objects, each value is set as a fixed distribution (no variance).
@@ -219,39 +222,39 @@ sweep:
 When you want to compare hand-picked input/output length pairings -- 128/128 for chatbot-style turns, 256/256 for short Q&A, 512/1024 for summarization -- a grid sweep is the wrong tool (it produces a Cartesian product, not paired combinations) and the verbose scenario form forces three levels of wrapping per pair. The terse singular `dataset:` shorthand inside scenario `runs:` keeps the intent visible:
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
 
-phases:
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 30
-    concurrency: 32
-    grace_period: 30
+  phases:
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 30
+      concurrency: 32
+      grace_period: 30
 
+  artifacts:
+    dir: ./artifacts/isl_osl_pairs
+    summary: [json]
 sweep:
   type: scenarios
   runs:
-    - {name: short,  dataset: {isl: 128, osl: 128}}
+    - {name: short, dataset: {isl: 128, osl: 128}}
     - {name: medium, dataset: {isl: 256, osl: 256}}
-    - {name: long,   dataset: {isl: 512, osl: 1024}}
-
-artifacts:
-  dir: ./artifacts/isl_osl_pairs
-  summary: [json]
+    - {name: long, dataset: {isl: 512, osl: 1024}}
 ```
 
 This produces three variations with paired (`isl`, `osl`) values. Mechanically, the scenario's singular `dataset:` deep-merges by name into the base's matching dataset entry; when the base has only one dataset the name is auto-inherited, so you can omit it. Top-level `isl:`/`osl:` on the scenario `dataset:` hoist into `prompts:` automatically.
@@ -261,9 +264,10 @@ This produces three variations with paired (`isl`, `osl`) values. Mechanically, 
 When the base declares more than one dataset, the scenario must spell out which one it is targeting via an explicit `name:`. Without it the sweep expander cannot decide where to merge and raises a `ValueError`:
 
 ```yaml
-datasets:
-  - {name: main, type: synthetic, entries: 2000}
-  - {name: eval, type: file, path: ./eval.jsonl}
+benchmark:
+  datasets:
+    - {name: main, type: synthetic, entries: 2000}
+    - {name: eval, type: file, path: ./eval.jsonl}
 
 sweep:
   type: scenarios
@@ -278,10 +282,11 @@ The shorthand `isl:`/`osl:` keys hoist into `prompts:` with `setdefault` semanti
 
 ```yaml
 # Won't work -- base already declares prompts:
-datasets:
-  - name: main
-    type: synthetic
-    prompts: {isl: 64, osl: 32}    # base prompts pre-set
+benchmark:
+  datasets:
+    - name: main
+      type: synthetic
+      prompts: {isl: 64, osl: 32}  # base prompts pre-set
 
 sweep:
   type: scenarios
@@ -380,43 +385,47 @@ total_runs = sweep_variations * num_runs
 ### Example: 3 Concurrency Levels x 3 Runs = 9 Total
 
 ```yaml
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+benchmark:
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 50}
-      osl: {type: normal, mean: 128, stddev: 25}
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 50}
+        osl: {type: normal, mean: 128, stddev: 25}
 
-phases:
-  - name: warmup
-    type: concurrency
-    exclude_from_results: true
-    requests: 100
-    concurrency: 8
+  phases:
+    - name: warmup
+      type: concurrency
+      exclude_from_results: true
+      requests: 100
+      concurrency: 8
 
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 30
-    concurrency: 16  # overridden by sweep
-    seamless: true
-    grace_period: 30
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 30
+      concurrency: 16 # overridden by sweep
+      seamless: true
+      grace_period: 30
 
+  artifacts:
+    dir: ./artifacts/concurrency_confidence
+    summary: [json]
 sweep:
   type: grid
   variables:
-    phases.profiling.concurrency: [16, 64, 128]
+    benchmark.phases.profiling.concurrency: [16, 64, 128]
 
 multi_run:
   num_runs: 3
@@ -425,10 +434,6 @@ multi_run:
   disable_warmup_after_first: true
 
 random_seed: 42
-
-artifacts:
-  dir: ./artifacts/concurrency_confidence
-  summary: [json]
 ```
 
 This produces `3 * 3 = 9` total benchmark executions. For each of the 3 concurrency levels, AIPerf runs the benchmark 3 times and computes aggregate statistics. The `disable_warmup_after_first` setting means warmup runs once per variation, not once per repetition.
@@ -460,36 +465,37 @@ artifacts/concurrency_confidence/
 YAML configs support `${VAR}` and `${VAR:default}` syntax for environment variable substitution. This is useful for CI pipelines that override sweep base values without editing the YAML file. The example below uses literal defaults so it round-trips against `AIPerfConfig`; in production, replace any of the values with `${VAR:default}` and substitute at deploy time.
 
 ```yaml
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
+benchmark:
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
 
-models:
-  - meta-llama/Llama-3.1-8B-Instruct
+  models:
+    - meta-llama/Llama-3.1-8B-Instruct
 
-datasets:
-  - name: main
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 50}
-      osl: {type: normal, mean: 128, stddev: 25}
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 50}
+        osl: {type: normal, mean: 128, stddev: 25}
 
-phases:
-  - name: profiling
-    type: poisson
-    dataset: main
-    duration: 120
-    rate: 30
-    concurrency: 32
-    grace_period: 30
+  phases:
+    - name: profiling
+      type: poisson
+      dataset: main
+      duration: 120
+      rate: 30
+      concurrency: 32
+      grace_period: 30
 
 sweep:
   type: grid
   variables:
-    phases.profiling.concurrency: [16, 32, 64, 128]
+    benchmark.phases.profiling.concurrency: [16, 32, 64, 128]
 
 multi_run:
   num_runs: 3

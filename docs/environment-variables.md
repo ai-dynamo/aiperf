@@ -55,6 +55,7 @@ Root operator environment configuration. Loads from environment variables. Neste
 | `AIPERF_DEFAULT_IMAGE` | `'nvcr.io/nvidia/aiperf:latest'` | — | Default container image for benchmark jobs |
 | `AIPERF_JOB_TIMEOUT_SECONDS` | `0` | ≥ 0 | Job timeout in seconds (0 = no timeout) |
 | `AIPERF_POD_RESTART_THRESHOLD` | `3` | ≥ 0, ≤ 100 | Pod restart count before emitting a warning event |
+| `AIPERF_METRICS_PORT` | `9090` | ≥ 0, ≤ 65535 | Port for the Prometheus /metrics endpoint exposed by the kopf operator process. Set to 0 to disable. Scraped by ServiceMonitor. |
 | `AIPERF_ENDPOINT_CHECK_TIMEOUT` | `10.0` | > 0, ≤ 300 | Seconds to wait for endpoint health check |
 | `AIPERF_PREFLIGHT_TIMEOUT` | `30.0` | > 0, ≤ 120 | Seconds to wait for all pre-flight checks to complete |
 | `AIPERF_CONFIGMAP_PROPAGATION_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 60 | Seconds to wait after creating the benchmark ConfigMap before creating the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before pods start mounting it, preventing FailedMount races on first deployment with a freshly pulled image. |

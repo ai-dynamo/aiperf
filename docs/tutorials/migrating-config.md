@@ -12,18 +12,19 @@ AIPerf YAML configs use an envelope shape that separates sweep machinery from th
 **Before (flat):**
 
 ```yaml
-models: [llama]
-endpoint:
-  urls: ["http://localhost:8000/v1/chat/completions"]
-datasets:
-  - {name: main, type: synthetic, entries: 200}
-phases:
-  - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+benchmark:
+  models: [llama]
+  endpoint:
+    urls: ["http://localhost:8000/v1/chat/completions"]
+  datasets:
+    - {name: main, type: synthetic, entries: 200}
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
 random_seed: 42
 sweep:
   type: grid
   variables:
-    "phases.profiling.concurrency": [1, 2, 4]
+    benchmark.phases.profiling.concurrency: [1, 2, 4]
 ```
 
 **After (envelope):**

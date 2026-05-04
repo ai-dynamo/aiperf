@@ -218,15 +218,16 @@ prompts:
 Short prompts with low variance. Most user queries are brief questions, with a small fraction of longer follow-ups.
 
 ```yaml
-datasets:
-  - name: chatbot
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {type: normal, mean: 64, stddev: 15}
-      osl: {type: normal, mean: 128, stddev: 30}
-    turns: {type: normal, mean: 2, stddev: 1}
-    turn_delay: {type: exponential, mean: 3000}  # 3s avg think time
+benchmark:
+  datasets:
+    - name: chatbot
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {type: normal, mean: 64, stddev: 15}
+        osl: {type: normal, mean: 128, stddev: 30}
+      turns: {type: normal, mean: 2, stddev: 1}
+      turn_delay: {type: exponential, mean: 3000} # 3s avg think time
 ```
 
 ### RAG Pipeline
@@ -234,13 +235,14 @@ datasets:
 Medium ISL with high variance from variable-length retrieved context. LogNormal models the skew from context injection: most retrievals add moderate context, but some include many long passages.
 
 ```yaml
-datasets:
-  - name: rag
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {type: lognormal, mean: 1024, sigma: 0.6}
-      osl: {type: normal, mean: 256, stddev: 50}
+benchmark:
+  datasets:
+    - name: rag
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: lognormal, mean: 1024, sigma: 0.6}
+        osl: {type: normal, mean: 256, stddev: 50}
 ```
 
 ### Summarization Service
@@ -248,13 +250,14 @@ datasets:
 Long input documents, short output summaries. Clamped to stay within the model's context window and guarantee a minimum output length.
 
 ```yaml
-datasets:
-  - name: summarization
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {type: lognormal, mean: 4096, sigma: 0.5, min: 1024, max: 16384}
-      osl: {type: normal, mean: 256, stddev: 80, min: 64, max: 512}
+benchmark:
+  datasets:
+    - name: summarization
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: lognormal, mean: 4096, sigma: 0.5, min: 1024, max: 16384}
+        osl: {type: normal, mean: 256, stddev: 80, min: 64, max: 512}
 ```
 
 ### Production Traffic Replay (Bimodal)
@@ -262,25 +265,26 @@ datasets:
 Two distinct user populations hit the same endpoint: interactive chat (high volume, short) and batch analysis (lower volume, long). The mixture captures both modes.
 
 ```yaml
-datasets:
-  - name: production_bimodal
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl:
-        type: mixture
-        components:
-          - distribution: {type: normal, mean: 128, stddev: 30}
-            weight: 65
-          - distribution: {type: lognormal, mean: 2048, sigma: 0.4}
-            weight: 35
-      osl:
-        type: mixture
-        components:
-          - distribution: {type: normal, mean: 96, stddev: 20}
-            weight: 65
-          - distribution: {type: normal, mean: 512, stddev: 100}
-            weight: 35
+benchmark:
+  datasets:
+    - name: production_bimodal
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl:
+          type: mixture
+          components:
+            - distribution: {type: normal, mean: 128, stddev: 30}
+              weight: 65
+            - distribution: {type: lognormal, mean: 2048, sigma: 0.4}
+              weight: 35
+        osl:
+          type: mixture
+          components:
+            - distribution: {type: normal, mean: 96, stddev: 20}
+              weight: 65
+            - distribution: {type: normal, mean: 512, stddev: 100}
+              weight: 35
 ```
 
 ### Multi-Tier Service (Empirical from Production Data)
@@ -288,28 +292,29 @@ datasets:
 When you have histogram data from production logs, use empirical distributions to replay the exact observed distribution. This example models a service where token lengths cluster at specific tiers corresponding to different API consumers.
 
 ```yaml
-datasets:
-  - name: production_replay
-    type: synthetic
-    entries: 2000
-    prompts:
-      isl:
-        type: empirical
-        points:
-          - {value: 64, weight: 15}    # health checks and pings
-          - {value: 256, weight: 30}    # mobile app short queries
-          - {value: 512, weight: 25}    # web app standard queries
-          - {value: 1024, weight: 15}   # web app with context
-          - {value: 2048, weight: 10}   # internal batch jobs
-          - {value: 8192, weight: 5}    # document processing
-      osl:
-        type: empirical
-        points:
-          - {value: 32, weight: 15}
-          - {value: 128, weight: 35}
-          - {value: 256, weight: 30}
-          - {value: 512, weight: 15}
-          - {value: 1024, weight: 5}
+benchmark:
+  datasets:
+    - name: production_replay
+      type: synthetic
+      entries: 2000
+      prompts:
+        isl:
+          type: empirical
+          points:
+            - {value: 64, weight: 15}  # health checks and pings
+            - {value: 256, weight: 30}  # mobile app short queries
+            - {value: 512, weight: 25}  # web app standard queries
+            - {value: 1024, weight: 15} # web app with context
+            - {value: 2048, weight: 10} # internal batch jobs
+            - {value: 8192, weight: 5}  # document processing
+        osl:
+          type: empirical
+          points:
+            - {value: 32, weight: 15}
+            - {value: 128, weight: 35}
+            - {value: 256, weight: 30}
+            - {value: 512, weight: 15}
+            - {value: 1024, weight: 5}
 ```
 
 ## Where Distributions Are Used
@@ -368,25 +373,26 @@ Sweep variables use dot-notation paths to override any config field, including d
 Sweep the mean of a lognormal ISL distribution while holding all other parameters constant:
 
 ```yaml
-datasets:
-  - name: profiling
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {type: lognormal, mean: 512, sigma: 0.5}
-      osl: {type: normal, mean: 256, stddev: 50}
+benchmark:
+  datasets:
+    - name: profiling
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: lognormal, mean: 512, sigma: 0.5}
+        osl: {type: normal, mean: 256, stddev: 50}
 
-phases:
-  - name: profiling
-    type: poisson
-    rate: 20.0
-    duration: 120
-    concurrency: 64
+  phases:
+    - name: profiling
+      type: poisson
+      rate: 20.0
+      duration: 120
+      concurrency: 64
 
 sweep:
   type: grid
   variables:
-    datasets.profiling.prompts.isl.mean: [128, 512, 2048, 8192]
+    benchmark.datasets.profiling.prompts.isl.mean: [128, 512, 2048, 8192]
 ```
 
 This produces 4 benchmark runs, each with a different ISL mean. The lognormal shape (`sigma: 0.5`) is preserved across all runs.
@@ -396,53 +402,58 @@ This produces 4 benchmark runs, each with a different ISL mean. The lognormal sh
 Compare how the server handles different workload shapes at the same average ISL:
 
 ```yaml
-datasets:
-  - name: profiling
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: 512
-      osl: 128
+benchmark:
+  datasets:
+    - name: profiling
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: 512
+        osl: 128
 
-phases:
-  - name: profiling
-    type: poisson
-    rate: 20.0
-    duration: 120
-    concurrency: 64
+  phases:
+    - name: profiling
+      type: poisson
+      rate: 20.0
+      duration: 120
+      concurrency: 64
 
 sweep:
   type: scenarios
   runs:
     - name: fixed_baseline
-      datasets:
-        - name: profiling
-          prompts:
-            isl: 512
+      benchmark:
+        datasets:
+          - name: profiling
+            prompts:
+              isl: 512
 
     - name: normal_moderate
-      datasets:
-        - name: profiling
-          prompts:
-            isl: {type: normal, mean: 512, stddev: 100}
+      benchmark:
+        datasets:
+          - name: profiling
+            prompts:
+              isl: {type: normal, mean: 512, stddev: 100}
 
     - name: lognormal_skewed
-      datasets:
-        - name: profiling
-          prompts:
-            isl: {type: lognormal, mean: 512, sigma: 0.8}
+      benchmark:
+        datasets:
+          - name: profiling
+            prompts:
+              isl: {type: lognormal, mean: 512, sigma: 0.8}
 
     - name: bimodal_production
-      datasets:
-        - name: profiling
-          prompts:
-            isl:
-              type: mixture
-              components:
-                - distribution: {type: normal, mean: 128, stddev: 30}
-                  weight: 70
-                - distribution: {type: normal, mean: 2048, stddev: 200}
-                  weight: 30
+      benchmark:
+        datasets:
+          - name: profiling
+            prompts:
+              isl:
+                type: mixture
+                components:
+                  - distribution: {type: normal, mean: 128, stddev: 30}
+                    weight: 70
+                  - distribution: {type: normal, mean: 2048, stddev: 200}
+                    weight: 30
 ```
 
 All four scenarios target similar average ISL, but the variance and shape differ. Comparing results reveals how your server handles workload variance.
@@ -456,13 +467,14 @@ When `random_seed` is set at the top level, AIPerf initializes its random number
 ```yaml
 random_seed: 42
 
-datasets:
-  - name: profiling
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {type: lognormal, mean: 512, sigma: 0.5}
-      osl: {type: normal, mean: 256, stddev: 50}
+benchmark:
+  datasets:
+    - name: profiling
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {type: lognormal, mean: 512, sigma: 0.5}
+        osl: {type: normal, mean: 256, stddev: 50}
 ```
 
 Running this config twice produces the same set of 500 (ISL, OSL) pairs both times, assuming no other configuration changes.
@@ -474,22 +486,23 @@ Individual datasets can override the global seed. This is useful when you want o
 ```yaml
 random_seed: 42
 
-datasets:
-  - name: stable_baseline
-    type: synthetic
-    entries: 500
-    random_seed: 100  # Always the same
-    prompts:
-      isl: {type: normal, mean: 512, stddev: 100}
-      osl: 128
+benchmark:
+  datasets:
+    - name: stable_baseline
+      type: synthetic
+      entries: 500
+      random_seed: 100 # Always the same
+      prompts:
+        isl: {type: normal, mean: 512, stddev: 100}
+        osl: 128
 
-  - name: variable_workload
-    type: synthetic
-    entries: 500
+    - name: variable_workload
+      type: synthetic
+      entries: 500
     # Uses global seed (42) -- same across runs with same config
-    prompts:
-      isl: {type: lognormal, mean: 1024, sigma: 0.6}
-      osl: {type: normal, mean: 256, stddev: 50}
+      prompts:
+        isl: {type: lognormal, mean: 1024, sigma: 0.6}
+        osl: {type: normal, mean: 256, stddev: 50}
 ```
 
 ### Deterministic Benchmarks
@@ -499,13 +512,14 @@ For reproducible A/B testing (comparing two server configurations, two model ver
 ```yaml
 random_seed: 42
 
-datasets:
-  - name: profiling
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {type: lognormal, mean: 512, sigma: 0.5}
-      osl: {type: normal, mean: 256, stddev: 50}
+benchmark:
+  datasets:
+    - name: profiling
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {type: lognormal, mean: 512, sigma: 0.5}
+        osl: {type: normal, mean: 256, stddev: 50}
 
 multi_run:
   num_runs: 5
