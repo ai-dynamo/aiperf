@@ -160,7 +160,7 @@ class TestEndpointConfig:
             model="gpt-4",
             api_type="openai",
         )
-        assert config.benchmark.model == "gpt-4"
+        assert config.model == "gpt-4"
         assert config.api_type == "openai"
 
     def test_default_api_type(self) -> None:

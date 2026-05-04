@@ -18,34 +18,35 @@ variables:
   isl: 1024
   osl: 512
 
-artifacts:
-  user_files:
-    - path: input_config.json
-      format: json                 # optional; inferred from content type
-      content:
-        isl: "{{ isl }}"
-        osl: "{{ osl }}"
-        endpoint: "{{ endpoint_url }}"
-        model: "{{ model }}"
+benchmark:
+  artifacts:
+    user_files:
+      - path: input_config.json
+        format: json                 # optional; inferred from content type
+        content:
+          isl: "{{ isl }}"
+          osl: "{{ osl }}"
+          endpoint: "{{ endpoint_url }}"
+          model: "{{ model }}"
 
-    - path: meta/notes.md          # subdirectories allowed
-      content: |
-        Run {{ job_name }} started at {{ epoch }}.
-        Targeting {{ model }} @ {{ endpoint_url }}.
+      - path: meta/notes.md          # subdirectories allowed
+        content: |
+          Run {{ job_name }} started at {{ epoch }}.
+          Targeting {{ model }} @ {{ endpoint_url }}.
 
-models:
-  - my-org/my-model
-endpoint:
-  type: chat
-  urls: ["http://my-frontend:8000"]
-datasets:
-  - name: main
-    type: synthetic
-phases:
-  - name: profiling
-    type: concurrency
-    concurrency: 10
-    requests: 100
+  models:
+    - my-org/my-model
+  endpoint:
+    type: chat
+    urls: ["http://my-frontend:8000"]
+  datasets:
+    - name: main
+      type: synthetic
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 10
+      requests: 100
 ```
 
 Result in the run directory:

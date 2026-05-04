@@ -19,9 +19,9 @@ aiperf --config benchmark.yaml
 A minimal config needs four sections: a model name, an endpoint URL, a dataset, and at least one phase.
 
 ```yaml
-model: meta-llama/Llama-3.1-8B-Instruct
-
 benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
   endpoint:
     url: http://localhost:8000
 
@@ -29,12 +29,13 @@ benchmark:
     type: concurrency
     concurrency: 8
     requests: 100
-dataset:
-  type: synthetic
-  entries: 100
-  prompts:
-    isl: 512
-    osl: 128
+
+  dataset:
+    type: synthetic
+    entries: 100
+    prompts:
+      isl: 512
+      osl: 128
 ```
 
 Shorthand forms (`model` instead of `models`, `url` instead of `urls`, inline `phases` without a name) are normalized automatically. The rest of this guide uses the explicit forms.

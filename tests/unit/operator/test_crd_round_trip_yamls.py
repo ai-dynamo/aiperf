@@ -163,7 +163,21 @@ _PARAMS = [pytest.param(yaml_id, config, id=yaml_id) for (yaml_id, config) in _C
 
 @pytest.mark.parametrize("yaml_id, config", _PARAMS)
 def test_documented_yaml_validates_through_aiperf_config(yaml_id: str, config: dict):
-    AIPerfConfig.model_validate(config)
+    # `.spec.benchmark` and `.spec.template.spec.benchmark` extracts are body
+    # shape (BenchmarkConfig); wrap them under {"benchmark": ...} envelope
+    # before validating. Standalone CLI-style YAMLs are envelope-shaped if
+    # they contain any envelope-only key (benchmark / sweep / multi_run /
+    # variables / random_seed).
+    envelope_keys = {"benchmark", "sweep", "multi_run", "variables", "random_seed"}
+    if yaml_id.endswith(".spec.benchmark") or yaml_id.endswith(
+        ".spec.template.spec.benchmark"
+    ):
+        AIPerfConfig.model_validate({"benchmark": config})
+    elif envelope_keys & set(config.keys()):
+        AIPerfConfig.model_validate(config)
+    else:
+        # Body-only shape (CLI YAMLs that pre-date the envelope split).
+        AIPerfConfig.model_validate({"benchmark": config})
 
 
 def test_round_trip_test_actually_found_yamls():

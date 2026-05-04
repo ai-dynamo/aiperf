@@ -142,7 +142,7 @@ async def test_handle_computes_max_total_runs_grid_x_trials(monkeypatch):
     body = _valid_body()
     body["spec"]["sweep"] = {
         "type": "grid",
-        "variables": {"random_seed": [1, 2, 3, 4]},
+        "variables": {"benchmark.phases.default.concurrency": [1, 2, 3, 4]},
     }
     body["spec"]["multiRun"]["trials"] = 5
     patch = kopf.Patch()

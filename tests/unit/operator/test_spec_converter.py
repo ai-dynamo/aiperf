@@ -77,7 +77,7 @@ class TestToAIPerfConfig:
             minimal_aiperfjob_spec, "test-job", "default"
         )
         config = converter.to_aiperf_config()
-        assert config.get_model_names() == ["test-model"]
+        assert config.benchmark.get_model_names() == ["test-model"]
 
     def test_sets_artifact_directory(
         self, minimal_aiperfjob_spec: dict[str, Any]
@@ -92,7 +92,7 @@ class TestToAIPerfConfig:
         converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
         config = converter.to_aiperf_config()
 
-        assert config.get_model_names() == ["gpt-4"]
+        assert config.benchmark.get_model_names() == ["gpt-4"]
         assert (
             "http://api.example.com/v1/chat/completions"
             in config.benchmark.endpoint.urls

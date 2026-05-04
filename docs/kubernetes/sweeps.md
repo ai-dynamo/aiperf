@@ -15,24 +15,25 @@ design rationale.
 `sweep.yaml`:
 
 ```yaml
-models: [Qwen/Qwen3-0.6B]
-endpoint:
-  urls: [http://server:8000/v1/chat/completions]
-  type: chat
-  streaming: true
-datasets:
-  - name: main
-    type: synthetic
-phases:
-  - name: profiling
-    type: poisson
-    duration: 120
-    concurrency: 8
-    rate: 10
+benchmark:
+  models: [Qwen/Qwen3-0.6B]
+  endpoint:
+    urls: [http://server:8000/v1/chat/completions]
+    type: chat
+    streaming: true
+  datasets:
+    - name: main
+      type: synthetic
+  phases:
+    - name: profiling
+      type: poisson
+      duration: 120
+      concurrency: 8
+      rate: 10
 sweep:
   type: grid
   variables:
-    random_seed: [1, 2, 3, 4]
+    benchmark.phases.profiling.concurrency: [4, 8, 16, 32]
 ```
 
 Submit:

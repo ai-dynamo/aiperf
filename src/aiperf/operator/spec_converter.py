@@ -208,7 +208,7 @@ def build_benchmark_run(
     """Build a BenchmarkRun from a config dict for a single K8s run.
 
     Args:
-        run_config: AIPerfConfig dict (already has k8s runtime config applied).
+        run_config: AIPerfConfig envelope dict (already has k8s runtime config applied).
         run_id: DNS-safe run identifier (used as benchmark_id and for DNS).
         namespace: Kubernetes namespace (for DNS name generation).
 
@@ -229,14 +229,19 @@ def build_benchmark_run(
                 unsupported_key,
             )
             run_config.pop(unsupported_key, None)
-    apply_k8s_runtime_config(run_config, run_id, namespace)
-    cfg = BenchmarkConfig.model_validate(run_config)
+
+    # Envelope shape: body lives under run_config["benchmark"]; envelope-only
+    # keys (sweep/multi_run/variables/random_seed) and `benchmark` itself are
+    # not valid BenchmarkConfig inputs.
+    body_dict = run_config.get("benchmark", run_config)
+    apply_k8s_runtime_config(body_dict, run_id, namespace)
+    cfg = BenchmarkConfig.model_validate(body_dict)
 
     return BenchmarkRun(
         benchmark_id=run_id,
         cfg=cfg,
         trial=0,
-        artifact_dir=Path(run_config.get("artifacts", {}).get("dir", "/results")),
+        artifact_dir=Path(body_dict.get("artifacts", {}).get("dir", "/results")),
         label="",
         variation=None,
         random_seed=run_config.get("random_seed"),
