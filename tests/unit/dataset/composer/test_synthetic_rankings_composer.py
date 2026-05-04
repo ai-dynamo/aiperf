@@ -49,7 +49,7 @@ def test_create_dataset_structure(mock_tokenizer):
     composer = SyntheticRankingsDatasetComposer(run, mock_tokenizer)
 
     dataset = composer.create_dataset()
-    assert len(dataset) == config.get_default_dataset().entries
+    assert len(dataset) == config.benchmark.get_default_dataset().entries
 
     for conv in dataset:
         assert isinstance(conv, Conversation)

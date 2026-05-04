@@ -100,10 +100,10 @@ class TestEndpointConfigApiKeyAccessible:
     construct headers can read it directly."""
 
     def test_api_key_attribute_returns_real_value(self, run):
-        assert run.cfg.benchmark.endpoint.api_key == API_KEY
+        assert run.cfg.endpoint.api_key == API_KEY
 
     def test_api_key_survives_model_copy(self, run):
-        copy = run.cfg.benchmark.endpoint.model_copy(deep=True)
+        copy = run.cfg.endpoint.model_copy(deep=True)
         assert copy.api_key == API_KEY
 
 

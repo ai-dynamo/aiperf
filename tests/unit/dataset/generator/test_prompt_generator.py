@@ -91,7 +91,7 @@ class TestPromptGeneratorComprehensive:
         tokenizer, config = basic_config
         generator = PromptGenerator(_make_run(config), tokenizer)
 
-        assert generator.run.cfg == config
+        assert generator.run.cfg == config.benchmark
         assert generator.tokenizer == tokenizer
         assert generator._tokenized_corpus is not None
         assert generator._corpus_size > 0

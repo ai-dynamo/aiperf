@@ -14,24 +14,26 @@ from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 def _make_config_with_bo() -> AIPerfConfig:
     return AIPerfConfig.model_validate(
         {
-            "models": ["m"],
-            "endpoint": {"urls": ["http://x"], "type": "chat"},
-            "datasets": [{"name": "default", "type": "synthetic"}],
-            "phases": [
-                {
-                    "name": "profiling",
-                    "type": "concurrency",
-                    "concurrency": 1,
-                    "requests": 1,
-                }
-            ],
+            "benchmark": {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "default", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+            },
             "multi_run": {
                 "num_runs": 2,
                 "adaptive_search": {
                     "algorithm": "bayes",
                     "search_space": [
                         {
-                            "path": "phases.profiling.concurrency",
+                            "path": "benchmark.phases.profiling.concurrency",
                             "lo": 1,
                             "hi": 1000,
                             "kind": "int",
@@ -61,27 +63,29 @@ def test_build_plan_with_bo_skips_grid_expansion():
 def test_build_plan_rejects_bo_with_sweep_block():
     cfg = AIPerfConfig.model_validate(
         {
-            "models": ["m"],
-            "endpoint": {"urls": ["http://x"], "type": "chat"},
-            "datasets": [{"name": "default", "type": "synthetic"}],
-            "phases": [
-                {
-                    "name": "profiling",
-                    "type": "concurrency",
-                    "concurrency": 1,
-                    "requests": 1,
-                }
-            ],
+            "benchmark": {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "default", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+            },
             "sweep": {
                 "type": "grid",
-                "variables": {"phases.profiling.concurrency": [1, 2]},
+                "variables": {"benchmark.phases.profiling.concurrency": [1, 2]},
             },
             "multi_run": {
                 "adaptive_search": {
                     "algorithm": "bayes",
                     "search_space": [
                         {
-                            "path": "phases.profiling.concurrency",
+                            "path": "benchmark.phases.profiling.concurrency",
                             "lo": 1,
                             "hi": 1000,
                             "kind": "int",

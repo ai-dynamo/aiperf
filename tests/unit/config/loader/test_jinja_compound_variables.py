@@ -158,19 +158,26 @@ def test_resolved_variables_visible_in_run_time_user_files_context() -> None:
             "deployment_gpu_count": 4,
             "total_concurrency": "{{ concurrency_per_gpu * deployment_gpu_count }}",
         },
-        "models": ["test/model"],
-        "endpoint": {"type": "chat", "urls": ["http://localhost:8000"]},
-        "datasets": [
-            {
-                "name": "default",
-                "type": "synthetic",
-                "entries": 100,
-                "prompts": {"isl": 128, "osl": 64},
-            }
-        ],
-        "phases": [
-            {"name": "default", "type": "concurrency", "requests": 10, "concurrency": 1}
-        ],
+        "benchmark": {
+            "models": ["test/model"],
+            "endpoint": {"type": "chat", "urls": ["http://localhost:8000"]},
+            "datasets": [
+                {
+                    "name": "default",
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            ],
+            "phases": [
+                {
+                    "name": "default",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        },
     }
     expanded = expand_config_dict(raw, substitute_env=False)
     config = AIPerfConfig.model_validate(expanded)

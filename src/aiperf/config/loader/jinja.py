@@ -20,8 +20,13 @@ SKIP_TEMPLATE_FIELDS = {"template", "body", "payload_template"}
 # Dotted-path prefixes whose entire subtree is skipped during load-time rendering.
 # Matched against ``current_path`` with a trailing ``.`` so siblings (e.g. ``artifacts.user``)
 # do not match. Used for content rendered at run-time with run-time-only context
-# (epoch, job_name, artifact_dir, ...), e.g. ``artifacts.user_files``.
-SKIP_TEMPLATE_PATH_PREFIXES = ("artifacts.user_files",)
+# (epoch, job_name, artifact_dir, ...), e.g. ``artifacts.user_files``. Both the
+# flat path and the envelope-nested path are listed since this module runs on
+# either input shape (CLI envelope dict, k8s spec.benchmark dict).
+SKIP_TEMPLATE_PATH_PREFIXES = (
+    "artifacts.user_files",
+    "benchmark.artifacts.user_files",
+)
 
 # Strict undefined surfaces typo'd / missing variables as ConfigurationError at load time
 # rather than silently rendering empty strings that downstream parsers must catch.

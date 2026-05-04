@@ -117,8 +117,10 @@ class TestOverrides:
         init_config(template="minimal", output=output_file)
 
         parsed = _parse(output_file.read_text())
-        # Template's default value — no override applied.
-        assert parsed["model"] == "meta-llama/Llama-3.1-8B-Instruct"
+        # Template's default value — no override applied (body fields nest
+        # under `benchmark:` in the envelope shape).
+        body = parsed.get("benchmark", parsed)
+        assert body["model"] == "meta-llama/Llama-3.1-8B-Instruct"
 
 
 class TestOverwritePrompt:

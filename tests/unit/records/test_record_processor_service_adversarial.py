@@ -853,8 +853,8 @@ class TestRecordProcessorInit:
         uses_worker_group_manager: bool = False,
     ) -> MagicMock:
         run = MagicMock()
-        run.cfg.benchmark.runtime.service_run_type = service_run_type
-        run.cfg.benchmark.runtime.uses_worker_group_manager = uses_worker_group_manager
+        run.cfg.runtime.service_run_type = service_run_type
+        run.cfg.runtime.uses_worker_group_manager = uses_worker_group_manager
         return run
 
     @staticmethod

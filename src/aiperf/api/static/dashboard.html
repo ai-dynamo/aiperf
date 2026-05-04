@@ -690,14 +690,15 @@ SPDX-License-Identifier: Apache-2.0
         };
 
         const renderConfig = cfg => {
-            // Schema matches BenchmarkConfig (src/aiperf/config/config.py): top-level
-            // is { models, endpoint, datasets, phases, ... } — no `loadgen`/`input`.
-            const ep = cfg.endpoint || {};
-            const phases = cfg.phases || [];
+            // Schema matches AIPerfConfig envelope: body fields nest under `benchmark`
+            // (BenchmarkConfig) — { benchmark: { models, endpoint, datasets, phases, ... } }
+            const body = cfg.benchmark || cfg;
+            const ep = body.endpoint || {};
+            const phases = cfg.benchmark.phases || [];
             const items = [];
             const add = (label, value) => items.push({ label, value: String(value) });
 
-            const modelNames = (cfg.models?.items || []).map(m => m?.name).filter(Boolean);
+            const modelNames = (cfg.benchmark.models?.items || []).map(m => m?.name).filter(Boolean);
             if (modelNames.length) add('Model', modelNames.join(', '));
             if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
             if (ep.urls?.length) add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);

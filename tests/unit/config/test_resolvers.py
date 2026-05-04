@@ -201,8 +201,8 @@ class TestArtifactDirResolver:
         # Probe run: target dir gets created, but user_files MUST NOT exist.
         probe_dir = tmp_path / "probe"
         probe_cfg = load_config_from_string(yaml_str)
-        probe_cfg.artifacts.dir = probe_dir
-        probe_run = _make_run(probe_cfg, artifact_dir=probe_dir)
+        probe_cfg.benchmark.artifacts.dir = probe_dir
+        probe_run = _make_run(probe_cfg.benchmark, artifact_dir=probe_dir)
         ArtifactDirResolver().resolve(probe_run, for_probe=True)
         assert probe_dir.is_dir()
         assert not (probe_dir / "input_config.json").exists()
@@ -210,8 +210,8 @@ class TestArtifactDirResolver:
         # Real per-variation run (default for_probe=False) DOES materialize.
         real_dir = tmp_path / "real"
         real_cfg = load_config_from_string(yaml_str)
-        real_cfg.artifacts.dir = real_dir
-        real_run = _make_run(real_cfg, artifact_dir=real_dir)
+        real_cfg.benchmark.artifacts.dir = real_dir
+        real_run = _make_run(real_cfg.benchmark, artifact_dir=real_dir)
         ArtifactDirResolver().resolve(real_run)
         assert (real_dir / "input_config.json").exists()
 

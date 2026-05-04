@@ -101,23 +101,24 @@ def _real_config(variables=None, model="m", url="http://x"):
     from aiperf.config.loader import load_config_from_string
 
     base = f"""
-models:
-  - {model}
-endpoint:
-  type: chat
-  urls: ["{url}"]
-datasets:
-  - name: default
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 128
-      osl: 64
-phases:
-  - name: default
-    type: concurrency
-    requests: 10
-    concurrency: 1
+benchmark:
+  models:
+    - {model}
+  endpoint:
+    type: chat
+    urls: ["{url}"]
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: default
+      type: concurrency
+      requests: 10
+      concurrency: 1
 """
     if variables:
         vars_yaml = "variables:\n" + "".join(

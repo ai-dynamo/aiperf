@@ -101,8 +101,11 @@ def wrap_as_aiperf_job(
     """Wrap an AIPerf benchmark config body in an AIPerfJob CR.
 
     Args:
-        benchmark_body: YAML content of an AIPerf benchmark config (top-level
-            keys like ``model``, ``endpoint``, ``dataset``, ``phases``).
+        benchmark_body: YAML content of an AIPerf benchmark config. May be
+            either an envelope (with ``benchmark:`` at the top level and the
+            body fields nested below) or the raw body fields directly. The
+            envelope case is auto-unwrapped before wrapping under
+            ``spec.benchmark`` so the result is always one level deep.
             SPDX headers should already be stripped by the caller; this
             function additionally strips yaml-language-server and
             ``# @template`` metadata blocks.
@@ -115,7 +118,35 @@ def wrap_as_aiperf_job(
         scheduling commented blocks appended.
     """
     cleaned = _strip_leading_meta_headers(benchmark_body).rstrip("\n")
+    cleaned = _unwrap_benchmark_envelope(cleaned)
     indented = textwrap.indent(cleaned, "    ")
     return (
         _HEADER.format(filename=filename, job_name=job_name) + indented + "\n" + _FOOTER
     )
+
+
+def _unwrap_benchmark_envelope(body: str) -> str:
+    """If the YAML body has a top-level ``benchmark:`` key, return the body
+    fields nested below it (de-indented).
+
+    The wrap function unconditionally indents under ``spec.benchmark``, so an
+    envelope-shaped template (``benchmark:\\n  models: ...``) would otherwise
+    produce ``spec.benchmark.benchmark.models``. Envelope-only top-level keys
+    (``sweep``, ``multi_run``, ``variables``, ``random_seed``) are dropped on
+    unwrap — the AIPerfJob CR places ``variables`` etc. inside
+    ``spec.benchmark`` (per ``extract_benchmark_config``'s lift), but starter
+    templates rarely declare them. A future iteration can preserve them by
+    re-injecting them into the body.
+    """
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(body)
+    except _yaml.YAMLError:
+        return body
+    if not isinstance(parsed, dict) or "benchmark" not in parsed:
+        return body
+    body_only = parsed["benchmark"]
+    if not isinstance(body_only, dict):
+        return body
+    return _yaml.safe_dump(body_only, sort_keys=False, default_flow_style=False)

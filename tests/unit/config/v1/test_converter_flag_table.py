@@ -516,7 +516,7 @@ def test_isl_min_max_drive_prefill_recipe_grid() -> None:
         }
     )
     out = build_v1_overrides(user)
-    isl_values = out["sweep"]["variables"]["datasets.main.prompts.isl"]
+    isl_values = out["sweep"]["variables"]["benchmark.datasets.main.prompts.isl"]
     assert min(isl_values) == 256
     assert max(isl_values) == 1024
 

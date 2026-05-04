@@ -26,7 +26,7 @@ class TestBaseMetricsProcessor:
     def test_initialization(self, mock_user_config: AIPerfConfig) -> None:
         """Test processor initialization stores user config."""
         processor = BaseMetricsProcessor(_make_run(mock_user_config))
-        assert processor.run.cfg == mock_user_config
+        assert processor.run.cfg == mock_user_config.benchmark
 
     @pytest.mark.parametrize(
         "endpoint_type,streaming,expected_supported_flags",

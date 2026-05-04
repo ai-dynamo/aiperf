@@ -148,9 +148,12 @@ def build_user_file_context(
     """Build the jinja2 context dict for user_files rendering.
 
     Args:
-        config: Resolved BenchmarkConfig. The production callsite passes
-            ``BenchmarkRun.cfg`` which is a ``BenchmarkConfig`` directly
-            (no ``.benchmark`` wrapper).
+        config: Resolved BenchmarkConfig OR AIPerfConfig envelope. Both shapes
+            are accepted because callers are mixed: ``resolvers.py`` passes a
+            ``BenchmarkRun.cfg`` (BenchmarkConfig), while CLI-side test paths
+            pass an AIPerfConfig envelope. ``variables`` is envelope-only;
+            when a BenchmarkConfig is supplied it falls back to an empty
+            dict.
         run_meta: Identity for the run (epoch, job_name, namespace).
         run_dir: Absolute path to the run directory on local disk.
 
@@ -161,11 +164,12 @@ def build_user_file_context(
     Side effects:
         Logs WARNING for each shadowed user variable.
     """
-    user_vars = dict(config.variables or {})
+    body = config.benchmark if hasattr(config, "benchmark") else config
+    user_vars = dict(getattr(config, "variables", None) or {})
     # BenchmarkConfig.models is a ModelsAdvanced, not a list — go through the
     # canonical helper which flattens .items[*].name into a list[str].
-    models = config.get_model_names()
-    endpoint_urls = config.endpoint.urls or []
+    models = body.get_model_names()
+    endpoint_urls = body.endpoint.urls or []
     injected = {
         "epoch": run_meta.epoch,
         "job_name": run_meta.job_name,

@@ -32,7 +32,7 @@ def test_build_plan_grid_sweep():
         {
             "sweep": {
                 "type": "grid",
-                "variables": {"random_seed": [8, 32]},
+                "variables": {"benchmark.phases.profiling.concurrency": [8, 32]},
             },
             "multiRun": {"trials": 2},
             "template": {"spec": {"benchmark": _benchmark()}},
@@ -42,8 +42,12 @@ def test_build_plan_grid_sweep():
     assert len(plan.configs) == 2
     assert len(plan.variations) == 2
     assert plan.trials == 2
-    assert plan.variations[0].values == {"random_seed": 8}
-    assert plan.variations[1].values == {"random_seed": 32}
+    assert plan.variations[0].values == {
+        "benchmark.phases.profiling.concurrency": 8
+    }
+    assert plan.variations[1].values == {
+        "benchmark.phases.profiling.concurrency": 32
+    }
 
 
 def test_build_plan_no_sweep_just_multirun():
