@@ -18,7 +18,8 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.display_units import to_display_unit
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
+from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -84,13 +85,20 @@ class MetricResultsProcessor(BaseMetricsProcessor):
                 metric_type = self._tags_to_types[tag]
                 if metric_type == MetricType.RECORD:
                     if tag not in results_dict:
-                        results_dict[tag] = MetricArray()
+                        # The metric class shape doesn't change mid-run, so the
+                        # storage type can be picked at first-touch. List values
+                        # go to the bounded t-digest aggregator (today only
+                        # inter_chunk_latency would otherwise blow past pod RAM
+                        # at ramp scale); scalar values stay in MetricArray.
+                        results_dict[tag] = (
+                            TDigestListMetricAggregator()
+                            if isinstance(value, list)
+                            else MetricArray()
+                        )
                     if isinstance(value, list):
-                        # NOTE: Right now we only support list-based metrics by extending the array.
-                        #       In the future, we possibly could support having nested arrays.
-                        results_dict[tag].extend(value)  # type: ignore
+                        results_dict[tag].extend(value)
                     else:
-                        results_dict[tag].append(value)  # type: ignore
+                        results_dict[tag].append(value)
 
                 elif metric_type == MetricType.AGGREGATE:
                     metric: BaseAggregateMetric = instances_map[tag]  # type: ignore
@@ -192,7 +200,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         metric_class = self._instances_map[tag]
 
-        if isinstance(values, MetricArray):
+        if isinstance(values, MetricAggregator):
             return values.to_result(tag, metric_class.header, str(metric_class.unit))
 
         if isinstance(values, int | float):

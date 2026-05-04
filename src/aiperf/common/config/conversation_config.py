@@ -21,8 +21,6 @@ class TurnDelayConfig(BaseConfig):
     A configuration class for defining turn delay related settings.
     """
 
-    _CLI_GROUP = Groups.CONVERSATION_INPUT
-
     mean: Annotated[
         float,
         Field(
@@ -36,7 +34,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-mean",
                 "--session-turn-delay-mean",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = TurnDelayDefaults.MEAN
 
@@ -53,7 +51,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-stddev",
                 "--session-turn-delay-stddev",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = TurnDelayDefaults.STDDEV
 
@@ -70,7 +68,7 @@ class TurnDelayConfig(BaseConfig):
                 "--conversation-turn-delay-ratio",
                 "--session-delay-ratio",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = TurnDelayDefaults.RATIO
 
@@ -79,8 +77,6 @@ class TurnConfig(BaseConfig):
     """
     A configuration class for defining turn related settings in a conversation.
     """
-
-    _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     mean: Annotated[
         int,
@@ -95,7 +91,7 @@ class TurnConfig(BaseConfig):
                 "--conversation-turn-mean",
                 "--session-turns-mean",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = TurnDefaults.MEAN
 
@@ -112,7 +108,7 @@ class TurnConfig(BaseConfig):
                 "--conversation-turn-stddev",
                 "--session-turns-stddev",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = TurnDefaults.STDDEV
 
@@ -123,8 +119,6 @@ class ConversationConfig(BaseConfig):
     """
     A configuration class for defining conversations related settings.
     """
-
-    _CLI_GROUP = Groups.CONVERSATION_INPUT
 
     num: Annotated[
         int | None,
@@ -142,7 +136,7 @@ class ConversationConfig(BaseConfig):
                 "--num-conversations",
                 "--num-sessions",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = ConversationDefaults.NUM
 
@@ -159,7 +153,7 @@ class ConversationConfig(BaseConfig):
                 "--num-dataset-entries",  # GenAI-Perf
                 "--num-prompts",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.CONVERSATION_INPUT,
         ),
     ] = PromptDefaults.NUM
 

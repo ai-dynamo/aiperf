@@ -171,6 +171,10 @@ navigation:
     path: reference/tokenizer-auto-detection.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
+  - page: List-Metric Aggregation
+    path: reference/list-metric-aggregation.md
+  - page: JSON Export Schema
+    path: reference/json-export-schema.md
 
 - section: Server Metrics
   collapsed: true
