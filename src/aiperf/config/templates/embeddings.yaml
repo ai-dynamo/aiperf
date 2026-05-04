@@ -22,65 +22,66 @@ randomSeed: 42
 
 model: BAAI/bge-small-en-v1.5
 
-endpoint:
-  url: http://localhost:8000/v1/embeddings
-  type: embeddings
-  timeout: 60.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/embeddings
+    type: embeddings
+    timeout: 60.0
 
-datasets:
+  datasets:
   # Single text per request — baseline latency
-  - name: single
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {mean: 256, stddev: 50}
-      batchSize: 1
+    - name: single
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {mean: 256, stddev: 50}
+        batchSize: 1
 
   # 10 texts per request — typical batch for real-time search
-  - name: batch_10
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {mean: 128, stddev: 30}
-      batchSize: 10
+    - name: batch_10
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {mean: 128, stddev: 30}
+        batchSize: 10
 
   # 50 texts per request — bulk indexing workload
-  - name: batch_50
-    type: synthetic
-    entries: 200
-    prompts:
-      isl: {mean: 100, stddev: 20}
-      batchSize: 50
+    - name: batch_50
+      type: synthetic
+      entries: 200
+      prompts:
+        isl: {mean: 100, stddev: 20}
+        batchSize: 50
 
-phases:
-  - name: single_test
-    type: concurrency
-    dataset: single
-    requests: 1000
-    concurrency: 32
-    duration: 120
-    gracePeriod: 30
+  phases:
+    - name: single_test
+      type: concurrency
+      dataset: single
+      requests: 1000
+      concurrency: 32
+      duration: 120
+      gracePeriod: 30
 
   # Lower concurrency for batched requests — each request does more work
-  - name: batch_10_test
-    type: concurrency
-    dataset: batch_10
-    requests: 500
-    concurrency: 16
-    seamless: true
-    duration: 120
-    gracePeriod: 30
+    - name: batch_10_test
+      type: concurrency
+      dataset: batch_10
+      requests: 500
+      concurrency: 16
+      seamless: true
+      duration: 120
+      gracePeriod: 30
 
-  - name: batch_50_test
-    type: concurrency
-    dataset: batch_50
-    requests: 200
-    concurrency: 8
-    seamless: true
-    duration: 120
-    gracePeriod: 30
+    - name: batch_50_test
+      type: concurrency
+      dataset: batch_50
+      requests: 200
+      concurrency: 8
+      seamless: true
+      duration: 120
+      gracePeriod: 30
 
-artifacts:
-  dir: ./artifacts/embeddings
-  summary: [json]
-  records: [jsonl, csv]
+  artifacts:
+    dir: ./artifacts/embeddings
+    summary: [json]
+    records: [jsonl, csv]

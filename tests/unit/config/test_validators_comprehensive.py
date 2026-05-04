@@ -778,25 +778,26 @@ class TestValidateConfigFileWarnings:
 
     def test_all_phases_excluded_warns(self, tmp_path) -> None:
         yaml_content = """
-models:
-  - test-model
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-datasets:
-  - name: main
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 128
-      osl: 64
-phases:
-  - name: warmup
-    type: concurrency
-    concurrency: 4
-    requests: 50
-    exclude_from_results: true
-"""
+            benchmark:
+              models:
+                - test-model
+              endpoint:
+                urls:
+                  - http://localhost:8000/v1/chat/completions
+              datasets:
+                - name: main
+                  type: synthetic
+                  entries: 100
+                  prompts:
+                    isl: 128
+                    osl: 64
+              phases:
+                - name: warmup
+                  type: concurrency
+                  concurrency: 4
+                  requests: 50
+                  exclude_from_results: true
+        """
         config_file = tmp_path / "all_excluded.yaml"
         config_file.write_text(yaml_content)
 
@@ -808,24 +809,25 @@ phases:
 
     def test_no_warnings_clean_config(self, tmp_path) -> None:
         yaml_content = """
-models:
-  - test-model
-endpoint:
-  urls:
-    - http://localhost:8000/v1/chat/completions
-datasets:
-  - name: main
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 128
-      osl: 64
-phases:
-  - name: profiling
-    type: concurrency
-    concurrency: 8
-    requests: 100
-"""
+            benchmark:
+              models:
+                - test-model
+              endpoint:
+                urls:
+                  - http://localhost:8000/v1/chat/completions
+              datasets:
+                - name: main
+                  type: synthetic
+                  entries: 100
+                  prompts:
+                    isl: 128
+                    osl: 64
+              phases:
+                - name: profiling
+                  type: concurrency
+                  concurrency: 8
+                  requests: 100
+        """
         config_file = tmp_path / "clean.yaml"
         config_file.write_text(yaml_content)
 

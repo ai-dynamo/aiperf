@@ -548,15 +548,16 @@ sweep:
 
 
 _VALID_SWEEP_YAML = """
-models: [m]
-endpoint: {urls: [http://x], type: chat}
-datasets:
-  - {name: main, type: synthetic}
-phases:
-  - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
-sweep:
-  type: grid
-  variables: {random_seed: [1, 2]}
+    benchmark:
+      models: [m]
+      endpoint: {urls: [http://x], type: chat}
+      datasets:
+        - {name: main, type: synthetic}
+      phases:
+        - {name: profiling, type: concurrency, duration: 1, concurrency: 1}
+    sweep:
+      type: grid
+      variables: {benchmark.random_seed: [1, 2]}
 """
 
 

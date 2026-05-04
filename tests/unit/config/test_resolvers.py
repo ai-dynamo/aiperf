@@ -173,30 +173,31 @@ class TestArtifactDirResolver:
         from aiperf.config.loader import load_config_from_string
 
         yaml_str = """
-artifacts:
-  user_files:
-    - path: input_config.json
-      format: json
-      content:
-        note: "literal value"
-models:
-  - test/model
-endpoint:
-  type: chat
-  urls: ["http://localhost:8000"]
-datasets:
-  - name: default
-    type: synthetic
-    entries: 10
-    prompts:
-      isl: 32
-      osl: 16
-phases:
-  - name: default
-    type: concurrency
-    requests: 10
-    concurrency: 1
-"""
+            benchmark:
+              artifacts:
+                user_files:
+                  - path: input_config.json
+                    format: json
+                    content:
+                      note: "literal value"
+              models:
+                - test/model
+              endpoint:
+                type: chat
+                urls: ["http://localhost:8000"]
+              datasets:
+                - name: default
+                  type: synthetic
+                  entries: 10
+                  prompts:
+                    isl: 32
+                    osl: 16
+              phases:
+                - name: default
+                  type: concurrency
+                  requests: 10
+                  concurrency: 1
+        """
         # Probe run: target dir gets created, but user_files MUST NOT exist.
         probe_dir = tmp_path / "probe"
         probe_cfg = load_config_from_string(yaml_str)

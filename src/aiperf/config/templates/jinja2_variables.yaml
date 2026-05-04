@@ -36,63 +36,68 @@ randomSeed: 42
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
-endpoint:
-  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
-  type: chat
-  streaming: true
-  timeout: 600.0
+benchmark:
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
 
-datasets:
-  - name: warmup
-    type: synthetic
-    entries: "{{ base_concurrency * 5 }}"
-    prompts:
-      isl: "{{ isl_target // 2 }}"
-      osl: "{{ osl_target // 2 }}"
+  datasets:
+    - name: warmup
+      type: synthetic
+      entries: "{{ base_concurrency * 5 }}"
+      prompts:
+        isl: "{{ isl_target // 2 }}"
+        osl: "{{ osl_target // 2 }}"
 
-  - name: profiling
-    type: synthetic
-    entries: "{{ base_concurrency * dataset_multiplier }}"
-    prompts:
-      isl:
-        mean: "{{ isl_target }}"
-        stddev: "{{ isl_target // 10 }}"
-      osl:
-        mean: "{{ osl_target }}"
-        stddev: "{{ osl_target // 5 }}"
+    - name: profiling
+      type: synthetic
+      entries: "{{ base_concurrency * dataset_multiplier }}"
+      prompts:
+        isl:
+          mean: "{{ isl_target }}"
+          stddev: "{{ isl_target // 10 }}"
+        osl:
+          mean: "{{ osl_target }}"
+          stddev: "{{ osl_target // 5 }}"
 
-phases:
-  - name: warmup
-    type: concurrency
-    dataset: warmup
-    requests: "{{ base_concurrency * 5 }}"
-    concurrency: "{{ base_concurrency // 2 }}"
-    excludeFromResults: true
+  phases:
+    - name: warmup
+      type: concurrency
+      dataset: warmup
+      requests: "{{ base_concurrency * 5 }}"
+      concurrency: "{{ base_concurrency // 2 }}"
+      excludeFromResults: true
 
-  - name: ramp_up
-    type: poisson
-    dataset: profiling
-    rate: "{{ target_rate // 2 }}"
-    duration: "{{ test_duration // 4 }}"
-    concurrency: "{{ base_concurrency }}"
-    rateRamp: "{{ test_duration // 4 }}"
-    seamless: true
-    gracePeriod: 30
+    - name: ramp_up
+      type: poisson
+      dataset: profiling
+      rate: "{{ target_rate // 2 }}"
+      duration: "{{ test_duration // 4 }}"
+      concurrency: "{{ base_concurrency }}"
+      rateRamp: "{{ test_duration // 4 }}"
+      seamless: true
+      gracePeriod: 30
 
-  - name: steady_state
-    type: gamma
-    dataset: profiling
-    rate: "{{ target_rate }}"
-    smoothness: 1.5
-    duration: "{{ test_duration }}"
-    concurrency: "{{ base_concurrency * 4 }}"
-    seamless: true
-    gracePeriod: 60
+    - name: steady_state
+      type: gamma
+      dataset: profiling
+      rate: "{{ target_rate }}"
+      smoothness: 1.5
+      duration: "{{ test_duration }}"
+      concurrency: "{{ base_concurrency * 4 }}"
+      seamless: true
+      gracePeriod: 60
 
-slos:
-  request_latency: 10000
-  time_to_first_token: 1000
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
 
+  artifacts:
+    dir: ./artifacts/jinja2_variables
+    summary: [json]
+    records: [jsonl, csv]
 multiRun:
   numRuns: 3
   cooldownSeconds: 15.0
@@ -100,7 +105,3 @@ multiRun:
   setConsistentSeed: true
   disableWarmupAfterFirst: true
 
-artifacts:
-  dir: ./artifacts/jinja2_variables
-  summary: [json]
-  records: [jsonl, csv]

@@ -24,65 +24,64 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000
-  path: /v1/chat/completions
-  type: chat
-  streaming: true  # Required for TTFT and ITL measurement
-  timeout: 120.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000
+    path: /v1/chat/completions
+    type: chat
+    streaming: true # Required for TTFT and ITL measurement
+    timeout: 120.0
 
+  phases:
+  # Warmup
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 100
+      concurrency: 16
+
+  # Goodput measurement at low load
+    - name: low_load
+      type: poisson
+      duration: 120
+      rate: 10.0
+      concurrency: 50
+      seamless: true
+      gracePeriod: 60
+
+  # Goodput measurement at medium load
+    - name: medium_load
+      type: poisson
+      duration: 120
+      rate: 30.0
+      concurrency: 100
+      seamless: true
+      gracePeriod: 60
+
+  # Goodput measurement at high load
+    - name: high_load
+      type: poisson
+      duration: 120
+      rate: 50.0
+      concurrency: 150
+      seamless: true
+      gracePeriod: 60
+
+# SLO definitions - request is "good" if ALL thresholds are met
+  slos:
+    request_latency: 5000 # Max 5 seconds E2E latency (ms)
+    time_to_first_token: 500 # Max 500ms TTFT
+    inter_token_latency: 50 # Max 50ms between tokens
+    tokens_per_second: 20.0 # Min 20 tokens/sec output rate
+
+  artifacts:
+    dir: ./artifacts/goodput_slo
+    summary: [json]
+    records: [jsonl, csv]
+    sliceDuration: 30
 dataset:
   type: synthetic
   entries: 5000
   prompts:
     isl: {mean: 512, stddev: 100}
     osl: {mean: 256, stddev: 50}
-
-
-phases:
-  # Warmup
-  - name: warmup
-    type: concurrency
-    excludeFromResults: true
-    requests: 100
-    concurrency: 16
-
-  # Goodput measurement at low load
-  - name: low_load
-    type: poisson
-    duration: 120
-    rate: 10.0
-    concurrency: 50
-    seamless: true
-    gracePeriod: 60
-
-  # Goodput measurement at medium load
-  - name: medium_load
-    type: poisson
-    duration: 120
-    rate: 30.0
-    concurrency: 100
-    seamless: true
-    gracePeriod: 60
-
-  # Goodput measurement at high load
-  - name: high_load
-    type: poisson
-    duration: 120
-    rate: 50.0
-    concurrency: 150
-    seamless: true
-    gracePeriod: 60
-
-# SLO definitions - request is "good" if ALL thresholds are met
-slos:
-  request_latency: 5000  # Max 5 seconds E2E latency (ms)
-  time_to_first_token: 500  # Max 500ms TTFT
-  inter_token_latency: 50  # Max 50ms between tokens
-  tokens_per_second: 20.0  # Min 20 tokens/sec output rate
-
-artifacts:
-  dir: ./artifacts/goodput_slo
-  summary: [json]
-  records: [jsonl, csv]
-  sliceDuration: 30

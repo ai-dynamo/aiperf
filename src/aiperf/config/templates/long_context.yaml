@@ -22,80 +22,81 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-70B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 600.0  # Long timeout for large context
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0 # Long timeout for large context
 
-datasets:
+  datasets:
   # 32K context length test
-  - name: long_32k
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: {mean: 32000, stddev: 2000}
-      osl: {mean: 512, stddev: 100}
+    - name: long_32k
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: {mean: 32000, stddev: 2000}
+        osl: {mean: 512, stddev: 100}
 
   # 64K context length test
-  - name: long_64k
-    type: synthetic
-    entries: 50
-    prompts:
-      isl: {mean: 64000, stddev: 4000}
-      osl: {mean: 256, stddev: 50}
+    - name: long_64k
+      type: synthetic
+      entries: 50
+      prompts:
+        isl: {mean: 64000, stddev: 4000}
+        osl: {mean: 256, stddev: 50}
 
   # Mixed context lengths (realistic RAG distribution)
-  - name: mixed_context
-    type: synthetic
-    entries: 500
-    prompts:
-      sequenceDistribution:
-        - {isl: 2048, osl: 256, probability: 30}   # Short queries
-        - {isl: 8192, osl: 512, probability: 35}   # Medium documents
-        - {isl: 32000, osl: 512, probability: 25}  # Long documents
-        - {isl: 64000, osl: 256, probability: 10}  # Very long documents
+    - name: mixed_context
+      type: synthetic
+      entries: 500
+      prompts:
+        sequenceDistribution:
+          - {isl: 2048, osl: 256, probability: 30} # Short queries
+          - {isl: 8192, osl: 512, probability: 35} # Medium documents
+          - {isl: 32000, osl: 512, probability: 25} # Long documents
+          - {isl: 64000, osl: 256, probability: 10} # Very long documents
 
 
-phases:
+  phases:
   # Warmup with shorter contexts
-  - name: warmup
-    type: concurrency
-    dataset: mixed_context
-    excludeFromResults: true
-    requests: 20
-    concurrency: 4
-    prefillConcurrency: 2
+    - name: warmup
+      type: concurrency
+      dataset: mixed_context
+      excludeFromResults: true
+      requests: 20
+      concurrency: 4
+      prefillConcurrency: 2
 
   # Mixed context test
-  - name: mixed_context_test
-    type: poisson
-    dataset: mixed_context
-    requests: 500
-    concurrency: 20
-    prefillConcurrency: 5  # Limit concurrent prefills to prevent OOM
-    prefillRamp: 30  # Ramp prefill concurrency over 30s
-    rate: 5.0
-    duration: 600
-    gracePeriod: 300
+    - name: mixed_context_test
+      type: poisson
+      dataset: mixed_context
+      requests: 500
+      concurrency: 20
+      prefillConcurrency: 5 # Limit concurrent prefills to prevent OOM
+      prefillRamp: 30 # Ramp prefill concurrency over 30s
+      rate: 5.0
+      duration: 600
+      gracePeriod: 300
 
   # 32K dedicated test
-  - name: long_32k_test
-    type: constant
-    dataset: long_32k
-    requests: 100
-    concurrency: 10
-    prefillConcurrency: 3
-    rate: 1.0  # Low rate for long contexts
-    seamless: true
-    duration: 600
-    gracePeriod: 300
+    - name: long_32k_test
+      type: constant
+      dataset: long_32k
+      requests: 100
+      concurrency: 10
+      prefillConcurrency: 3
+      rate: 1.0 # Low rate for long contexts
+      seamless: true
+      duration: 600
+      gracePeriod: 300
 
-artifacts:
-  dir: ./artifacts/long_context
-  summary: [json]
-  records: [jsonl, csv]
-  sliceDuration: 60
+  artifacts:
+    dir: ./artifacts/long_context
+    summary: [json]
+    records: [jsonl, csv]
+    sliceDuration: 60
 
 # Monitor GPU memory usage
 gpuTelemetry:

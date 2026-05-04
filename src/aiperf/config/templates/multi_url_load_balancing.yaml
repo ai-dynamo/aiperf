@@ -25,17 +25,22 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  urls:
-    - http://server1:8000/v1/chat/completions
-    - http://server2:8000/v1/chat/completions
-    - http://server3:8000/v1/chat/completions
-    - http://server4:8000/v1/chat/completions
-  urlStrategy: round_robin
-  type: chat
-  streaming: true
-  timeout: 120.0
+benchmark:
+  endpoint:
+    urls:
+      - http://server1:8000/v1/chat/completions
+      - http://server2:8000/v1/chat/completions
+      - http://server3:8000/v1/chat/completions
+      - http://server4:8000/v1/chat/completions
+    urlStrategy: round_robin
+    type: chat
+    streaming: true
+    timeout: 120.0
 
+  artifacts:
+    dir: ./artifacts/multi_url
+    summary: [json]
+    records: [jsonl, csv]
 dataset:
   type: synthetic
   entries: 10000
@@ -55,10 +60,6 @@ profiling:
   concurrencyRamp: 60    # Gradual ramp avoids overwhelming cold servers
   gracePeriod: 120
 
-artifacts:
-  dir: ./artifacts/multi_url
-  summary: [json]
-  records: [jsonl, csv]
 
 # Scrape all replicas to compare per-server behavior
 serverMetrics:

@@ -2,24 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # Test benchmark configuration for K8s no-operator deployment against mock server
 
-models:
-  - mock-model
+benchmark:
+  models:
+    - mock-model
 
-endpoint:
-  urls:
-    - http://aiperf-mock-server.default.svc.cluster.local:8000/v1/chat/completions
-  type: chat
-  use_server_token_count: true
+  endpoint:
+    urls:
+      - http://aiperf-mock-server.default.svc.cluster.local:8000/v1/chat/completions
+    type: chat
+    use_server_token_count: true
 
-tokenizer:
-  name: builtin
+  tokenizer:
+    name: builtin
 
-datasets:
-  main:
-    type: synthetic
-    entries: 100
-    isl: 50
-    osl: 20
+  datasets:
+    main:
+      type: synthetic
+      entries: 100
+      isl: 50
+      osl: 20
 
 profiling:
   type: concurrency

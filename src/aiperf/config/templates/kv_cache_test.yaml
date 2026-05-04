@@ -36,58 +36,59 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 120.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
 
-datasets:
+  datasets:
   # Approach 1: Random selection from a small prefix pool
-  - name: prefix_pool
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {mean: 256, stddev: 30}
-      osl: {mean: 128, stddev: 20}
-    prefixPrompts:
-      poolSize: 10   # 10 distinct prefixes — expect ~10% unique, ~90% cache hits
-      length: 512    # Each prefix is 512 tokens
+    - name: prefix_pool
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {mean: 256, stddev: 30}
+        osl: {mean: 128, stddev: 20}
+      prefixPrompts:
+        poolSize: 10 # 10 distinct prefixes — expect ~10% unique, ~90% cache hits
+        length: 512  # Each prefix is 512 tokens
 
   # Approach 2: Shared system prompt + per-user context
-  - name: system_context
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {mean: 200, stddev: 25}
-      osl: {mean: 150, stddev: 30}
-    prefixPrompts:
-      sharedSystemLength: 1000  # Same 1000-token system prompt for everyone
-      userContextLength: 256    # Unique 256-token context per session
+    - name: system_context
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {mean: 200, stddev: 25}
+        osl: {mean: 150, stddev: 30}
+      prefixPrompts:
+        sharedSystemLength: 1000 # Same 1000-token system prompt for everyone
+        userContextLength: 256  # Unique 256-token context per session
 
-phases:
-  - name: prefix_pool_test
-    type: user_centric
-    dataset: prefix_pool
-    duration: 120
-    users: 30         # 30 simulated users sharing the global rate
-    rate: 2.0         # 2 QPS total (each user sends ~0.067 QPS)
-    gracePeriod: 60
+  phases:
+    - name: prefix_pool_test
+      type: user_centric
+      dataset: prefix_pool
+      duration: 120
+      users: 30       # 30 simulated users sharing the global rate
+      rate: 2.0       # 2 QPS total (each user sends ~0.067 QPS)
+      gracePeriod: 60
 
-  - name: system_context_test
-    type: user_centric
-    dataset: system_context
-    duration: 120
-    users: 30
-    rate: 2.0
-    seamless: true
-    gracePeriod: 60
+    - name: system_context_test
+      type: user_centric
+      dataset: system_context
+      duration: 120
+      users: 30
+      rate: 2.0
+      seamless: true
+      gracePeriod: 60
 
-artifacts:
-  dir: ./artifacts/kv_cache_test
-  summary: [json]
-  records: [jsonl, csv]
-  sliceDuration: 30  # Watch for cache warm-up — early slices should be slower
+  artifacts:
+    dir: ./artifacts/kv_cache_test
+    summary: [json]
+    records: [jsonl, csv]
+    sliceDuration: 30 # Watch for cache warm-up — early slices should be slower
 
 serverMetrics:
   enabled: true

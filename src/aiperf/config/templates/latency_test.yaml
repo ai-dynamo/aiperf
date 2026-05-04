@@ -27,12 +27,18 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true  # Required for TTFT and ITL — without streaming, only E2E is measured
-  timeout: 600.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true # Required for TTFT and ITL — without streaming, only E2E is measured
+    timeout: 600.0
 
+  artifacts:
+    dir: ./artifacts/latency_test
+    summary: [json]
+    records: [jsonl, csv]
+    sliceDuration: 30 # 30-second windows to see if latency drifts over time
 dataset:
   type: synthetic
   entries: 3000
@@ -48,8 +54,3 @@ profiling:
   concurrency: 100    # Safety cap to prevent unbounded queue growth
   gracePeriod: 60
 
-artifacts:
-  dir: ./artifacts/latency_test
-  summary: [json]
-  records: [jsonl, csv]
-  sliceDuration: 30   # 30-second windows to see if latency drifts over time

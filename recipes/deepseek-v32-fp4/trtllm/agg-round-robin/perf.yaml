@@ -37,7 +37,8 @@ spec:
           osl: {mean: 200, stddev: 0}
       - name: trace
         type: file
-        path: /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
+        path: 
+          /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
         format: mooncake_trace
     phases:
       - name: warmup

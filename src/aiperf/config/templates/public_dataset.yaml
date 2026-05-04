@@ -24,12 +24,17 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 180.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 180.0
 
+  artifacts:
+    dir: ./artifacts/public_dataset
+    summary: [json]
+    records: [jsonl, csv]
 dataset:
   type: public
   dataset: sharegpt
@@ -49,7 +54,3 @@ profiling:
   duration: 300
   gracePeriod: 120  # Multi-turn conversations need time to finish all turns
 
-artifacts:
-  dir: ./artifacts/public_dataset
-  summary: [json]
-  records: [jsonl, csv]

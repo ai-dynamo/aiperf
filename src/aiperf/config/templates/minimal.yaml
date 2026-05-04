@@ -24,10 +24,15 @@
 # "model:" is shorthand for models: { items: [{ name: ... }] }
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000  # Path auto-detected from endpoint type (chat -> /v1/chat/completions)
+benchmark:
+  endpoint:
+    url: http://localhost:8000 # Path auto-detected from endpoint type (chat -> /v1/chat/completions)
 
 # "dataset:" (singular) is shorthand for datasets: { default: { ... } }
+  phases:
+    type: concurrency
+    concurrency: 8
+    requests: 100
 dataset:
   type: synthetic
   entries: 100
@@ -36,7 +41,3 @@ dataset:
     osl: 128
 
 # Flat "phases:" with a "type:" key is shorthand for phases: { default: { ... } }
-phases:
-  type: concurrency
-  concurrency: 8
-  requests: 100

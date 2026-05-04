@@ -35,12 +35,23 @@ randomSeed: ${BENCHMARK_SEED:42}
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
-endpoint:
-  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
-  type: chat
-  streaming: true
-  timeout: 600.0
+benchmark:
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
 
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
+    inter_token_latency: 50
+    tokens_per_second: 20.0
+
+  artifacts:
+    dir: ${ARTIFACTS_DIR:./artifacts/production}
+    summary: [json]
+    records: [jsonl, csv]
 dataset:
   # Production-realistic: lognormal ISL (right-skewed, most requests short)
   # with clamped output to prevent runaway generations
@@ -68,12 +79,6 @@ profiling:
   seamless: true
   gracePeriod: 60
 
-slos:
-  request_latency: 10000
-  time_to_first_token: 1000
-  inter_token_latency: 50
-  tokens_per_second: 20.0
-
 multiRun:
   numRuns: ${NUM_RUNS:3}
   cooldownSeconds: ${COOLDOWN:30.0}
@@ -81,10 +86,6 @@ multiRun:
   setConsistentSeed: true
   disableWarmupAfterFirst: true
 
-artifacts:
-  dir: ${ARTIFACTS_DIR:./artifacts/production}
-  summary: [json]
-  records: [jsonl, csv]
 
 serverMetrics:
   enabled: true

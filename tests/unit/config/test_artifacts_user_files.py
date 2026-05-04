@@ -8,23 +8,24 @@ from aiperf.config.loader import load_config_from_string
 # Mirror tests/unit/config/test_variables_persist.py: BenchmarkConfig requires
 # datasets+phases (min_length=1), so prepend test-specific YAML to this base.
 _BASE_YAML = """
-models:
-  - test/model
-endpoint:
-  type: chat
-  urls: ["http://localhost:8000"]
-datasets:
-  - name: default
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 128
-      osl: 64
-phases:
-  - name: default
-    type: concurrency
-    requests: 10
-    concurrency: 1
+    benchmark:
+      models:
+        - test/model
+      endpoint:
+        type: chat
+        urls: ["http://localhost:8000"]
+      datasets:
+        - name: default
+          type: synthetic
+          entries: 100
+          prompts:
+            isl: 128
+            osl: 64
+      phases:
+        - name: default
+          type: concurrency
+          requests: 10
+          concurrency: 1
 """
 
 

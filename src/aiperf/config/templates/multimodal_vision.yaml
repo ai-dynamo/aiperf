@@ -25,54 +25,55 @@ randomSeed: 42
 
 model: llava-hf/llava-1.5-7b-hf
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 120.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
 
-datasets:
-  - name: vision_test
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: {mean: 100, stddev: 20}
-      osl: {mean: 256, stddev: 50}
-    images:
-      batchSize: 1              # Single image per request
-      width: 512
-      height: 512
-      format: jpeg              # JPEG is smaller on the wire than PNG
+  datasets:
+    - name: vision_test
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: {mean: 100, stddev: 20}
+        osl: {mean: 256, stddev: 50}
+      images:
+        batchSize: 1            # Single image per request
+        width: 512
+        height: 512
+        format: jpeg            # JPEG is smaller on the wire than PNG
 
-  - name: multi_image_test
-    type: synthetic
-    entries: 200
-    prompts:
-      isl: {mean: 150, stddev: 30}
-      osl: {mean: 200, stddev: 40}
-    images:
-      batchSize: 4              # 4 images — tests multi-image understanding
-      width: {mean: 256, stddev: 50}
-      height: {mean: 256, stddev: 50}
-      format: jpeg
+    - name: multi_image_test
+      type: synthetic
+      entries: 200
+      prompts:
+        isl: {mean: 150, stddev: 30}
+        osl: {mean: 200, stddev: 40}
+      images:
+        batchSize: 4            # 4 images — tests multi-image understanding
+        width: {mean: 256, stddev: 50}
+        height: {mean: 256, stddev: 50}
+        format: jpeg
 
-phases:
-  - name: single_image
-    type: poisson
-    dataset: vision_test
-    requests: 500
-    concurrency: 16
-    rate: 10.0
+  phases:
+    - name: single_image
+      type: poisson
+      dataset: vision_test
+      requests: 500
+      concurrency: 16
+      rate: 10.0
 
-  - name: multi_image
-    type: poisson
-    dataset: multi_image_test
-    requests: 200
-    concurrency: 8     # Fewer concurrent — 4x more image data per request
-    rate: 5.0
-    seamless: true
+    - name: multi_image
+      type: poisson
+      dataset: multi_image_test
+      requests: 200
+      concurrency: 8   # Fewer concurrent — 4x more image data per request
+      rate: 5.0
+      seamless: true
 
-artifacts:
-  dir: ./artifacts/multimodal_vision
-  summary: [json]
-  records: [jsonl]
+  artifacts:
+    dir: ./artifacts/multimodal_vision
+    summary: [json]
+    records: [jsonl]

@@ -30,12 +30,24 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 120.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
 
+  phases:
+    type: concurrency
+    requests: 1000
+    concurrency: 32
+    duration: 120
+    gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/composed_dataset
+    summary: [json]
+    records: [jsonl, csv]
 dataset:
   type: composed
   source:
@@ -48,14 +60,3 @@ dataset:
     oslMode: fill  # Respect existing OSL if present, fill missing ones
   entries: 1000    # Recycle prompts if file has fewer than 1000 lines
 
-phases:
-  type: concurrency
-  requests: 1000
-  concurrency: 32
-  duration: 120
-  gracePeriod: 60
-
-artifacts:
-  dir: ./artifacts/composed_dataset
-  summary: [json]
-  records: [jsonl, csv]

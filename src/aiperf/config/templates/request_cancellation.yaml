@@ -29,12 +29,52 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 120.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 120.0
 
+  phases:
+    - name: baseline
+      type: poisson
+      requests: 500
+      concurrency: 32
+      rate: 20.0
+      duration: 120
+      gracePeriod: 60
+
+  # Simulates users abandoning slow requests
+    - name: cancel_10_percent
+      type: poisson
+      requests: 500
+      concurrency: 32
+      rate: 20.0
+      cancellation:
+        rate: 10.0 # 10% of requests cancelled
+        delay: 0.5 # After 0.5s — enough for prefill, cancels during decode
+      seamless: true
+      duration: 120
+      gracePeriod: 60
+
+  # Simulates aggressive load balancer or client timeout
+    - name: cancel_25_percent_immediate
+      type: poisson
+      requests: 500
+      concurrency: 32
+      rate: 20.0
+      cancellation:
+        rate: 25.0
+        delay: 0.0 # Immediate — server must abort before any work completes
+      seamless: true
+      duration: 120
+      gracePeriod: 60
+
+  artifacts:
+    dir: ./artifacts/request_cancellation
+    summary: [json]
+    records: [jsonl, csv]
 dataset:
   type: synthetic
   entries: 1000
@@ -42,45 +82,6 @@ dataset:
     isl: {mean: 512, stddev: 100}
     osl: {mean: 512, stddev: 100}  # Long output gives cancellation time to trigger
 
-phases:
-  - name: baseline
-    type: poisson
-    requests: 500
-    concurrency: 32
-    rate: 20.0
-    duration: 120
-    gracePeriod: 60
-
-  # Simulates users abandoning slow requests
-  - name: cancel_10_percent
-    type: poisson
-    requests: 500
-    concurrency: 32
-    rate: 20.0
-    cancellation:
-      rate: 10.0   # 10% of requests cancelled
-      delay: 0.5   # After 0.5s — enough for prefill, cancels during decode
-    seamless: true
-    duration: 120
-    gracePeriod: 60
-
-  # Simulates aggressive load balancer or client timeout
-  - name: cancel_25_percent_immediate
-    type: poisson
-    requests: 500
-    concurrency: 32
-    rate: 20.0
-    cancellation:
-      rate: 25.0
-      delay: 0.0   # Immediate — server must abort before any work completes
-    seamless: true
-    duration: 120
-    gracePeriod: 60
-
-artifacts:
-  dir: ./artifacts/request_cancellation
-  summary: [json]
-  records: [jsonl, csv]
 
 # Compare server-side metrics across phases to spot resource leaks
 serverMetrics:

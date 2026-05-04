@@ -25,61 +25,62 @@ randomSeed: 42
 
 model: openai/whisper-large-v3
 
-endpoint:
-  url: http://localhost:8000/v1/audio/transcriptions
-  type: chat
-  timeout: 180.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/audio/transcriptions
+    type: chat
+    timeout: 180.0
 
-datasets:
-  - name: short_audio
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: 50
-      osl: {mean: 200, stddev: 50}
-    audio:
-      batchSize: 1
-      length: {mean: 7.5, stddev: 2.5}
-      format: wav
-      sampleRates: [16.0]  # 16kHz — standard for speech recognition
-      depths: [16]          # 16-bit PCM
-      channels: 1
+  datasets:
+    - name: short_audio
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: 50
+        osl: {mean: 200, stddev: 50}
+      audio:
+        batchSize: 1
+        length: {mean: 7.5, stddev: 2.5}
+        format: wav
+        sampleRates: [16.0] # 16kHz — standard for speech recognition
+        depths: [16]        # 16-bit PCM
+        channels: 1
 
-  - name: long_audio
-    type: synthetic
-    entries: 200
-    prompts:
-      isl: 50
-      osl: {mean: 500, stddev: 100}
-    audio:
-      batchSize: 1
-      length: {mean: 45.0, stddev: 15.0}
-      format: wav
-      sampleRates: [16.0]
-      depths: [16]
-      channels: 1
+    - name: long_audio
+      type: synthetic
+      entries: 200
+      prompts:
+        isl: 50
+        osl: {mean: 500, stddev: 100}
+      audio:
+        batchSize: 1
+        length: {mean: 45.0, stddev: 15.0}
+        format: wav
+        sampleRates: [16.0]
+        depths: [16]
+        channels: 1
 
-phases:
-  - name: short_audio_test
-    type: poisson
-    dataset: short_audio
-    requests: 500
-    concurrency: 8
-    rate: 5.0
-    duration: 300
-    gracePeriod: 120
+  phases:
+    - name: short_audio_test
+      type: poisson
+      dataset: short_audio
+      requests: 500
+      concurrency: 8
+      rate: 5.0
+      duration: 300
+      gracePeriod: 120
 
-  - name: long_audio_test
-    type: poisson
-    dataset: long_audio
-    requests: 200
-    concurrency: 4    # Lower concurrency — each request is GPU-heavy
-    rate: 2.0
-    seamless: true
-    duration: 300
-    gracePeriod: 180  # Long clips take longer to process
+    - name: long_audio_test
+      type: poisson
+      dataset: long_audio
+      requests: 200
+      concurrency: 4  # Lower concurrency — each request is GPU-heavy
+      rate: 2.0
+      seamless: true
+      duration: 300
+      gracePeriod: 180 # Long clips take longer to process
 
-artifacts:
-  dir: ./artifacts/audio_multimodal
-  summary: [json]
-  records: [jsonl, csv]
+  artifacts:
+    dir: ./artifacts/audio_multimodal
+    summary: [json]
+    records: [jsonl, csv]

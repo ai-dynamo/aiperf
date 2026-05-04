@@ -21,107 +21,117 @@ randomSeed: 42
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
-endpoint:
-  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
-  type: chat
-  streaming: true
-  timeout: ${TIMEOUT:600.0}
+benchmark:
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: ${TIMEOUT:600.0}
 
-datasets:
-  - name: workload
-    type: synthetic
-    entries: 1000
-    prompts:
-      isl: {mean: 512, stddev: 50}    # Base: overridden per scenario
-      osl: {mean: 128, stddev: 25}
+  datasets:
+    - name: workload
+      type: synthetic
+      entries: 1000
+      prompts:
+        isl: {mean: 512, stddev: 50}  # Base: overridden per scenario
+        osl: {mean: 128, stddev: 25}
 
-phases:
-  - name: warmup
-    type: concurrency
-    requests: 50
-    concurrency: 8
-    excludeFromResults: true
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 8
+      excludeFromResults: true
 
-  - name: test
-    type: poisson
-    rate: 20.0
-    duration: 180
-    concurrency: 64
-    seamless: true
-    gracePeriod: 60
+    - name: test
+      type: poisson
+      rate: 20.0
+      duration: 180
+      concurrency: 64
+      seamless: true
+      gracePeriod: 60
 
+  slos:
+    request_latency: 10000
+    time_to_first_token: 1000
+
+  artifacts:
+    dir: ./artifacts/workload_profiles
+    summary: [json]
+    records: [jsonl, csv]
 sweep:
   type: scenarios
   runs:
     # Chatbot: short Q&A, high rate, low variance
     - name: chatbot
-      datasets:
-        - name: workload
-          prompts:
-            isl: {mean: 128, stddev: 20}
-            osl: {mean: 64, stddev: 10}
-      phases:
-        - name: test
-          rate: 50.0
-          concurrency: 128
+      benchmark:
+        datasets:
+          - name: workload
+            prompts:
+              isl: {mean: 128, stddev: 20}
+              osl: {mean: 64, stddev: 10}
+        phases:
+          - name: test
+            rate: 50.0
+            concurrency: 128
 
     # RAG: medium input with retrieval context, moderate rate
     - name: rag_pipeline
-      datasets:
-        - name: workload
-          prompts:
-            isl: {mean: 1024, median: 904}
-            osl: {mean: 256, stddev: 50}
-      phases:
-        - name: test
-          rate: 20.0
-          concurrency: 64
+      benchmark:
+        datasets:
+          - name: workload
+            prompts:
+              isl: {mean: 1024, median: 904}
+              osl: {mean: 256, stddev: 50}
+        phases:
+          - name: test
+            rate: 20.0
+            concurrency: 64
 
     # Summarization: long input, short output, low rate
     - name: summarization
-      datasets:
-        - name: workload
-          prompts:
-            isl: {mean: 4096, median: 3421}
-            osl: {mean: 128, stddev: 30}
-      phases:
-        - name: test
-          rate: 5.0
-          concurrency: 16
+      benchmark:
+        datasets:
+          - name: workload
+            prompts:
+              isl: {mean: 4096, median: 3421}
+              osl: {mean: 128, stddev: 30}
+        phases:
+          - name: test
+            rate: 5.0
+            concurrency: 16
 
     # Bimodal production: mix of short and long requests
     - name: production_mix
-      datasets:
-        - name: workload
-          prompts:
-            isl:
-              peaks:
-                - {mean: 128, stddev: 30, weight: 60}
-                - {mean: 2048, median: 1891, weight: 40}
-            osl:
-              peaks:
-                - {mean: 64, stddev: 15, weight: 60}
-                - {mean: 512, stddev: 100, weight: 40}
-      phases:
-        - name: test
-          rate: 30.0
-          concurrency: 64
+      benchmark:
+        datasets:
+          - name: workload
+            prompts:
+              isl:
+                peaks:
+                  - {mean: 128, stddev: 30, weight: 60}
+                  - {mean: 2048, median: 1891, weight: 40}
+              osl:
+                peaks:
+                  - {mean: 64, stddev: 15, weight: 60}
+                  - {mean: 512, stddev: 100, weight: 40}
+        phases:
+          - name: test
+            rate: 30.0
+            concurrency: 64
 
     # Power-law: Zipf-distributed ISL (realistic request popularity)
     - name: power_law
-      datasets:
-        - name: workload
-          prompts:
-            isl: {mean: 512, median: 192}
-            osl: {mean: 144, stddev: 64}
-      phases:
-        - name: test
-          rate: 25.0
-          concurrency: 64
-
-slos:
-  request_latency: 10000
-  time_to_first_token: 1000
+      benchmark:
+        datasets:
+          - name: workload
+            prompts:
+              isl: {mean: 512, median: 192}
+              osl: {mean: 144, stddev: 64}
+        phases:
+          - name: test
+            rate: 25.0
+            concurrency: 64
 
 multiRun:
   numRuns: 3
@@ -129,7 +139,3 @@ multiRun:
   confidenceLevel: 0.95
   setConsistentSeed: true
 
-artifacts:
-  dir: ./artifacts/workload_profiles
-  summary: [json]
-  records: [jsonl, csv]

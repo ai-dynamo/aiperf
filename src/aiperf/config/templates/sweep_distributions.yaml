@@ -25,40 +25,45 @@ randomSeed: 42
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
-endpoint:
-  url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
-  type: chat
-  streaming: true
-  timeout: ${TIMEOUT:600.0}
+benchmark:
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: ${TIMEOUT:600.0}
 
 # --- APPROACH 1: Grid Sweep ---
 # Sweep across ISL sizes and request rates.
 # ISL is set as a scalar (FixedDistribution), so the grid varies the fixed value.
 # Result: 3 ISL values x 3 rates = 9 benchmark runs.
 
-datasets:
-  - name: profiling
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: 512  # Overridden by sweep
-      osl: {mean: 128, stddev: 25}
+  datasets:
+    - name: profiling
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: 512 # Overridden by sweep
+        osl: {mean: 128, stddev: 25}
 
-phases:
-  - name: warmup
-    type: concurrency
-    requests: 50
-    concurrency: 8
-    excludeFromResults: true
+  phases:
+    - name: warmup
+      type: concurrency
+      requests: 50
+      concurrency: 8
+      excludeFromResults: true
 
-  - name: profiling
-    type: poisson
-    rate: 20.0  # Overridden by sweep
-    duration: 120
-    concurrency: 64
-    seamless: true
-    gracePeriod: 60
+    - name: profiling
+      type: poisson
+      rate: 20.0 # Overridden by sweep
+      duration: 120
+      concurrency: 64
+      seamless: true
+      gracePeriod: 60
 
+  artifacts:
+    dir: ./artifacts/sweep_distributions
+    summary: [json]
+    records: [jsonl, csv]
 sweep:
   type: grid
   variables:
@@ -66,8 +71,8 @@ sweep:
     # second segment is the phase's `name` (e.g. ``profiling``), so
     # ``phases.profiling.rate`` targets the phase named ``profiling`` —
     # not an integer list index.
-    datasets.profiling.prompts.isl: [128, 512, 2048]
-    phases.profiling.rate: [10.0, 30.0, 50.0]
+    benchmark.datasets.profiling.prompts.isl: [128, 512, 2048]
+    benchmark.phases.profiling.rate: [10.0, 30.0, 50.0]
 
 multiRun:
   numRuns: 3
@@ -76,7 +81,3 @@ multiRun:
   setConsistentSeed: true
   disableWarmupAfterFirst: true
 
-artifacts:
-  dir: ./artifacts/sweep_distributions
-  summary: [json]
-  records: [jsonl, csv]

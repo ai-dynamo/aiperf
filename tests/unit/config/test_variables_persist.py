@@ -8,23 +8,24 @@ from aiperf.config.loader import build_benchmark_plan, load_config_from_string
 from aiperf.config.loader.jinja import expand_config_dict
 
 _BASE_YAML = """
-models:
-  - test/model
-endpoint:
-  type: chat
-  urls: ["http://localhost:8000"]
-datasets:
-  - name: default
-    type: synthetic
-    entries: 100
-    prompts:
-      isl: 128
-      osl: 64
-phases:
-  - name: default
-    type: concurrency
-    requests: 10
-    concurrency: 1
+    benchmark:
+      models:
+        - test/model
+      endpoint:
+        type: chat
+        urls: ["http://localhost:8000"]
+      datasets:
+        - name: default
+          type: synthetic
+          entries: 100
+          prompts:
+            isl: 128
+            osl: 64
+      phases:
+        - name: default
+          type: concurrency
+          requests: 10
+          concurrency: 1
 """
 
 

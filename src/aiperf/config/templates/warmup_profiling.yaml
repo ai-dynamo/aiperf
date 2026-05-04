@@ -24,25 +24,31 @@ randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
-endpoint:
-  url: http://localhost:8000/v1/chat/completions
-  type: chat
-  streaming: true
-  timeout: 600.0
+benchmark:
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+    timeout: 600.0
 
-datasets:
-  - name: warmup
-    type: synthetic
-    entries: 100
-    isl: 256
-    osl: 64
+  datasets:
+    - name: warmup
+      type: synthetic
+      entries: 100
+      isl: 256
+      osl: 64
 
-  - name: profiling
-    type: synthetic
-    entries: 5000
-    isl: {mean: 550, stddev: 50}
-    osl: {mean: 150, stddev: 25}
+    - name: profiling
+      type: synthetic
+      entries: 5000
+      isl: {mean: 550, stddev: 50}
+      osl: {mean: 150, stddev: 25}
 
+  artifacts:
+    dir: ./artifacts/warmup_profiling
+    summary: [json]
+    records: [jsonl, csv]
+    sliceDuration: 60s
 warmup:
   type: concurrency
   dataset: warmup
@@ -61,8 +67,3 @@ profiling:
   seamless: true  # Start immediately after warmup
   gracePeriod: 60s
 
-artifacts:
-  dir: ./artifacts/warmup_profiling
-  summary: [json]
-  records: [jsonl, csv]
-  sliceDuration: 60s
