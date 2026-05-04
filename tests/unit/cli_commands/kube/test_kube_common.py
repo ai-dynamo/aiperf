@@ -39,12 +39,13 @@ def _fake_config(
     workers_per_pod: int = 10,
 ) -> SimpleNamespace:
     """Build a duck-typed config that satisfies generate_benchmark_name + print_memory_estimate."""
-    return SimpleNamespace(
+    benchmark = SimpleNamespace(
         get_model_names=lambda: [model],
         endpoint=SimpleNamespace(type=endpoint_type),
         phases=[SimpleNamespace(type=phase_type)],
         runtime=SimpleNamespace(workers_per_pod=workers_per_pod),
     )
+    return SimpleNamespace(benchmark=benchmark)
 
 
 # ============================================================

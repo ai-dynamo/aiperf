@@ -32,8 +32,8 @@ def make_phase_config(**overrides) -> CreditPhaseConfig:
     return CreditPhaseConfig(**defaults)
 
 
-def make_config(phases: dict | None = None) -> AIPerfConfig:
-    """Create an AIPerfConfig with the given phases."""
+def make_config(phases: dict | None = None):
+    """Create a BenchmarkConfig (the body) with the given phases."""
     if phases is None:
         phases = [
             {
@@ -44,7 +44,7 @@ def make_config(phases: dict | None = None) -> AIPerfConfig:
                 "concurrency": 10,
             }
         ]
-    return AIPerfConfig(benchmark={**_BASE, "phases": phases})
+    return AIPerfConfig(benchmark={**_BASE, "phases": phases}).benchmark
 
 
 class TestTimingConfig:
