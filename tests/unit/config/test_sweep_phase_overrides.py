@@ -101,24 +101,26 @@ class TestGridSweepWithPhaseNamePath:
 
     def _data(self) -> dict:
         return {
-            "phases": [
-                {
-                    "name": "warmup",
-                    "type": "concurrency",
-                    "requests": 50,
-                    "concurrency": 8,
-                },
-                {
-                    "name": "profiling",
-                    "type": "poisson",
-                    "rate": 20.0,
-                    "concurrency": 64,
-                },
-            ],
+            "benchmark": {
+                "phases": [
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
+                        "requests": 50,
+                        "concurrency": 8,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "poisson",
+                        "rate": 20.0,
+                        "concurrency": 64,
+                    },
+                ],
+            },
             "sweep": {
                 "type": "grid",
                 "variables": {
-                    "phases.profiling.rate": [10.0, 30.0, 50.0],
+                    "benchmark.phases.profiling.rate": [10.0, 30.0, 50.0],
                 },
             },
         }
@@ -128,7 +130,9 @@ class TestGridSweepWithPhaseNamePath:
 
         assert len(result) == 3
         rates = [
-            next(p for p in cfg["phases"] if p["name"] == "profiling")["rate"]
+            next(p for p in cfg["benchmark"]["phases"] if p["name"] == "profiling")[
+                "rate"
+            ]
             for cfg, _ in result
         ]
         assert rates == [10.0, 30.0, 50.0]
@@ -137,7 +141,9 @@ class TestGridSweepWithPhaseNamePath:
         result = expand_sweep(self._data())
 
         for cfg, _ in result:
-            warmup = next(p for p in cfg["phases"] if p["name"] == "warmup")
+            warmup = next(
+                p for p in cfg["benchmark"]["phases"] if p["name"] == "warmup"
+            )
             assert warmup["concurrency"] == 8
             assert warmup["requests"] == 50
 
@@ -152,34 +158,48 @@ class TestScenarioSweepPhaseOverrideByName:
 
     def _data(self) -> dict:
         return {
-            "phases": [
-                {
-                    "name": "warmup",
-                    "type": "concurrency",
-                    "requests": 50,
-                    "concurrency": 8,
-                },
-                {
-                    "name": "profiling",
-                    "type": "poisson",
-                    "rate": 20.0,
-                    "concurrency": 64,
-                },
-            ],
+            "benchmark": {
+                "phases": [
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
+                        "requests": 50,
+                        "concurrency": 8,
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "poisson",
+                        "rate": 20.0,
+                        "concurrency": 64,
+                    },
+                ],
+            },
             "sweep": {
                 "type": "scenarios",
                 "runs": [
                     {
                         "name": "chatbot",
-                        "phases": [
-                            {"name": "profiling", "rate": 50.0, "concurrency": 128},
-                        ],
+                        "benchmark": {
+                            "phases": [
+                                {
+                                    "name": "profiling",
+                                    "rate": 50.0,
+                                    "concurrency": 128,
+                                },
+                            ],
+                        },
                     },
                     {
                         "name": "summarization",
-                        "phases": [
-                            {"name": "profiling", "rate": 5.0, "concurrency": 16},
-                        ],
+                        "benchmark": {
+                            "phases": [
+                                {
+                                    "name": "profiling",
+                                    "rate": 5.0,
+                                    "concurrency": 16,
+                                },
+                            ],
+                        },
                     },
                 ],
             },
@@ -190,7 +210,7 @@ class TestScenarioSweepPhaseOverrideByName:
 
         assert len(result) == 2
 
-        chatbot_phases = result[0][0]["phases"]
+        chatbot_phases = result[0][0]["benchmark"]["phases"]
         assert isinstance(chatbot_phases, list)
         prof = next(p for p in chatbot_phases if p["name"] == "profiling")
         assert prof["rate"] == 50.0
@@ -201,7 +221,9 @@ class TestScenarioSweepPhaseOverrideByName:
         result = expand_sweep(self._data())
 
         for cfg, _ in result:
-            warmup = next(p for p in cfg["phases"] if p["name"] == "warmup")
+            warmup = next(
+                p for p in cfg["benchmark"]["phases"] if p["name"] == "warmup"
+            )
             assert warmup == {
                 "name": "warmup",
                 "type": "concurrency",
@@ -212,20 +234,26 @@ class TestScenarioSweepPhaseOverrideByName:
     def test_scenario_appends_phase_not_in_base(self) -> None:
         """Override may introduce a new phase that wasn't in the base list."""
         data = {
-            "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 8}],
+            "benchmark": {
+                "phases": [
+                    {"name": "profiling", "type": "concurrency", "concurrency": 8}
+                ],
+            },
             "sweep": {
                 "type": "scenarios",
                 "runs": [
                     {
                         "name": "with_warmup",
-                        "phases": [
-                            {
-                                "name": "warmup",
-                                "type": "concurrency",
-                                "requests": 10,
-                                "concurrency": 1,
-                            }
-                        ],
+                        "benchmark": {
+                            "phases": [
+                                {
+                                    "name": "warmup",
+                                    "type": "concurrency",
+                                    "requests": 10,
+                                    "concurrency": 1,
+                                }
+                            ],
+                        },
                     }
                 ],
             },
@@ -233,7 +261,7 @@ class TestScenarioSweepPhaseOverrideByName:
         result = expand_sweep(data)
 
         assert len(result) == 1
-        names = [p["name"] for p in result[0][0]["phases"]]
+        names = [p["name"] for p in result[0][0]["benchmark"]["phases"]]
         # Existing phases stay, override-only entries are appended at the end.
         assert "profiling" in names
         assert "warmup" in names
