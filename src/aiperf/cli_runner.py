@@ -1,18 +1,48 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import contextlib
 import sys
-from typing import TYPE_CHECKING
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 from aiperf.plugin.enums import ServiceType, UIType
 
-if TYPE_CHECKING:
-    from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.orchestrator.aggregation.base import AggregateResult
+
+def _validate_ui_compatibility(
+    is_multi_run: bool,
+    is_sweep: bool,
+    service_config: ServiceConfig,
+) -> None:
+    """Validate UI type compatibility with multi-run modes.
+
+    Dashboard UI cannot be used with parameter sweeps or multi-run confidence
+    trials because each subprocess run needs terminal control.
+
+    Args:
+        is_multi_run: True if num_profile_runs > 1
+        is_sweep: True if a sweep parameter is detected
+        service_config: Service configuration (checked for explicit ui_type)
+
+    Raises:
+        ValueError: If dashboard UI is explicitly set with multi-run modes.
+    """
+    if not (is_multi_run or is_sweep):
+        return
+
+    if (
+        "ui_type" in service_config.model_fields_set
+        and service_config.ui_type == UIType.DASHBOARD
+    ):
+        raise ValueError(
+            "Dashboard UI (--ui dashboard) is not supported with multi-run mode "
+            "(--num-profile-runs > 1) or parameter sweeps due to terminal control "
+            "limitations when running multiple sequential benchmarks. "
+            "Use --ui simple (recommended, shows progress bars) or --ui none (no UI output). "
+            "Example: aiperf --concurrency 10,20,30 --ui simple ..."
+        )
 
 
 def run_system_controller(
@@ -21,11 +51,16 @@ def run_system_controller(
 ) -> None:
     """Run the system controller with the given configuration.
 
-    If num_profile_runs > 1, runs multi-run orchestration for confidence reporting.
+    If num_profile_runs > 1 OR parameter sweep is detected, runs multi-run orchestration.
     Otherwise, runs a single benchmark (backward compatibility).
     """
-    # Check if multi-run mode is enabled
-    if user_config.loadgen.num_profile_runs > 1:
+    is_sweep = user_config.loadgen.get_sweep_parameter() is not None
+    is_multi_run = user_config.loadgen.num_profile_runs > 1
+
+    # Validate dashboard UI is not used with multi-run modes
+    _validate_ui_compatibility(is_multi_run, is_sweep, service_config)
+
+    if is_multi_run or is_sweep:
         _run_multi_benchmark(user_config, service_config)
     else:
         _run_single_benchmark(user_config, service_config)
@@ -59,7 +94,10 @@ def _run_single_benchmark(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
-    from aiperf.common.tokenizer_validator import validate_tokenizer_early
+    from aiperf.common.tokenizer_validator import (
+        preload_tokenizers,
+        validate_tokenizer_early,
+    )
 
     logger = AIPerfLogger(__name__)
 
@@ -99,6 +137,17 @@ def _run_single_benchmark(
     # Validate tokenizer early (before spawning services) to fail fast.
     user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
 
+    # Preload tokenizer files into HF disk cache so child processes use
+    # local_files_only=True and make zero HF network calls.
+    asyncio.run(
+        preload_tokenizers(
+            user_config.tokenizer.resolved_names,
+            trust_remote_code=user_config.tokenizer.trust_remote_code,
+            revision=user_config.tokenizer.revision,
+            logger=logger,
+        )
+    )
+
     # Validate custom GPU metrics CSV file
     if user_config.gpu_telemetry_metrics_file:
         try:
@@ -135,39 +184,25 @@ def _run_multi_benchmark(
     user_config: UserConfig,
     service_config: ServiceConfig,
 ) -> None:
-    """Run multiple benchmarks for confidence reporting.
+    """Run multiple benchmarks for confidence reporting or parameter sweeps.
 
-    Executes num_profile_runs benchmarks with the same configuration,
-    then aggregates results and computes confidence statistics.
+    Executes benchmarks according to the detected mode:
+    - Parameter sweep only: Tests different parameter values
+    - Confidence trials only: Runs same config multiple times
+    - Both: Combines sweep and confidence (nested execution)
 
-    When convergence flags are set, uses AdaptiveStrategy for early stopping
-    and runs both ConfidenceAggregation and DetailedAggregation.
+    When convergence flags are set, uses AdaptiveStrategy for early stopping.
+
+    Follows the same pattern as _run_single_benchmark where the orchestrator
+    handles execution, aggregation, and export internally.
     """
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.enums import ConvergenceMode, ExportLevel
     from aiperf.common.logging import setup_rich_logging
-    from aiperf.exporters.aggregate import (
-        AggregateConfidenceCsvExporter,
-        AggregateConfidenceJsonExporter,
-        AggregateDetailedJsonExporter,
-        AggregateExporterConfig,
-    )
-    from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
     from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
-    from aiperf.orchestrator.strategies import FixedTrialsStrategy
-
-    # Validate and adjust UI type for multi-run mode
-    if (
-        "ui_type" in service_config.model_fields_set
-        and service_config.ui_type == UIType.DASHBOARD
-    ):
-        raise ValueError(
-            "Dashboard UI is not supported with multi-run mode (--num-profile-runs > 1) "
-            "due to terminal control limitations. "
-            "Please use '--ui simple' or '--ui none' instead."
-        )
 
     # Set default to simple if ui_type wasn't explicitly set
+    # (dashboard is already rejected by _validate_ui_compatibility)
     if "ui_type" not in service_config.model_fields_set:
         service_config.ui_type = UIType.SIMPLE
 
@@ -176,12 +211,35 @@ def _run_multi_benchmark(
 
     logger = AIPerfLogger(__name__)
 
+    # Resolve tokenizer aliases and preload files into HF disk cache once,
+    # before any subprocesses spawn. Each subprocess then finds the tokenizer
+    # cached on disk and makes zero HF network calls.
+    from aiperf.common.tokenizer_validator import (
+        preload_tokenizers,
+        validate_tokenizer_early,
+    )
+
+    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
+    asyncio.run(
+        preload_tokenizers(
+            user_config.tokenizer.resolved_names,
+            trust_remote_code=user_config.tokenizer.trust_remote_code,
+            revision=user_config.tokenizer.revision,
+            logger=logger,
+        )
+    )
+
     # Inform user about UI mode (now that logging is set up)
     if "ui_type" not in service_config.model_fields_set:
         logger.info(
             "Multi-run mode: UI automatically set to 'simple' "
             "(use '--ui none' to disable UI output)"
         )
+
+    # Detect mode for banner
+    sweep_info = user_config.loadgen.get_sweep_parameter()
+    is_sweep = sweep_info is not None
+    is_confidence = user_config.loadgen.num_profile_runs > 1
 
     # Print multi-run banner
     num_runs = user_config.loadgen.num_profile_runs
@@ -207,87 +265,112 @@ def _run_multi_benchmark(
                 "Use --export-level records or --export-level raw."
             )
 
+    # Print banner based on mode
     logger.info("=" * 80)
-    logger.info("Starting Multi-Run Confidence Reporting")
-    logger.info(f"  Number of runs: {num_runs}")
-    logger.info(f"  Confidence level: {confidence_level:.0%}")
-    logger.info(f"  Cooldown between runs: {cooldown}s")
-    if use_adaptive:
-        logger.info(f"  Convergence mode: {user_config.loadgen.convergence_mode}")
-        logger.info(f"  Convergence metric: {convergence_metric}")
+    if is_sweep and is_confidence:
+        param_name, param_values = sweep_info
+        logger.info("Starting Parameter Sweep with Confidence Trials")
+        logger.info(f"  Parameter: {param_name} = {param_values}")
+        logger.info(f"  Sweep mode: {user_config.loadgen.parameter_sweep_mode}")
+        logger.info(f"  Trials per value: {user_config.loadgen.num_profile_runs}")
+        logger.info(f"  Confidence level: {user_config.loadgen.confidence_level:.0%}")
+    elif is_sweep:
+        param_name, param_values = sweep_info
+        logger.info("Starting Parameter Sweep")
+        logger.info(f"  Parameter: {param_name} = {param_values}")
         logger.info(
-            f"  Convergence threshold: {user_config.loadgen.convergence_threshold}"
+            f"  Sweep cooldown: {user_config.loadgen.parameter_sweep_cooldown_seconds}s"
         )
-        if user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION:
+    elif is_confidence:
+        logger.info("Starting Multi-Run Confidence Reporting")
+        logger.info(f"  Number of runs: {num_runs}")
+        logger.info(f"  Confidence level: {confidence_level:.0%}")
+        logger.info(f"  Cooldown between runs: {cooldown}s")
+        if use_adaptive:
+            logger.info(f"  Convergence mode: {user_config.loadgen.convergence_mode}")
+            logger.info(f"  Convergence metric: {convergence_metric}")
             logger.info(
-                "  Note: distribution mode converges when KS p-value > threshold "
-                "(higher threshold = stricter, opposite of ci_width/cv)"
+                f"  Convergence threshold: {user_config.loadgen.convergence_threshold}"
             )
+            if user_config.loadgen.convergence_mode == ConvergenceMode.DISTRIBUTION:
+                logger.info(
+                    "  Note: distribution mode converges when KS p-value > threshold "
+                    "(higher threshold = stricter, opposite of ci_width/cv)"
+                )
+    else:
+        raise ValueError(
+            "_run_multi_benchmark requires sweep or confidence mode. "
+            "Single-run benchmarks should use _run_single_benchmark() directly."
+        )
     logger.info("=" * 80)
 
-    # Create strategy
-    if use_adaptive:
-        from aiperf.orchestrator.convergence import (
-            CIWidthConvergence,
-            CVConvergence,
-            DistributionConvergence,
-        )
-        from aiperf.orchestrator.strategies import AdaptiveStrategy
+    # Create strategy (for confidence/adaptive modes; sweep uses orchestrator auto-detect)
+    strategy = None
+    if is_confidence and not is_sweep:
+        from aiperf.orchestrator.strategies import FixedTrialsStrategy
 
-        mode = user_config.loadgen.convergence_mode
-        threshold = user_config.loadgen.convergence_threshold
-
-        if mode == ConvergenceMode.CI_WIDTH:
-            criterion = CIWidthConvergence(
-                metric=convergence_metric,
-                stat=user_config.loadgen.convergence_stat,
-                threshold=threshold,
-                confidence_level=confidence_level,
+        if use_adaptive:
+            from aiperf.orchestrator.convergence import (
+                CIWidthConvergence,
+                CVConvergence,
+                DistributionConvergence,
             )
-        elif mode == ConvergenceMode.CV:
-            criterion = CVConvergence(
-                metric=convergence_metric,
-                threshold=threshold,
-                stat=user_config.loadgen.convergence_stat,
+            from aiperf.orchestrator.strategies import AdaptiveStrategy
+
+            mode = user_config.loadgen.convergence_mode
+            threshold = user_config.loadgen.convergence_threshold
+
+            if mode == ConvergenceMode.CI_WIDTH:
+                criterion = CIWidthConvergence(
+                    metric=convergence_metric,
+                    stat=user_config.loadgen.convergence_stat,
+                    threshold=threshold,
+                    confidence_level=confidence_level,
+                )
+            elif mode == ConvergenceMode.CV:
+                criterion = CVConvergence(
+                    metric=convergence_metric,
+                    threshold=threshold,
+                    stat=user_config.loadgen.convergence_stat,
+                )
+            else:
+                criterion = DistributionConvergence(
+                    metric=convergence_metric,
+                    p_value_threshold=threshold,
+                    jsonl_filename=str(user_config.output._profile_export_jsonl_file),
+                )
+
+            effective_min_runs = min(3, num_runs)
+            if effective_min_runs < 3:
+                logger.warning(
+                    f"--num-profile-runs={num_runs} is below the recommended minimum of 3. "
+                    "Convergence checks will have reduced statistical power."
+                )
+
+            strategy = AdaptiveStrategy(
+                criterion=criterion,
+                min_runs=effective_min_runs,
+                max_runs=num_runs,
+                cooldown_seconds=cooldown,
+                auto_set_seed=user_config.loadgen.set_consistent_seed,
+                disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
             )
         else:
-            criterion = DistributionConvergence(
-                metric=convergence_metric,
-                p_value_threshold=threshold,
-                jsonl_filename=str(user_config.output._profile_export_jsonl_file),
+            strategy = FixedTrialsStrategy(
+                num_trials=num_runs,
+                cooldown_seconds=cooldown,
+                auto_set_seed=user_config.loadgen.set_consistent_seed,
+                disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
             )
-
-        effective_min_runs = min(3, num_runs)
-        if effective_min_runs < 3:
-            logger.warning(
-                f"--num-profile-runs={num_runs} is below the recommended minimum of 3. "
-                "Convergence checks will have reduced statistical power."
-            )
-
-        strategy = AdaptiveStrategy(
-            criterion=criterion,
-            min_runs=effective_min_runs,
-            max_runs=num_runs,
-            cooldown_seconds=cooldown,
-            auto_set_seed=user_config.loadgen.set_consistent_seed,
-            disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
-        )
-    else:
-        strategy = FixedTrialsStrategy(
-            num_trials=num_runs,
-            cooldown_seconds=cooldown,
-            auto_set_seed=user_config.loadgen.set_consistent_seed,
-            disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
-        )
 
     # Create orchestrator
     orchestrator = MultiRunOrchestrator(
         base_dir=user_config.output.artifact_directory, service_config=service_config
     )
 
-    # Execute runs
+    # Execute runs, aggregate, and export (orchestrator handles everything)
     try:
-        results = orchestrator.execute(user_config, strategy)
+        results = orchestrator.execute_and_export(user_config, strategy=strategy)
     except Exception:
         logger.exception("Error executing multi-run benchmark")
         raise
@@ -302,185 +385,24 @@ def _run_multi_benchmark(
         logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
     logger.info("=" * 80)
 
-    # Aggregate results if we have at least 2 successful runs
-    if len(successful_runs) >= 2:
-        logger.info("Computing aggregate statistics...")
-
-        aggregation = ConfidenceAggregation(confidence_level=confidence_level)
-        aggregate_result = aggregation.aggregate(results)
-
-        # Add cooldown to metadata
-        aggregate_result.metadata["cooldown_seconds"] = cooldown
-
-        # Write aggregate artifacts using exporters
-        aggregate_dir = strategy.get_aggregate_path(
-            user_config.output.artifact_directory
-        )
-
-        # Create exporter config
-        exporter_config = AggregateExporterConfig(
-            result=aggregate_result,
-            output_dir=aggregate_dir,
-        )
-
-        # Export both JSON and CSV in a single async context
-        # This avoids multiple asyncio.run() calls and is more efficient
-        import asyncio
-
-        # Compute detailed aggregation synchronously before async export
-        # (CPU-bound work with no benefit from async offload)
-        detailed_result = None
-        if use_adaptive and user_config.output.export_level != ExportLevel.SUMMARY:
-            from aiperf.orchestrator.aggregation.detailed import DetailedAggregation
-
-            detailed_aggregation = DetailedAggregation(
-                jsonl_filename=str(user_config.output._profile_export_jsonl_file),
+    # Check for failures and exit appropriately
+    if is_sweep and not is_confidence:
+        # Sweep-only mode
+        if len(successful_runs) < len(results):
+            logger.warning("Some sweep values failed. Check logs for details.")
+            sys.exit(1)
+        else:
+            logger.info("Parameter sweep completed successfully!")
+    elif len(successful_runs) < 2:
+        # Confidence or sweep+confidence mode needs at least 2 successful runs
+        if len(successful_runs) == 1:
+            logger.warning(
+                "Only 1 successful run - cannot compute confidence statistics. "
+                "At least 2 successful runs are required."
             )
-            detailed_result = detailed_aggregation.aggregate(results)
-            detailed_result.metadata["cooldown_seconds"] = cooldown
-
-        async def export_artifacts():
-            """Export aggregate artifacts asynchronously."""
-            # Create directory asynchronously
-            await asyncio.to_thread(aggregate_dir.mkdir, parents=True, exist_ok=True)
-
-            # Export JSON and CSV concurrently
-            json_exporter = AggregateConfidenceJsonExporter(exporter_config)
-            csv_exporter = AggregateConfidenceCsvExporter(exporter_config)
-
-            tasks = [
-                json_exporter.export(),
-                csv_exporter.export(),
-            ]
-
-            if detailed_result is not None:
-                detailed_config = AggregateExporterConfig(
-                    result=detailed_result,
-                    output_dir=aggregate_dir,
-                )
-                detailed_exporter = AggregateDetailedJsonExporter(detailed_config)
-                tasks.append(detailed_exporter.export())
-
-            return await asyncio.gather(*tasks)
-
-        export_paths = asyncio.run(export_artifacts())
-
-        json_path = export_paths[0]
-        csv_path = export_paths[1]
-        logger.info(f"Aggregate JSON written to: {json_path}")
-        logger.info(f"Aggregate CSV written to: {csv_path}")
-        if (
-            use_adaptive
-            and user_config.output.export_level != ExportLevel.SUMMARY
-            and len(export_paths) > 2
-        ):
-            logger.info(f"Collated aggregate JSON written to: {export_paths[2]}")
-
-        # Print summary
-        _print_aggregate_summary(aggregate_result, logger)
-    elif len(successful_runs) == 1:
-        logger.warning(
-            "Only 1 successful run - cannot compute confidence statistics. "
-            "At least 2 successful runs are required."
-        )
+        else:
+            logger.error(
+                "All runs failed - cannot compute aggregate statistics. "
+                "Please check the error messages above."
+            )
         sys.exit(1)
-    else:
-        logger.error(
-            "All runs failed - cannot compute aggregate statistics. "
-            "Please check the error messages above."
-        )
-        sys.exit(1)
-
-
-def _print_aggregate_summary(
-    aggregate_result: "AggregateResult", logger: "AIPerfLogger"
-) -> None:
-    """Print a comprehensive summary of aggregate statistics to console.
-
-    Args:
-        aggregate_result: AggregateResult with computed statistics
-        logger: Logger instance for output
-    """
-
-    logger.info("")
-    logger.info("=" * 80)
-    logger.info("AGGREGATE STATISTICS SUMMARY")
-    logger.info("=" * 80)
-    logger.info(f"Aggregation Type: {aggregate_result.aggregation_type}")
-    logger.info(f"Total Runs: {aggregate_result.num_runs}")
-    logger.info(f"Successful Runs: {aggregate_result.num_successful_runs}")
-
-    if aggregate_result.failed_runs:
-        logger.warning(f"Failed Runs ({len(aggregate_result.failed_runs)}):")
-        for failed in aggregate_result.failed_runs:
-            logger.warning(f"  - {failed['label']}: {failed['error']}")
-
-    # Get confidence level from metadata
-    confidence_level = aggregate_result.metadata.get("confidence_level", 0.95)
-    logger.info(f"Confidence Level: {confidence_level:.0%}")
-
-    logger.info("")
-    logger.info("Key Metrics:")
-    logger.info("-" * 80)
-
-    # Define priority metrics to display (in order of preference)
-    # We'll look for these base metric names with _avg, _p99, _max suffixes
-    priority_metrics = [
-        "request_throughput",
-        "time_to_first_token",
-        "inter_token_latency",
-        "request_latency",
-    ]
-
-    # Build list of metrics to display by finding available stat variants
-    metrics_to_display = []
-    for base_metric in priority_metrics:
-        # Look for _avg first (most common), then _p99, then _max
-        for suffix in ["_avg", "_p99", "_max", "_p50"]:
-            metric_key = f"{base_metric}{suffix}"
-            if metric_key in aggregate_result.metrics:
-                # Create display name (e.g., "Request Throughput (Avg)")
-                display_name = base_metric.replace("_", " ").title()
-                stat_name = suffix[1:].upper()  # Remove leading underscore
-                if stat_name == "AVG":
-                    stat_name = "Avg"
-                elif stat_name.startswith("P"):
-                    stat_name = f"P{stat_name[1:]}"  # P99, P50, etc.
-                else:
-                    stat_name = stat_name.capitalize()
-
-                metrics_to_display.append((metric_key, f"{display_name} ({stat_name})"))
-                break  # Only show one stat variant per base metric
-
-    metrics_found = 0
-    for metric_key, display_name in metrics_to_display:
-        metric = aggregate_result.metrics[metric_key]
-        logger.info(f"\n{display_name}:")
-        logger.info(f"  Mean:    {metric.mean:>12.4f} {metric.unit}")
-        logger.info(f"  Std Dev: {metric.std:>12.4f} {metric.unit}")
-        logger.info(f"  Min:     {metric.min:>12.4f} {metric.unit}")
-        logger.info(f"  Max:     {metric.max:>12.4f} {metric.unit}")
-        logger.info(f"  CV:      {metric.cv:>12.2%}")
-        logger.info(
-            f"  {confidence_level:.0%} CI: [{metric.ci_low:.4f}, {metric.ci_high:.4f}] {metric.unit}"
-        )
-        metrics_found += 1
-
-    if metrics_found == 0:
-        logger.warning("No key metrics found in aggregate results")
-
-    logger.info("")
-    logger.info("-" * 80)
-    logger.info("Coefficient of Variation (CV) Interpretation Guide:")
-    logger.info("  CV < 5%:   Excellent repeatability (low variance)")
-    logger.info("  CV 5-10%:  Good repeatability (moderate variance)")
-    logger.info("  CV 10-20%: Fair repeatability (consider more runs)")
-    logger.info("  CV > 20%:  High variance (investigate or increase runs)")
-    logger.info("")
-    logger.info("Confidence Interval (CI) Interpretation:")
-    logger.info(
-        f"  The {confidence_level:.0%} CI indicates the range where the true mean"
-    )
-    logger.info(f"  is likely to fall with {confidence_level:.0%} confidence.")
-    logger.info("  Narrower intervals indicate more precise estimates.")
-    logger.info("=" * 80)

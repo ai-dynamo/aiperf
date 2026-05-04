@@ -19,8 +19,9 @@ Launch a vLLM server with a vision language model:
 <!-- setup-vllm-vision-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model Qwen/Qwen2-VL-2B-Instruct
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen2-VL-2B-Instruct \
+  --enforce-eager
 ```
 <!-- /setup-vllm-vision-openai-endpoint-server -->
 

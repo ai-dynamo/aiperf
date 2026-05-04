@@ -82,6 +82,7 @@ class HandlerInput:
     """Common inputs for all request handlers."""
 
     start_perf_ns: int
+    start_timestamp_ns: int
     ctx: RequestCtx
     endpoint_path: str
     req: BaseModel
@@ -146,14 +147,17 @@ class FakeTransport(BaseTransport):
         return model_class.model_validate_json(payload)
 
     def _make_json_record(
-        self, start_perf_ns: int, response_data: dict[str, Any]
+        self,
+        start_perf_ns: int,
+        start_timestamp_ns: int,
+        response_data: dict[str, Any],
     ) -> RequestRecord:
         """Create a RequestRecord with a JSON response."""
         end_perf_ns = time.perf_counter_ns()
         return RequestRecord(
             start_perf_ns=start_perf_ns,
             end_perf_ns=end_perf_ns,
-            timestamp_ns=time.time_ns(),
+            timestamp_ns=start_timestamp_ns,
             status=200,
             responses=[
                 TextResponse(
@@ -168,6 +172,7 @@ class FakeTransport(BaseTransport):
         self,
         stream: AsyncGenerator[bytes, None],
         start_perf_ns: int,
+        start_timestamp_ns: int,
         first_token_callback: FirstTokenCallback | None,
     ) -> RequestRecord:
         """Consume an SSE stream and build a RequestRecord."""
@@ -191,7 +196,7 @@ class FakeTransport(BaseTransport):
         return RequestRecord(
             start_perf_ns=start_perf_ns,
             end_perf_ns=time.perf_counter_ns(),
-            timestamp_ns=time.time_ns(),
+            timestamp_ns=start_timestamp_ns,
             status=200,
             responses=responses,
         )
@@ -212,12 +217,19 @@ class FakeTransport(BaseTransport):
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
         """Parse request, create context, and dispatch to handler."""
+        # Capture start_perf_ns and start_timestamp_ns as a paired snapshot so
+        # `compute_time_ns(timestamp_ns, start_perf_ns, target_perf_ns)` produces
+        # correct wall-clock timestamps. Setting timestamp_ns at end-of-stream
+        # would shift request_start_ns/request_end_ns by the request's own duration
+        # and corrupt cross-request interval analysis (e.g. prefill overlap tests).
         start_perf_ns = time.perf_counter_ns()
+        start_timestamp_ns = time.time_ns()
         endpoint_path = plugins.get_endpoint_metadata(endpoint_type).endpoint_path
         req = self._parse_payload(payload, request_class)
         ctx = make_ctx(req, endpoint_path, time.perf_counter(), self.config)
         input = HandlerInput(
             start_perf_ns=start_perf_ns,
+            start_timestamp_ns=start_timestamp_ns,
             ctx=ctx,
             endpoint_path=endpoint_path,
             req=req,
@@ -384,7 +396,9 @@ class FakeTransport(BaseTransport):
         """Handle simple non-streaming requests (image, SOLIDO RAG)."""
         await inp.ctx.latency_sim.wait_for_tokens(len(inp.ctx.tokens))
         return self._make_json_record(
-            inp.start_perf_ns, inp.build_response(inp.ctx, inp.req)
+            inp.start_perf_ns,
+            inp.start_timestamp_ns,
+            inp.build_response(inp.ctx, inp.req),
         )
 
     async def _do_streaming(self, inp: HandlerInput) -> RequestRecord:
@@ -393,11 +407,18 @@ class FakeTransport(BaseTransport):
             include_usage = getattr(inp.req, "include_usage", False)
             stream = inp.stream_fn(inp.ctx, inp.endpoint_path, include_usage)
             return await self._stream_to_record(
-                stream, inp.start_perf_ns, inp.first_token_callback
+                stream,
+                inp.start_perf_ns,
+                inp.start_timestamp_ns,
+                inp.first_token_callback,
             )
 
         await inp.ctx.latency_sim.wait_for_tokens(len(inp.ctx.tokens))
-        return self._make_json_record(inp.start_perf_ns, inp.build_response(inp.ctx))
+        return self._make_json_record(
+            inp.start_perf_ns,
+            inp.start_timestamp_ns,
+            inp.build_response(inp.ctx),
+        )
 
     async def _do_embedding(self, inp: HandlerInput) -> RequestRecord:
         """Handle embedding requests."""
@@ -412,7 +433,11 @@ class FakeTransport(BaseTransport):
             if inp.build_response
             else _build_embedding_response_data(inp.ctx, inputs)
         )
-        return self._make_json_record(inp.start_perf_ns, response_data)
+        return self._make_json_record(
+            inp.start_perf_ns,
+            inp.start_timestamp_ns,
+            response_data,
+        )
 
     async def _do_ranking(self, inp: HandlerInput) -> RequestRecord:
         """Handle ranking requests."""
@@ -425,12 +450,15 @@ class FakeTransport(BaseTransport):
             len(inp.req.passage_texts),
         )
         return self._make_json_record(
-            inp.start_perf_ns, inp.build_response(inp.ctx, ranked_scores)
+            inp.start_perf_ns,
+            inp.start_timestamp_ns,
+            inp.build_response(inp.ctx, ranked_scores),
         )
 
     async def _do_image_retrieval(self, payload: RequestInputT) -> RequestRecord:
         """Handle image retrieval requests (bypasses _dispatch since no ctx needed)."""
         start_perf_ns = time.perf_counter_ns()
+        start_timestamp_ns = time.time_ns()
         req = self._parse_payload(payload, ImageRetrievalRequest)
         await _wait_for_processing(
             self.config.image_retrieval_base_latency,
@@ -438,7 +466,9 @@ class FakeTransport(BaseTransport):
             len(req.input),
         )
         return self._make_json_record(
-            start_perf_ns, _build_image_retrieval_response_data(req)
+            start_perf_ns,
+            start_timestamp_ns,
+            _build_image_retrieval_response_data(req),
         )
 
 

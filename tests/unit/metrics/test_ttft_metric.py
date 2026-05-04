@@ -51,7 +51,7 @@ class TestTTFTMetric:
         record = create_record(start_ns=100, responses=[90])
 
         metric = TTFTMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_ttft_no_responses(self):
@@ -60,5 +60,5 @@ class TestTTFTMetric:
         record.responses = []
 
         metric = TTFTMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())

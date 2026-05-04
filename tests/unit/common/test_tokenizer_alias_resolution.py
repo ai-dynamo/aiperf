@@ -20,8 +20,10 @@ def _create_mock_response(status_code: int = 404) -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
-def _no_cache_shortcut() -> Iterator[None]:
-    """Disable cache-based shortcut so tests exercise the network path."""
+def _no_cache_shortcut(monkeypatch) -> Iterator[None]:
+    """Disable cache-based and offline-mode shortcuts so tests exercise the network path."""
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     with patch("aiperf.common.tokenizer._is_hf_cached", return_value=False):
         yield
 

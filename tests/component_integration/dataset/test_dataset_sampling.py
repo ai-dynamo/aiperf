@@ -47,8 +47,11 @@ class TestDatasetSamplingStrategies:
         assert analyzer.credits_balanced()
         assert analyzer.total_credits == 10
 
-        # Validate sequential order
-        conversation_ids = [r.metadata.conversation_id for r in result.jsonl]
+        # JSONL is ordered by completion under concurrent workers, so sort by
+        # session_num (the issuance index) to recover issuance order, then
+        # verify each Nth issued request sampled the Nth dataset entry.
+        records = sorted(result.jsonl, key=lambda r: r.metadata.session_num)
+        conversation_ids = [r.metadata.conversation_id for r in records]
         assert conversation_ids == [f"session_{i:06d}" for i in range(10)], (
             f"Sequential sampling should produce IDs in order [0-9], got {conversation_ids}"
         )

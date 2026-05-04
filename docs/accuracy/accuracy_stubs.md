@@ -5,7 +5,9 @@
 
 # Accuracy Benchmarking: Stub Implementation Guide
 
-This document catalogs every stubbed method in the accuracy benchmarking scaffolding. All stubs currently raise `NotImplementedError` and are ready for implementation. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline -- the performance benchmarking path is unaffected.
+This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
+
+**Status summary (as of PR #815):** 6 of the original stubs are now fully implemented. Use them as canonical references when adding the remaining stubs.
 
 ## Table of Contents
 
@@ -13,10 +15,10 @@ This document catalogs every stubbed method in the accuracy benchmarking scaffol
 - [Data Models](#data-models)
 - [Protocols](#protocols)
 - [CLI Configuration](#cli-configuration)
-- [Graders (4 stubs)](#graders)
-- [Benchmarks (9 stubs)](#benchmarks)
-- [Processors (2 stubs)](#processors)
-- [Exporters (2 stubs)](#exporters)
+- [Graders](#graders)
+- [Benchmarks](#benchmarks)
+- [Processors](#processors)
+- [Exporters](#exporters)
 - [Plugin Registration](#plugin-registration)
 - [Implementation Notes](#implementation-notes)
 
@@ -24,34 +26,14 @@ This document catalogs every stubbed method in the accuracy benchmarking scaffol
 
 ## Architecture Overview
 
-```
-                  +-------------------+
-                  | AccuracyConfig    |  <-- 7 CLI flags (--accuracy-*)
-                  | enabled property  |
-                  +--------+----------+
-                           |
-           +---------------+----------------+
-           |                                |
-  +--------v---------+          +-----------v-----------+
-  | AccuracyBenchmark|          | AccuracyGrader        |
-  | (9 benchmarks)   |          | (4 graders)           |
-  | load_problems()  |          | grade() + extract()   |
-  +--------+---------+          +-----------+-----------+
-           |                                |
-           v                                v
-  +------------------+          +------------------------+
-  | AccuracyRecord   |          | AccuracyResults        |
-  | Processor        |          | Processor              |
-  | process_record() |          | process_result()       |
-  +--------+---------+          | summarize()            |
-           |                    +-----------+------------+
-           |                                |
-           +---------------+----------------+
-                           |
-              +------------v-----------+
-              | AccuracyConsoleExporter |
-              | AccuracyDataExporter    |
-              +------------------------+
+```mermaid
+graph TD
+    A[AccuracyConfig<br/>7 CLI flags --accuracy-*<br/>enabled property] --> B[AccuracyBenchmark<br/>9 benchmarks<br/>load_problems]
+    A --> C[AccuracyGrader<br/>4 graders<br/>grade + extract]
+    B --> D[AccuracyRecordProcessor<br/>process_record]
+    C --> D
+    D --> E[AccuracyResultsProcessor<br/>process_result<br/>summarize]
+    E --> F[AccuracyConsoleExporter<br/>AccuracyDataExporter]
 ```
 
 All processors and exporters **self-disable** when `user_config.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
@@ -133,7 +115,7 @@ All 7 flags appear under the `Accuracy` group in `aiperf profile --help`.
 
 **Key property:** `AccuracyConfig.enabled -> bool` returns `self.benchmark is not None`.
 
-**Stub validator** in `UserConfig.validate_accuracy_config()` is a no-op `pass` -- add validation logic here (e.g., verify benchmark name is a valid `AccuracyBenchmarkType`).
+**Stub validator** in `UserConfig.validate_accuracy_config()` is a no-op `pass` — add validation logic here (e.g., verify benchmark name is a valid `AccuracyBenchmarkType`).
 
 ---
 
@@ -152,14 +134,19 @@ class BaseGrader(AIPerfLoggerMixin):
     def extract_answer(self, response_text: str, **kwargs) -> str                               # raises NotImplementedError
 ```
 
-### Stub Implementations
+### Implemented
+
+| # | Class | File | Plugin Key | Description |
+|---|-------|------|------------|-------------|
+| 1 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | **IMPLEMENTED in PR #815** — canonical reference for new graders. Matches choice labels (A/B/C/D) by regex extraction then exact comparison. |
+
+### Still Stubbed
 
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | Exact string matching against ground truth |
 | 2 | `MathGrader` | `graders/math.py` | `math` | Mathematical expression equivalence |
-| 3 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | Match choice labels (A/B/C/D) |
-| 4 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
+| 3 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | Execute code and compare output |
 
 **Each grader has 2 methods to implement:**
 
@@ -174,19 +161,24 @@ def extract_answer(self, response_text: str, **kwargs) -> str
 
 All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 
-### Stub Implementations
+### Implemented
 
 | # | Class | File | Plugin Key | Default Grader | Default N-Shots |
 |---|-------|------|------------|----------------|-----------------|
-| 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 |
-| 2 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 |
-| 3 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
-| 4 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
-| 5 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
-| 6 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
-| 7 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
-| 8 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
-| 9 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
+| 1 | `MMLUBenchmark` | `benchmarks/mmlu.py` | `mmlu` | `multiple_choice` | 5 | **IMPLEMENTED in PR #815** — canonical reference for new benchmarks. Downloads via HuggingFace datasets, handles few-shot formatting and CoT. |
+
+### Still Stubbed
+
+| # | Class | File | Plugin Key | Default Grader | Default N-Shots |
+|---|-------|------|------------|----------------|-----------------|
+| 1 | `AIMEBenchmark` | `benchmarks/aime.py` | `aime` | `math` | 0 |
+| 2 | `HellaSwagBenchmark` | `benchmarks/hellaswag.py` | `hellaswag` | `multiple_choice` | 0 |
+| 3 | `BigBenchBenchmark` | `benchmarks/bigbench.py` | `bigbench` | `exact_match` | 3 |
+| 4 | `AIME24Benchmark` | `benchmarks/aime24.py` | `aime24` | `math` | 0 |
+| 5 | `AIME25Benchmark` | `benchmarks/aime25.py` | `aime25` | `math` | 0 |
+| 6 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `math` | 0 |
+| 7 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `multiple_choice` | 0 |
+| 8 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 |
 
 **Each benchmark has 1 method to implement:**
 
@@ -205,7 +197,7 @@ plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "mmlu")  # -> {"default_grad
 
 ## Processors
 
-### AccuracyRecordProcessor
+### AccuracyRecordProcessor — IMPLEMENTED in PR #815
 
 **File:** `src/aiperf/accuracy/accuracy_record_processor.py`
 **Parent:** `AIPerfLifecycleMixin`
@@ -213,15 +205,17 @@ plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "mmlu")  # -> {"default_grad
 **Plugin key:** `accuracy_record` (under `record_processor`)
 **Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
 
+This class is fully implemented and serves as the canonical reference for wiring grading into the record processing pipeline.
+
 ```python
 async def process_record(
     self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-) -> MetricRecordDict                                                          # raises NotImplementedError
+) -> MetricRecordDict                                                          # IMPLEMENTED in PR #815
 ```
 
 **Reference implementation:** `MetricRecordProcessor` in `src/aiperf/post_processors/metric_record_processor.py`
 
-### AccuracyResultsProcessor
+### AccuracyResultsProcessor — IMPLEMENTED in PR #815
 
 **File:** `src/aiperf/accuracy/accuracy_results_processor.py`
 **Parent:** `AIPerfLifecycleMixin`
@@ -229,9 +223,11 @@ async def process_record(
 **Plugin key:** `accuracy_results` (under `results_processor`)
 **Disables via:** `PostProcessorDisabled` when `not user_config.accuracy.enabled`
 
+This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics.
+
 ```python
-async def process_result(self, record_data: MetricRecordsData) -> None         # raises NotImplementedError
-async def summarize(self) -> list[MetricResult]                                # raises NotImplementedError
+async def process_result(self, record_data: MetricRecordsData) -> None         # IMPLEMENTED in PR #815
+async def summarize(self) -> list[MetricResult]                                # IMPLEMENTED in PR #815
 ```
 
 **Reference implementation:** `MetricResultsProcessor` in `src/aiperf/post_processors/metric_results_processor.py`
@@ -240,7 +236,7 @@ async def summarize(self) -> list[MetricResult]                                #
 
 ## Exporters
 
-### AccuracyConsoleExporter
+### AccuracyConsoleExporter — IMPLEMENTED in PR #815
 
 **File:** `src/aiperf/accuracy/accuracy_console_exporter.py`
 **Parent:** `AIPerfLoggerMixin`
@@ -248,13 +244,15 @@ async def summarize(self) -> list[MetricResult]                                #
 **Plugin key:** `accuracy` (under `console_exporter`)
 **Disables via:** `ConsoleExporterDisabled` when `not user_config.accuracy.enabled`
 
+This class is fully implemented and serves as the canonical reference for displaying accuracy results in the terminal.
+
 ```python
-async def export(self, console: Console) -> None                               # raises NotImplementedError
+async def export(self, console: Console) -> None                               # IMPLEMENTED in PR #815
 ```
 
 **Reference implementation:** `ConsoleMetricsExporter` in `src/aiperf/exporters/console_metrics_exporter.py`
 
-### AccuracyDataExporter
+### AccuracyDataExporter — IMPLEMENTED in PR #815
 
 **File:** `src/aiperf/accuracy/accuracy_data_exporter.py`
 **Parent:** `AIPerfLoggerMixin`
@@ -262,9 +260,11 @@ async def export(self, console: Console) -> None                               #
 **Plugin key:** `accuracy_csv` (under `data_exporter`)
 **Disables via:** `DataExporterDisabled` when `not user_config.accuracy.enabled`
 
+This class is fully implemented and serves as the canonical reference for writing accuracy results to CSV.
+
 ```python
-def get_export_info(self) -> FileExportInfo                                    # raises NotImplementedError
-async def export(self) -> None                                                 # raises NotImplementedError
+def get_export_info(self) -> FileExportInfo                                    # IMPLEMENTED in PR #815
+async def export(self) -> None                                                 # IMPLEMENTED in PR #815
 ```
 
 **Reference implementation:** `MetricsCsvExporter` in `src/aiperf/exporters/metrics_csv_exporter.py`
@@ -302,39 +302,41 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 
 ### Method Count Summary
 
-| Component | Stubs | Methods per Stub | Total Methods |
-|-----------|-------|------------------|---------------|
-| Graders | 4 | 2 (`grade`, `extract_answer`) | 8 |
-| Benchmarks | 9 | 1 (`load_problems`) | 9 |
-| Record Processor | 1 | 1 (`process_record`) | 1 |
-| Results Processor | 1 | 2 (`process_result`, `summarize`) | 2 |
-| Console Exporter | 1 | 1 (`export`) | 1 |
-| Data Exporter | 1 | 2 (`get_export_info`, `export`) | 2 |
-| Config Validator | 1 | 1 (`validate_accuracy_config`) | 1 |
-| **Total** | **18** | | **24** |
+| Component | Implemented | Still Stubbed | Methods per Stub | Remaining Methods |
+|-----------|-------------|---------------|------------------|-------------------|
+| Graders | 1 (`MultipleChoiceGrader`) | 3 | 2 (`grade`, `extract_answer`) | 6 |
+| Benchmarks | 1 (`MMLUBenchmark`) | 8 | 1 (`load_problems`) | 8 |
+| Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
+| Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
+| Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
+| Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
+| Config Validator | 0 | 1 | 1 (`validate_accuracy_config`) | 1 |
+| **Total** | **6** | **13** | | **15** |
 
 ### Self-Disabling Pattern
 
-Processors and exporters raise their `Disabled` exception **in `__init__`** when accuracy is off. The existing framework catches these and silently skips the plugin. No code changes needed to support this -- it uses the same pattern as `RawRecordWriterProcessor` and `ServerMetricsCsvExporter`.
+Processors and exporters raise their `Disabled` exception **in `__init__`** when accuracy is off. The existing framework catches these and silently skips the plugin. No code changes needed to support this — it uses the same pattern as `RawRecordWriterProcessor` and `ServerMetricsCsvExporter`.
 
 ### Suggested Implementation Order
 
-1. **Models** -- finalize `GradingResult` and `BenchmarkProblem` fields if needed
-2. **Graders** -- start with `ExactMatchGrader` (simplest), then `MultipleChoiceGrader`
-3. **Benchmarks** -- start with `MMLUBenchmark` (most common), wire up dataset loading
-4. **Config validator** -- validate benchmark name against `AccuracyBenchmarkType` enum
-5. **Processors** -- wire grading into the record processing pipeline
-6. **Exporters** -- display results in console and write CSV output
-7. **Integration** -- decide how `BenchmarkProblem` flows into the `Conversation`-based pipeline
+The processors, exporters, and one grader/benchmark pair are already wired end-to-end. Start from the already-working pipeline:
+
+1. **Graders** — use `MultipleChoiceGrader` as reference; implement `ExactMatchGrader` next (simplest), then `MathGrader`
+2. **Benchmarks** — use `MMLUBenchmark` as reference; implement dataset loading for each remaining benchmark
+3. **Config validator** — validate benchmark name against `AccuracyBenchmarkType` enum in `UserConfig.validate_accuracy_config()`
 
 ### Key Files for Reference
 
 | What | Where |
 |------|-------|
+| **Canonical grader** | `src/aiperf/accuracy/graders/multiple_choice.py` |
+| **Canonical benchmark** | `src/aiperf/accuracy/benchmarks/mmlu.py` |
+| **Canonical record processor** | `src/aiperf/accuracy/accuracy_record_processor.py` |
+| **Canonical results processor** | `src/aiperf/accuracy/accuracy_results_processor.py` |
+| **Canonical console exporter** | `src/aiperf/accuracy/accuracy_console_exporter.py` |
+| **Canonical data exporter** | `src/aiperf/accuracy/accuracy_data_exporter.py` |
 | Disabled exception pattern | `src/aiperf/post_processors/raw_record_writer_processor.py:47` |
 | Record processor protocol | `src/aiperf/post_processors/protocols.py` |
 | Exporter protocols | `src/aiperf/exporters/protocols.py` |
-| Console exporter example | `src/aiperf/exporters/console_metrics_exporter.py` |
-| Data exporter example | `src/aiperf/exporters/metrics_csv_exporter.py` |
 | Plugin lookup API | `plugins.get_class(PluginType.ACCURACY_GRADER, "exact_match")` |
 | Metadata lookup API | `plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "mmlu")` |

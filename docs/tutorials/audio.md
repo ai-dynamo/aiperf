@@ -14,7 +14,7 @@ This guide covers profiling audio models using OpenAI-compatible chat completion
 
 ## Start a vLLM Server
 
-Launch the vLLM server with Qwen2-Audio-7B-Instruct. Audio support requires the `vllm[audio]` extras to be installed:
+Launch the vLLM server with Qwen2.5-Omni-3B. Audio support requires the `vllm[audio]` extras to be installed:
 
 <!-- setup-vllm-audio-openai-endpoint-server -->
 ```bash
@@ -25,8 +25,9 @@ RUN pip install 'vllm[audio]'
 EOF
 
 # Run the server
-docker run --gpus all -p 8000:8000 vllm-audio \
-  --model Qwen/Qwen2-Audio-7B-Instruct \
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm-audio \
+  --model Qwen/Qwen2.5-Omni-3B \
+  --enforce-eager \
   --trust-remote-code
 ```
 <!-- /setup-vllm-audio-openai-endpoint-server -->
@@ -36,7 +37,7 @@ Verify the server is ready:
 
 <!-- health-check-vllm-audio-openai-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2-Audio-7B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen2.5-Omni-3B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
 ```
 <!-- /health-check-vllm-audio-openai-endpoint-server -->
 
@@ -49,7 +50,7 @@ AIPerf can generate synthetic audio for benchmarking:
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --audio-length-mean 5.0 \
     --audio-format wav \
@@ -83,14 +84,14 @@ aiperf profile \
 │             Request Count (requests) │    20.00 │    N/A │       N/A │       N/A │       N/A │    N/A │      N/A │
 └──────────────────────────────────────┴──────────┴────────┴───────────┴───────────┴───────────┴────────┴──────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --audio-length-mean 5.0
+CLI Command: aiperf profile --model 'Qwen/Qwen2.5-Omni-3B' --endpoint-type 'chat' --audio-length-mean 5.0
 --audio-format 'wav' --audio-sample-rates 16 --streaming --url 'localhost:8000' --request-count 20 --concurrency 4
 Benchmark Duration: 21.80 sec
 CSV Export:
-artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.csv
+artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency4/profile_export_aiperf.csv
 JSON Export:
-artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/profile_export_aiperf.json
-Log File: artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency4/logs/aiperf.log
+artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency4/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency4/logs/aiperf.log
 ```
 
 To add text prompts alongside audio, include `--synthetic-input-tokens-mean 100`
@@ -111,7 +112,7 @@ cat <<EOF > inputs.jsonl
 EOF
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --input-file inputs.jsonl \
     --custom-dataset-type single_turn \
@@ -148,12 +149,12 @@ AIPerf will automatically:
 │             Request Count (requests) │     3.00 │    N/A │      N/A │      N/A │      N/A │    N/A │    N/A │
 └──────────────────────────────────────┴──────────┴────────┴──────────┴──────────┴──────────┴────────┴────────┘
 
-CLI Command: aiperf profile --model 'Qwen/Qwen2-Audio-7B-Instruct' --endpoint-type 'chat' --input-file
+CLI Command: aiperf profile --model 'Qwen/Qwen2.5-Omni-3B' --endpoint-type 'chat' --input-file
 'inputs_filepaths.jsonl' --custom-dataset-type 'single_turn' --streaming --url 'localhost:8000' --request-count 3
 Benchmark Duration: 3.16 sec
 CSV Export:
-artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.csv
+artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency1/profile_export_aiperf.csv
 JSON Export:
-artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/profile_export_aiperf.json
-Log File: artifacts/Qwen_Qwen2-Audio-7B-Instruct-openai-chat-concurrency1/logs/aiperf.log
+artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency1/profile_export_aiperf.json
+Log File: artifacts/Qwen_Qwen2.5-Omni-3B-openai-chat-concurrency1/logs/aiperf.log
 ```

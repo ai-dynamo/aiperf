@@ -1,0 +1,4 @@
+interface:
+  display_name: "AIPerf LLM-Ergonomics Review"
+  short_description: "Review AIPerf code for agent-friendly semantics"
+  default_prompt: "Use $aiperf-llm-ergonomics-review to review this AIPerf branch before PR."

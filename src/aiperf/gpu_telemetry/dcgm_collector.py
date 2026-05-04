@@ -56,6 +56,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
     def __init__(
         self,
         dcgm_url: str,
+        *,
         collection_interval: float = Environment.GPU.COLLECTION_INTERVAL,
         reachability_timeout: float = Environment.GPU.REACHABILITY_TIMEOUT,
         record_callback: TRecordCallback | None = None,

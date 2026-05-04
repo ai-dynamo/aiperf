@@ -579,6 +579,14 @@ class AIPerfCLI:
         """Raise detailed error for failed AIPerf run."""
         error_parts = [f"AIPerf process failed with exit code {result.exit_code}\n"]
 
+        # Include stderr if available
+        if result.stderr:
+            error_parts.append(f"\n{'=' * 80}\nSTDERR:\n{'=' * 80}\n{result.stderr}\n")
+
+        # Include stdout if available
+        if result.stdout:
+            error_parts.append(f"\n{'=' * 80}\nSTDOUT:\n{'=' * 80}\n{result.stdout}\n")
+
         if hasattr(perf_results, "log") and perf_results.log:
             error_parts.append(
                 f"\n{'=' * 80}\nAIPERF LOG (logs/aiperf.log):\n{'=' * 80}\n"

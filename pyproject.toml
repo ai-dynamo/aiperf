@@ -11,7 +11,7 @@ allow-direct-references = true
 
 [project]
 name = "aiperf"
-version = "0.7.0"
+version = "0.8.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -43,6 +43,7 @@ dependencies = [
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
   "prometheus_client~=0.23.1",
+  "protobuf>=4", # Loose on purpose: required by some HF tokenizers (e.g. T5/LLaMA SentencePiece converters); let it co-resolve with transformers/grpc/etc.
   "psutil~=7.0.0",
   "pyarrow>=18.0.0",
   "pydantic>=2.10.0,<3.0.0",
@@ -52,6 +53,7 @@ dependencies = [
   "ruamel.yaml~=0.18.12",
   "seaborn~=0.13.2",
   "scipy>=1.13.0",
+  "sentencepiece>=0.2.0", # Loose on purpose: required by SentencePiece-based tokenizers (T5, LLaMA, XLNet, etc.) so the default install just works.
   "setproctitle~=1.3.6",
   "soundfile~=0.13.1",
   "starlette-compress>=1.0.1",
@@ -62,6 +64,7 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "uvloop~=0.21.0; platform_system != 'Windows'",
   "zstandard>=0.25.0",
+  "crick~=0.0.8",
 ]
 
 # CLI Entrypoints
@@ -76,6 +79,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",
+  "hypothesis>=6.0.0",
   "looptime>=0.5",
   "pre-commit>=4.2.0",
   "pytest-asyncio",
@@ -84,6 +88,11 @@ dev = [
   "pytest-xdist>=3.8.0",
   "ruff>=0.14.0,<0.15.0",
   "trustme>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.152.4",
 ]
 
 [tool.ruff]
@@ -110,6 +119,37 @@ select = [
 # Ignore line length errors, ruff format will handle this but
 # can have some lines that are slightly over due to the way formatting works
 ignore = ["E501"]
+
+# LLM-ergonomics rules (PLR0915, PLR0912, C901, TID251) are deliberately
+# NOT in `select` above. They are enforced out-of-band via
+# ``tools/ruff_baselined.py``, which filters ruff's output through
+# ``tools/ruff_baseline.json`` (keyed on (rule, file, function-name)). This
+# avoids per-line ``# noqa`` noise and per-file exemptions while still
+# catching NEW violations in files that already have grandfathered ones.
+# The threshold/config blocks below are kept so that ``ruff check --select
+# PLR0915,...`` (invoked by the wrapper and available for ad-hoc runs)
+# honors the project's tunings.
+
+[tool.ruff.lint.pylint]
+# Match tools/check_ergonomics.py thresholds.
+max-statements = 50  # function-size proxy (custom tool targets 80 lines)
+max-branches = 12    # nesting proxy (custom tool targets depth 5)
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Enforced ONLY via the wrapper (``tools/ruff_baselined.py`` passes
+# ``--select TID251`` explicitly) — plain ``ruff check`` / ``make lint``
+# does NOT fire these because TID251 is intentionally absent from
+# ``select`` above. ``tools/check_ergonomics.py`` is the second
+# enforcement path: its ``stdlib-json`` axis flags the same imports via
+# AST walk, independent of ruff. Both run as pre-commit hooks.
+# Enforce orjson over stdlib json (CLAUDE.md standard).
+"json.dumps".msg = "Use orjson.dumps(obj).decode() instead. Add option=orjson.OPT_INDENT_2 only when pretty-printed output is required (configs, manifests, debug exports) — the default must stay compact to preserve byte-for-byte equivalence for tests, JSONL, and cache keys."
+"json.loads".msg = "Use orjson.loads instead."
+"json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
+"json.load".msg = "Use orjson.loads on file bytes instead."
 
 [tool.pytest.ini_options]
 # Basic pytest configuration

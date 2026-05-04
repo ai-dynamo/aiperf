@@ -107,7 +107,7 @@ class TestCliConvergenceStrategyWiring:
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_no_convergence_flags_uses_fixed_trials(self, mock_orch_cls, tmp_path):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute_and_export.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
 
         config = _make_user_config(
@@ -118,7 +118,7 @@ class TestCliConvergenceStrategyWiring:
 
         _run_multi_benchmark(config, _make_service_config())
 
-        strategy = mock_orch.execute.call_args[0][1]
+        strategy = mock_orch.execute_and_export.call_args[1]["strategy"]
         assert isinstance(strategy, FixedTrialsStrategy)
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
@@ -126,7 +126,7 @@ class TestCliConvergenceStrategyWiring:
         self, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute_and_export.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
 
         config = _make_user_config(
@@ -142,7 +142,7 @@ class TestCliConvergenceStrategyWiring:
 
         _run_multi_benchmark(config, _make_service_config())
 
-        strategy = mock_orch.execute.call_args[0][1]
+        strategy = mock_orch.execute_and_export.call_args[1]["strategy"]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, CIWidthConvergence)
         assert strategy.criterion._metric == "time_to_first_token"
@@ -153,7 +153,7 @@ class TestCliConvergenceStrategyWiring:
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_cv_mode_creates_adaptive_with_cv(self, mock_orch_cls, tmp_path):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute_and_export.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
 
         config = _make_user_config(
@@ -168,7 +168,7 @@ class TestCliConvergenceStrategyWiring:
 
         _run_multi_benchmark(config, _make_service_config())
 
-        strategy = mock_orch.execute.call_args[0][1]
+        strategy = mock_orch.execute_and_export.call_args[1]["strategy"]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, CVConvergence)
         assert strategy.criterion._metric == "request_latency"
@@ -179,7 +179,7 @@ class TestCliConvergenceStrategyWiring:
         self, mock_orch_cls, tmp_path
     ):
         mock_orch = MagicMock()
-        mock_orch.execute.return_value = _make_successful_results(3)
+        mock_orch.execute_and_export.return_value = _make_successful_results(3)
         mock_orch_cls.return_value = mock_orch
 
         config = _make_user_config(
@@ -195,7 +195,7 @@ class TestCliConvergenceStrategyWiring:
 
         _run_multi_benchmark(config, _make_service_config())
 
-        strategy = mock_orch.execute.call_args[0][1]
+        strategy = mock_orch.execute_and_export.call_args[1]["strategy"]
         assert isinstance(strategy, AdaptiveStrategy)
         assert isinstance(strategy.criterion, DistributionConvergence)
         assert strategy.criterion._metric == "time_to_first_token"

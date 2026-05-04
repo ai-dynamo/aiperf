@@ -22,6 +22,7 @@ from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
+    DatasetConfiguredNotification,
     MetricRecordsData,
     MetricRecordsMessage,
     ProcessRecordsCommand,
@@ -373,6 +374,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._server_metrics_state.error_counts[
                     ErrorDetails.from_exception(error)
                 ] += 1
+
+    @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
+    async def _on_dataset_configured(
+        self, message: DatasetConfiguredNotification
+    ) -> None:
+        for processor in self._metric_results_processors:
+            if hasattr(processor, "on_dataset_configured"):
+                processor.on_dataset_configured(message.metadata)
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(
