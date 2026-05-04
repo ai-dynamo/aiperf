@@ -105,6 +105,8 @@ The sections below provide detailed descriptions, requirements, and notes for ea
 
 AIPerf computes metrics in three distinct phases during benchmark execution: **Record Metrics**, **Aggregate Metrics**, and **Derived Metrics**.
 
+> The metric type also determines which stat fields appear in `profile_export_aiperf.json` per metric — see [JSON Export Schema](reference/json-export-schema.md) for the per-field presence rules and version history.
+
 ## Record Metrics
 
 Record Metrics are computed **individually** for **each request** and its **response(s)** during the benchmark run. A single request may have one response (non-streaming) or multiple responses (streaming). These metrics capture **per-request characteristics** such as latency, token counts, and streaming behavior. Record metrics produce **statistical distributions** (min, max, mean, median, p90, p99, etc.) that reveal performance variability across requests.
