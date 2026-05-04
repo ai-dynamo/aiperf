@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from aiperf.config import AIPerfConfig
+from aiperf.config import AIPerfConfig, BenchmarkConfig
 from aiperf.config.artifacts import GpuTelemetryConfig, ServerMetricsConfig
 from aiperf.config.distributions import (
     Distribution,
@@ -28,13 +28,13 @@ PRESERVE = "x-kubernetes-preserve-unknown-fields"
 
 
 def test_aiperf_config_models_field_marks_preserve_unknown_fields():
-    """AIPerfConfig.models accepts str | list[str] | ModelsAdvanced — must mark preserve-unknown.
+    """BenchmarkConfig.models accepts str | list[str] | ModelsAdvanced — must mark preserve-unknown.
 
     The marker lives on the field-level property schema (which sits beside the
     ``$ref`` to ModelsAdvanced); it is the field-level extras dict that the CRD
-    generator picks up when it walks AIPerfConfig.
+    generator picks up when it walks BenchmarkConfig (the swept body).
     """
-    schema = AIPerfConfig.model_json_schema()
+    schema = BenchmarkConfig.model_json_schema()
     models_prop = schema["properties"]["models"]
     assert models_prop.get(PRESERVE) is True, (
         f"models field must mark {PRESERVE}=true (it accepts str/list/object shorthand); "
@@ -93,11 +93,15 @@ def test_distribution_subclasses_mark_preserve_unknown_fields():
 
 
 def test_aiperf_config_schema_exposes_top_level_shortcuts():
-    """model/dataset/warmup/profiling appear as optional schema siblings with preserve-unknown."""
-    schema = AIPerfConfig.model_json_schema()
+    """model/dataset/warmup/profiling appear as optional schema siblings with preserve-unknown.
+
+    These shortcuts live on BenchmarkConfig (the body), not on the AIPerfConfig
+    envelope. The CRD generator walks BenchmarkConfig's properties.
+    """
+    schema = BenchmarkConfig.model_json_schema()
     props = schema["properties"]
     for key in ("model", "dataset", "warmup", "profiling"):
-        assert key in props, f"AIPerfConfig schema missing shortcut sibling {key!r}"
+        assert key in props, f"BenchmarkConfig schema missing shortcut sibling {key!r}"
         assert props[key].get(PRESERVE) is True, (
             f"shortcut {key!r} must mark {PRESERVE}=true; got: {props[key]!r}"
         )
@@ -107,17 +111,19 @@ def test_aiperf_config_runtime_still_validates_with_string_model_shortcut():
     """The before-validator hoist is unchanged — passing model: 'foo' still works after the field is exposed."""
     cfg = AIPerfConfig.model_validate(
         {
-            "model": "test-model",
-            "endpoint": {"type": "chat", "url": "http://x:8000"},
-            "phases": [
-                {
-                    "name": "profiling",
-                    "type": "concurrency",
-                    "concurrency": 1,
-                    "requests": 1,
-                }
-            ],
-            "datasets": [{"name": "default", "type": "synthetic"}],
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"type": "chat", "url": "http://x:8000"},
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+                "datasets": [{"name": "default", "type": "synthetic"}],
+            }
         }
     )
     assert cfg.benchmark.models.items[0].name == "test-model"
@@ -127,20 +133,22 @@ def test_aiperf_config_dump_excludes_shortcut_siblings():
     """Adding the shortcut as a real field must not pollute model_dump output."""
     cfg = AIPerfConfig.model_validate(
         {
-            "model": "test-model",
-            "endpoint": {"type": "chat", "url": "http://x:8000"},
-            "phases": [
-                {
-                    "name": "profiling",
-                    "type": "concurrency",
-                    "concurrency": 1,
-                    "requests": 1,
-                }
-            ],
-            "datasets": [{"name": "default", "type": "synthetic"}],
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"type": "chat", "url": "http://x:8000"},
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+                "datasets": [{"name": "default", "type": "synthetic"}],
+            }
         }
     )
-    dumped = cfg.model_dump(exclude_none=True)
+    dumped = cfg.benchmark.model_dump(exclude_none=True)
     for shortcut in ("model", "dataset", "warmup", "profiling"):
         assert shortcut not in dumped, (
             f"{shortcut!r} leaked into canonical model_dump; the field must be exclude=True"

@@ -142,11 +142,11 @@ benchmark:
     sliceDuration: 60
     showTraceTiming: true
     perChunkData: true
-gpuTelemetry:
-  enabled: false
+  gpuTelemetry:
+    enabled: false
 
-serverMetrics:
-  enabled: false
+  serverMetrics:
+    enabled: false
 
 """)
 
@@ -183,8 +183,8 @@ benchmark:
   gpu_telemetry:
     enabled: false
 
-serverMetrics:
-  enabled: false
+  serverMetrics:
+    enabled: false
 """)
 
 
@@ -719,11 +719,11 @@ benchmark:
     - {name: d, type: synthetic}
   phases:
     - {name: p, type: concurrency, requests: 1}
-serverMetrics:
-  enabled: true
-  discovery:
-    mode: kubernetes
-    labelSelector: app=vllm
+  serverMetrics:
+    enabled: true
+    discovery:
+      mode: kubernetes
+      labelSelector: app=vllm
 """)
         config = load_config_from_string(yaml_str)
         assert config.benchmark.server_metrics.discovery.label_selector == "app=vllm"
@@ -783,17 +783,24 @@ class TestJsonSchemaCamelCase:
     """Verify JSON schema property names are camelCase."""
 
     def test_top_level_schema_keys(self) -> None:
+        # Envelope: AIPerfConfig has benchmark, sweep, multiRun, variables, randomSeed.
+        # Body fields (models, endpoint, gpuTelemetry, etc.) live in BenchmarkConfig.
         schema = AIPerfConfig.model_json_schema()
         props = schema.get("properties", {})
-        assert "gpuTelemetry" in props
-        assert "serverMetrics" in props
         assert "randomSeed" in props
         assert "multiRun" in props
+        assert "benchmark" in props
+
+        from aiperf.config import BenchmarkConfig
+
+        body_props = BenchmarkConfig.model_json_schema().get("properties", {})
+        assert "gpuTelemetry" in body_props
+        assert "serverMetrics" in body_props
         # Single-word keys unchanged
-        assert "models" in props
-        assert "endpoint" in props
-        assert "datasets" in props
-        assert "phases" in props
+        assert "models" in body_props
+        assert "endpoint" in body_props
+        assert "datasets" in body_props
+        assert "phases" in body_props
 
     def test_nested_schema_keys(self) -> None:
         from aiperf.config.endpoint import EndpointConfig
