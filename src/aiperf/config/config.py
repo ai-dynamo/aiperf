@@ -78,7 +78,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     """Pure runtime configuration - what SystemController and services need.
 
     Contains all fields required to execute a single benchmark run.
-    Does NOT include sweep or multi_run settings (those live on AIPerfConfig).
+    Does NOT include sweep, multi_run, variables, or random_seed settings
+    (those live on AIPerfConfig as envelope-level cross-variation fields).
 
     Required Sections:
         - models: Model(s) to benchmark
@@ -95,9 +96,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         - runtime: Worker and communication settings
         - logging: Logging and debug settings
         - accuracy: Accuracy evaluation configuration
-
-    Global Settings:
-        - random_seed: Global seed for reproducibility
 
     Note:
         When a phase doesn't specify a dataset, the first dataset defined
@@ -318,33 +316,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     ]
 
     # ==========================================================================
-    # GLOBAL SETTINGS
-    # ==========================================================================
-
-    random_seed: Annotated[
-        int | None,
-        Field(
-            default=None,
-            description="Global random seed for reproducibility. "
-            "Can be overridden per-dataset. "
-            "If not set, uses system entropy.",
-        ),
-    ]
-
-    variables: Annotated[
-        dict[str, Any],
-        Field(
-            default_factory=dict,
-            description=(
-                "User-defined values exposed to Jinja2 in `{{ ... }}` expressions "
-                "during config load. Preserved on the resolved config so run-time "
-                "renderers (e.g. `artifacts.user_files`) can resolve them again at "
-                "run time."
-            ),
-        ),
-    ]
-
-    # ==========================================================================
     # VALIDATORS
     # ==========================================================================
 
@@ -474,12 +445,23 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
 
-class AIPerfConfig(BenchmarkConfig):
-    """Full YAML schema - adds sweep and multi_run on top of BenchmarkConfig.
+class AIPerfConfig(BaseConfig):
+    """AIPerf YAML envelope.
 
-    This is the primary entry point for loading YAML configuration files.
-    After sweep expansion, each variation becomes a BenchmarkConfig.
+    Wraps a `BenchmarkConfig` (the swept body) with cross-variation fields
+    (`sweep`, `multi_run`, `variables`, `random_seed`). This is the primary
+    entry point for loading YAML configuration files. After sweep expansion,
+    each variation's body materializes as a separate `BenchmarkConfig`.
+
+    The split (envelope vs body) mirrors how AIPerfSweep CRDs are shaped on
+    the K8s side: cross-variation machinery at envelope level, the swept
+    workload as a body.
     """
+
+    benchmark: Annotated[
+        BenchmarkConfig,
+        Field(description="Benchmark workload (the swept body)."),
+    ]
 
     sweep: Annotated[
         SweepConfig | None,
@@ -497,6 +479,28 @@ class AIPerfConfig(BenchmarkConfig):
             default_factory=MultiRunConfig,
             description="Multi-run benchmarking configuration for statistical reporting. "
             "When num_runs > 1, executes multiple runs and computes aggregate statistics.",
+        ),
+    ]
+
+    variables: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description=(
+                "User-defined values exposed to Jinja2 in `{{ ... }}` expressions "
+                "during config load. Cross-variation: scenario `runs[i].variables:` "
+                "deep-merge over this base. Preserved on the resolved config so "
+                "run-time renderers can resolve them again."
+            ),
+        ),
+    ]
+
+    random_seed: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Global random seed for reproducibility. Base seed for "
+            "per-variation derivation in sweep mode (variation N gets base + N).",
         ),
     ]
 
