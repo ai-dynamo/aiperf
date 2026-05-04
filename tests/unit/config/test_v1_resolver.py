@@ -184,7 +184,7 @@ class TestEndpointUrlPluralization:
         config validates -- otherwise both reach Pydantic and trip
         `endpoint.url: Extra inputs are not permitted`. CLI wins (override
         semantics)."""
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate(
             {"url": "http://yaml", "urls": ["http://cli"], "type": "chat"}
@@ -194,7 +194,7 @@ class TestEndpointUrlPluralization:
 
     def test_only_url_promotes_to_urls(self) -> None:
         """Backwards-compat: lone singular shorthand still promotes."""
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate({"url": "http://only", "type": "chat"})
         assert [str(u) for u in cfg.urls] == ["http://only"]
@@ -202,7 +202,7 @@ class TestEndpointUrlPluralization:
     def test_url_as_list_promoted_intact(self) -> None:
         """When `url` is itself a list (some tests pass that), don't double-
         wrap; the prior behavior is preserved."""
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         cfg = EndpointConfig.model_validate(
             {"url": ["http://a", "http://b"], "type": "chat"}

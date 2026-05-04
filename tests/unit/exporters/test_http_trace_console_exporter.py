@@ -178,7 +178,7 @@ def make_exporter_config(
             end_ns=0,
             completed=0,
         ),
-        config=aiperf_config,
+        config=aiperf_config.benchmark,
         telemetry_results=None,
     )
 

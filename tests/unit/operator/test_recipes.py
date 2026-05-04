@@ -58,7 +58,7 @@ class TestRecipeValidation:
         config = converter.to_aiperf_config()
 
         assert isinstance(config, AIPerfConfig)
-        assert config.get_model_names()
+        assert config.benchmark.get_model_names()
         assert config.benchmark.endpoint.urls
         for url in config.benchmark.endpoint.urls:
             assert url.startswith("http://") or url.startswith("https://")

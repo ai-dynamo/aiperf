@@ -15,8 +15,8 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.config.config import BenchmarkConfig
-from aiperf.config.benchmark.dataset import ComposedDataset, SyntheticDataset
-from aiperf.config.benchmark.models import ModelsAdvanced
+from aiperf.config.dataset import ComposedDataset, SyntheticDataset
+from aiperf.config.models import ModelsAdvanced
 
 _ENDPOINT = {"urls": ["http://localhost:8000/v1/chat/completions"]}
 _SYNTHETIC_DATASET = {
@@ -51,16 +51,16 @@ class TestModelNormalization:
     def test_string_model_normalized_to_models_advanced(self) -> None:
         cfg = BenchmarkConfig.model_validate(_minimal(models="gpt-4"))
 
-        assert isinstance(cfg.benchmark.models, ModelsAdvanced)
-        assert len(cfg.benchmark.models.items) == 1
-        assert cfg.benchmark.models.items[0].name == "gpt-4"
+        assert isinstance(cfg.models, ModelsAdvanced)
+        assert len(cfg.models.items) == 1
+        assert cfg.models.items[0].name == "gpt-4"
 
     def test_list_of_strings_normalized(self) -> None:
         cfg = BenchmarkConfig.model_validate(_minimal(models=["gpt-4", "gpt-3.5"]))
 
-        assert isinstance(cfg.benchmark.models, ModelsAdvanced)
-        assert len(cfg.benchmark.models.items) == 2
-        names = [item.name for item in cfg.benchmark.models.items]
+        assert isinstance(cfg.models, ModelsAdvanced)
+        assert len(cfg.models.items) == 2
+        names = [item.name for item in cfg.models.items]
         assert names == ["gpt-4", "gpt-3.5"]
 
     def test_singular_model_key_accepted(self) -> None:
@@ -70,8 +70,8 @@ class TestModelNormalization:
 
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert len(cfg.benchmark.models.items) == 1
-        assert cfg.benchmark.models.items[0].name == "llama-3"
+        assert len(cfg.models.items) == 1
+        assert cfg.models.items[0].name == "llama-3"
 
     def test_already_structured_models_passthrough(self) -> None:
         structured = {
@@ -83,9 +83,9 @@ class TestModelNormalization:
         }
         cfg = BenchmarkConfig.model_validate(_minimal(models=structured))
 
-        assert len(cfg.benchmark.models.items) == 2
-        assert cfg.benchmark.models.items[0].name == "llama-3"
-        assert cfg.benchmark.models.items[1].name == "mistral-7b"
+        assert len(cfg.models.items) == 2
+        assert cfg.models.items[0].name == "llama-3"
+        assert cfg.models.items[1].name == "mistral-7b"
 
     def test_singular_model_with_plural_models_rejected(self) -> None:
         """`model` and `models` together are mutually exclusive — like `dataset`/`datasets`."""
@@ -113,8 +113,8 @@ class TestDatasetNormalization:
 
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert "default" in [d.name for d in cfg.benchmark.datasets]
-        assert isinstance(cfg.benchmark.datasets[0], SyntheticDataset)
+        assert "default" in [d.name for d in cfg.datasets]
+        assert isinstance(cfg.datasets[0], SyntheticDataset)
 
     def test_composed_dataset_with_explicit_type(self) -> None:
         composed_dict = {
@@ -131,7 +131,7 @@ class TestDatasetNormalization:
             _minimal(datasets=[{"name": "mixed", **composed_dict}])
         )
 
-        assert isinstance(cfg.benchmark.datasets[0], ComposedDataset)
+        assert isinstance(cfg.datasets[0], ComposedDataset)
 
     def test_composed_without_explicit_type_needs_type_field(self) -> None:
         """source+augment without type field fails: discriminated union requires tag."""
@@ -155,7 +155,7 @@ class TestDatasetNormalization:
             _minimal(datasets=[{"name": "gen", **no_type}])
         )
 
-        assert isinstance(cfg.benchmark.datasets[0], SyntheticDataset)
+        assert isinstance(cfg.datasets[0], SyntheticDataset)
 
     def test_explicit_type_preserved(self) -> None:
         cfg = BenchmarkConfig.model_validate(
@@ -171,7 +171,7 @@ class TestDatasetNormalization:
             )
         )
 
-        assert cfg.benchmark.datasets[0].type == "file"
+        assert cfg.datasets[0].type == "file"
 
 
 # ============================================================
@@ -187,9 +187,9 @@ class TestLoadNormalization:
 
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert any(p.name == "default" for p in cfg.benchmark.phases)
-        assert next(p for p in cfg.benchmark.phases if p.name == "default").type == "concurrency"
-        assert next(p for p in cfg.benchmark.phases if p.name == "default").duration == 60.0
+        assert any(p.name == "default" for p in cfg.phases)
+        assert next(p for p in cfg.phases if p.name == "default").type == "concurrency"
+        assert next(p for p in cfg.phases if p.name == "default").duration == 60.0
 
     def test_dict_of_phases_passthrough(self) -> None:
         multi = [
@@ -209,7 +209,7 @@ class TestLoadNormalization:
         ]
         cfg = BenchmarkConfig.model_validate(_minimal(phases=multi))
 
-        assert [p.name for p in cfg.benchmark.phases] == ["warmup", "main"]
+        assert [p.name for p in cfg.phases] == ["warmup", "main"]
 
     def test_phase_names_injected(self) -> None:
         multi = [
@@ -229,15 +229,15 @@ class TestLoadNormalization:
         ]
         cfg = BenchmarkConfig.model_validate(_minimal(phases=multi))
 
-        assert next(p for p in cfg.benchmark.phases if p.name == "ramp_up").name == "ramp_up"
-        assert next(p for p in cfg.benchmark.phases if p.name == "profiling").name == "profiling"
+        assert next(p for p in cfg.phases if p.name == "ramp_up").name == "ramp_up"
+        assert next(p for p in cfg.phases if p.name == "profiling").name == "profiling"
 
     def test_single_phase_gets_default_name(self) -> None:
         flat_load = {"type": "concurrency", "requests": 10, "concurrency": 1}
 
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert next(p for p in cfg.benchmark.phases if p.name == "default").name == "default"
+        assert next(p for p in cfg.phases if p.name == "default").name == "default"
 
     @pytest.mark.parametrize(
         "phase_type,extra_fields",
@@ -253,8 +253,8 @@ class TestLoadNormalization:
         flat_load = {"type": phase_type, **extra_fields}
         cfg = BenchmarkConfig.model_validate(_minimal(phases=flat_load))
 
-        assert any(p.name == "default" for p in cfg.benchmark.phases)
-        assert next(p for p in cfg.benchmark.phases if p.name == "default").type == phase_type
+        assert any(p.name == "default" for p in cfg.phases)
+        assert next(p for p in cfg.phases if p.name == "default").type == phase_type
 
     def test_load_not_dict_raises(self) -> None:
         with pytest.raises(Exception, match="phases must be a list"):
@@ -282,9 +282,9 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert any(p.name == "profiling" for p in cfg.benchmark.phases)
+        assert any(p.name == "profiling" for p in cfg.phases)
         assert (
-            next(p for p in cfg.benchmark.phases if p.name == "profiling").type == "concurrency"
+            next(p for p in cfg.phases if p.name == "profiling").type == "concurrency"
         )
 
     def test_warmup_and_profiling(self) -> None:
@@ -297,9 +297,9 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert [p.name for p in cfg.benchmark.phases] == ["warmup", "profiling"]
+        assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
         assert (
-            next(p for p in cfg.benchmark.phases if p.name == "warmup").exclude_from_results
+            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
             is True
         )
 
@@ -314,7 +314,7 @@ class TestPhaseFlattening:
         cfg = BenchmarkConfig.model_validate(data)
 
         assert (
-            next(p for p in cfg.benchmark.phases if p.name == "warmup").exclude_from_results
+            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
             is True
         )
 
@@ -354,7 +354,7 @@ class TestPhaseFlattening:
         data = _minimal()
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert any(p.name == "default" for p in cfg.benchmark.phases)
+        assert any(p.name == "default" for p in cfg.phases)
 
     def test_warmup_preserves_execution_order(self) -> None:
         data = {
@@ -366,7 +366,7 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert [p.name for p in cfg.benchmark.phases] == ["warmup", "profiling"]
+        assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
 
 
 class TestDatasetMutualExclusivity:
@@ -401,7 +401,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.benchmark.datasets[0]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None
@@ -431,8 +431,8 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert cfg.benchmark.datasets[0].prompts is not None
-        assert cfg.benchmark.datasets[1].prompts is not None
+        assert cfg.datasets[0].prompts is not None
+        assert cfg.datasets[1].prompts is not None
 
     def test_isl_only_hoisted(self) -> None:
         data = {
@@ -443,7 +443,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.benchmark.datasets[0]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None
@@ -453,7 +453,7 @@ class TestIslOslHoisting:
         data = _minimal()
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.benchmark.datasets[0]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
 
@@ -496,7 +496,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.benchmark.datasets[0]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
 
@@ -515,7 +515,7 @@ class TestIslOslHoisting:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        ds = cfg.benchmark.datasets[0]
+        ds = cfg.datasets[0]
         assert isinstance(ds, SyntheticDataset)
         assert ds.prompts is not None
         assert ds.prompts.isl is not None  # hoisted from top-level

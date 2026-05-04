@@ -269,7 +269,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -317,7 +317,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -362,7 +362,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -407,7 +407,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -539,7 +539,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -628,7 +628,7 @@ class TestTimesliceMetricsJsonExporterWindowFields:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 

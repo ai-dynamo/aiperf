@@ -68,7 +68,7 @@ class FakeTransport(BaseTransport):
         )
 
     def get_url(self, request_info: RequestInfo) -> str:
-        ep = self.run.cfg.benchmark.endpoint
+        ep = self.run.cfg.endpoint
         base_url = _ensure_scheme(ep.urls[0]) if ep.urls else ""
         if ep.path:
             return f"{base_url}{ep.path}"

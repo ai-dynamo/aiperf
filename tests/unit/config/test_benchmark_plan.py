@@ -17,7 +17,7 @@ from aiperf.config import (
     BenchmarkRun,
 )
 from aiperf.config.loader import build_benchmark_plan, load_benchmark_plan
-from aiperf.config.benchmark.models import MultiRunConfig
+from aiperf.config.models import MultiRunConfig
 from aiperf.config.sweep import SweepVariation
 
 _MINIMAL_CONFIG_KWARGS = {

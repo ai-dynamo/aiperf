@@ -67,7 +67,7 @@ class TestServiceCommand:
             patch.object(Path, "read_bytes", return_value=b'{"cfg": {}}'),
             patch("orjson.loads", return_value={"cfg": {}}) as mock_loads,
             patch(
-                "aiperf.config.benchmark.BenchmarkRun.model_validate",
+                "aiperf.config.BenchmarkRun.model_validate",
                 return_value=mock_run,
             ) as mock_validate,
         ):

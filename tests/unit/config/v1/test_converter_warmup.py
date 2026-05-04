@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from aiperf.config.benchmark.phases import PhaseType
+from aiperf.config.phases import PhaseType
 from aiperf.config.v1 import UserConfig
 from aiperf.config.v1._converter_warmup import build_warmup
 

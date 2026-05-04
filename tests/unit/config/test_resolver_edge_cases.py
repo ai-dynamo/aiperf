@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.config.benchmark import BenchmarkRun
-from aiperf.config.benchmark.models import TokenizerConfig
+from aiperf.config.models import TokenizerConfig
 from aiperf.config.resolvers import (
     ArtifactDirResolver,
     ConfigResolverChain,

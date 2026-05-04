@@ -97,7 +97,15 @@ class AIPerfJobSpecConverter:
 
         config_dict = expand_config_dict(config_dict)
         apply_k8s_runtime_config(config_dict, self.job_id or self.name, self.namespace)
-        return AIPerfConfig.model_validate({"benchmark": config_dict})
+        # AIPerfJob.spec.benchmark may carry envelope-level keys (variables,
+        # random_seed) for Jinja templating convenience — lift them out of the
+        # body before validating, since BenchmarkConfig forbids them.
+        envelope: dict[str, Any] = {}
+        for key in ("variables", "random_seed", "randomSeed"):
+            if key in config_dict:
+                envelope_key = "random_seed" if key == "randomSeed" else key
+                envelope[envelope_key] = config_dict.pop(key)
+        return AIPerfConfig.model_validate({"benchmark": config_dict, **envelope})
 
     def to_deployment_config(self) -> DeploymentConfig:
         """Convert CRD spec to DeploymentConfig.

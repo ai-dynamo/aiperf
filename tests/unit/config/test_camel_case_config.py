@@ -796,7 +796,7 @@ class TestJsonSchemaCamelCase:
         assert "phases" in props
 
     def test_nested_schema_keys(self) -> None:
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         schema = EndpointConfig.model_json_schema()
         props = schema.get("properties", {})

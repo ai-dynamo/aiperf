@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.benchmark.artifacts import GpuTelemetryConfig, ServerMetricsConfig
+from aiperf.config.artifacts import GpuTelemetryConfig, ServerMetricsConfig
 from aiperf.config.distributions import (
     Distribution,
     EmpiricalDistribution,
@@ -22,7 +22,7 @@ from aiperf.config.distributions import (
     MultimodalDistribution,
     NormalDistribution,
 )
-from aiperf.config.benchmark.endpoint import EndpointConfig
+from aiperf.config.endpoint import EndpointConfig
 
 PRESERVE = "x-kubernetes-preserve-unknown-fields"
 
@@ -149,7 +149,7 @@ def test_aiperf_config_dump_excludes_shortcut_siblings():
 
 def test_synthetic_dataset_schema_exposes_isl_osl_shortcuts():
     """SyntheticDataset exposes isl/osl as optional schema siblings with preserve-unknown."""
-    from aiperf.config.benchmark.dataset import SyntheticDataset
+    from aiperf.config.dataset import SyntheticDataset
 
     schema = SyntheticDataset.model_json_schema()
     props = schema["properties"]
@@ -162,7 +162,7 @@ def test_synthetic_dataset_schema_exposes_isl_osl_shortcuts():
 
 def test_synthetic_dataset_runtime_still_validates_with_top_level_isl():
     """Before-validator hoist (isl -> prompts.isl) is unchanged after the field is exposed."""
-    from aiperf.config.benchmark.dataset import SyntheticDataset
+    from aiperf.config.dataset import SyntheticDataset
 
     ds = SyntheticDataset.model_validate(
         {
@@ -187,7 +187,7 @@ def test_synthetic_dataset_runtime_still_validates_with_top_level_isl():
 
 def test_synthetic_dataset_dump_excludes_isl_osl_shortcuts():
     """isl/osl shortcuts must not pollute SyntheticDataset.model_dump output."""
-    from aiperf.config.benchmark.dataset import SyntheticDataset
+    from aiperf.config.dataset import SyntheticDataset
 
     ds = SyntheticDataset.model_validate(
         {

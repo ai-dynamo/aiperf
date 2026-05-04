@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.config import BenchmarkConfig
-from aiperf.config.benchmark.artifacts import GpuTelemetryConfig
+from aiperf.config.artifacts import GpuTelemetryConfig
 from aiperf.config.benchmark import BenchmarkRun
-from aiperf.config.benchmark.models import TokenizerConfig
+from aiperf.config.models import TokenizerConfig
 from aiperf.config.resolvers import (
     ArtifactDirResolver,
     CommConfigResolver,

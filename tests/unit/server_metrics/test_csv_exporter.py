@@ -1003,7 +1003,7 @@ class TestServerMetricsCsvExporterIntegration:
         await exporter.export()
 
         # Read and parse the exported file
-        output_file = mock_config.artifacts.server_metrics_export_csv_file
+        output_file = mock_config.benchmark.artifacts.server_metrics_export_csv_file
         assert output_file.exists()
 
         with open(output_file) as f:

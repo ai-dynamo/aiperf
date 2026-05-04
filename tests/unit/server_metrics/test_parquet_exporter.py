@@ -122,7 +122,7 @@ def create_mock_accumulator(
 ) -> MagicMock:
     """Create a mock accumulator that returns the given hierarchy."""
     mock = MagicMock()
-    mock.run.cfg = config
+    mock.run.cfg = config.benchmark
     mock.get_hierarchy_for_export.return_value = hierarchy
     return mock
 
@@ -278,7 +278,7 @@ class TestParquetExporterBasics:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         assert parquet_file.exists()
 
         table = pq.read_table(parquet_file)
@@ -356,7 +356,7 @@ class TestSchemaDiscovery:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -388,7 +388,7 @@ class TestSchemaDiscovery:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         schema_names = table.schema.names
 
@@ -414,7 +414,7 @@ class TestDeltaCalculations:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         gauge_rows = df[df["metric_type"] == "gauge"].sort_values("timestamp_ns")
@@ -432,7 +432,7 @@ class TestDeltaCalculations:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -453,7 +453,7 @@ class TestDeltaCalculations:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"].sort_values(
@@ -537,7 +537,7 @@ class TestTimeFilteringEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == 1
@@ -568,7 +568,7 @@ class TestTimeFilteringEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -621,7 +621,7 @@ class TestNumericEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -661,7 +661,7 @@ class TestNumericEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -691,7 +691,7 @@ class TestNumericEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert df["value"].iloc[0] == 0.0
@@ -729,7 +729,7 @@ class TestLabelHandlingEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == 1
@@ -766,7 +766,7 @@ class TestLabelHandlingEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert "method" in df.columns
@@ -805,7 +805,7 @@ class TestLabelHandlingEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert df["method"].iloc[0] == ""
@@ -849,7 +849,7 @@ class TestHistogramBucketEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -889,7 +889,7 @@ class TestHistogramBucketEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -926,7 +926,7 @@ class TestHistogramBucketEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         hist_rows = df[df["metric_type"] == "histogram"]
@@ -967,7 +967,7 @@ class TestSchemaConsistency:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         assert len(df) == num_endpoints
@@ -1021,7 +1021,7 @@ class TestSchemaConsistency:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         # 2 gauges + 2 counters + (2 histograms × 2 buckets) = 8 rows
@@ -1072,7 +1072,7 @@ class TestMultiEndpoint:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         endpoints = df["endpoint_url"].unique()
@@ -1115,7 +1115,7 @@ class TestEdgeCases:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         counter_rows = df[df["metric_type"] == "counter"].sort_values("timestamp_ns")
@@ -1192,7 +1192,7 @@ class TestDataValidation:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         metric_types = set(df["metric_type"].unique())
@@ -1226,7 +1226,7 @@ class TestDataValidation:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        table = pq.read_table(mock_config.output.server_metrics_export_parquet_file)
+        table = pq.read_table(mock_config.benchmark.artifacts.server_metrics_export_parquet_file)
         df = table.to_pandas()
 
         timestamps = df["timestamp_ns"].values
@@ -1249,7 +1249,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1280,7 +1280,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
@@ -1309,12 +1309,12 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 
         parquet_benchmark_id = metadata[b"aiperf.benchmark_id"].decode()
-        assert parquet_benchmark_id == mock_config.benchmark_id
+        assert parquet_benchmark_id == mock_config.benchmark.benchmark_id
 
     @pytest.mark.asyncio
     async def test_parquet_has_complete_metadata_set(
@@ -1331,7 +1331,7 @@ class TestParquetMetadataFields:
         exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
         await exporter.export()
 
-        parquet_file = mock_config.output.server_metrics_export_parquet_file
+        parquet_file = mock_config.benchmark.artifacts.server_metrics_export_parquet_file
         table = pq.read_table(parquet_file)
         metadata = table.schema.metadata
 

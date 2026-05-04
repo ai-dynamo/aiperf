@@ -285,7 +285,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -327,7 +327,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -379,7 +379,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -434,7 +434,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -484,7 +484,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -520,7 +520,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -556,7 +556,7 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -687,7 +687,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -725,7 +725,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 
@@ -803,7 +803,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
 
             config = ExporterConfig(
                 results=MockResults(),
-                config=mock_user_config,
+                config=mock_user_config.benchmark,
                 telemetry_results=None,
             )
 

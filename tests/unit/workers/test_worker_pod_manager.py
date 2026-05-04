@@ -85,8 +85,10 @@ def _make_run(
     if record_processors_per_pod is not None:
         runtime["record_processors_per_pod"] = record_processors_per_pod
     cfg = AIPerfConfig(
-        **_MINIMAL_CONFIG_KWARGS,
-        **({"runtime": runtime} if runtime else {}),
+        benchmark={
+            **_MINIMAL_CONFIG_KWARGS,
+            **({"runtime": runtime} if runtime else {}),
+        },
     )
     return BenchmarkRun(
         benchmark_id="test",

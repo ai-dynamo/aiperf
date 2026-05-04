@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.config.config import AIPerfConfig
-from aiperf.config.benchmark.endpoint import EndpointConfig
+from aiperf.config.endpoint import EndpointConfig
 
 _ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
 
@@ -426,7 +426,7 @@ class TestStreamingNormalization:
         assert endpoint.streaming is False
 
     def test_streaming_true_with_embeddings_disabled_with_warning(self):
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -440,7 +440,7 @@ class TestStreamingNormalization:
         assert any("streaming" in str(w.message).lower() for w in caught)
 
     def test_streaming_false_with_embeddings_no_warning(self):
-        from aiperf.config.benchmark.endpoint import EndpointConfig
+        from aiperf.config.endpoint import EndpointConfig
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")

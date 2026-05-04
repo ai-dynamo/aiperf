@@ -4,7 +4,7 @@
 """Tests for API CLI parameter validation on RuntimeConfig."""
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.benchmark.models import RuntimeConfig
+from aiperf.config.models import RuntimeConfig
 
 
 def _minimal_config(**runtime_kwargs) -> AIPerfConfig:

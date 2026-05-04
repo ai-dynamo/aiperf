@@ -17,7 +17,7 @@ from aiperf.common.redact import (
     redact_headers,
     redact_string,
 )
-from aiperf.config.benchmark.endpoint import EndpointConfig
+from aiperf.config.endpoint import EndpointConfig
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
 # =============================================================================
