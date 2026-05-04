@@ -84,7 +84,7 @@ class TestMetricsBaseExporterInitialization:
 
             assert exporter._results is mock_results
             assert exporter._telemetry_results is None
-            assert exporter._config is mock_user_config
+            assert exporter._config is mock_user_config.benchmark
             assert exporter._output_directory == Path(temp_dir)
 
 

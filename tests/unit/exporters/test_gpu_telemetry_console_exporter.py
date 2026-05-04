@@ -100,7 +100,7 @@ class TestGPUTelemetryConsoleExporter:
         )
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=no_gpu_config,
+            config=no_gpu_config.benchmark,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -119,7 +119,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test that export does not print when telemetry_results is None."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=None,
         )
 
@@ -137,7 +137,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test export with real telemetry data displays correctly."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -158,7 +158,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test that all endpoints are displayed in the summary."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -182,7 +182,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test that failed endpoints are marked appropriately."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=sample_telemetry_results_with_failures,
         )
 
@@ -203,7 +203,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test that empty telemetry data shows appropriate message."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=empty_telemetry_results,
         )
 
@@ -225,7 +225,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test get_renderable method with multi-GPU data."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -264,7 +264,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test that all key metrics are displayed in the output."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -301,7 +301,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=telemetry_results,
         )
 
@@ -349,7 +349,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=telemetry_results,
         )
 
@@ -385,7 +385,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=telemetry_results,
         )
 
@@ -423,7 +423,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=telemetry_results,
         )
 
@@ -438,7 +438,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test _format_number with None value."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=None,
         )
 
@@ -453,7 +453,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test _format_number with large values (scientific notation)."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=None,
         )
 
@@ -468,7 +468,7 @@ class TestGPUTelemetryConsoleExporter:
         """Test _format_number with normal values."""
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=None,
         )
 
@@ -513,7 +513,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            config=gpu_config,
+            config=gpu_config.benchmark,
             telemetry_results=telemetry_results,
         )
 

@@ -88,7 +88,7 @@ class TestServerMetricsJSONLWriterInitialization:
 
         assert (
             processor.output_file
-            == config_with_jsonl.output.server_metrics_export_jsonl_file
+            == config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         )
 
     @pytest.mark.asyncio
@@ -98,7 +98,7 @@ class TestServerMetricsJSONLWriterInitialization:
         tmp_artifact_dir: Path,
     ):
         """Test that output files are cleared on initialization."""
-        jsonl_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        jsonl_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         jsonl_file.parent.mkdir(parents=True, exist_ok=True)
         jsonl_file.write_text("old data")
 
@@ -132,7 +132,7 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         assert output_file.exists()
 
         lines = output_file.read_text().strip().split("\n")
@@ -177,7 +177,7 @@ class TestServerMetricsRecordProcessing:
                 )
                 await processor.process_server_metrics_record(record)
 
-        output_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         lines = output_file.read_text().strip().split("\n")
         assert len(lines) == 5
 
@@ -197,7 +197,7 @@ class TestServerMetricsRecordProcessing:
                 sample_server_metrics_record_for_export
             )
 
-        output_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         data = orjson.loads(output_file.read_text().strip())
 
         assert "metrics" in data
@@ -236,7 +236,7 @@ class TestServerMetricsRecordProcessing:
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
-        output_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         data = orjson.loads(output_file.read_text().strip())
 
         # Verify histogram is in slim format
@@ -295,7 +295,7 @@ class TestDuplicateRecordHandling:
             await processor.process_server_metrics_record(unique_record)
             await processor.process_server_metrics_record(duplicate_record)
 
-        output_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        output_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         lines = output_file.read_text().strip().split("\n")
 
         # Should only have 1 line (duplicate skipped)
@@ -377,7 +377,7 @@ class TestInfoMetricsHandling:
         async with aiperf_lifecycle(processor):
             await processor.process_server_metrics_record(record)
 
-        jsonl_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        jsonl_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         lines = jsonl_file.read_text().strip().split("\n")
 
         # Should have 1 line
@@ -434,7 +434,7 @@ class TestInfoMetricsHandling:
             await processor.process_server_metrics_record(record)
 
         # Check JSONL file
-        jsonl_file = config_with_jsonl.output.server_metrics_export_jsonl_file
+        jsonl_file = config_with_jsonl.benchmark.output.server_metrics_export_jsonl_file
         slim_record = orjson.loads(jsonl_file.read_text().strip())
 
         # Only regular metrics in slim record

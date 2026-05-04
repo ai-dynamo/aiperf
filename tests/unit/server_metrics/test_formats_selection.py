@@ -92,18 +92,18 @@ class TestServerMetricsFormatSelection:
         """Test that default config enables JSON, CSV, and Parquet."""
         config = _config(tmp_path)
 
-        assert ServerMetricsFormat.JSON in config.server_metrics_formats
-        assert ServerMetricsFormat.CSV in config.server_metrics_formats
-        assert ServerMetricsFormat.PARQUET in config.server_metrics_formats
-        assert ServerMetricsFormat.JSONL not in config.server_metrics_formats
+        assert ServerMetricsFormat.JSON in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.CSV in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.PARQUET in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.JSONL not in config.benchmark.server_metrics_formats
 
     def test_single_format_selection(self, tmp_path):
         """Test selecting a single format."""
         config = _config(tmp_path, formats=[ServerMetricsFormat.JSON])
 
-        assert ServerMetricsFormat.JSON in config.server_metrics_formats
-        assert ServerMetricsFormat.CSV not in config.server_metrics_formats
-        assert ServerMetricsFormat.JSONL not in config.server_metrics_formats
+        assert ServerMetricsFormat.JSON in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.CSV not in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.JSONL not in config.benchmark.server_metrics_formats
 
     def test_multiple_formats_selection(self, tmp_path):
         """Test selecting multiple formats."""
@@ -111,9 +111,9 @@ class TestServerMetricsFormatSelection:
             tmp_path, formats=[ServerMetricsFormat.JSON, ServerMetricsFormat.CSV]
         )
 
-        assert ServerMetricsFormat.JSON in config.server_metrics_formats
-        assert ServerMetricsFormat.CSV in config.server_metrics_formats
-        assert ServerMetricsFormat.JSONL not in config.server_metrics_formats
+        assert ServerMetricsFormat.JSON in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.CSV in config.benchmark.server_metrics_formats
+        assert ServerMetricsFormat.JSONL not in config.benchmark.server_metrics_formats
 
     def test_invalid_format_raises_error(self, tmp_path):
         """Test that invalid format name raises ValidationError."""

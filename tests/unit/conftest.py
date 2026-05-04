@@ -866,10 +866,16 @@ def create_exporter_config(
     telemetry_results=None,
     server_metrics_results=None,
 ):
-    """Helper to create ExporterConfig with common defaults."""
+    """Helper to create ExporterConfig with common defaults.
+
+    Accepts either an ``AIPerfConfig`` envelope or a ``BenchmarkConfig`` body
+    so callers don't have to drill in.
+    """
+    if hasattr(config, "benchmark"):
+        config = config.benchmark
     return ExporterConfig(
         results=profile_results,
-        config=config.benchmark,
+        config=config,
         telemetry_results=telemetry_results,
         server_metrics_results=server_metrics_results,
     )

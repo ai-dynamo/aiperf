@@ -50,7 +50,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                config=config,
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -89,7 +89,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                config=config,
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_console(Console(file=StringIO()))
@@ -117,7 +117,7 @@ class TestExporterManager:
                 was_cancelled=False,
                 error_summary=[],
             ),
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
             steady_state_results=sentinel_steady,
             energy_efficiency_results=sentinel_energy,
@@ -157,7 +157,7 @@ class TestConsoleExportToFile:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                config=config,
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_console(Console(file=StringIO()))
@@ -197,7 +197,7 @@ class TestConsoleExportToFile:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                config=config,
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_console(Console(file=StringIO()))
@@ -233,7 +233,7 @@ class TestConsoleExportToFile:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                config=config,
+                config=config.benchmark,
                 telemetry_results=None,
             )
             await manager.export_console(Console(file=StringIO(), width=80))

@@ -127,7 +127,7 @@ class TestAIPerfConfigWithDiscovery:
     """Test discovery integration in full AIPerfConfig."""
 
     def test_default_discovery_in_full_config(self):
-        cfg = AIPerfConfig(**_BASE)
+        cfg = AIPerfConfig(benchmark=_BASE)
         assert (
             cfg.benchmark.server_metrics.discovery.mode
             == ServerMetricsDiscoveryMode.AUTO
@@ -184,8 +184,8 @@ class TestAIPerfConfigWithDiscovery:
         data = cfg.model_dump(exclude_none=True)
         restored = AIPerfConfig.model_validate(data)
         assert (
-            restored.server_metrics.discovery.mode
+            restored.benchmark.server_metrics.discovery.mode
             == ServerMetricsDiscoveryMode.KUBERNETES
         )
-        assert restored.server_metrics.discovery.label_selector == "app=vllm"
-        assert restored.server_metrics.discovery.namespace == "inference"
+        assert restored.benchmark.server_metrics.discovery.label_selector == "app=vllm"
+        assert restored.benchmark.server_metrics.discovery.namespace == "inference"

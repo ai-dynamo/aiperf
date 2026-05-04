@@ -73,7 +73,7 @@ def mock_exporter_config(sample_records, config):
             end_ns=0,
             completed=0,
         ),
-        config=config,
+        config=config.benchmark,
         telemetry_results=None,
     )
 
@@ -122,7 +122,7 @@ class TestConsoleExporter:
                 end_ns=0,
                 completed=0,
             ),
-            config=config,
+            config=config.benchmark,
             telemetry_results=None,
         )
         exporter = ConsoleMetricsExporter(exporter_config)

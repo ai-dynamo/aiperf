@@ -413,7 +413,7 @@ class TestSliceDurationConfig:
             }
         )
         # Set slice_duration to 2 seconds
-        config.output.slice_duration = 2.0
+        config.benchmark.output.slice_duration = 2.0
 
         processor = ServerMetricsAccumulator(run=_make_run(config))
         assert processor._slice_duration == 2.0
@@ -486,7 +486,7 @@ class TestSliceDurationConfig:
             }
         )
         # Ensure slice_duration is None (default)
-        config.output.slice_duration = None
+        config.benchmark.output.slice_duration = None
 
         processor = ServerMetricsAccumulator(run=_make_run(config))
         # When None, windowed stats are not computed
