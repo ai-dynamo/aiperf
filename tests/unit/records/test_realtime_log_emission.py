@@ -8,21 +8,20 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.models.credit_models import CreditPhaseStats
+from aiperf.common.models.credit_models import PhaseRecordsStats
 from aiperf.common.models.record_models import MetricResult
 from aiperf.records import records_manager as rm_module
 
 
 def _phase_stats(
-    *, completed: int, sent: int, errors: int = 0, elapsed_s: float = 10.0
-) -> CreditPhaseStats:
+    *, completed: int, sent: int, errors: int = 0, elapsed_s: float = 10.0  # noqa: ARG001
+) -> PhaseRecordsStats:
     now_ns = time.time_ns()
-    return CreditPhaseStats(
+    return PhaseRecordsStats(
         phase=CreditPhase.PROFILING,
         start_ns=now_ns - int(elapsed_s * 1_000_000_000),
-        requests_sent=sent,
-        requests_completed=completed,
-        request_errors=errors,
+        success_records=max(0, completed - errors),
+        error_records=errors,
     )
 
 
@@ -41,7 +40,7 @@ def _metrics() -> list[MetricResult]:
     ]
 
 
-def _make_manager(phase_stats: CreditPhaseStats):
+def _make_manager(phase_stats: PhaseRecordsStats):
     rm = MagicMock(spec=rm_module.RecordsManager)
     rm._records_tracker = SimpleNamespace(
         create_stats_for_phase=lambda _phase: phase_stats
