@@ -1017,12 +1017,16 @@ accuracy_grader:
     description: |
       Exact match grader that compares extracted answers against ground truth
       using exact string matching. Suitable for factual Q&A and classification tasks.
+    metadata:
+      is_implemented: false
 
   math:
     class: aiperf.accuracy.graders.math:MathGrader
     description: |
       Math grader that evaluates mathematical expressions for equivalence.
       Handles symbolic comparison, numeric tolerance, and expression normalization.
+    metadata:
+      is_implemented: false
 
   multiple_choice:
     class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
@@ -1035,6 +1039,8 @@ accuracy_grader:
     description: |
       Code execution grader that runs generated code in a sandboxed environment
       and compares output against expected results.
+    metadata:
+      is_implemented: false
 
 # =============================================================================
 # Accuracy Benchmarks
@@ -1060,6 +1066,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
@@ -1068,6 +1075,7 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
+      is_implemented: false
 
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
@@ -1077,6 +1085,7 @@ accuracy_benchmark:
     metadata:
       default_grader: exact_match
       default_n_shots: 3
+      is_implemented: false
 
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
@@ -1085,6 +1094,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
@@ -1093,6 +1103,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
@@ -1102,6 +1113,7 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
+      is_implemented: false
 
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
@@ -1111,6 +1123,7 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
+      is_implemented: false
 
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
@@ -1120,6 +1133,7 @@ accuracy_benchmark:
     metadata:
       default_grader: code_execution
       default_n_shots: 0
+      is_implemented: false
 
 # =============================================================================
 # Communication Backends
