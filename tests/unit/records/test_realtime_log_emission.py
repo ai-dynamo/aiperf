@@ -50,6 +50,7 @@ def _make_manager(phase_stats: PhaseRecordsStats):
         create_stats_for_phase=lambda _phase: phase_stats
     )
     rm._metric_record_accumulators = {}
+    rm._server_metrics_accumulator = None
     rm._prev_realtime_snapshot = None
     rm._previous_realtime_records = 0
     rm.service_id = "records-manager"
