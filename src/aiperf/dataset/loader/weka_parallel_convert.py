@@ -161,6 +161,7 @@ class _WekaTraceTask:
     ignore_delays: bool
     think_time_only: bool
     model_map: dict[str, str]
+    emit_assistant_segments: bool = True
 
 
 @dataclass(slots=True)
@@ -290,6 +291,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         sample_partial_tail_tokens=parent_partial,
         decode_tokens_to_text=parent_decode_text,
         bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
+        emit_assistant_segments=task.emit_assistant_segments,
     )
 
     parent_turns: list[_WekaParentTurnDict] = []
@@ -391,6 +393,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             sample_partial_tail_tokens=child_partial,
             decode_tokens_to_text=child_decode_text,
             bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
+            emit_assistant_segments=task.emit_assistant_segments,
         )
 
         child_turns: list[_WekaParentTurnDict] = []

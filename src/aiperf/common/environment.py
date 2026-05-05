@@ -278,6 +278,19 @@ class _DatasetSettings(BaseSettings):
         "path. Below this, the in-process serial path is used (Pool startup "
         "overhead exceeds the speedup for tiny corpora).",
     )
+    WEKA_LIVE_ASSISTANT_RESPONSES: bool = Field(
+        default=False,
+        description="When True, WekaTraceLoader emits user-only deltas and "
+        "selects ConversationContextMode.DELTAS_WITHOUT_RESPONSES so the "
+        "worker threads the server's live assistant response back into the "
+        "session's turn_list between turns. Preserves the server's "
+        "just-generated KV blocks across turn boundaries (real cache-hit "
+        "rate) at the cost of hash-id fidelity past turn 0 (server-generated "
+        "assistant length will not exactly match the trace's recorded "
+        "output_length, so subsequent user-turn block alignment drifts from "
+        "the trace's hash_ids). Default False preserves the pre-canned-"
+        "assistant behavior that matches recorded hash_ids byte-for-byte.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

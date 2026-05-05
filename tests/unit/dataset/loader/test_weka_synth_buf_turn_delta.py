@@ -380,3 +380,130 @@ def test_truncate_returns_none_when_zeroes_segments():
     result = truncate_synth_buf_at_block(segs, target_blocks=0, block_size=BLOCK_SIZE)
     assert result is None
     assert segs == []
+
+
+# ---------------------------------------------------------------------------
+# emit_assistant_segments=False (live-assistant mode):
+# delta_messages drops role=='assistant' segments while _segments retains them
+# for LCP / truncation accounting on subsequent turns.
+# ---------------------------------------------------------------------------
+
+
+def _make_recon_user_only() -> ConversationReconstructor:
+    return ConversationReconstructor(
+        block_size=BLOCK_SIZE,
+        decode_block_tokens=_stub_decode_block_tokens,
+        sample_partial_tail_tokens=_stub_partial_tail_tokens,
+        decode_tokens_to_text=_stub_decode_tokens_to_text,
+        emit_assistant_segments=False,
+    )
+
+
+def test_turn_delta_user_only_baseline_keeps_system_and_user():
+    """Turn 0 has no assistant segment; user-only mode emits both segments unchanged."""
+    r = _make_recon_user_only()
+    r.init_turn_0(
+        hash_ids=[1, 2, 3, 4],
+        in_tokens=4 * BLOCK_SIZE,
+        tool_tokens=BLOCK_SIZE,
+        system_tokens=0,
+        seed="t:0",
+    )
+    delta = r.turn_delta()
+    assert [m["role"] for m in delta.delta_messages] == ["system", "user"]
+    assert delta.reset_context is False
+
+
+def test_turn_delta_user_only_strict_append_drops_assistant_segment():
+    """Strict-append turn produces (asst, user) internally; emission is user-only."""
+    r = _make_recon_user_only()
+    r.init_turn_0(
+        hash_ids=[1, 2],
+        in_tokens=2 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    _ = r.turn_delta()
+    n_after_t0 = len(r._segments)
+
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,  # 1 asst block
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    new_segs = r._segments[n_after_t0:]
+    new_roles = [s.role for s in new_segs]
+    assert new_roles == ["assistant", "user"], (
+        "internal segments should still carry the assistant entry"
+    )
+    delta = r.turn_delta()
+    assert [m["role"] for m in delta.delta_messages] == ["user"]
+    assert delta.reset_context is False
+
+
+def test_turn_delta_user_only_default_includes_assistant_segment():
+    """Sanity: default mode (emit_assistant_segments=True) does emit the asst delta."""
+    r = _make_recon()
+    r.init_turn_0(
+        hash_ids=[1, 2],
+        in_tokens=2 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    _ = r.turn_delta()
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    delta = r.turn_delta()
+    assert [m["role"] for m in delta.delta_messages] == ["assistant", "user"]
+
+
+def test_turn_delta_user_only_lcp_invariant_preserved_across_turns():
+    """LCP/truncation accounting depends on _segments, not delta_messages.
+
+    Run two strict-append turns in user-only mode and confirm the next turn's
+    LCP truncation still fires correctly (no IndexError, segments shrink as
+    expected) by triggering a pull-back on turn 2.
+    """
+    r = _make_recon_user_only()
+    r.init_turn_0(
+        hash_ids=[1, 2, 3, 4],
+        in_tokens=4 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    _ = r.turn_delta()
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4],
+        prev_in_tokens=4 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 5, 6],
+        curr_in_tokens=6 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    _ = r.turn_delta()
+    blocks_before = sum(s.block_count for s in r._segments)
+    assert blocks_before == 6
+
+    # Pull-back: shrink to 3 blocks of shared prefix; LCP=3 strips trailing.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4, 5, 6],
+        prev_in_tokens=6 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 7],
+        curr_in_tokens=4 * BLOCK_SIZE,
+        seed="t:2",
+    )
+    blocks_after = sum(s.block_count for s in r._segments)
+    assert blocks_after == 4, "LCP truncation should have shrunk segments to 4 blocks"
