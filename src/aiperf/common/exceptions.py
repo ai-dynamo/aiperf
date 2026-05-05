@@ -107,6 +107,19 @@ class DatasetGeneratorError(AIPerfError):
     """Generic dataset generator error."""
 
 
+class IncompatibleMetricsEndpointError(AIPerfError):
+    """Raised when an HTTP metrics endpoint returns content that cannot be
+    interpreted as Prometheus exposition format (e.g. a JSON body, or text
+    that fails the Prometheus parser). Indicates a structural mismatch the
+    collector cannot recover from by retrying — the affected collector should
+    auto-disable rather than spam parse errors at the configured interval.
+
+    A representative trigger is the TensorRT-LLM ``/metrics`` endpoint, which
+    serves an iteration-stats JSON array (``application/json``) at the same
+    path Prometheus scrapers expect.
+    """
+
+
 class InitializationError(AIPerfError):
     """Exception raised when something fails to initialize."""
 
