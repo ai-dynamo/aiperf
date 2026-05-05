@@ -69,7 +69,7 @@ def test_wrong_timing_mode_raises_under_lock() -> None:
     cfg._timing_mode_explicitly_set = True
     with pytest.raises(ScenarioLockError) as exc:
         validate_scenario(cfg)
-    assert "--timing-mode" in str(exc.value)
+    assert "--request-rate" in str(exc.value)
 
 
 def test_default_timing_mode_auto_set_under_scenario(
@@ -179,7 +179,7 @@ def test_unsafe_override_converts_errors_to_warnings(
         outcome = validate_scenario(cfg)
     assert outcome.submission_valid is False
     assert len(outcome.violations) == 2
-    assert any("--timing-mode" in r.message for r in caplog.records)
+    assert any("--request-rate" in r.message for r in caplog.records)
     assert any("--synthesis-max-isl" in r.message for r in caplog.records)
 
 

@@ -170,7 +170,7 @@ For non-standard APIs where no built-in endpoint matches, use `--endpoint-type r
 
 ## Limitations
 
-`--cache-bust` is rejected for `raw_payload` datasets. Two independent constraints are responsible: cache-bust requires `--timing-mode agentic_replay` and an `--endpoint-type` of `chat` or `responses`, and AIPerf separately refuses cache-bust when the dataset writes through the `PAYLOAD_BYTES` mmap fast path (which is what `raw_payload` produces) — the bytes are pre-encoded and bypass per-credit marker injection. Either drop `--cache-bust` or switch to a dataset type that produces structured turns (e.g. `single_turn`, `multi_turn`, or `dag_jsonl`) under `--timing-mode agentic_replay`.
+`--cache-bust` is rejected for `raw_payload` datasets. Two independent constraints are responsible: cache-bust requires the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`) and an `--endpoint-type` of `chat` or `responses`, and AIPerf separately refuses cache-bust when the dataset writes through the `PAYLOAD_BYTES` mmap fast path (which is what `raw_payload` produces) — the bytes are pre-encoded and bypass per-credit marker injection. Either drop `--cache-bust` or switch to a dataset type that produces structured turns (e.g. `single_turn`, `multi_turn`, or `dag_jsonl`) under the `agentic_replay` timing mode.
 
 ---
 

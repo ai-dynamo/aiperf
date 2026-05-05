@@ -23,7 +23,7 @@ AIPerf maps the format directly onto its DAG datastructure:
 
 - One root `Conversation` per trace file.
 - One child `Conversation` per `type: "subagent"` entry (session id `<trace_id>::sa:<agent_id>`).
-- A `SPAWN` branch on the parent's preceding turn; a `SPAWN_JOIN` prerequisite on the parent's following turn.
+- A `SPAWN` branch on the parent's preceding turn; a `SPAWN_JOIN` prerequisite on the parent's following turn. Three nuances: (a) subagents with no preceding parent turn are dropped (logged at load time); (b) subagents with no following parent turn become `is_background=True` branches with no `SPAWN_JOIN` prerequisite (the parent doesn't wait); (c) adjacent subagents sharing the same `(preceding, following)` anchors collapse into one multi-child branch.
 
 ---
 
@@ -83,7 +83,7 @@ aiperf profile \
 
 On first run, the full corpus downloads upfront (657 MB compressed, 739 traces) and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. The dataset is public — no HuggingFace authentication or token is required.
 
-> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full 739-trace corpus, pass `--num-dataset-entries 739`. The loader logs `Loading <n>/739 traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path is not capped by this flag — it loads every JSON file it finds, then `--num-conversations` controls downstream conversation count.)
+> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full 739-trace corpus, pass `--num-dataset-entries 739`. The loader logs `Loading <n>/739 traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
 
 The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
 
@@ -94,7 +94,7 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 | `--input-file <dir-or-file>` (file-based) | You already have a local trace directory, you need offline runs (no outbound network), or you're developing/debugging the loader against a specific subset of traces. |
 | `--public-dataset semianalysis_cc_traces_weka` (HuggingFace) | You want zero-setup against the canonical 739-trace corpus and don't mind a one-time ~657 MB download (cached afterward). |
 
-All existing tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--num-conversations`, `--scenario inferencex-agentx-mvp`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire.
+All existing tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--scenario inferencex-agentx-mvp`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire.
 
 A tokenizer is required in both paths (the prompt is reconstructed from `hash_ids`); pass `--tokenizer <name-or-path>` if your `--model` doesn't resolve a default tokenizer.
 
@@ -140,9 +140,9 @@ This is locked on for the AgentX MVP scenario; outside that scenario it's option
 
 A few details worth knowing if you're using `--cache-bust` outside the scenario:
 
-- **Compatibility is checked at startup.** `--cache-bust` requires `--timing-mode agentic_replay` and a chat-shaped endpoint (`--endpoint-type chat` or `responses`). Other combinations error before the run starts with a message naming the offending flag, not silently mid-run.
-- **Multimodal turns are supported.** When a turn carries images or audio alongside text, the marker is injected into the text portion of the message; the multimodal parts pass through untouched.
-- **`system_*` falls back to the first user turn when there's no system message.** If a trace has no system role anywhere (neither a conversation-level system message nor a `raw_messages[0].role=='system'`), `--cache-bust system_prefix` and `system_suffix` route the marker to the first user turn with the same orientation (prefix stays prefix, suffix stays suffix). This is logged once per session at warn level so you can spot it in mixed corpora.
+- **Compatibility is checked at startup.** `--cache-bust` requires the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`) and a chat-shaped endpoint (`--endpoint-type chat` or `responses`). Other combinations error before the run starts with a message naming the offending flag, not silently mid-run.
+- **Multimodal turns are supported.** When a turn carries images or audio alongside text, the marker is added as a new `{type: "text", text: "<marker>"}` content part at the start (prefix) or end (suffix) of the parts list; existing text/image/audio parts pass through untouched.
+- **`system_*` falls back to the first user turn when there's no system message.** If a trace has no system role anywhere (neither a conversation-level system message nor a `raw_messages[0].role=='system'`), `--cache-bust system_prefix` and `system_suffix` route the marker to the first user turn (turn index 0) with the same orientation (prefix stays prefix, suffix stays suffix). Because the fallback only fires on turn 0, later turns of that session can't re-inject — the worker logs this once per worker process at WARN level so you can spot it in mixed corpora.
 - **Incompatible with `payload_bytes` workloads.** AIPerf's pre-encoded mmap fast path bypasses the per-request rendering that injection needs. If your dataset would otherwise pick the `PAYLOAD_BYTES` format, AIPerf refuses the run with a clear error rather than silently dropping markers. Either drop `--cache-bust` or use a workload that goes through the normal compose path.
 
 If you're tracking how the marker contributes to the **wire-token total** the model actually sees, see [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md). With `--apply-chat-template`, AIPerf compensates the synthetic prompt budget for the marker's token cost so `--isl N` lands on `N` tokens at the wire after the chat template wraps it.

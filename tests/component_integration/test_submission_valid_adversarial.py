@@ -209,7 +209,7 @@ async def test_zero_responses_does_not_flip_on_overflow_rule(tmp_path):
 
 
 async def test_bare_timing_mode_no_scenario_omits_submission_valid(tmp_path):
-    """Spec 8.4.6 #6: bare `--timing-mode agentic_replay` (no --scenario) omits the field."""
+    """Spec 8.4.6 #6: bare agentic_replay timing mode (no --scenario) omits the field."""
     # No `_scenario_name` key, no validator outcome -- non-scenario run.
     aggregate = _make_aggregate({"confidence_level": 0.95})
 

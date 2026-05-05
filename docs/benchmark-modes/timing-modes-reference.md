@@ -23,7 +23,7 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 
 When multiple options are specified, AIPerf uses this priority:
 
-1. `--fixed-schedule` or mooncake_trace dataset → Timestamp-based scheduling
+1. `--fixed-schedule`, or any trace dataset (e.g. mooncake_trace, weka_trace) with a `timestamp` field on its records → Timestamp-based scheduling
 2. `--user-centric-rate` → Per-user turn gap scheduling
 3. `--scenario inferencex-agentx-mvp` (or any scenario whose spec pins `timing_mode=agentic_replay`) → Trajectory-based multi-turn replay. The `agentic_replay` mode is not a user-selectable flag; it is locked in by the scenario validator.
 4. `--request-rate` → Rate-based scheduling with arrival patterns
@@ -53,15 +53,15 @@ When multiple options are specified, AIPerf uses this priority:
 
 | Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
 |--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--request-count` | ✅ | ✅ | ✅ | Mutually exclusive with `--num-sessions` |
-| `--num-sessions` | ✅ | ✅ | ✅ | Mutually exclusive with `--request-count` |
+| `--request-count` | ✅ | ✅ | ✅ | Mutually exclusive with `--num-conversations` |
+| `--num-conversations` | ✅ | ✅ | ✅ | Mutually exclusive with `--request-count`. Aliases: `--conversation-num`, `--num-sessions` (GenAI-Perf compat). |
 | `--benchmark-duration` | ✅ | ✅ | ✅ | Enables `--benchmark-grace-period` |
 
 ### Arrival Pattern Options
 
 | Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
 |--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--arrival-pattern` | ✅ | ❌ | ❌ | Conflicts with `--user-centric-rate`; values: `constant`, `poisson`, `gamma` |
+| `--arrival-pattern` | ✅ | ❌ | ❌ | Conflicts with `--user-centric-rate`; user-facing values: `constant`, `poisson`, `gamma` (a fourth internal value, `concurrency_burst`, is auto-set when no rate is specified — passing it explicitly with `--request-rate` errors) |
 | `--arrival-smoothness` | ⚠️ | ❌ | ❌ | Only with `--arrival-pattern gamma` |
 
 **Arrival Pattern Values:**
@@ -127,7 +127,7 @@ When multiple options are specified, AIPerf uses this priority:
 
 ## Warmup Options
 
-Warmup options work **independently of the main benchmark configuration**. The warmup phase always uses rate-based scheduling internally.
+Warmup options work **independently of the main benchmark configuration**. For `--request-rate`, `--user-centric-rate`, `--fixed-schedule`, and bare `--concurrency` runs, the warmup phase uses rate-based scheduling internally. Under the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`), the warmup phase is trajectory-based instead — it dispatches exactly one credit per trajectory at the sampled starting turn `k_i` and most warmup CLI flags below are ignored (only `--warmup-grace-period`, plus the inherited `--concurrency` / `--prefill-concurrency`, are honored).
 
 | Option | All Configurations | Notes |
 |--------|:------------------:|-------|
@@ -138,7 +138,7 @@ Warmup options work **independently of the main benchmark configuration**. The w
 | `--warmup-prefill-concurrency` | ⚠️ | Requires `--streaming` |
 | `--warmup-request-rate` | ✅ | Falls back to `--request-rate` |
 | `--warmup-arrival-pattern` | ✅ | Falls back to `--arrival-pattern` |
-| `--warmup-grace-period` | ⚠️ | Requires warmup to be enabled; default: ∞ |
+| `--warmup-grace-period` | ⚠️ | Requires `--warmup-duration` (effective default: ∞ when unset) |
 | `--warmup-concurrency-ramp-duration` | ✅ | Falls back to `--concurrency-ramp-duration` |
 | `--warmup-prefill-concurrency-ramp-duration` | ⚠️ | Requires `--streaming` |
 | `--warmup-request-rate-ramp-duration` | ✅ | Falls back to `--request-rate-ramp-duration` |
@@ -245,7 +245,7 @@ aiperf profile \
     --cache-bust system_prefix
 ```
 
-**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere in the first 70% of each conversation, and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded inter-turn delays (clamped — see `--inter-turn-delay-cap-seconds`). When a trajectory finishes its conversation, its trace ID is recycled FIFO-style and a fresh session starts from turn 0 of the next queued trace.
+**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere in roughly the first 70% of each conversation (clamped to leave at least one profile turn after warmup), and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded inter-turn delays. The default `--inter-turn-delay-cap-seconds` is `None` (no clamp); the `inferencex-agentx-mvp` scenario locks it to `60` so coffee-break gaps don't distort steady-state. When a trajectory finishes its conversation, its trace ID is recycled FIFO-style and a fresh session starts from turn 0 of the next queued trace.
 
 **When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust system_prefix` (locked on by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
 
@@ -261,11 +261,11 @@ aiperf profile \
 | `--user-centric-rate requires --num-users to be set` | Missing required option | Add `--num-users` |
 | `--user-centric-rate requires multi-turn conversations (--session-turns-mean >= 2)` | Single-turn with `--user-centric-rate` | Use `--request-rate` for single-turn or increase `--session-turns-mean` |
 | `--benchmark-grace-period can only be used with duration-based benchmarking` | Grace period without duration | Add `--benchmark-duration` |
-| `--warmup-grace-period can only be used when warmup is enabled` | Warmup grace without warmup | Add `--warmup-request-count`, `--warmup-duration`, or `--num-warmup-sessions` |
+| `--warmup-grace-period can only be used when --warmup-duration is set` | Warmup grace without `--warmup-duration` | Add `--warmup-duration` (the validator does not accept `--warmup-request-count` or `--num-warmup-sessions` as a substitute for this flag) |
 | `--prefill-concurrency requires --streaming to be enabled` | Prefill without streaming | Add `--streaming` |
 | `--arrival-smoothness can only be used with --arrival-pattern gamma` | Wrong arrival pattern | Change to `--arrival-pattern gamma` |
 | `Dataset sampling strategy is not compatible with fixed schedule mode` | Sampling with `--fixed-schedule` | Remove `--dataset-sampling-strategy` |
-| `Both a request-count and number of conversations are set` | Conflicting stop conditions | Use only one of `--request-count` or `--num-sessions` |
+| `Both a request-count and number of conversations are set` | Conflicting stop conditions | Use only one of `--request-count` or `--num-conversations` |
 | `Both --warmup-request-count and --num-warmup-sessions are set` | Conflicting warmup stop conditions | Use only one of `--warmup-request-count` or `--num-warmup-sessions` |
 | `--num-users can only be used with --user-centric-rate` | `--num-users` without `--user-centric-rate` | Add `--user-centric-rate` or remove `--num-users` |
 | `--request-cancellation-delay can only be used with --request-cancellation-rate` | Delay without cancellation rate | Add `--request-cancellation-rate` or remove `--request-cancellation-delay` |
@@ -309,7 +309,7 @@ aiperf profile \
 | `--user-centric-rate` | float | None | Per-user QPS; enables turn-gap scheduling (requires `--num-users`) |
 | `--fixed-schedule` | bool | false | Enable timestamp-based scheduling from dataset |
 | `--num-users` | int | None | Concurrent users (required with `--user-centric-rate`) |
-| `--arrival-pattern` | enum | poisson | Request arrival distribution: `constant`, `poisson`, `gamma` (only with `--request-rate`) |
+| `--arrival-pattern` | enum | poisson | Request arrival distribution: `constant`, `poisson`, `gamma` (only with `--request-rate`). A fourth value `concurrency_burst` exists internally but is auto-set when no rate is specified — passing it explicitly with `--request-rate` errors. |
 | `--arrival-smoothness` | float | 1.0 | Gamma distribution shape (only with `--arrival-pattern gamma`) |
 | `--request-rate-ramp-duration` | float | None | Seconds to ramp request rate from proportional minimum to target (only with `--request-rate`) |
 
@@ -329,7 +329,7 @@ aiperf profile \
 | `--benchmark-duration` | float | None | Max duration in seconds for benchmarking |
 | `--benchmark-grace-period` | float | 30.0 | Grace period after duration ends (requires `--benchmark-duration`) |
 | `--request-count` | int | Auto | Max requests to send |
-| `--num-sessions` | int | None | Number of conversations to run |
+| `--num-conversations` | int | None | Number of conversations to run. Aliases: `--conversation-num`, `--num-sessions` (GenAI-Perf compat) |
 
 ### Request Cancellation
 
@@ -368,7 +368,7 @@ aiperf profile \
 |--------|------|---------|-------------|
 | `--session-turns-mean` | int | 1 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
 | `--session-turns-stddev` | int | 0 | Standard deviation of turns |
-| `--dataset-sampling-strategy` | enum | shuffle | Dataset sampling: `sequential`, `shuffle` (not with `--fixed-schedule`) |
+| `--dataset-sampling-strategy` | enum | None (auto: `sequential` for traces, `shuffle` for synthetic) | Dataset sampling: `sequential`, `random`, `shuffle` (not with `--fixed-schedule`) |
 
 ### Multi-URL Load Balancing
 
