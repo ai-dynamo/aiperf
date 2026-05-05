@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.common.models import Conversation
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
@@ -140,6 +141,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._delay_cap_tracker = DelayCapTracker(
             cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
         )
+        self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
@@ -150,11 +152,29 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         """Weka emits delta-encoded turns; the endpoint accumulates at request time.
 
         Overrides ``BaseFileLoader.get_default_context_mode`` (None) so the
-        composer / dataset_manager picks ``DELTAS_WITH_RESPONSES`` for weka,
+        composer / dataset_manager picks the right delta mode for weka,
         which (a) matches the per-turn ``raw_messages`` shape this loader now
         emits and (b) correctly bypasses the preformat fast path in
         ``DatasetManager`` (deltas need at-request-time accumulation).
+
+        When ``AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES`` is set, the
+        loader emits user-only deltas and the worker threads live server
+        responses into the session's ``turn_list`` via the
+        ``DELTAS_WITHOUT_RESPONSES`` ``store_response`` path.
         """
+        if Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES:
+            return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+        return ConversationContextMode.DELTAS_WITH_RESPONSES
+
+    def _resolved_context_mode(self) -> ConversationContextMode:
+        """Per-instance counterpart to ``get_default_context_mode``.
+
+        Read once at ``__init__`` time so all four ``Conversation`` construction
+        sites in this loader pick the same mode, regardless of whether the env
+        var is mutated mid-run.
+        """
+        if self._use_live_assistant:
+            return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         return ConversationContextMode.DELTAS_WITH_RESPONSES
 
     @classmethod
@@ -415,8 +435,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         _t1 = _time.monotonic()
         _n_plans = len(parent_plans)
 
-        from aiperf.common.environment import Environment
-
         parallel_threshold = Environment.DATASET.WEKA_PARALLEL_THRESHOLD
         configured_workers = Environment.DATASET.WEKA_PARALLEL_WORKERS
         use_parallel = (
@@ -494,7 +512,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         from aiperf.common.enums import (
             ConversationBranchMode,
-            ConversationContextMode,
             PrerequisiteKind,
         )
         from aiperf.common.models import (
@@ -525,7 +542,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             trace = data[plan.trace_id][0]
             conv = Conversation(
                 session_id=plan.trace_id,
-                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                context_mode=self._resolved_context_mode(),
             )
             recon = ConversationReconstructor(
                 block_size=self._block_size,
@@ -533,6 +550,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
+                emit_assistant_segments=not self._use_live_assistant,
             )
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
@@ -659,10 +677,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
+                emit_assistant_segments=not self._use_live_assistant,
             )
             child_conv = Conversation(
                 session_id=cp.session_id,
-                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                context_mode=self._resolved_context_mode(),
             )
             for k, creq in enumerate(cp.entry.requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
@@ -734,7 +753,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         from aiperf.common.enums import (
             ConversationBranchMode,
-            ConversationContextMode,
             PrerequisiteKind,
         )
         from aiperf.common.models import (
@@ -819,6 +837,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     ignore_delays=ignore_delays,
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
+                    emit_assistant_segments=not self._use_live_assistant,
                 )
             )
 
@@ -868,7 +887,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
             parent_conv = Conversation(
                 session_id=trace_id,
-                context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                context_mode=self._resolved_context_mode(),
             )
             for t_dict in result["parent_turns"]:
                 parent_conv.turns.append(
@@ -907,7 +926,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             for child in result["children"]:
                 child_conv = Conversation(
                     session_id=child["session_id"],
-                    context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+                    context_mode=self._resolved_context_mode(),
                 )
                 for t_dict in child["turns"]:
                     child_conv.turns.append(

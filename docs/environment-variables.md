@@ -81,6 +81,7 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
 | `AIPERF_DATASET_WEKA_PARALLEL_WORKERS` | `0` | ≥ 0, ≤ 256 | Number of worker processes for WekaTraceLoader parallel reconstruction. 0 = auto (min(cpu_count - 1, 16, num_traces)). Set to 1 to force serial reconstruction. |
 | `AIPERF_DATASET_WEKA_PARALLEL_THRESHOLD` | `8` | ≥ 1, ≤ 100000 | Minimum number of parent traces required before WekaTraceLoader switches to the multi-process parallel reconstruction path. Below this, the in-process serial path is used (Pool startup overhead exceeds the speedup for tiny corpora). |
+| `AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES` | `False` | — | When True, WekaTraceLoader emits user-only deltas and selects ConversationContextMode.DELTAS_WITHOUT_RESPONSES so the worker threads the server's live assistant response back into the session's turn_list between turns. Preserves the server's just-generated KV blocks across turn boundaries (real cache-hit rate) at the cost of hash-id fidelity past turn 0 (server-generated assistant length will not exactly match the trace's recorded output_length, so subsequent user-turn block alignment drifts from the trace's hash_ids). Default False preserves the pre-canned-assistant behavior that matches recorded hash_ids byte-for-byte. |
 
 ## GPU
 

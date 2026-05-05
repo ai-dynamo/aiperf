@@ -123,6 +123,16 @@ class ConversationReconstructor:
     sample_partial_tail_tokens: Callable[[int, str], list[int]]
     decode_tokens_to_text: Callable[[list[int]], str]
     bpe_stable_terminator_tokens: list[int] = field(default_factory=list)
+    emit_assistant_segments: bool = True
+    """When False, ``turn_delta`` filters role=='assistant' segments out of
+    the emitted ``delta_messages``. The segments remain in ``_segments`` for
+    LCP/truncation accounting on subsequent turns. Used to switch the weka
+    loader from pre-canned trace assistant text (preserves recorded hash_id
+    chain, but invalidates server KV every turn) to live server-generated
+    assistant turns threaded back via ``DELTAS_WITHOUT_RESPONSES`` (preserves
+    cache-hit reuse across turns at the cost of hash-id fidelity past
+    turn 0).
+    """
     _segments: list[RoleSegment] = field(default_factory=list)
     _emitted_segment_count: int = 0
     _last_disturbance_at: int | None = None
@@ -307,14 +317,20 @@ class ConversationReconstructor:
             and self._last_disturbance_at < self._emitted_segment_count
         )
         if self._emitted_segment_count == 0 or disturbed_emitted:
-            messages = [{"role": s.role, "content": s.content} for s in self._segments]
+            source = self._segments
             reset = self._emitted_segment_count != 0 and disturbed_emitted
+        else:
+            source = self._segments[self._emitted_segment_count :]
+            reset = False
+
+        if self.emit_assistant_segments:
+            messages = [{"role": s.role, "content": s.content} for s in source]
         else:
             messages = [
                 {"role": s.role, "content": s.content}
-                for s in self._segments[self._emitted_segment_count :]
+                for s in source
+                if s.role != "assistant"
             ]
-            reset = False
 
         self._emitted_segment_count = len(self._segments)
         self._last_disturbance_at = None

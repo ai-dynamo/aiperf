@@ -301,6 +301,42 @@ nested subagents, see the [Weka Traces tutorial](weka-trace.md).
 
 ---
 
+## Live vs. Pre-Canned Assistant Turns (`AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES`)
+
+By default, the weka loader emits each turn's delta with the trace's
+**pre-canned** assistant content (synthesized from `prev_out_tokens` and
+the recorded hash_ids) so the wire prompt's hash chain matches the
+original recording byte-for-byte. The downside: the assistant tokens the
+server *actually generates* on turn N never appear in turn N+1's prompt,
+so the server's just-built KV blocks for the assistant region are
+invalidated every turn — measured cache-hit rate underweights the
+assistant prefix.
+
+Set `AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES=1` to flip the
+trade-off:
+
+- The loader emits **user-only deltas** (assistant segments are still
+  tracked internally for LCP / truncation correctness, but never sent on
+  the wire).
+- The conversation context mode becomes `DELTAS_WITHOUT_RESPONSES`, so
+  the worker captures the server's live assistant response and threads
+  it into the session's `turn_list` for the next turn's prompt.
+- Cache-hit rate now reflects what a real agentic user would experience:
+  the prior turn's KV is still valid because the server is reading back
+  exactly the tokens it just emitted.
+
+Caveat: server-generated assistant length will not exactly match the
+trace's recorded `output_length`, so the boundary between assistant
+blocks and the next user turn shifts by a few tokens each turn. Hash-id
+equality past turn 0 is **not** preserved. For metrics that care about
+the cache reuse pattern (cache-hit rate, prefill/decode mix, end-to-end
+latency) this drift is harmless. For tooling that compares per-block
+hits against the trace's recorded `hash_ids`, it isn't.
+
+The default (`False`) is unchanged.
+
+---
+
 ## `--unsafe-override`
 
 Sometimes you intentionally want to break a scenario rule — to study the
