@@ -91,7 +91,11 @@ from aiperf.records.records_tracker import RecordsTracker
 
 _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("ttft", "time_to_first_token"),
-    ("itl", "inter_chunk_latency"),
+    # Use the scalar per-record metric (avg gap across the response), not the
+    # list-valued ``inter_chunk_latency``. List metrics don't aggregate into
+    # displayable percentiles in the realtime path, so the row used to show
+    # only dashes mid-run even when the per-record JSONL had real values.
+    ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
 )
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "

@@ -57,7 +57,7 @@ def _baseline_metrics() -> list[MetricResult]:
         _mr("request_throughput", avg=39.8, unit="requests/sec"),
         _mr("output_token_throughput", avg=1820, unit="tokens/sec"),
         _mr("time_to_first_token", p50=80, p95=180, p99=240),
-        _mr("inter_chunk_latency", p50=12, p95=22, p99=35),
+        _mr("inter_token_latency", p50=12, p95=22, p99=35),
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
 
@@ -106,7 +106,7 @@ def test_render_sub_millisecond_value_renders_lt1ms() -> None:
         _mr("request_throughput", avg=39.8, unit="requests/sec"),
         _mr("output_token_throughput", avg=1820, unit="tokens/sec"),
         _mr("time_to_first_token", p50=0.5, p95=180, p99=240),
-        _mr("inter_chunk_latency", p50=12, p95=22, p99=35),
+        _mr("inter_token_latency", p50=12, p95=22, p99=35),
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
     block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)

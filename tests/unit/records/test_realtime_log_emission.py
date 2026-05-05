@@ -39,7 +39,7 @@ def _metrics() -> list[MetricResult]:
         mr("request_throughput", unit="req/sec", avg=39.8),
         mr("output_token_throughput", unit="tokens/sec", avg=1820),
         mr("time_to_first_token", p50=80, p95=180, p99=240),
-        mr("inter_chunk_latency", p50=12, p95=22, p99=35),
+        mr("inter_token_latency", p50=12, p95=22, p99=35),
         mr("request_latency", p50=320, p95=680, p99=910),
     ]
 
