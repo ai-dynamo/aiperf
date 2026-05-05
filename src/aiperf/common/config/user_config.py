@@ -1208,7 +1208,8 @@ class UserConfig(BaseConfig):
 
         if self.timing_mode != TimingMode.AGENTIC_REPLAY:
             raise ValueError(
-                f"--cache-bust requires --timing-mode agentic_replay; "
+                f"--cache-bust requires the agentic_replay timing mode "
+                f"(set today by --scenario inferencex-agentx-mvp); "
                 f"got {self.timing_mode}. Cache-bust marker minting is only "
                 f"implemented for agentic_replay."
             )

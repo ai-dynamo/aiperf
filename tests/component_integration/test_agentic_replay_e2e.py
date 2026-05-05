@@ -21,7 +21,7 @@ Three tests:
    aggregate JSON contains ``submission_valid: false`` with
    ``unsafe_override`` in ``submission_invalid_reasons``.
 3. ``test_agentic_replay_e2e_no_scenario_omits_submission_valid`` -- bare
-   ``--timing-mode agentic_replay`` (no ``--scenario``): aggregate JSON omits
+   agentic_replay timing mode (no ``--scenario``): aggregate JSON omits
    the ``submission_valid`` field; the rest of the run still succeeds.
 
 Wiring scope:
@@ -652,7 +652,7 @@ async def test_agentic_replay_e2e_unsafe_override_stamps_false(
 
 
 # =============================================================================
-# Test 3: bare --timing-mode agentic_replay (no --scenario) omits the field
+# Test 3: bare agentic_replay timing mode (no --scenario) omits the field
 # =============================================================================
 
 
@@ -661,7 +661,7 @@ async def test_agentic_replay_e2e_unsafe_override_stamps_false(
 async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     tmp_path: Path, monkeypatch, parallel: bool
 ) -> None:
-    """Spec §8.2 #3: bare timing-mode without scenario -> no submission_valid field.
+    """Spec §8.2 #3: bare agentic_replay timing mode without scenario -> no submission_valid field.
 
     Exercises the same loader -> trajectory -> strategy chain to confirm the
     pipeline runs cleanly when ``--scenario`` is unset, then stamps the
@@ -716,7 +716,7 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     md = data["metadata"]
 
     assert "submission_valid" not in md, (
-        "Bare timing-mode (no --scenario) must omit submission_valid"
+        "Bare agentic_replay timing mode (no --scenario) must omit submission_valid"
     )
     assert "submission_invalid_reasons" not in md
     assert "scenario" not in md

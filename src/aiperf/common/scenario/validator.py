@@ -146,10 +146,15 @@ def validate_scenario(
         if explicit:
             violations.append(
                 ScenarioViolation(
-                    flag="--timing-mode",
+                    flag="--request-rate / --user-centric-rate / --fixed-schedule",
                     current_value=str(actual_mode),
                     required_value=str(spec.timing_mode),
-                    message=f"scenario {spec.name!r} requires timing_mode={spec.timing_mode}",
+                    message=(
+                        f"scenario {spec.name!r} requires timing_mode={spec.timing_mode}; "
+                        "do not pass --request-rate / --arrival-pattern / "
+                        "--user-centric-rate / --fixed-schedule (or related flags) "
+                        "alongside --scenario"
+                    ),
                 )
             )
         else:
