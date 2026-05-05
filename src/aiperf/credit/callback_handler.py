@@ -329,9 +329,13 @@ class CreditCallbackHandler:
         is_child = credit.agent_depth > 0
         if not is_child:
             if handler.stop_checker.can_send_any_turn():
-                await handler.strategy.handle_credit_return(credit)
+                await handler.strategy.handle_credit_return(
+                    credit, error=credit_return.error
+                )
         elif credit.is_final_turn or handler.stop_checker.can_send_child_turn():
-            await handler.strategy.handle_credit_return(credit)
+            await handler.strategy.handle_credit_return(
+                credit, error=credit_return.error
+            )
         elif self._branch_orchestrator is not None:
             try:
                 await self._branch_orchestrator.on_child_stopped(
