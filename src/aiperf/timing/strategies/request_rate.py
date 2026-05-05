@@ -207,7 +207,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 # This is especially critical to prevent deadlock in CONCURRENCY_BURST mode (0 interval).
                 await yield_to_event_loop()
 
-    async def handle_credit_return(self, credit: Credit) -> None:
+    async def handle_credit_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         """Queue the next turn of this conversation for the main loop.
 
         Called by CreditCallbackHandler when a worker completes a turn.
