@@ -121,6 +121,16 @@ class MetricRegistry:
             raise MetricTypeError(f"Metric class with tag '{tag}' not found") from e
 
     @classmethod
+    def get_class_or_none(cls, tag: MetricTagT) -> type["BaseMetric"] | None:
+        """Get a metric class by its tag, or None if not registered.
+
+        Use this when callers handle metric tags from multiple registries (e.g.
+        inference metrics + GPU telemetry metrics) and need to branch on
+        registration without exception-driven control flow.
+        """
+        return cls._metrics_map.get(tag)
+
+    @classmethod
     def get_instance(cls, tag: MetricTagT) -> "BaseMetric":
         """Get an instance of a metric class by its tag. This will create a new instance if it does not exist.
 
