@@ -157,14 +157,20 @@ def _render_realtime_block(
     tput_out_avg = getattr(tput_out_mr, "avg", None)
     tput_out_str = str(int(round(tput_out_avg))) if tput_out_avg is not None else "-"
 
-    tput_in_mr = by_tag.get("input_token_throughput")
-    tput_in_avg = getattr(tput_in_mr, "avg", None)
-    tput_in_str = str(int(round(tput_in_avg))) if tput_in_avg is not None else "-"
+    # ``total_token_throughput`` = (input + output tokens) / wall-clock —
+    # matches kv-cache-tester's "Total throughput" assessment field.
+    # aiperf doesn't aggregate input throughput as its own metric, so this
+    # is the cleanest equivalent.
+    tput_total_mr = by_tag.get("total_token_throughput")
+    tput_total_avg = getattr(tput_total_mr, "avg", None)
+    tput_total_str = (
+        str(int(round(tput_total_avg))) if tput_total_avg is not None else "-"
+    )
 
     line1 = (
         f"[realtime {_format_elapsed(elapsed)} profiling] "
         f"rps={rps_delta_str} (avg {rps_avg_str}) "
-        f"tput_in={tput_in_str}/s "
+        f"tput_total={tput_total_str}/s "
         f"tput_out={tput_out_str}/s "
         f"done={phase_stats.total_records} "
         f"ok={phase_stats.success_records} "
