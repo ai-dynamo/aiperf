@@ -305,8 +305,9 @@ class EndpointConfig(BaseConfig):
             "may reject the `uuid` field. Size `--mm-processor-cache-gb` >= "
             "working set, otherwise vLLM 400s on UUID miss. Currently "
             "supported only with `--custom-dataset-type single_turn` (with "
-            "`session_id`-grouped rows); using it with `multi_turn` raises "
-            "`NotImplementedError`.",
+            "`session_id`-grouped rows) and `--endpoint-type chat`; using "
+            "it with `multi_turn` raises `NotImplementedError`, and on "
+            "non-chat endpoints the flag is silently ignored.",
         ),
         CLIParameter(
             name=("--uuid-and-strip",),
