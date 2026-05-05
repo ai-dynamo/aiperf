@@ -67,8 +67,8 @@ def test_render_full_block_first_tick() -> None:
         _baseline_metrics(), _phase_stats(), prev_snapshot=None
     )
     assert block.startswith(
-        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_out=1820/s "
-        "done=1903 ok=1903 err=0"
+        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_in=-/s "
+        "tput_out=1820/s done=1903 ok=1903 err=0"
     )
     assert "ttft p50=80ms" in block
     assert "p95=180ms" in block
@@ -84,7 +84,7 @@ def test_render_uses_prev_snapshot_for_delta_rps() -> None:
         prev_snapshot=(900, 30.0),
     )
     assert block.startswith(
-        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_out=1820/s"
+        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_in=-/s tput_out=1820/s"
     )
 
 

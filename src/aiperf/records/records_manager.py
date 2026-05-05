@@ -153,9 +153,14 @@ def _render_realtime_block(
     tput_out_avg = getattr(tput_out_mr, "avg", None)
     tput_out_str = str(int(round(tput_out_avg))) if tput_out_avg is not None else "-"
 
+    tput_in_mr = by_tag.get("input_token_throughput")
+    tput_in_avg = getattr(tput_in_mr, "avg", None)
+    tput_in_str = str(int(round(tput_in_avg))) if tput_in_avg is not None else "-"
+
     line1 = (
         f"[realtime {_format_elapsed(elapsed)} profiling] "
         f"rps={rps_delta_str} (avg {rps_avg_str}) "
+        f"tput_in={tput_in_str}/s "
         f"tput_out={tput_out_str}/s "
         f"done={phase_stats.total_records} "
         f"ok={phase_stats.success_records} "
@@ -170,6 +175,22 @@ def _render_realtime_block(
         p95 = _format_ms(getattr(mr, "p95", None))
         p99 = _format_ms(getattr(mr, "p99", None))
         rows.append(f"{indent}{label:<4} p50={p50:<6} p95={p95:<6} p99={p99}")
+
+    # Sequence-length distribution row — useful for spotting long-tail
+    # agentic prompts mid-run.  Reads the same MetricResults aggregator
+    # already publishes; no extra plumbing.
+    isl_mr = by_tag.get("input_sequence_length")
+    osl_mr = by_tag.get("output_sequence_length")
+    isl_avg = getattr(isl_mr, "avg", None)
+    osl_avg = getattr(osl_mr, "avg", None)
+    if isl_avg is not None or osl_avg is not None:
+        isl_str = (
+            f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
+        )
+        osl_str = (
+            f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
+        )
+        rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
 
     return "\n".join([line1, *rows])
 
