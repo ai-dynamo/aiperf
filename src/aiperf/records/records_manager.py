@@ -208,13 +208,9 @@ def _render_realtime_block(
                 f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"
             )
         if "kv_cache_usage_pct" in server_snapshot:
-            srv_parts.append(
-                f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%"
-            )
+            srv_parts.append(f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%")
         if "num_preemptions" in server_snapshot:
-            srv_parts.append(
-                f"preemptions={int(server_snapshot['num_preemptions'])}"
-            )
+            srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
         if srv_parts:
             rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 
@@ -767,7 +763,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 if callable(snapshot_fn):
                     server_snapshot = snapshot_fn() or {}
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 self.debug(lambda: f"server_snapshot failed: {exc!r}")
 
         rendered = _render_realtime_block(
