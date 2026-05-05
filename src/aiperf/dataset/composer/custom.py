@@ -220,6 +220,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             or s.prefix_len_multiplier != 1.0
             or s.prefix_root_multiplier != 1
             or s.prompt_len_multiplier != 1.0
+            or s.output_len_multiplier != 1.0
         )
 
     def _validate_synthesis_config(self, dataset_type: CustomDatasetType) -> None:
@@ -234,7 +235,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
         if self._should_synthesize() and not plugins.is_trace_dataset(dataset_type):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
-                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
+                f"--synthesis-output-len-multiplier) "
                 f"are only supported with trace datasets, "
                 f"but got {dataset_type}. "
                 f"Either remove synthesis options or use a trace dataset type."

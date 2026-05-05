@@ -29,7 +29,7 @@ def _has_meaningful_synthesis(synthesis: Any) -> bool:
     Trace loaders only invoke the Synthesizer when the user actually asked
     for a transformation. Defaults: speedup_ratio=1.0,
     prefix_len_multiplier=1.0, prefix_root_multiplier=1,
-    prompt_len_multiplier=1.0.
+    prompt_len_multiplier=1.0, output_len_multiplier=1.0.
     """
     if synthesis is None:
         return False
@@ -38,6 +38,7 @@ def _has_meaningful_synthesis(synthesis: Any) -> bool:
         or getattr(synthesis, "prefix_len_multiplier", 1.0) != 1.0
         or getattr(synthesis, "prefix_root_multiplier", 1) != 1
         or getattr(synthesis, "prompt_len_multiplier", 1.0) != 1.0
+        or getattr(synthesis, "output_len_multiplier", 1.0) != 1.0
     )
 
 

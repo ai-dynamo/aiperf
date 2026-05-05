@@ -115,6 +115,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "synthesis_prefix_len_multiplier",
         "synthesis_prefix_root_multiplier",
         "synthesis_prompt_len_multiplier",
+        "synthesis_output_len_multiplier",
         "synthesis_max_isl",
         "synthesis_max_osl",
     }
