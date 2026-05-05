@@ -372,3 +372,74 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             Empty list (server metrics exported via export_results instead)
         """
         return []
+
+    def realtime_snapshot(self) -> dict[str, float]:
+        """Live snapshot of key server metrics for the realtime stats block.
+
+        Returns a flat ``{metric_name: value}`` dict with the metrics most
+        useful to display mid-run:
+
+        - ``prefix_cache_hit_rate`` (% across all endpoints; counter-delta
+          since the first observed sample; ``vllm:prefix_cache_hits`` /
+          ``vllm:prefix_cache_queries``).
+        - ``external_prefix_cache_hit_rate`` (% same shape, when CPU
+          offload is active and ``vllm:external_prefix_cache_*`` are present).
+        - ``kv_cache_usage_pct`` (latest gauge value, max across endpoints).
+        - ``num_preemptions`` (cumulative total since first sample).
+
+        Returns ``{}`` when no server metrics have been received yet, so
+        callers can suppress the row on early ticks.
+        """
+        endpoints = list(self._server_metrics_hierarchy.endpoints.values())
+        if not endpoints:
+            return {}
+        out: dict[str, float] = {}
+
+        def _counter_delta_first_to_last(metric_name: str) -> float | None:
+            total = 0.0
+            found = False
+            for ep in endpoints:
+                for key, entry in ep.metrics.items():
+                    if key.name != metric_name:
+                        continue
+                    vals = entry.data.values
+                    if len(vals) >= 2:
+                        total += float(vals[-1] - vals[0])
+                        found = True
+                    elif len(vals) == 1:
+                        total += float(vals[-1])
+                        found = True
+            return total if found else None
+
+        def _gauge_latest_max(metric_name: str) -> float | None:
+            best: float | None = None
+            for ep in endpoints:
+                for key, entry in ep.metrics.items():
+                    if key.name != metric_name:
+                        continue
+                    vals = entry.data.values
+                    if len(vals) > 0:
+                        v = float(vals[-1])
+                        best = v if best is None else max(best, v)
+            return best
+
+        hits = _counter_delta_first_to_last("vllm:prefix_cache_hits")
+        queries = _counter_delta_first_to_last("vllm:prefix_cache_queries")
+        if hits is not None and queries and queries > 0:
+            out["prefix_cache_hit_rate"] = 100.0 * hits / queries
+
+        ext_hits = _counter_delta_first_to_last("vllm:external_prefix_cache_hits")
+        ext_queries = _counter_delta_first_to_last("vllm:external_prefix_cache_queries")
+        if ext_hits is not None and ext_queries and ext_queries > 0:
+            out["external_prefix_cache_hit_rate"] = 100.0 * ext_hits / ext_queries
+
+        kv = _gauge_latest_max("vllm:kv_cache_usage_perc")
+        if kv is not None:
+            # Prometheus exposes this as 0-1 fraction, normalize to %.
+            out["kv_cache_usage_pct"] = kv * 100.0 if kv <= 1.0 else kv
+
+        preempt = _counter_delta_first_to_last("vllm:num_preemptions")
+        if preempt is not None:
+            out["num_preemptions"] = preempt
+
+        return out

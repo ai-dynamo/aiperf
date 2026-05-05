@@ -122,6 +122,7 @@ def _render_realtime_block(
     metric_results: list[MetricResult],
     phase_stats: PhaseRecordsStats,
     prev_snapshot: tuple[int, float] | None,
+    server_snapshot: dict[str, float] | None = None,
 ) -> str:
     """Render a compact 4-line realtime stats block for the aiperf logger.
 
@@ -191,6 +192,31 @@ def _render_realtime_block(
         isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
         osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
         rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
+
+    # Server-side row — cumulative cache hit rate, KV usage, preemptions
+    # from the live ServerMetricsAccumulator snapshot. Sourced from the
+    # /metrics scrape, so populates only when server-metrics collection
+    # is enabled and the inference server actually serves Prometheus.
+    if server_snapshot:
+        srv_parts: list[str] = []
+        if "prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"prefix_cache_hit={server_snapshot['prefix_cache_hit_rate']:.1f}%"
+            )
+        if "external_prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"
+            )
+        if "kv_cache_usage_pct" in server_snapshot:
+            srv_parts.append(
+                f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%"
+            )
+        if "num_preemptions" in server_snapshot:
+            srv_parts.append(
+                f"preemptions={int(server_snapshot['num_preemptions'])}"
+            )
+        if srv_parts:
+            rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 
     return "\n".join([line1, *rows])
 
@@ -727,8 +753,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
+        # Server-side live snapshot from the ServerMetricsAccumulator.
+        # Best-effort: silently falls back to empty when the accumulator
+        # isn't enabled (--no-server-metrics) or hasn't received any
+        # records yet, so the realtime block stays usable in either case.
+        server_snapshot: dict[str, float] = {}
+        if self._server_metrics_accumulator is not None:
+            try:
+                snapshot_fn = getattr(
+                    self._server_metrics_accumulator,
+                    "realtime_snapshot",
+                    None,
+                )
+                if callable(snapshot_fn):
+                    server_snapshot = snapshot_fn() or {}
+            except Exception as exc:  # noqa: BLE001
+                self.debug(lambda: f"server_snapshot failed: {exc!r}")
+
         rendered = _render_realtime_block(
-            display_metrics, phase_stats, self._prev_realtime_snapshot
+            display_metrics,
+            phase_stats,
+            self._prev_realtime_snapshot,
+            server_snapshot=server_snapshot,
         )
         if rendered:
             self._prev_realtime_snapshot = (
