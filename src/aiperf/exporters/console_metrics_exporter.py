@@ -46,7 +46,6 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     """Records that have ANY of these flags are hidden."""
 
     console_groups: ClassVar[tuple[MetricConsoleGroup, ...] | None] = (
-        MetricConsoleGroup.DEFAULT,
         MetricConsoleGroup.EFFECTIVE,
         MetricConsoleGroup.ACTIVE,
         MetricConsoleGroup.USAGE,
@@ -54,6 +53,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         MetricConsoleGroup.PREDICTION,
         MetricConsoleGroup.AUDIO,
         MetricConsoleGroup.REASONING,
+        MetricConsoleGroup.DEFAULT,
     )
     """Groups to include. `None` means no group filter (every record that
     passes the flag filter is shown)."""

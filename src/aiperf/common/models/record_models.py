@@ -15,8 +15,10 @@ from pydantic import (
     Field,
     PlainSerializer,
     RootModel,
+    SerializationInfo,
     SerializeAsAny,
     field_validator,
+    model_serializer,
 )
 from pydantic.functional_validators import AfterValidator
 
@@ -67,11 +69,26 @@ class MetricResult(JsonMetricResult):
     )
     console_group: MetricConsoleGroup | None = Field(
         default=None,
-        exclude=True,
         description="Optional console-grouping override for analyzer-injected results "
-        "whose tags are not in MetricRegistry. Excluded from JSON dumps; the registered "
-        "metric class's `console_group` ClassVar is the source of truth for everything else.",
+        "whose tags are not in MetricRegistry. The registered metric class's "
+        "`console_group` ClassVar is the source of truth for everything else; this "
+        "field is only consulted by the console exporter when a tag isn't registered. "
+        "Dropped from every public dump (CSV / JSON exports / REST API); only IPC "
+        "passes `context={'include_internal': True}` to keep it across process boundaries.",
     )
+
+    @model_serializer(mode="wrap")
+    def _drop_internal_fields(self, handler, info: SerializationInfo) -> dict[str, Any]:
+        """Strip internal-only fields (`console_group`) from every dump unless
+        the caller opts in with ``context={'include_internal': True}`` — i.e.
+        cross-process IPC. User-facing CSV/JSON/REST exports never set the
+        flag, so they always see the public shape."""
+        data = handler(self)
+        if isinstance(data, dict) and not (
+            info.context and info.context.get("include_internal")
+        ):
+            data.pop("console_group", None)
+        return data
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
