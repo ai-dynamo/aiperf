@@ -61,7 +61,6 @@ from aiperf.common.models import (
     WorkerProcessingStats,
 )
 from aiperf.common.models.branch_stats import BranchStats
-from aiperf.common.models.credit_models import CreditPhaseStats
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -117,7 +116,7 @@ def _format_ms(value: float | None) -> str:
 
 def _render_realtime_block(
     metric_results: list[MetricResult],
-    phase_stats: CreditPhaseStats,
+    phase_stats: PhaseRecordsStats,
     prev_snapshot: tuple[int, float] | None,
 ) -> str:
     """Render a compact 4-line realtime stats block for the aiperf logger.
@@ -127,12 +126,16 @@ def _render_realtime_block(
     accumulator's ``summarize`` path), so ``_format_ms`` consumes them as-is.
     Returns an empty string when no requests have completed yet so callers
     can suppress the log line entirely on the first tick.
+
+    Records-side stats only — ``in_flight_requests`` is a credit-side concept
+    that this function doesn't have access to and is therefore omitted from
+    the output line.
     """
-    if phase_stats.requests_completed == 0:
+    if phase_stats.total_records == 0:
         return ""
 
     by_tag: dict[str, MetricResult] = {m.tag: m for m in metric_results}
-    elapsed = phase_stats.requests_elapsed_time
+    elapsed = phase_stats.records_elapsed_time
 
     rps_avg_mr = by_tag.get("request_throughput")
     rps_avg = getattr(rps_avg_mr, "avg", None)
@@ -141,9 +144,7 @@ def _render_realtime_block(
     if prev_snapshot is not None:
         prev_completed, prev_elapsed = prev_snapshot
         dt = elapsed - prev_elapsed
-        rps_delta = (
-            (phase_stats.requests_completed - prev_completed) / dt if dt > 0 else 0.0
-        )
+        rps_delta = (phase_stats.total_records - prev_completed) / dt if dt > 0 else 0.0
         rps_delta_str = f"{rps_delta:.1f}"
     else:
         rps_delta_str = rps_avg_str
@@ -156,9 +157,9 @@ def _render_realtime_block(
         f"[realtime {_format_elapsed(elapsed)} profiling] "
         f"rps={rps_delta_str} (avg {rps_avg_str}) "
         f"tput_out={tput_out_str}/s "
-        f"in_flight={phase_stats.in_flight_requests} "
-        f"done={phase_stats.requests_completed} "
-        f"err={phase_stats.request_errors}"
+        f"done={phase_stats.total_records} "
+        f"ok={phase_stats.success_records} "
+        f"err={phase_stats.error_records}"
     )
 
     indent = " " * _LATENCY_PREFIX_WIDTH
@@ -710,8 +711,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         if rendered:
             self._prev_realtime_snapshot = (
-                phase_stats.requests_completed,
-                phase_stats.requests_elapsed_time,
+                phase_stats.total_records,
+                phase_stats.records_elapsed_time,
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
                 self.info(rendered)
