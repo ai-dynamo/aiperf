@@ -34,18 +34,18 @@ STUB_GRADERS = ("exact_match", "math", "code_execution")
 
 
 class TestAcceptsImplemented:
-    def test_no_benchmark_set_is_valid(self) -> None:
+    def test_accuracyconfig_no_benchmark_returns_defaults(self) -> None:
         cfg = AccuracyConfig()
         assert cfg.benchmark is None
         assert cfg.grader is None
         assert cfg.enabled is False
 
-    def test_implemented_benchmark_passes(self) -> None:
+    def test_accuracyconfig_with_implemented_benchmark_enables_config(self) -> None:
         cfg = AccuracyConfig(benchmark="mmlu")
         assert str(cfg.benchmark) == "mmlu"
         assert cfg.enabled is True
 
-    def test_implemented_grader_override_passes(self) -> None:
+    def test_accuracyconfig_with_grader_override_sets_grader(self) -> None:
         cfg = AccuracyConfig(benchmark="mmlu", grader="multiple_choice")
         assert str(cfg.grader) == "multiple_choice"
 
@@ -55,7 +55,9 @@ class TestRejectsStubBenchmark:
         "name",
         [param(n, id=n) for n in STUB_BENCHMARKS],
     )  # fmt: skip
-    def test_stub_benchmark_rejected(self, name: str) -> None:
+    def test_accuracyconfig_with_stub_benchmark_raises_validationerror(
+        self, name: str
+    ) -> None:
         with pytest.raises(ValidationError) as exc:
             AccuracyConfig(benchmark=name)
         msg = str(exc.value)
@@ -67,7 +69,9 @@ class TestRejectsStubBenchmark:
         # must surface at least that as a usable alternative.
         assert "mmlu" in msg.split("Available:")[-1]
 
-    def test_hyphenated_stub_name_also_rejected(self) -> None:
+    def test_accuracyconfig_with_hyphenated_stub_name_raises_validationerror(
+        self,
+    ) -> None:
         """Reproduces the original bug: ``--accuracy-benchmark lcb-codegeneration``
         used the hyphen-tolerant enum lookup and reached the loader."""
         with pytest.raises(ValidationError) as exc:
@@ -78,7 +82,9 @@ class TestRejectsStubBenchmark:
         assert "lcb_codegeneration" in msg
         assert "not yet implemented" in msg
 
-    def test_uppercase_stub_name_also_rejected(self) -> None:
+    def test_accuracyconfig_with_uppercase_stub_name_raises_validationerror(
+        self,
+    ) -> None:
         """Case-insensitive enum lookup must not bypass the validator."""
         with pytest.raises(ValidationError) as exc:
             AccuracyConfig(benchmark="HELLASWAG")
@@ -90,7 +96,9 @@ class TestRejectsStubGrader:
         "name",
         [param(n, id=n) for n in STUB_GRADERS],
     )  # fmt: skip
-    def test_stub_grader_override_rejected(self, name: str) -> None:
+    def test_accuracyconfig_with_stub_grader_override_raises_validationerror(
+        self, name: str
+    ) -> None:
         with pytest.raises(ValidationError) as exc:
             AccuracyConfig(benchmark="mmlu", grader=name)
         msg = str(exc.value)
@@ -100,7 +108,7 @@ class TestRejectsStubGrader:
         # ``multiple_choice`` is the one always-implemented grader.
         assert "multiple_choice" in msg.split("Available:")[-1]
 
-    def test_grader_unset_falls_back_to_default(self) -> None:
+    def test_accuracyconfig_grader_unset_allows_default(self) -> None:
         """Leaving ``grader`` unset must not trigger the stub check.
 
         AccuracyConfig stays neutral about which grader the benchmark
