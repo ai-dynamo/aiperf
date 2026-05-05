@@ -134,10 +134,10 @@ flag.
 | `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, FIFO trace recycle, 60s clamp). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--use-think-time-only` is on | Inter-turn delays use the agent's recorded "think time" only, not "send-to-send time" | Send-to-send delays include the *previous* server's response time, which would unfairly slow your replay if your server is faster than the recording. |
-| `--ignore-trace-delays` is off | Trace inter-turn delays are honored (subject to the cap below) | The whole point of replay is to preserve the agent's pacing. |
+| `--ignore-trace-delays` is off | Trace-derived inter-turn delays (the recorded `think_time`, see the row above) are not stripped — only clamped (see below) | The whole point of replay is to preserve the agent's pacing. |
 | `--inter-turn-delay-cap-seconds = 60` | Any single inter-turn delay over 60s is clamped to 60s | Real coding sessions have 10-minute coffee-break gaps that would distort steady-state measurement. |
-| `--cache-bust system_prefix` | Inject a unique per-conversation marker at the start of every prompt | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. |
-| Loader is `semianalysis_cc_traces_weka` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-042026` HF dataset (via `--public-dataset semianalysis_cc_traces_weka`) or a local copy of the same corpus replayed via `--input-file <dir>` (the file-based `weka_trace` loader). Both produce byte-identical conversations — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
+| `--cache-bust system_prefix` | Inject a unique per-conversation marker into the system message at the start of every play (or, if there is no system message, into the first user turn) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. |
+| Loader is `semianalysis_cc_traces_weka` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-042026` HF dataset (via `--public-dataset semianalysis_cc_traces_weka`) or a local copy of the same corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -207,10 +207,12 @@ trajectory-based warmup specific to the agentic-replay scheduler.
 
 Here's the picture. You set `--concurrency 100`. The scheduler picks 100
 distinct conversations (call them *trajectories*) from the trace pool. For
-each trajectory, it samples a random "starting turn" `k_i` somewhere in the
-first 70% of that conversation's turns. Then, in the warmup phase, it dispatches
-exactly *one* request per trajectory: turn `k_i` of conversation `i`, with the
-full prefix history (turns 0 through `k_i-1`) attached as message context.
+each trajectory, it samples a random "starting turn" `k_i` somewhere in
+roughly the first 70% of that conversation's turns (clamped to leave at
+least one profile turn after warmup). Then, in the warmup phase, it
+dispatches exactly *one* request per trajectory: turn `k_i` of conversation
+`i`, with the full prefix history (turns 0 through `k_i-1`) attached as
+message context.
 
 The point is that the server's prefix cache fills with a realistic mix of
 multi-turn coding contexts before any measurement starts. When the profiling
@@ -252,11 +254,13 @@ A few wrinkles worth knowing:
   to keep injecting mid-conversation jumps forever.
 - **Each play of a trace gets a fresh cache-bust marker.** When a trace ID is
   recycled (or first dispatched as a trajectory), AIPerf prepends a unique
-  short tag like `[rid:8a3f2c1b9e7d]\n\n` to the start of every prompt in that
-  conversation. The tag is derived deterministically *within a single run*
-  from the run's auto-generated benchmark ID, the recycle pass for that
-  slot, the trajectory index, and the trace ID. The trace ID is part of the
-  digest by design — without it, two different traces landing on the same
+  short tag like `[rid:8a3f2c1b9e7d]\n\n` to the conversation's system
+  message (or, if the trace has no system message, to its first user turn —
+  one injection per play, shared across all turns of that play). The tag is
+  derived deterministically *within a single run* from the run's
+  auto-generated benchmark ID, the recycle pass for that slot, the
+  trajectory index, and the trace ID. The trace ID is part of the digest by
+  design — without it, two different traces landing on the same
   `(recycle_pass, trajectory_index)` pair would collide on the same marker
   (~33% rate at MVP scale). Within one run, the same trace plays out with
   the same marker on every turn, and a different marker each time it
@@ -300,7 +304,7 @@ nested subagents, see the [Weka Traces tutorial](weka-trace.md).
 ## `--unsafe-override`
 
 Sometimes you intentionally want to break a scenario rule — to study the
-sensitivity of one variable, to run a 5-minute smoke test instead of a
+sensitivity of one variable, to run a 1-minute smoke test instead of a
 15-minute proper run, to see what happens with a smaller model. For that:
 
 ```bash
@@ -315,14 +319,15 @@ What `--unsafe-override` does:
 
 - **Converts every scenario rule violation from an error into a warning.** The
   run starts.
-- **Permanently stamps `submission_valid: false`** in every JSON output
-  (per-run and, when `--num-profile-runs >= 2`, the aggregate file), with
-  `"unsafe_override"` in `submission_invalid_reasons`.
+- **Stamps `submission_valid: false`** in every JSON output (per-run and, when
+  `--num-profile-runs >= 2`, the aggregate file), with `"unsafe_override"` in
+  `submission_invalid_reasons` — but only when at least one rule was actually
+  broken. Passing the flag without breaking any rule is a no-op.
 
-You cannot un-set the flag at runtime, you cannot launder a result through
-post-processing — once the flag was on, the run is marked invalid forever.
-The flag is a no-op without `--scenario` (since there's no rule set to
-override).
+Once the flag was on AND a rule was broken, the run is marked invalid forever —
+you cannot un-set the flag at runtime, you cannot launder a result through
+post-processing. The flag is a no-op without `--scenario` (since there's no rule
+set to override).
 
 Use this for development. Don't use it for anything you want to compare
 against other AgentX MVP runs.
@@ -331,16 +336,16 @@ against other AgentX MVP runs.
 
 ## Troubleshooting
 
-**"`UnknownScenarioError`: scenario 'inferencex-agentx-mvp' not found"**
+**`UnknownScenarioError: Unknown scenario 'inferencex-agentx-mvp'. Valid scenarios: …`**
 Re-run `make generate-all-plugin-files` and reinstall (`make install`) —
 your local plugin registry is out of date.
 
-**"`EmptyTracePoolError`: loader returned 0 traces"**
+**`EmptyTracePoolError: Loader produced 0 traces; trajectories cannot be built.`**
 The HF dataset download or row validation produced no usable traces. Check
 your network connectivity to `huggingface.co` and confirm the dataset name
 is `semianalysis_cc_traces_weka`. The shipped corpus has 739 traces.
 
-**"`TrajectoryWarmupFailedError`: warmup credits failed terminally"**
+**`TrajectoryWarmupFailedError: Trajectory warmup failed for N trace(s): …`**
 Your inference server rejected one or more warmup requests after AIPerf's
 normal retry budget. Check the server logs — common causes are an
 authentication or model-name mismatch (e.g. `--model` doesn't match what
@@ -359,19 +364,22 @@ see how close you were to the threshold.
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …"**
 The AgentX MVP scenario is defined against the public
 `semianalysisai/cc-traces-weka-042026` corpus, replayed via either the
-HuggingFace loader (`semianalysis_cc_traces_weka`, the default for
-`--public-dataset`) or the local file-based loader (`weka_trace`, the
-default for `--input-file <dir>` of the same JSON traces). Pass one of:
+HuggingFace loader (`semianalysis_cc_traces_weka`, selected by
+`--public-dataset`) or the explicit local file-based loader (`weka_trace`,
+selected by `--custom-dataset-type weka_trace --input-file <dir>` of the
+same JSON traces). Pass one of:
 
 - `--public-dataset semianalysis_cc_traces_weka` (zero-setup; HF download), or
-- `--input-file <local-trace-dir>` (offline; the dir must contain the same
-  Weka trace JSON files).
+- `--custom-dataset-type weka_trace --input-file <local-trace-dir>` (offline;
+  the dir must contain the same Weka trace JSON files). `--input-file` alone
+  does NOT auto-detect weka trace directories — you have to pass the explicit
+  `--custom-dataset-type weka_trace`.
 
 If you're trying to replay a *different* corpus under this scenario, that's
 not a supported submission — but you can pass `--unsafe-override` to run
 anyway; the result will be marked `submission_valid=false`.
 
-**"scenario requires `cache_bust.target=system_prefix`, got `none`"**
+**"scenario requires `cache_bust.target=system_prefix`; got `none`"**
 The cache-bust target is one of the locked settings, but unlike
 `ignore_eos` and `--use-think-time-only` it isn't auto-injected by the
 validator. You have to pass `--cache-bust system_prefix` on the command
