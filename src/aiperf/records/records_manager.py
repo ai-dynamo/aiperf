@@ -184,12 +184,8 @@ def _render_realtime_block(
     isl_avg = getattr(isl_mr, "avg", None)
     osl_avg = getattr(osl_mr, "avg", None)
     if isl_avg is not None or osl_avg is not None:
-        isl_str = (
-            f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
-        )
-        osl_str = (
-            f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
-        )
+        isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
+        osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
         rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
 
     return "\n".join([line1, *rows])
