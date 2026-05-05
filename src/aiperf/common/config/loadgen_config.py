@@ -18,8 +18,6 @@ from aiperf.plugin.enums import ArrivalPattern
 class LoadGeneratorConfig(BaseConfig):
     """A configuration class for defining top-level load generator settings."""
 
-    _CLI_GROUP = Groups.LOAD_GENERATOR
-
     _inter_turn_delay_cap_explicitly_set: bool = False
 
     @model_validator(mode="after")
@@ -170,7 +168,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--benchmark-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -184,7 +182,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--benchmark-grace-period",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
 
@@ -200,7 +198,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=(
                 "--concurrency",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -255,7 +253,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--prefill-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -271,7 +269,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=(
                 "--request-rate",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -285,7 +283,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--arrival-pattern", "--request-rate-mode"),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = LoadGeneratorDefaults.ARRIVAL_PATTERN
 
@@ -302,7 +300,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--arrival-smoothness", "--vllm-burstiness"),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -318,7 +316,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--request-count",  # GenAI-Perf
                 "--num-requests",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -334,7 +332,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--inter-turn-delay-cap-seconds",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -350,7 +348,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--warmup-request-count",  # GenAI-Perf
                 "--num-warmup-requests",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -363,7 +361,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -375,7 +373,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--num-warmup-sessions",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -387,7 +385,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -400,7 +398,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-prefill-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -412,7 +410,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-request-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -426,7 +424,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-arrival-pattern",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
             show_choices=False,
         ),
     ] = None
@@ -441,7 +439,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-grace-period",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -456,7 +454,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-cancellation-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -470,7 +468,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-cancellation-delay",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = 0.0
 
@@ -487,7 +485,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--user-centric-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -499,7 +497,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--num-users",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -512,7 +510,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -524,7 +522,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--prefill-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -537,7 +535,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -550,7 +548,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-prefill-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -564,7 +562,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-rate-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -578,7 +576,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-request-rate-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 

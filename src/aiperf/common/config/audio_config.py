@@ -18,8 +18,6 @@ class AudioLengthConfig(BaseConfig):
     A configuration class for defining audio length related settings.
     """
 
-    _CLI_GROUP = Groups.AUDIO_INPUT
-
     mean: Annotated[
         float,
         Field(
@@ -32,7 +30,7 @@ class AudioLengthConfig(BaseConfig):
             name=(
                 "--audio-length-mean",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.LENGTH_MEAN
 
@@ -48,7 +46,7 @@ class AudioLengthConfig(BaseConfig):
             name=(
                 "--audio-length-stddev",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.LENGTH_STDDEV
 
@@ -57,8 +55,6 @@ class AudioConfig(BaseConfig):
     """
     A configuration class for defining audio related settings.
     """
-
-    _CLI_GROUP = Groups.AUDIO_INPUT
 
     batch_size: Annotated[
         int,
@@ -71,7 +67,7 @@ class AudioConfig(BaseConfig):
                 "--audio-batch-size",
                 "--batch-size-audio",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.BATCH_SIZE
 
@@ -87,7 +83,7 @@ class AudioConfig(BaseConfig):
             name=(
                 "--audio-format",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.FORMAT
 
@@ -104,7 +100,7 @@ class AudioConfig(BaseConfig):
             name=(
                 "--audio-depths",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.DEPTHS
 
@@ -120,7 +116,7 @@ class AudioConfig(BaseConfig):
             name=(
                 "--audio-sample-rates",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.SAMPLE_RATES
 
@@ -137,6 +133,6 @@ class AudioConfig(BaseConfig):
             name=(
                 "--audio-num-channels",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.AUDIO_INPUT,
         ),
     ] = AudioDefaults.NUM_CHANNELS

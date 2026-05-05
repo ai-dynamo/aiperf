@@ -19,7 +19,7 @@ license-files = ["LICENSE", "ATTRIBUTIONS.md"]
 authors = [
     { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
   "async-timeout>=4.0.0; python_version < '3.11'",
@@ -62,7 +62,7 @@ dependencies = [
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
   "uvicorn[standard]>=0.34,<1",
-  "uvloop~=0.21.0; platform_system != 'Windows'",
+  "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
   "crick~=0.0.8",
 ]

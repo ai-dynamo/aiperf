@@ -53,6 +53,10 @@ class DerivedSumMetric(
 
     @classmethod
     def _derive_value(cls, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
+        # Our metrics-accumulator pipeline stores the running sum scalar in
+        # `scalar_dict[tag]` (see `MetricsAccumulator._collect_scalars_and_arrays`),
+        # so the value already IS the sum. Wrapping it in a `MetricAggregator`
+        # check would always fail here.
         value = metric_results.get(cls.record_metric_type.tag)
         if value is None:
             raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
