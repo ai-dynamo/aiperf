@@ -196,7 +196,7 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 #### `--uuid-and-strip`
 
-Drive vLLM's UUID-keyed multimodal cache (`--mm-processor-cache-gb`). When set, image parts that carry a UUID (from `Image.uuids` / JSONL `image_uuids`) are emitted with a `uuid` field; on the second-and-later occurrence of a UUID within a session the `image_url.url` is shipped as an empty string so vLLM serves the cached embedding. Image parts without a UUID are emitted as-is. vLLM-only extension; other servers may reject the `uuid` field. Size `--mm-processor-cache-gb` >= working set, otherwise vLLM 400s on UUID miss.
+Drive vLLM's UUID-keyed multimodal cache (`--mm-processor-cache-gb`). When set, image parts that carry a UUID (from `Image.uuids` / JSONL `image_uuids`) are emitted with a `uuid` field; on the second-and-later occurrence of a UUID within a session the `image_url.url` is shipped as an empty string so vLLM serves the cached embedding. Image parts without a UUID are emitted as-is. vLLM-only extension; other servers may reject the `uuid` field. Size `--mm-processor-cache-gb` >= working set, otherwise vLLM 400s on UUID miss. Currently supported only with `--custom-dataset-type single_turn` (with `session_id`-grouped rows); using it with `multi_turn` raises `NotImplementedError`.
 <br/>_Flag (no value required)_
 
 #### `--use-server-token-count`

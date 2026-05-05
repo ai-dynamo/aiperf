@@ -635,3 +635,32 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert len(conversations[1].turns) == 1
         assert conversations[0].turns[0].texts[0].contents == ["First"]
         assert conversations[1].turns[0].texts[0].contents == ["Second"]
+
+    def test_convert_uuid_and_strip_rejected(self, default_user_config):
+        """Reject --uuid-and-strip until multi-turn dedup is implemented."""
+        default_user_config.endpoint.uuid_and_strip = True
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(
+                            text="Describe",
+                            images=["img1.png"],
+                            image_uuids=["u1"],
+                        ),
+                        SingleTurn(
+                            text="Again",
+                            images=["img1.png"],
+                            image_uuids=["u1"],
+                        ),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", user_config=default_user_config
+        )
+        with pytest.raises(NotImplementedError, match="uuid-and-strip"):
+            loader.convert_to_conversations(data)

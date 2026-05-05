@@ -62,8 +62,6 @@ def create_request_info(
     conversation_id: str = "test-conversation",
     system_message: str | None = None,
     user_context_message: str | None = None,
-    is_final_turn: bool = True,
-    url_index: int | None = None,
     **turn_kwargs,
 ) -> RequestInfo:
     """Helper to create RequestInfo with all required fields.
@@ -95,8 +93,6 @@ def create_request_info(
         conversation_id=conversation_id,
         system_message=system_message,
         user_context_message=user_context_message,
-        is_final_turn=is_final_turn,
-        url_index=url_index,
     )
 
 

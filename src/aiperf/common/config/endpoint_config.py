@@ -303,7 +303,10 @@ class EndpointConfig(BaseConfig):
             "string so vLLM serves the cached embedding. Image parts without "
             "a UUID are emitted as-is. vLLM-only extension; other servers "
             "may reject the `uuid` field. Size `--mm-processor-cache-gb` >= "
-            "working set, otherwise vLLM 400s on UUID miss.",
+            "working set, otherwise vLLM 400s on UUID miss. Currently "
+            "supported only with `--custom-dataset-type single_turn` (with "
+            "`session_id`-grouped rows); using it with `multi_turn` raises "
+            "`NotImplementedError`.",
         ),
         CLIParameter(
             name=("--uuid-and-strip",),
