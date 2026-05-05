@@ -47,8 +47,8 @@ that supports DAG context replay.
   and duration stop conditions.
 - Documentation: `docs/benchmark-modes/dag.md`,
   `docs/tutorials/inputs-json-replay.md`, `docs/tutorials/raw-payload-replay.md`,
-  + the four-file sync of `dag_jsonl` mention (CLAUDE.md +
-  copilot-instructions + cursor python.mdc + AGENTS.md).
+  + the three-file sync of `dag_jsonl` mention (CLAUDE.md +
+  `.github/copilot-instructions.md` + `.cursor/rules/python.mdc`).
 
 ### Out-of-Scope (explicit)
 
@@ -57,9 +57,11 @@ that supports DAG context replay.
 - Weka loaders (`weka_trace.py`, `weka_parallel_convert.py`, `weka_synth_buf.py`,
   `weka_trace_models.py`, `semianalysis_cc_traces_weka.py`, etc.),
   `--use-think-time-only`, weka delta-context.
-- Cache-bust marker injection: `_apply_cache_bust_*` in `worker.py`,
-  `cache_bust_marker` / `cache_bust_target` plumbing, `validate_cache_bust_compatibility`.
-- Agentic-replay strategy, `trajectory_source.py`, AGENTIC_REPLAY mode.
+- Cache-bust marker injection: `_apply_cache_bust_*` in
+  `src/aiperf/workers/worker.py`, `cache_bust_marker` / `cache_bust_target`
+  plumbing, `validate_cache_bust_compatibility`.
+- Agentic-replay strategy (`src/aiperf/timing/strategies/agentic_replay.py`),
+  `src/aiperf/timing/trajectory_source.py`, AGENTIC_REPLAY mode.
 - `Turn.reset_context` (only consumer was Weka delta-context).
 - Plugin-categories split (`accumulator` / `stream_exporter` / `analyzer`) —
   stay on main's single `ResultsProcessorType`. `BranchStats` exporter sits
@@ -80,29 +82,41 @@ and the interfaces between layers are message-bus-typed.
 - `dataset/loader/dag_jsonl.py` + `dataset/loader/dag_jsonl_models.py`
 - Pure parse/validate; no timing or worker awareness.
 - Outputs `Conversation` objects with:
-  - `branches: list[ConversationBranchInfo]` (FORK or SPAWN with `dispatch_timing="pre"`)
+  - `branches: list[ConversationBranchInfo]` (mode FORK or SPAWN; SPAWN
+    branches set `dispatch_timing="pre"` for background pre-session
+    dispatch — the `ConversationBranchInfo.dispatch_timing` field defaults
+    to `"post"` and `"pre"` is reserved for SPAWN per the field validator)
   - `agent_depth` stamped via topology walk
   - `prerequisites` attached to `Turn` instances
 - Sister DAG-adjacent loaders (`inputs_json.py`, `raw_payload.py`,
   `mooncake_trace.py`) share the same `Conversation` output shape and ship
   alongside DAG because they were part of the same endpoint-refactor commit
   on `dag4` and are needed for byte-exact DAG replay.
-- `can_load` is robust to non-dict first records (auto-detection guard).
+- `can_load` rejects non-dict first records via an explicit
+  `isinstance(data, dict)` guard (current
+  `src/aiperf/dataset/loader/dag_jsonl.py:122-127`); dag4 lacks the guard
+  and raises `AttributeError` on non-dict probes. Keep current's guard.
 
 ### b. Data Models
 
 - `common/models/dataset_models.py`: `Turn`, `TurnMetadata`, `Conversation`.
   - `Turn` carries `prerequisites: list[TurnPrerequisite] | None`.
   - `Conversation.metadata()` projects `prerequisites=turn.prerequisites`
-    into `TurnMetadata` so the orchestrator does not need the full
-    `Conversation` across the wire (dag4 fix; latent bug on current).
+    into each `TurnMetadata` it builds (dag4 line 378). Current
+    `Conversation.metadata()` (lines 457–471) omits the field — latent bug
+    confirmed. Note: `Turn.metadata()` projects prereqs on both branches;
+    only the `Conversation.metadata()` walk differs. Take dag4's projection.
   - `TurnMetadata.has_forks` stamped at load time so the sticky router can
     defer eviction until all forks have spawned.
-- `common/models/branch.py`: `ConversationBranchInfo`,
-  `ConversationBranchMode` (FORK | SPAWN), `BranchStats`,
-  `dispatch_timing` ("pre" | "post" — only "pre" wired in this branch;
-  "post" reserved).
-- `common/models/prerequisite.py`: `TurnPrerequisite`, `PrerequisiteKind`.
+- `common/models/branch.py`: `ConversationBranchInfo` with
+  `dispatch_timing: Literal["pre","post"]` (default `"post"`; `"pre"` is
+  reserved for background SPAWN branches per the field validator).
+- `common/models/branch_stats.py`: `BranchStats` with `joins_suppressed`
+  counter for stop-condition-suppressed joins.
+- `common/enums/enums.py`: `ConversationBranchMode` (FORK | SPAWN) enum.
+- `dataset/loader/dag_jsonl_models.py`: `DagSpawn` model backing the
+  `spawns:` shorthand in dag_jsonl input.
+- `common/models/prerequisites.py`: `TurnPrerequisite`, `PrerequisiteKind`.
 
 ### c. Timing Layer
 
@@ -113,16 +127,18 @@ and the interfaces between layers are message-bus-typed.
 - `ConversationSource.start_branch_child` and
   `ConversationSource.start_pre_session_child` — child SampledSession builders
   that inherit sticky routing from parent.
-- `request_rate` strategy threads the orchestrator and routes
-  `requests_sent`-cap refusals to `on_child_stopped` so parent joins drain
-  (dag4 method `_issue_child_continuation_or_release` ported and adapted to
-  current's fan-in/multi-gate logic).
+- `src/aiperf/timing/strategies/request_rate.py` threads the orchestrator
+  and routes `requests_sent`-cap refusals to `on_child_stopped` so parent
+  joins drain (dag4 method `_issue_child_continuation_or_release` ported
+  and adapted to current's fan-in/multi-gate logic).
 - `phase/credit_counter.py`: child credits flip `is_final_credit` once
   `requests_sent` crosses the cap (dag4).
 - `phase/stop_conditions.py`: `RequestCountStopCondition.applies_to_dag_children = True`;
   `SessionCountStopCondition` stays root-only (dag4 design).
-- `TimingManager._on_dataset_configuration_failed` + `_wait_for_dataset_or_failure`
-  (dag4) — fixes a 300s hang when DatasetManager configure fails.
+- `TimingManager._on_dataset_configuration_failed` +
+  `_wait_for_dataset_or_failure` (current — `src/aiperf/timing/manager.py:95`
+  and `:140`; absent on dag4) — fixes a 300s hang when DatasetManager
+  configure fails.
 
 The orchestrator is the only component aware of DAG topology; everything
 below it sees ordinary credits with `agent_depth` / `parent_correlation_id`
@@ -330,20 +346,22 @@ uv run pytest -m integration -n auto
   delta/done), `test_openai_chat.py` (mixed content+tool_calls precedence),
   `test_response_mixin.py` (JMESPath fallback), `test_base_endpoint.py`
   (`build_assistant_turn` for chat / responses / completions).
+- **BranchOrchestrator**: `test_branch_orchestrator.py` plus the eight
+  scenario files
+  `test_branch_orchestrator_{fan_in,multi_gate,delayed,join,phase0,pre_session,adversarial,adversarial_full}.py`
+  — port all 9 from current's `tests/unit/timing/`.
 
 ### Component-integration (`tests/component_integration/`, single-process)
 
-- **BranchOrchestrator**:
-  `test_branch_orchestrator_{fan_in,multi_gate,delayed,join,phase0,pre_session,adversarial,adversarial_full}.py`
-  — port all 8 from current.
 - **DAG cross-cutting**: `test_dag_cross_component.py`,
   `test_dag_concurrency_pathology.py`, `test_dag_combined_pathology.py`,
   `test_dag_timing_pathology.py`, `test_dag_join_end_to_end.py`,
   `test_dag_v1_adversarial.py`, `test_dag_adversarial_timing_modes.py`.
-- **Hard cap**: `test_dag_hard_cap.py` (dag4) — verifies `--request-count 30`
-  produces exactly 30 wire requests across forks.
-- **Multi-root**: `test_dag_multi_root_payload_bytes.py` (dag4) — multi-root
-  DAG round-trips through PAYLOAD_BYTES context mode.
+- **Hard cap**: `tests/component_integration/timing/test_dag_hard_cap.py`
+  (dag4) — verifies `--request-count 30` produces exactly 30 wire requests
+  across forks.
+- **Multi-root**: `tests/component_integration/timing/test_dag_multi_root_payload_bytes.py`
+  (dag4) — multi-root DAG round-trips through PAYLOAD_BYTES context mode.
 - **Prereqs**: `test_prerequisites.py`, `test_prerequisites_adversarial.py`,
   `test_prereq_metadata_adversarial.py`.
 
@@ -389,9 +407,14 @@ with `make generate-all-plugin-files`.
 - `docs/tutorials/inputs-json-replay.md` — `inputs.json` verbatim replay.
 - `docs/tutorials/raw-payload-replay.md` — `raw_payload` byte-exact replay.
 - `README.md` — add new tutorials to index.
-- Three-file sync (`CLAUDE.md`, `.github/copilot-instructions.md`,
-  `.cursor/rules/python.mdc`): mention `dag_jsonl` input type as already done
-  in the existing CLAUDE.md tip line; verify all three files match after edit.
+- Three-file sync per project rule (`CLAUDE.md`,
+  `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`): mention
+  `dag_jsonl` input type as already done in the existing CLAUDE.md tip
+  line; verify all three files match after edit. (dag4's commit added the
+  same mention to `AGENTS.md` for a "four-file sync"; project CLAUDE.md
+  only mandates the three-file sync, so AGENTS.md is optional and only
+  updated if it already participates in this repo's sync rule when the
+  port lands.)
 - `docs/cli-options.md` — auto-regenerated via `make generate-cli-docs` after
   CLI surface lands.
 - `docs/environment-variables.md` — auto-regenerated via
