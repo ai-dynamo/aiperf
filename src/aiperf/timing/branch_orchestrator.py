@@ -231,6 +231,18 @@ class BranchOrchestrator:
         self._pre_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
+        # Drain observer: sync callback fired after state mutations that may
+        # drain has_pending_branch_work() to False. Wired by
+        # CreditCallbackHandler.set_branch_orchestrator to re-evaluate the
+        # deferred all-credits-returned signal when the last drain step
+        # lands between concurrent on_credit_return callbacks (no further
+        # return arrives to re-trigger the check). Without this hook the
+        # phase runner's pre-wait short-circuit and drain-timeout backstop
+        # are the only safety nets — both work, but the short-circuit only
+        # catches the race when the runner is late, and the backstop costs
+        # a drain timeout's worth of wall clock per occurrence. Closing the
+        # race at the source eliminates both costs.
+        self._drain_observer = None
         self.stats = BranchStats()
         # Pre-built index: (conv_id, spawning_turn_idx) -> list of
         # (branch_id, gated_turn_idx, prereq_key). Built once at init from
@@ -634,6 +646,7 @@ class BranchOrchestrator:
         ):
             self._release_slot(parent_corr)
             del self._descendant_counts[parent_corr]
+        self._notify_drain()  # all-children-rolled-back path: no credit return follows
 
         for pending in drained_gates:
             # Zero-outstanding gate with no way to fire via child-leaf
@@ -897,6 +910,7 @@ class BranchOrchestrator:
             ):
                 self._release_slot(parent)
                 del self._descendant_counts[parent]
+        self._notify_drain()  # cap-suppressed joins finalize w/o credit return
 
     async def on_child_errored(self, child_x_correlation_id: str) -> None:
         """Called when a child session errors mid-branch.
@@ -956,6 +970,7 @@ class BranchOrchestrator:
 
         self._descendant_counts.pop(parent, None)
         self._parent_locks.pop(parent, None)
+        self._notify_drain()
 
     def _release_slot(self, parent_x_correlation_id: str) -> None:
         """Release per-parent orchestration state once the DAG has drained.
@@ -965,6 +980,20 @@ class BranchOrchestrator:
         layer slot accounting is handled elsewhere.
         """
         self._parent_locks.pop(parent_x_correlation_id, None)
+
+    def set_drain_observer(self, observer) -> None:
+        """Register/detach the sync drain-observer callback. See ``__init__``."""
+        self._drain_observer = observer
+
+    def _notify_drain(self) -> None:
+        """Fire the registered drain observer (no-op if unset)."""
+        observer = self._drain_observer
+        if observer is None:
+            return
+        try:
+            observer()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("drain observer raised: %s", exc)
 
     def has_pending_branch_work(self) -> bool:
         """Return True if any DAG-dispatched children are still outstanding."""
@@ -983,6 +1012,7 @@ class BranchOrchestrator:
         if self._cleaning_up:
             return
         self._cleaning_up = True
+        self._drain_observer = None
         s = self.stats
         logger.info(
             "BranchOrchestrator stats: spawned=%d completed=%d errored=%d "

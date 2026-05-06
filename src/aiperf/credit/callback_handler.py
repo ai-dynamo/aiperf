@@ -96,8 +96,41 @@ class CreditCallbackHandler:
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
 
     def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
-        """Inject the subagent orchestrator post-construction."""
+        """Inject the subagent orchestrator post-construction.
+
+        Also registers a drain observer on the orchestrator so the deferred
+        completion check fires when the orchestrator's last drain step lands
+        AFTER the final ``on_credit_return`` callback (concurrency race:
+        under N>1, ``has_pending_branch_work()`` can flip False between
+        credit returns, with no further return arriving to re-trigger the
+        check). Without this hook the phase runner relies on the pre-wait
+        short-circuit + drain-timeout backstop; the drain timeout cost is
+        avoided here.
+        """
+        if (
+            self._branch_orchestrator is not None
+            and self._branch_orchestrator is not orchestrator
+        ):
+            self._branch_orchestrator.set_drain_observer(None)
         self._branch_orchestrator = orchestrator
+        if orchestrator is not None:
+            orchestrator.set_drain_observer(self._on_orchestrator_drain)
+
+    def _on_orchestrator_drain(self) -> None:
+        """Re-evaluate the deferred all-credits-returned check across every
+        active phase handler. Idempotent: per-handler check no-ops if the
+        event is already set or the predicate disagrees.
+        """
+        for handler in self._phase_handlers.values():
+            if handler.lifecycle.is_complete:
+                continue
+            if (
+                self._branch_orchestrator is not None
+                and not handler.progress.all_credits_returned_event.is_set()
+                and handler.progress.check_all_returned_or_cancelled()
+                and not self._branch_orchestrator.has_pending_branch_work()
+            ):
+                handler.progress.all_credits_returned_event.set()
 
     def _credit_will_dispatch_children(self, credit: Credit) -> bool:
         """Return True if the completing credit's turn declares DAG spawns.
