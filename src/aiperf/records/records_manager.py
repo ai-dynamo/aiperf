@@ -763,8 +763,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 if callable(snapshot_fn):
                     server_snapshot = snapshot_fn() or {}
-            except Exception:  # noqa: BLE001
-                self.debug(lambda: f"server_snapshot failed: {exc!r}")
+            except Exception as exc:  # noqa: BLE001
+                # Lazy lambda — only formatted when debug logging is enabled,
+                # so this swallows realtime_snapshot failures silently in
+                # production. Bind ``exc`` correctly so debug builds actually
+                # surface the error instead of raising NameError on render.
+                self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
 
         rendered = _render_realtime_block(
             display_metrics,
