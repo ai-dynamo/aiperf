@@ -11,7 +11,7 @@ values in these tests reflect what the live pipeline hands the renderer.
 import time
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models.credit_models import CreditPhaseStats
+from aiperf.common.models.credit_models import PhaseRecordsStats
 from aiperf.common.models.record_models import MetricResult
 from aiperf.records.records_manager import _render_realtime_block
 
@@ -39,17 +39,16 @@ def _mr(
 def _phase_stats(
     *,
     completed: int = 1903,
-    sent: int = 2031,
+    sent: int = 2031,  # noqa: ARG001 — kept for back-compat call shape
     errors: int = 0,
     elapsed_s: float = 45.2,
-) -> CreditPhaseStats:
+) -> PhaseRecordsStats:
     now_ns = time.time_ns()
-    return CreditPhaseStats(
+    return PhaseRecordsStats(
         phase=CreditPhase.PROFILING,
         start_ns=now_ns - int(elapsed_s * 1_000_000_000),
-        requests_sent=sent,
-        requests_completed=completed,
-        request_errors=errors,
+        success_records=max(0, completed - errors),
+        error_records=errors,
     )
 
 
@@ -58,7 +57,7 @@ def _baseline_metrics() -> list[MetricResult]:
         _mr("request_throughput", avg=39.8, unit="requests/sec"),
         _mr("output_token_throughput", avg=1820, unit="tokens/sec"),
         _mr("time_to_first_token", p50=80, p95=180, p99=240),
-        _mr("inter_chunk_latency", p50=12, p95=22, p99=35),
+        _mr("inter_token_latency", p50=12, p95=22, p99=35),
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
 
@@ -68,8 +67,8 @@ def test_render_full_block_first_tick() -> None:
         _baseline_metrics(), _phase_stats(), prev_snapshot=None
     )
     assert block.startswith(
-        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_out=1820/s "
-        "in_flight=128 done=1903 err=0"
+        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_in=-/s "
+        "tput_out=1820/s done=1903 ok=1903 err=0"
     )
     assert "ttft p50=80ms" in block
     assert "p95=180ms" in block
@@ -85,7 +84,7 @@ def test_render_uses_prev_snapshot_for_delta_rps() -> None:
         prev_snapshot=(900, 30.0),
     )
     assert block.startswith(
-        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_out=1820/s"
+        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_in=-/s tput_out=1820/s"
     )
 
 
@@ -107,7 +106,7 @@ def test_render_sub_millisecond_value_renders_lt1ms() -> None:
         _mr("request_throughput", avg=39.8, unit="requests/sec"),
         _mr("output_token_throughput", avg=1820, unit="tokens/sec"),
         _mr("time_to_first_token", p50=0.5, p95=180, p99=240),
-        _mr("inter_chunk_latency", p50=12, p95=22, p99=35),
+        _mr("inter_token_latency", p50=12, p95=22, p99=35),
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
     block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)

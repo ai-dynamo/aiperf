@@ -36,6 +36,7 @@ from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
+from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
@@ -228,7 +229,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             turn = self._build_turn_for_session(session, resume_index)
             await self.credit_issuer.issue_credit(turn)
 
-    async def handle_credit_return(self, credit: Credit) -> None:
+    async def handle_credit_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         """Dispatch next turn or recycle on session completion.
 
         WARMUP returns are no-ops at the strategy level; phase termination is
@@ -239,13 +242,37 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         PROFILING: if not the final turn, dispatch the next turn honoring
         trace ``delay_ms``. If the final turn just completed, recycle the
         trace_id and spawn a fresh session from the next queued trace_id.
+
+        Context-overflow short-circuit: when a non-final turn returns with an
+        error body matching the AgentX context-overflow allowlist, recycle the
+        trajectory immediately instead of dispatching subsequent turns. Once a
+        trajectory has blown past the model's context limit, every later turn's
+        cumulative prompt will too — continuing to dispatch them just wastes
+        compute and inflates the run's overflow rate. This mirrors the
+        kv-cache-tester behavior of marking the user "truncated" on the first
+        context-length error and removing them from the active pool.
         """
         if self.config.phase == CreditPhase.WARMUP:
             return
 
-        if not credit.is_final_turn:
+        terminal_overflow = (
+            not credit.is_final_turn
+            and error is not None
+            and is_context_overflow_response(body=error)
+        )
+
+        if not credit.is_final_turn and not terminal_overflow:
             await self._dispatch_next_turn(credit)
             return
+
+        if terminal_overflow:
+            self.info(
+                lambda: (
+                    f"Terminating trajectory {credit.conversation_id} early at "
+                    f"turn {credit.turn_index}/{credit.num_turns - 1}: "
+                    f"context-overflow error from server"
+                )
+            )
 
         await self._spawn_from_recycle_or_id(
             credit.conversation_id,

@@ -61,7 +61,6 @@ from aiperf.common.models import (
     WorkerProcessingStats,
 )
 from aiperf.common.models.branch_stats import BranchStats
-from aiperf.common.models.credit_models import CreditPhaseStats
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -92,8 +91,16 @@ from aiperf.records.records_tracker import RecordsTracker
 
 _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("ttft", "time_to_first_token"),
-    ("itl", "inter_chunk_latency"),
+    # Use the scalar per-record metric (avg gap across the response), not the
+    # list-valued ``inter_chunk_latency``. List metrics don't aggregate into
+    # displayable percentiles in the realtime path, so the row used to show
+    # only dashes mid-run even when the per-record JSONL had real values.
+    ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
+)
+_PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
+    ("tin", "prefill_throughput_per_user"),
+    ("tout", "output_token_throughput_per_user"),
 )
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
 
@@ -115,10 +122,18 @@ def _format_ms(value: float | None) -> str:
     return f"{int(round(value))}ms"
 
 
+def _format_int(value: float | None) -> str:
+    """Compact int formatter for token-rate percentiles. Returns ``-`` for None."""
+    if value is None:
+        return "-"
+    return f"{int(round(value)):,}"
+
+
 def _render_realtime_block(
     metric_results: list[MetricResult],
-    phase_stats: CreditPhaseStats,
+    phase_stats: PhaseRecordsStats,
     prev_snapshot: tuple[int, float] | None,
+    server_snapshot: dict[str, float] | None = None,
 ) -> str:
     """Render a compact 4-line realtime stats block for the aiperf logger.
 
@@ -127,12 +142,16 @@ def _render_realtime_block(
     accumulator's ``summarize`` path), so ``_format_ms`` consumes them as-is.
     Returns an empty string when no requests have completed yet so callers
     can suppress the log line entirely on the first tick.
+
+    Records-side stats only — ``in_flight_requests`` is a credit-side concept
+    that this function doesn't have access to and is therefore omitted from
+    the output line.
     """
-    if phase_stats.requests_completed == 0:
+    if phase_stats.total_records == 0:
         return ""
 
     by_tag: dict[str, MetricResult] = {m.tag: m for m in metric_results}
-    elapsed = phase_stats.requests_elapsed_time
+    elapsed = phase_stats.records_elapsed_time
 
     rps_avg_mr = by_tag.get("request_throughput")
     rps_avg = getattr(rps_avg_mr, "avg", None)
@@ -141,9 +160,7 @@ def _render_realtime_block(
     if prev_snapshot is not None:
         prev_completed, prev_elapsed = prev_snapshot
         dt = elapsed - prev_elapsed
-        rps_delta = (
-            (phase_stats.requests_completed - prev_completed) / dt if dt > 0 else 0.0
-        )
+        rps_delta = (phase_stats.total_records - prev_completed) / dt if dt > 0 else 0.0
         rps_delta_str = f"{rps_delta:.1f}"
     else:
         rps_delta_str = rps_avg_str
@@ -152,13 +169,18 @@ def _render_realtime_block(
     tput_out_avg = getattr(tput_out_mr, "avg", None)
     tput_out_str = str(int(round(tput_out_avg))) if tput_out_avg is not None else "-"
 
+    tput_in_mr = by_tag.get("input_token_throughput")
+    tput_in_avg = getattr(tput_in_mr, "avg", None)
+    tput_in_str = str(int(round(tput_in_avg))) if tput_in_avg is not None else "-"
+
     line1 = (
         f"[realtime {_format_elapsed(elapsed)} profiling] "
         f"rps={rps_delta_str} (avg {rps_avg_str}) "
+        f"tput_in={tput_in_str}/s "
         f"tput_out={tput_out_str}/s "
-        f"in_flight={phase_stats.in_flight_requests} "
-        f"done={phase_stats.requests_completed} "
-        f"err={phase_stats.request_errors}"
+        f"done={phase_stats.total_records} "
+        f"ok={phase_stats.success_records} "
+        f"err={phase_stats.error_records}"
     )
 
     indent = " " * _LATENCY_PREFIX_WIDTH
@@ -166,9 +188,71 @@ def _render_realtime_block(
     for label, tag in _LATENCY_LINE_LABELS:
         mr = by_tag.get(tag)
         p50 = _format_ms(getattr(mr, "p50", None))
+        p75 = _format_ms(getattr(mr, "p75", None))
         p95 = _format_ms(getattr(mr, "p95", None))
         p99 = _format_ms(getattr(mr, "p99", None))
-        rows.append(f"{indent}{label:<4} p50={p50:<6} p95={p95:<6} p99={p99}")
+        rows.append(
+            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
+        )
+
+    # Per-user throughput percentiles — distribution of how fast each
+    # request's tokens flowed (tokens/sec/user). Aggregate tput_in/tput_out
+    # on line 1 are bandwidth; these rows show the spread per request, which
+    # is what users tail for tail-latency-equivalent throughput.
+    for label, tag in _PER_USER_TPUT_LABELS:
+        mr = by_tag.get(tag)
+        p50 = _format_int(getattr(mr, "p50", None))
+        p75 = _format_int(getattr(mr, "p75", None))
+        p95 = _format_int(getattr(mr, "p95", None))
+        p99 = _format_int(getattr(mr, "p99", None))
+        rows.append(
+            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
+        )
+
+    # Sequence-length distribution row — useful for spotting long-tail
+    # agentic prompts mid-run.  Reads the same MetricResults aggregator
+    # already publishes; no extra plumbing.
+    isl_mr = by_tag.get("input_sequence_length")
+    osl_mr = by_tag.get("output_sequence_length")
+    isl_avg = getattr(isl_mr, "avg", None)
+    osl_avg = getattr(osl_mr, "avg", None)
+    if isl_avg is not None or osl_avg is not None:
+        isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
+        osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
+        rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
+
+    # Cumulative token totals — running counters, useful for spotting
+    # whether the ratio of output:input tokens is matching the workload's
+    # expected agentic pattern.
+    total_isl_mr = by_tag.get("total_isl")
+    total_osl_mr = by_tag.get("total_osl")
+    total_isl = getattr(total_isl_mr, "avg", None)
+    total_osl = getattr(total_osl_mr, "avg", None)
+    if total_isl is not None or total_osl is not None:
+        in_str = f"{int(round(total_isl)):,}" if total_isl is not None else "-"
+        out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
+        rows.append(f"{indent}tot  in={in_str:<14} out={out_str}")
+
+    # Server-side row — cumulative cache hit rate, KV usage, preemptions
+    # from the live ServerMetricsAccumulator snapshot. Sourced from the
+    # /metrics scrape, so populates only when server-metrics collection
+    # is enabled and the inference server actually serves Prometheus.
+    if server_snapshot:
+        srv_parts: list[str] = []
+        if "prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"prefix_cache_hit={server_snapshot['prefix_cache_hit_rate']:.1f}%"
+            )
+        if "external_prefix_cache_hit_rate" in server_snapshot:
+            srv_parts.append(
+                f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"
+            )
+        if "kv_cache_usage_pct" in server_snapshot:
+            srv_parts.append(f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%")
+        if "num_preemptions" in server_snapshot:
+            srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
+        if srv_parts:
+            rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 
     return "\n".join([line1, *rows])
 
@@ -705,13 +789,41 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
+        # Server-side live snapshot from the ServerMetricsAccumulator.
+        # Best-effort: silently falls back to empty when the accumulator
+        # isn't enabled (--no-server-metrics) or hasn't received any
+        # records yet, so the realtime block stays usable in either case.
+        server_snapshot: dict[str, float] = {}
+        if self._server_metrics_accumulator is not None:
+            try:
+                snapshot_fn = getattr(
+                    self._server_metrics_accumulator,
+                    "realtime_snapshot",
+                    None,
+                )
+                if callable(snapshot_fn):
+                    server_snapshot = snapshot_fn() or {}
+            except Exception as exc:  # noqa: BLE001
+                # Lazy lambda — only formatted when debug logging is enabled,
+                # so this swallows realtime_snapshot failures silently in
+                # production. Bind ``exc`` correctly so debug builds actually
+                # surface the error instead of raising NameError on render.
+                self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
+
+        # Realtime block uses the *raw* (unfiltered) metric set so per-user
+        # throughput rows can show ``prefill_throughput_per_user`` etc. —
+        # those have ``console_group=NONE`` (hidden from the dashboard table)
+        # and ``filter_display_metrics`` strips them, leaving the row blank.
         rendered = _render_realtime_block(
-            display_metrics, phase_stats, self._prev_realtime_snapshot
+            raw_metrics,
+            phase_stats,
+            self._prev_realtime_snapshot,
+            server_snapshot=server_snapshot,
         )
         if rendered:
             self._prev_realtime_snapshot = (
-                phase_stats.requests_completed,
-                phase_stats.requests_elapsed_time,
+                phase_stats.total_records,
+                phase_stats.records_elapsed_time,
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
                 self.info(rendered)

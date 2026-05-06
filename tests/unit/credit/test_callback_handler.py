@@ -301,7 +301,7 @@ class TestNextTurnDispatch:
         credit = make_credit(turn_index=0, num_turns=3)
         credit_return = make_credit_return(credit)
         await registered_handler.on_credit_return("worker-1", credit_return)
-        mock_strategy.handle_credit_return.assert_called_once_with(credit)
+        mock_strategy.handle_credit_return.assert_called_once_with(credit, error=None)
 
         # Stop condition reached
         mock_strategy.reset_mock()
@@ -516,7 +516,7 @@ class TestDagCallbackGuards:
 
         await registered_dag_handler.on_credit_return("worker-1", credit_return)
 
-        mock_strategy.handle_credit_return.assert_called_once_with(credit)
+        mock_strategy.handle_credit_return.assert_called_once_with(credit, error=None)
 
     async def test_root_dispatch_still_gated_by_can_send_any_turn(
         self, registered_dag_handler, mock_stop_checker, mock_strategy
