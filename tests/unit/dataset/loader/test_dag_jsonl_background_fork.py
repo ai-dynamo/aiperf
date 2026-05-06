@@ -34,7 +34,7 @@ def _branch(loader: DagJsonlLoader, sid: str, branch_id: str):
 class TestBareStringForkUnchanged:
     """Bare-string ``forks: ["c"]`` continues to mean foreground FORK
     (parent terminates after the fork). Existing fixtures must parse
-    identically to pre-DagFork dag5."""
+    identically to pre-DagFork behavior."""
 
     def test_bare_string_emits_fg_fork_branch(self) -> None:
         path = _write_jsonl("""

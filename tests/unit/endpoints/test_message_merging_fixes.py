@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for message-merging gap fixes on ajc/dag5.
+"""Regression tests for FORK-child message-merging gap fixes.
 
 Each class targets one finding from the audit so a regression triggers
 a single, named test failure rather than a generic e2e drift.

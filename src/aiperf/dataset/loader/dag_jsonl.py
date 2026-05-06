@@ -422,7 +422,7 @@ class DagJsonlLoader(BaseFileLoader):
     def _stamp_topology(self, parent_of: dict[str, tuple[str, int]]) -> None:
         """Stamp parent_conversation_id, run cycle detection, then walk
         agent_depth iteratively. FORK children inherit parent_depth + 1; SPAWN
-        children remain at depth 0 (fresh root-like context) per dag5 spec."""
+        children remain at depth 0 (fresh root-like context) per the DAG spec."""
         for child_sid, (parent_sid, _turn_idx) in parent_of.items():
             child = self._conversations.get(child_sid)
             if child is None:
