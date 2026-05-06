@@ -118,6 +118,12 @@ def _build_multi_run_plot_types() -> list[dict]:
     pareto_entry = plugins.get_entry("plot", PlotType.PARETO)
     scatter_line_meta = plugins.get_plot_metadata(PlotType.SCATTER_LINE)
     scatter_line_entry = plugins.get_entry("plot", PlotType.SCATTER_LINE)
+    uncertainty_meta = plugins.get_plot_metadata(
+        PlotType.LATENCY_THROUGHPUT_UNCERTAINTY
+    )
+    uncertainty_entry = plugins.get_entry(
+        "plot", PlotType.LATENCY_THROUGHPUT_UNCERTAINTY
+    )
     return [
         {
             "label": pareto_meta.display_name,
@@ -133,6 +139,11 @@ def _build_multi_run_plot_types() -> list[dict]:
             "label": "Scatter Only",
             "value": PlotType.SCATTER,
             "title": "Data points without connecting lines",
+        },
+        {
+            "label": uncertainty_meta.display_name,
+            "value": PlotType.LATENCY_THROUGHPUT_UNCERTAINTY,
+            "title": uncertainty_entry.description,
         },
     ]
 
