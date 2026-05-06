@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricOverTimeUnit
+from aiperf.common.enums import MetricFlags, MetricOverTimeUnit
 from aiperf.metrics import BaseDerivedMetric
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -30,7 +30,12 @@ class InputTokenThroughputMetric(BaseDerivedMetric[float]):
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND
     display_order = 805
     flags = MetricFlags.LARGER_IS_BETTER
-    console_group = MetricConsoleGroup.NONE
+    # Default console_group (DEFAULT) so the metric flows through
+    # filter_display_metrics into the realtime stats block. Setting NONE
+    # would drop it as a "hidden" metric — that's why
+    # ``total_token_throughput`` doesn't appear in the realtime line and
+    # always rendered ``-``. Mirrors ``OutputTokenThroughputMetric`` which
+    # also uses the default group.
     required_metrics = {
         TotalInputSequenceLengthMetric.tag,
         BenchmarkDurationMetric.tag,
