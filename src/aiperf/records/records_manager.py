@@ -98,6 +98,10 @@ _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
 )
+_PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
+    ("tin", "prefill_throughput_per_user"),
+    ("tout", "output_token_throughput_per_user"),
+)
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
 
 
@@ -116,6 +120,13 @@ def _format_ms(value: float | None) -> str:
     if value < 1.0:
         return "<1ms"
     return f"{int(round(value))}ms"
+
+
+def _format_int(value: float | None) -> str:
+    """Compact int formatter for token-rate percentiles. Returns ``-`` for None."""
+    if value is None:
+        return "-"
+    return f"{int(round(value)):,}"
 
 
 def _render_realtime_block(
@@ -177,9 +188,26 @@ def _render_realtime_block(
     for label, tag in _LATENCY_LINE_LABELS:
         mr = by_tag.get(tag)
         p50 = _format_ms(getattr(mr, "p50", None))
+        p75 = _format_ms(getattr(mr, "p75", None))
         p95 = _format_ms(getattr(mr, "p95", None))
         p99 = _format_ms(getattr(mr, "p99", None))
-        rows.append(f"{indent}{label:<4} p50={p50:<6} p95={p95:<6} p99={p99}")
+        rows.append(
+            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
+        )
+
+    # Per-user throughput percentiles — distribution of how fast each
+    # request's tokens flowed (tokens/sec/user). Aggregate tput_in/tput_out
+    # on line 1 are bandwidth; these rows show the spread per request, which
+    # is what users tail for tail-latency-equivalent throughput.
+    for label, tag in _PER_USER_TPUT_LABELS:
+        mr = by_tag.get(tag)
+        p50 = _format_int(getattr(mr, "p50", None))
+        p75 = _format_int(getattr(mr, "p75", None))
+        p95 = _format_int(getattr(mr, "p95", None))
+        p99 = _format_int(getattr(mr, "p99", None))
+        rows.append(
+            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
+        )
 
     # Sequence-length distribution row — useful for spotting long-tail
     # agentic prompts mid-run.  Reads the same MetricResults aggregator
@@ -192,6 +220,18 @@ def _render_realtime_block(
         isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
         osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
         rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
+
+    # Cumulative token totals — running counters, useful for spotting
+    # whether the ratio of output:input tokens is matching the workload's
+    # expected agentic pattern.
+    total_isl_mr = by_tag.get("total_isl")
+    total_osl_mr = by_tag.get("total_osl")
+    total_isl = getattr(total_isl_mr, "avg", None)
+    total_osl = getattr(total_osl_mr, "avg", None)
+    if total_isl is not None or total_osl is not None:
+        in_str = f"{int(round(total_isl)):,}" if total_isl is not None else "-"
+        out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
+        rows.append(f"{indent}tot  in={in_str:<14} out={out_str}")
 
     # Server-side row — cumulative cache hit rate, KV usage, preemptions
     # from the live ServerMetricsAccumulator snapshot. Sourced from the
