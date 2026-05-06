@@ -195,6 +195,7 @@ class GenericMetricUnit(BaseMetricUnit):
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
+    TOKENS_PER_JOULE = _unit("tokens/J")
     USER = _unit("user")
     USERS = _unit("users")
     VIDEO = _unit("video")
