@@ -69,9 +69,7 @@ def bootstrap_and_run_service(
 
     if hasattr(signal, "SIGUSR1"):
         try:
-            faulthandler.register(
-                signal.SIGUSR1, all_threads=True, chain=False
-            )
+            faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
         except (ValueError, RuntimeError):
             # Already registered, or running in a context where signal
             # handlers cannot be installed. Best-effort.
