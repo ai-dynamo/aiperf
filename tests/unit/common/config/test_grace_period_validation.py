@@ -224,3 +224,54 @@ class TestWarmupGracePeriodValidation:
         user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
 
         assert user_config.loadgen.warmup_grace_period == grace_period
+
+
+class TestWarmupGracePeriodAgenticReplayCarveout:
+    """`--warmup-grace-period` is meaningful on its own under AGENTIC_REPLAY:
+    warmup is trajectory-based and `_build_warmup_config` ignores
+    `--warmup-duration` entirely, so requiring the duration would force users
+    to pass a flag with zero runtime effect just to satisfy validation.
+    """
+
+    def test_warmup_grace_period_alone_is_valid_under_agentic_replay(self, monkeypatch):
+        from aiperf.common.scenario.validator import ValidationOutcome
+        from aiperf.plugin.enums import TimingMode
+
+        def fake_scenario_validator(cfg, **_kwargs):
+            cfg._timing_mode = TimingMode.AGENTIC_REPLAY
+            return ValidationOutcome(violations=[], submission_valid=True)
+
+        monkeypatch.setattr(
+            "aiperf.common.scenario.validator.validate_scenario",
+            fake_scenario_validator,
+        )
+
+        loadgen_config = LoadGeneratorConfig(
+            warmup_grace_period=15.0,
+            benchmark_duration=900.0,
+            concurrency=1,
+        )
+        endpoint_config = EndpointConfig(
+            url="http://localhost:8000/test", model_names=["test-model"]
+        )
+
+        user_config = UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)
+
+        assert user_config.timing_mode == TimingMode.AGENTIC_REPLAY
+        assert user_config.loadgen.warmup_grace_period == 15.0
+        assert user_config.loadgen.warmup_duration is None
+
+    def test_warmup_grace_period_alone_still_rejected_outside_agentic_replay(self):
+        """Sanity: the carve-out must not leak into REQUEST_RATE runs."""
+        with pytest.raises(
+            ValidationError,
+            match=".*--warmup-grace-period can only be used when --warmup-duration is set.*",
+        ):
+            loadgen_config = LoadGeneratorConfig(
+                warmup_grace_period=15.0,
+                benchmark_duration=30.0,
+            )
+            endpoint_config = EndpointConfig(
+                url="http://localhost:8000/test", model_names=["test-model"]
+            )
+            UserConfig(endpoint=endpoint_config, loadgen=loadgen_config)

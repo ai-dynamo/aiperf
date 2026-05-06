@@ -286,20 +286,6 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_warmup_grace_period(self) -> Self:
-        """Validate warmup grace period is only used when --warmup-duration is set."""
-        if (
-            "warmup_grace_period" in self.loadgen.model_fields_set
-            and self.loadgen.warmup_duration is None
-        ):
-            raise ValueError(
-                "--warmup-grace-period can only be used when --warmup-duration is set. "
-                "Set --warmup-duration."
-            )
-
-        return self
-
-    @model_validator(mode="after")
     def validate_unused_options(self) -> Self:
         """Validate that options are not set without their required companion options.
 
@@ -1186,6 +1172,33 @@ class UserConfig(BaseConfig):
             timing_mode_explicit=_derive_timing_mode_explicit(self),
         )
         self._scenario_outcome = outcome
+        return self
+
+    @model_validator(mode="after")
+    def validate_warmup_grace_period(self) -> Self:
+        """Validate warmup grace period is only used when --warmup-duration is set.
+
+        Runs after `_run_scenario_validator` so a scenario-imposed timing_mode
+        (e.g. `--scenario inferencex-agentx-mvp` -> AGENTIC_REPLAY) is already
+        stamped on `self.timing_mode`.
+
+        AGENTIC_REPLAY warmup is trajectory-based: it dispatches one credit per
+        trajectory and ignores `--warmup-duration` entirely (see
+        `_build_warmup_config` in `aiperf.timing.config`), but
+        `--warmup-grace-period` still bounds how long the warmup barrier waits
+        for in-flight responses, so it is meaningful on its own.
+        """
+        if self.timing_mode == TimingMode.AGENTIC_REPLAY:
+            return self
+        if (
+            "warmup_grace_period" in self.loadgen.model_fields_set
+            and self.loadgen.warmup_duration is None
+        ):
+            raise ValueError(
+                "--warmup-grace-period can only be used when --warmup-duration is set. "
+                "Set --warmup-duration."
+            )
+
         return self
 
     @model_validator(mode="after")

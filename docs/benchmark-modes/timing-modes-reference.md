@@ -270,8 +270,7 @@ aiperf profile \
 | `--num-users can only be used with --user-centric-rate` | `--num-users` without `--user-centric-rate` | Add `--user-centric-rate` or remove `--num-users` |
 | `--request-cancellation-delay can only be used with --request-cancellation-rate` | Delay without cancellation rate | Add `--request-cancellation-rate` or remove `--request-cancellation-delay` |
 | `--fixed-schedule-* can only be used with --fixed-schedule` | Fixed schedule options without `--fixed-schedule` | Add `--fixed-schedule` or remove the offset options |
-| `--request-rate-ramp-duration cannot be used with --user-centric-rate` | Rate ramping with `--user-centric-rate` | Remove `--request-rate-ramp-duration` |
-| `--request-rate-ramp-duration cannot be used with --fixed-schedule` | Rate ramping with `--fixed-schedule` | Remove `--request-rate-ramp-duration` |
+| `--request-rate-ramp-duration can only be used with --request-rate scheduling` | Rate ramping outside `--request-rate` mode | Remove `--request-rate-ramp-duration` (one error covers `--user-centric-rate`, `--fixed-schedule`, and `agentic_replay`) |
 
 ---
 
