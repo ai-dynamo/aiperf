@@ -810,8 +810,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 # surface the error instead of raising NameError on render.
                 self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
 
+        # Realtime block uses the *raw* (unfiltered) metric set so per-user
+        # throughput rows can show ``prefill_throughput_per_user`` etc. —
+        # those have ``console_group=NONE`` (hidden from the dashboard table)
+        # and ``filter_display_metrics`` strips them, leaving the row blank.
         rendered = _render_realtime_block(
-            display_metrics,
+            raw_metrics,
             phase_stats,
             self._prev_realtime_snapshot,
             server_snapshot=server_snapshot,
