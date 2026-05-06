@@ -3,7 +3,20 @@
 
 import asyncio
 import contextlib
+import faulthandler
+import signal
 import sys
+
+# Diagnostic stack-dump signal in the SystemController process. ``kill
+# -USR1 <pid>`` dumps the Python traceback for every thread to stderr
+# (and the system_controller log). Subprocesses register the same
+# handler in ``aiperf.common.bootstrap.bootstrap_and_run_service`` so
+# the entire process tree is poke-able for hangs.
+if hasattr(signal, "SIGUSR1"):
+    try:
+        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+    except (ValueError, RuntimeError):
+        pass
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig

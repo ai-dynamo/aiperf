@@ -60,6 +60,23 @@ def bootstrap_and_run_service(
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
+    # Diagnostic stack-dump signal — `kill -USR1 <pid>` writes the full
+    # Python traceback for every thread in the process to stderr (which
+    # ends up in the worker's per-service log file). Crucial for
+    # debugging hangs in non-cooperative subprocess pools where py-spy
+    # isn't installed on the runner. Never attached on Windows.
+    import faulthandler
+
+    if hasattr(signal, "SIGUSR1"):
+        try:
+            faulthandler.register(
+                signal.SIGUSR1, all_threads=True, chain=False
+            )
+        except (ValueError, RuntimeError):
+            # Already registered, or running in a context where signal
+            # handlers cannot be installed. Best-effort.
+            pass
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
