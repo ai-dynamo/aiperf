@@ -84,6 +84,7 @@ from dataclasses import dataclass, field
 from aiperf.common.enums import (
     CacheBustTarget,
     ConversationBranchMode,
+    CreditPhase,
     PrerequisiteKind,
 )
 from aiperf.common.environment import Environment
@@ -388,6 +389,13 @@ class BranchOrchestrator:
         SPAWN-mode children route freely (no sticky pin).
         """
         if self._cleaning_up:
+            return False
+
+        # Warmup is one-shot per trajectory; strategy refuses to advance
+        # child continuation turns. Spawning here leaks _descendant_counts
+        # (children never reach is_final_turn) and wedges
+        # all_credits_returned_event. DAG dispatch runs in PROFILING.
+        if credit.phase == CreditPhase.WARMUP:
             return False
 
         # Child path: handled by the callback handler directly (child leaf /
