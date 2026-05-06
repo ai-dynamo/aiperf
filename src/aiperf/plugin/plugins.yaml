@@ -377,6 +377,23 @@ endpoint:
       tokenizes_input: true
       metrics_title: SOLIDO RAG Metrics
 
+  raw:
+    class: aiperf.endpoints.raw_endpoint:RawEndpoint
+    description: |
+      Fallback endpoint for non-standard APIs. Does not format payloads or
+      append a URL path. Parses responses using auto-detection with optional
+      JMESPath extraction via response_field. Prefer a regular endpoint type
+      when the target API is supported.
+    metadata:
+      endpoint_path: null
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_audio: true
+      supports_images: true
+      supports_videos: true
+      metrics_title: LLM Metrics
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
@@ -481,6 +498,29 @@ custom_dataset_loader:
     metadata:
       is_trace: true
       default_block_size: 512
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Each line is a
+      complete API request body sent directly to the transport with zero
+      formatting. Supports single file (one conversation per line) and
+      directory mode (one JSONL file per multi-turn conversation).
+
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Inputs JSON payload loader for verbatim API replay. Loads AIPerf
+      InputsFile format with pre-formatted payloads. Preserves multi-turn
+      session structure and sends each payload directly to the transport
+      without endpoint formatting.
+
+  dag_jsonl:
+    class: aiperf.dataset.loader.dag_jsonl:DagJsonlLoader
+    description: |
+      DAG-shaped benchmark loader. Each JSONL line is a Conversation;
+      supports forks: and spawns: shorthand at the turn level; topology
+      walk validates and stamps agent_depth and TurnMetadata.has_forks.
 
   sagemaker_data_capture:
     class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
@@ -988,13 +1028,6 @@ plot:
       display_name: Time Window Summary
       category: aggregated
 
-  latency_throughput_uncertainty:
-    class: aiperf.plot.handlers.multi_run_handlers:LatencyThroughputUncertaintyHandler
-    description: Latency vs throughput with crosshair error bars and confidence ellipses.
-    metadata:
-      display_name: Uncertainty Scatter
-      category: comparison
-
 # =============================================================================
 # GPU Telemetry Collector
 # =============================================================================
@@ -1024,16 +1057,12 @@ accuracy_grader:
     description: |
       Exact match grader that compares extracted answers against ground truth
       using exact string matching. Suitable for factual Q&A and classification tasks.
-    metadata:
-      is_implemented: false
 
   math:
     class: aiperf.accuracy.graders.math:MathGrader
     description: |
       Math grader that evaluates mathematical expressions for equivalence.
       Handles symbolic comparison, numeric tolerance, and expression normalization.
-    metadata:
-      is_implemented: false
 
   multiple_choice:
     class: aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader
@@ -1046,8 +1075,6 @@ accuracy_grader:
     description: |
       Code execution grader that runs generated code in a sandboxed environment
       and compares output against expected results.
-    metadata:
-      is_implemented: false
 
 # =============================================================================
 # Accuracy Benchmarks
@@ -1073,7 +1100,6 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
-      is_implemented: false
 
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
@@ -1082,7 +1108,6 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
-      is_implemented: false
 
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
@@ -1092,7 +1117,6 @@ accuracy_benchmark:
     metadata:
       default_grader: exact_match
       default_n_shots: 3
-      is_implemented: false
 
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
@@ -1101,7 +1125,6 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
-      is_implemented: false
 
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
@@ -1110,7 +1133,6 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
-      is_implemented: false
 
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
@@ -1120,7 +1142,6 @@ accuracy_benchmark:
     metadata:
       default_grader: math
       default_n_shots: 0
-      is_implemented: false
 
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
@@ -1130,7 +1151,6 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 0
-      is_implemented: false
 
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
@@ -1140,7 +1160,6 @@ accuracy_benchmark:
     metadata:
       default_grader: code_execution
       default_n_shots: 0
-      is_implemented: false
 
 # =============================================================================
 # Communication Backends

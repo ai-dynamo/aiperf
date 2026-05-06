@@ -271,7 +271,7 @@ class TestInferenceClient:
             end_perf_ns=2000,
         )
 
-        result = inference_client._enrich_request_record(
+        result = inference_client._finalize_request_record(
             record=record, request_info=request_info
         )
 

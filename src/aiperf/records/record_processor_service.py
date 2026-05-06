@@ -164,6 +164,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
+            agent_depth=record.request_info.agent_depth,
+            parent_correlation_id=record.request_info.parent_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)

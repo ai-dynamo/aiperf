@@ -72,6 +72,14 @@ def callback_handler(mock_concurrency):
 
 
 @pytest.fixture
+def mock_branch_orchestrator():
+    """Mock BranchOrchestrator that records ``set_drain_observer`` calls."""
+    mock = MagicMock()
+    mock.set_drain_observer = MagicMock()
+    return mock
+
+
+@pytest.fixture
 def registered_handler(
     callback_handler,
     mock_progress,
@@ -397,3 +405,114 @@ class TestEdgeCases:
             mock_concurrency.release_prefill_slot.assert_called_once()
         else:
             mock_concurrency.release_prefill_slot.assert_not_called()
+
+
+class TestDrainObserverWiring:
+    """Regression for the concurrency>=2 race fixed in commit 7cd4180b7.
+
+    The orchestrator's last drain step (``_handle_child_done`` decrement,
+    ``dispatch_join_turn`` returning False under cap, all-children-rolled-
+    back path) can land BETWEEN concurrent ``on_credit_return`` callbacks.
+    Without the drain-observer hook, ``all_credits_returned_event`` is
+    never set from the callback path and the phase runner blocks forever
+    (or, post-`f6fb1ae29`, takes the slow drain-timeout path).
+
+    These tests pin the wiring contract on
+    ``CreditCallbackHandler.set_branch_orchestrator`` and the closure
+    registered via ``BranchOrchestrator.set_drain_observer``.
+    """
+
+    def test_set_branch_orchestrator_registers_drain_observer(self, callback_handler):
+        """Attaching an orchestrator must register a drain callback;
+        detaching (set None) must clear it."""
+        orchestrator = MagicMock()
+        orchestrator.set_drain_observer = MagicMock()
+
+        callback_handler.set_branch_orchestrator(orchestrator)
+        orchestrator.set_drain_observer.assert_called_once()
+        assert callable(orchestrator.set_drain_observer.call_args.args[0])
+
+        callback_handler.set_branch_orchestrator(None)
+        orchestrator.set_drain_observer.assert_called_with(None)
+
+    def test_drain_observer_sets_event_when_predicate_satisfied(
+        self, registered_handler, mock_progress, mock_branch_orchestrator
+    ):
+        """Race-closing path: callback fires AND counters say all returned
+        AND orchestrator predicate clean -> event MUST set."""
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        assert not mock_progress.all_credits_returned_event.is_set()
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+        callback()
+
+        assert mock_progress.all_credits_returned_event.is_set()
+
+    def test_drain_observer_no_op_when_pending_work_remains(
+        self, registered_handler, mock_progress, mock_branch_orchestrator
+    ):
+        """has_pending_branch_work=True must keep the event deferred —
+        firing now would declare phase complete with children in flight."""
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+        callback()
+
+        assert not mock_progress.all_credits_returned_event.is_set()
+
+    def test_drain_observer_no_op_when_counters_disagree(
+        self, registered_handler, mock_progress, mock_branch_orchestrator
+    ):
+        """check_all_returned_or_cancelled=False must keep the event
+        deferred — sending isn't actually complete yet."""
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+        callback()
+
+        assert not mock_progress.all_credits_returned_event.is_set()
+
+    def test_drain_observer_skips_completed_phase_handlers(
+        self,
+        registered_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_branch_orchestrator,
+    ):
+        """A phase whose lifecycle is already complete must be skipped —
+        its event was already finalized by the normal end-of-phase path
+        and re-setting from here would be racy."""
+        mock_lifecycle.is_complete = True
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+        callback()
+
+        assert not mock_progress.all_credits_returned_event.is_set()
+
+    def test_drain_observer_idempotent_on_already_set_event(
+        self, registered_handler, mock_progress, mock_branch_orchestrator
+    ):
+        """Multiple callback invocations after the event is already set
+        must remain a no-op. The observer can fire several times in rapid
+        succession (``_handle_child_done`` + ``_handle_child_errored_fail_fast``
+        + ``_drain_vestigial_gates`` all call ``_notify_drain``)."""
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+        mock_branch_orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+        mock_progress.all_credits_returned_event.set()
+
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+        callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+        callback()
+        callback()
+        callback()
+
+        assert mock_progress.all_credits_returned_event.is_set()

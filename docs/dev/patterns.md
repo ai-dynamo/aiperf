@@ -181,88 +181,33 @@ def test_with_mock_plugin():
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.
 
-## Uncertainty Plot Pattern
+## Validator Pattern
 
-The latency-throughput uncertainty plot uses a one-data-contract, three-renderers architecture.
-
-### Data Contract
+Per-feature load-time validators (e.g. `BranchOrchestrator` v1) run from the
+end of dataset loaders. Unsupported constructs raise ``NotImplementedError``
+with a ``<loc>: <reason>`` prefix where ``<loc>`` identifies the offending
+conversation/turn so misconfigurations surface before any credit is issued:
 
 ```python
-from aiperf.plot.models.uncertainty import BenchmarkPoint, LatencyThroughputUncertaintyData
-
-point = BenchmarkPoint(
-    x_mean=10.0, y_mean=100.0,
-    x_ci_low=8.0, x_ci_high=12.0,
-    y_ci_low=90.0, y_ci_high=110.0,
-    cov_xy=5.0,  # enables rotated ellipses; None for axis-aligned
-    label="concurrency=4",
-)
-data = LatencyThroughputUncertaintyData(
-    points=[point],
-    confidence_level=0.95,
-    title="Latency vs Throughput",
-    x_label="Latency (ms)",
-    y_label="Throughput (tok/s)",
+# src/aiperf/common/validators/orchestrator_v1.py - gate convention
+raise NotImplementedError(
+    f"conversation '{conv.conversation_id}' turn {idx}: "
+    f"prerequisite kind '{prereq.kind}' not supported by v1 orchestrator"
 )
 ```
 
-### Multi-Series Data Contract
+## Endpoint Mixin Pattern
+
+Reusable response-parsing behavior lives in mixins applied to endpoint classes:
 
 ```python
-from aiperf.plot.models.uncertainty import (
-    BenchmarkPoint, LatencyThroughputUncertaintyData, UncertaintySeries,
-)
-
-# One series per experiment variant (e.g., request_count=20 vs 50).
-# When `series` is non-empty it overrides `points`; see get_series().
-data = LatencyThroughputUncertaintyData(
-    series=[
-        UncertaintySeries(name="request_count=20", points=[
-            BenchmarkPoint(x_mean=5.0, y_mean=50.0, x_ci_low=4.0, x_ci_high=6.0,
-                           y_ci_low=45.0, y_ci_high=55.0, label="c=2", n_runs=10),
-            BenchmarkPoint(x_mean=15.0, y_mean=120.0, x_ci_low=13.0, x_ci_high=17.0,
-                           y_ci_low=110.0, y_ci_high=130.0, label="c=10", n_runs=8),
-        ]),
-        UncertaintySeries(name="request_count=50", points=[
-            BenchmarkPoint(x_mean=6.0, y_mean=48.0, x_ci_low=4.5, x_ci_high=7.5,
-                           y_ci_low=42.0, y_ci_high=54.0, label="c=2", n_runs=10),
-            BenchmarkPoint(x_mean=18.0, y_mean=110.0, x_ci_low=15.0, x_ci_high=21.0,
-                           y_ci_low=100.0, y_ci_high=120.0, label="c=10", n_runs=10),
-        ]),
-    ],
-    confidence_level=0.95,
-    title="Latency vs Throughput by Request Count",
-    x_label="Latency (ms)",
-    y_label="Throughput (tok/s)",
-)
+# src/aiperf/endpoints/raw_endpoint.py - composing a mixin
+class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._init_response_parser()
 ```
 
-### Plotly Renderer (interactive + Kaleido PNG)
-
-```python
-from aiperf.plot.core.plot_generator import PlotGenerator
-
-pg = PlotGenerator()
-fig = pg.create_uncertainty_plot(data)
-fig.write_image("output.png")  # Kaleido export
-```
-
-### Matplotlib Renderer (code-gen reports)
-
-```python
-from aiperf.plot.exporters import export_uncertainty_matplotlib
-from pathlib import Path
-
-export_uncertainty_matplotlib(data, Path("output.png"))
-```
-
-### Ellipse Geometry Utility
-
-```python
-from aiperf.plot.geometry import compute_ellipse_vertices, compute_axis_aligned_ellipse_vertices
-import numpy as np
-
-cov = np.array([[4.0, 1.0], [1.0, 9.0]])
-vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
-# Returns list of (x, y) tuples forming a closed polygon
-```
+The mixin in ``src/aiperf/endpoints/response_mixin.py`` compiles an optional
+``endpoint.extra.response_field`` JMESPath query at construction time, with
+auto-detect fallback when the query fails or no JSON body is present.

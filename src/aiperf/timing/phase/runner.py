@@ -19,6 +19,7 @@ from aiperf.common.mixins import TaskManagerMixin
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
@@ -27,7 +28,7 @@ from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
-    from aiperf.common.models import CreditPhaseStats
+    from aiperf.common.models import BranchStats, CreditPhaseStats, DatasetMetadata
     from aiperf.credit.callback_handler import CreditCallbackHandler
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.concurrency import ConcurrencyManager
@@ -79,6 +80,7 @@ class PhaseRunner(TaskManagerMixin):
         cancellation_policy: RequestCancellationSimulator,
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
+        branch_orchestrator: BranchOrchestrator | None = None,
         **kwargs,
     ) -> None:
         """Initialize phase runner.
@@ -93,10 +95,15 @@ class PhaseRunner(TaskManagerMixin):
             callback_handler: Handles credit returns and TTFT events.
             url_selection_strategy: Optional URL selection strategy for multi-URL
                 load balancing. Passed to CreditIssuer.
+            branch_orchestrator: Optional DAG branch orchestrator. When present,
+                ``_is_phase_complete`` consults ``has_pending_branch_work`` so
+                completion blocks while DAG children are still in flight, even
+                after ``--request-count`` is reached.
         """
         super().__init__(**kwargs)
         self._config = config
         self._conversation_source = conversation_source
+        self._branch_orchestrator = branch_orchestrator
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
         # Config values may reflect pre-filtered file size, but dataset_metadata
@@ -125,7 +132,22 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             counter=self._progress.counter,
         )
-        self._credit_issuer = CreditIssuer(
+        self._credit_issuer = self._build_credit_issuer(url_selection_strategy)
+        self._maybe_construct_branch_orchestrator(conversation_source)
+
+        self._execution_task: asyncio.Task | None = None
+        self._progress_task: asyncio.Task | None = None
+        self._return_wait_task: asyncio.Task | None = None
+        self._was_cancelled = False
+        self._rampers: list[Ramper] = []
+
+    def _build_credit_issuer(
+        self, url_selection_strategy: URLSelectionStrategyProtocol | None
+    ) -> CreditIssuer:
+        """Construct the CreditIssuer with the per-phase components already
+        wired by ``__init__``. Split out so ``__init__`` stays under the
+        ergonomics file-size cap."""
+        return CreditIssuer(
             phase=self._config.phase,
             stop_checker=self._stop_checker,
             progress=self._progress,
@@ -136,17 +158,50 @@ class PhaseRunner(TaskManagerMixin):
             url_selection_strategy=url_selection_strategy,
         )
 
-        # Execution state
-        self._execution_task: asyncio.Task | None = None
-        self._progress_task: asyncio.Task | None = None
-        self._return_wait_task: asyncio.Task | None = None
-        self._was_cancelled = False
-        self._rampers: list[Ramper] = []
+    def _maybe_construct_branch_orchestrator(
+        self, conversation_source: ConversationSource
+    ) -> None:
+        """Construct ``BranchOrchestrator`` for DAG-shaped datasets.
+
+        A "DAG-shaped" dataset is one whose metadata declares any branches
+        OR contains any non-root conversations (``agent_depth > 0``).
+        Non-DAG runs leave ``self._branch_orchestrator`` as None and the
+        callback / strategy paths skip orchestrator hooks.
+        """
+        if self._branch_orchestrator is not None:
+            return
+        if not self._is_dag_dataset(conversation_source.dataset_metadata):
+            return
+        sticky_router = getattr(self._credit_router, "sticky_router", None)
+        self._branch_orchestrator = BranchOrchestrator(
+            conversation_source=conversation_source,
+            credit_issuer=self._credit_issuer,
+            sticky_router=sticky_router,
+        )
 
     @property
     def phase(self) -> CreditPhase:
         """Phase enum (WARMUP or PROFILING)."""
         return self._config.phase
+
+    @staticmethod
+    def _is_dag_dataset(dataset_metadata: DatasetMetadata | None) -> bool:
+        """True iff the dataset declares any DAG fan-out.
+
+        A DAG-shaped dataset has at least one conversation with branches
+        attached, or at least one non-root conversation
+        (``agent_depth > 0``). Non-DAG runs return False so the
+        orchestrator is not constructed (saves the per-conv prereq-index
+        build and keeps the callback path orchestrator-free).
+        """
+        if dataset_metadata is None:
+            return False
+        for conv in getattr(dataset_metadata, "conversations", None) or []:
+            if getattr(conv, "branches", None):
+                return True
+            if getattr(conv, "agent_depth", 0) > 0:
+                return True
+        return False
 
     def set_phase_complete_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to invoke when phase fully completes.
@@ -155,6 +210,46 @@ class PhaseRunner(TaskManagerMixin):
         return wait task finishes, allowing cleanup of the runner from active list.
         """
         self._on_phase_complete = callback
+
+    def _is_phase_complete(self) -> bool:
+        """Return True if the request-count cap has been reached AND no DAG
+        children are still in flight.
+
+        DAG-aware completion gate. ``--request-count`` is a wire-request cap
+        that applies to roots and children alike (see
+        ``RequestCountStopCondition.applies_to_dag_children``); however, even
+        after the cap fires, ``BranchOrchestrator`` may still be holding
+        children that have been dispatched but not yet returned. Closing the
+        phase before those children land would freeze sent counts mid-DAG and
+        drop the in-flight requests.
+
+        Returns False when:
+        - ``total_expected_requests`` is unset (this gate doesn't apply —
+          completion is driven by other stop conditions like duration).
+        - ``requests_sent`` has not yet reached the cap.
+        - The branch orchestrator reports pending DAG work.
+        """
+        cap = self._config.total_expected_requests
+        if cap is None:
+            return False
+        if self._progress.counter.requests_sent < cap:
+            return False
+        return not (
+            self._branch_orchestrator is not None
+            and self._branch_orchestrator.has_pending_branch_work()
+        )
+
+    def _snapshot_branch_stats(self) -> BranchStats | None:
+        """Snapshot the BranchOrchestrator counters for publication.
+
+        Returns None on non-DAG runs (no orchestrator wired). DAG runs
+        return a copy of the counters so the published snapshot stays
+        stable even if the orchestrator keeps mutating after we
+        publish.
+        """
+        if self._branch_orchestrator is None:
+            return None
+        return self._branch_orchestrator.snapshot_branch_stats()
 
     def cancel(self) -> None:
         """Cancel the phase runner (external cancellation like Ctrl+C)."""
@@ -199,109 +294,156 @@ class PhaseRunner(TaskManagerMixin):
         Returns:
             CreditPhaseStats snapshot of final phase state.
         """
+        strategy = self._build_strategy()
+        try:
+            self._register_strategy_with_callback_handler(strategy)
+            return await self._run_strategy(strategy, is_final_phase)
+        except Exception as e:
+            await self._publish_phase_failure_lifecycle()
+            raise e
+        finally:
+            self._detach_orchestrator_and_cleanup()
+
+    def _build_strategy(self) -> TimingStrategyProtocol:
+        """Construct the timing strategy class for this phase."""
         StrategyClass = plugins.get_class(
             PluginType.TIMING_STRATEGY, self._config.timing_mode
         )
-        strategy: TimingStrategyProtocol = StrategyClass(
+        return StrategyClass(
             config=self._config,
             conversation_source=self._conversation_source,
             scheduler=self._scheduler,
             stop_checker=self._stop_checker,
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
+            branch_orchestrator=self._branch_orchestrator,
         )
 
-        try:
-            # Register phase with callback handler (BEFORE any credits are sent)
-            self._callback_handler.register_phase(
-                phase=self._config.phase,
-                progress=self._progress,
-                lifecycle=self._lifecycle,
-                stop_checker=self._stop_checker,
-                strategy=strategy,
-            )
+    def _register_strategy_with_callback_handler(
+        self, strategy: TimingStrategyProtocol
+    ) -> None:
+        """Register the phase's strategy + (optionally) the orchestrator
+        with the shared CreditCallbackHandler before any credits are sent.
+        """
+        self._callback_handler.register_phase(
+            phase=self._config.phase,
+            progress=self._progress,
+            lifecycle=self._lifecycle,
+            stop_checker=self._stop_checker,
+            strategy=strategy,
+        )
+        if self._branch_orchestrator is not None:
+            self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
 
-            self._concurrency_manager.configure_for_phase(
-                self._config.phase,
-                self._config.concurrency,
-                self._config.prefill_concurrency,
-            )
+    def _detach_orchestrator_and_cleanup(self) -> None:
+        """Final-pass orchestrator teardown for the phase.
 
-            await strategy.setup_phase()
+        Detaches from the shared callback handler so a subsequent phase /
+        non-DAG resumption doesn't dispatch into a torn-down orchestrator.
+        Final stats are already snapshotted via ``_snapshot_branch_stats``
+        before ``publish_phase_complete`` runs.
+        """
+        if self._branch_orchestrator is not None:
+            self._callback_handler.set_branch_orchestrator(None)
+            self._branch_orchestrator.cleanup()
 
-            self._create_rampers(strategy)
+    async def _run_strategy(
+        self, strategy: TimingStrategyProtocol, is_final_phase: bool
+    ) -> CreditPhaseStats:
+        """Drive the strategy through its execute → sending-complete →
+        returning-complete pipeline. The exception path (publishing partial
+        lifecycle state) lives in the caller's ``except``.
+        """
+        self._concurrency_manager.configure_for_phase(
+            self._config.phase,
+            self._config.concurrency,
+            self._config.prefill_concurrency,
+        )
 
-            self._lifecycle.start()
-            stats = self._progress.create_stats(self._lifecycle)
-            self.notice(self._format_phase_started(stats))
-            await self._phase_publisher.publish_phase_start(self._config, stats)
+        await strategy.setup_phase()
 
-            self._progress_task = self.execute_async(self._progress_report_loop())
+        self._create_rampers(strategy)
 
-            # Start rampers BEFORE execution to ensure concurrency limits are applied
-            # from the start. Otherwise, credits could be issued at full concurrency
-            # before the ramper sets the initial (lower) limit.
-            for ramper in self._rampers:
-                ramper.start()
+        self._lifecycle.start()
+        stats = self._progress.create_stats(self._lifecycle)
+        self.notice(self._format_phase_started(stats))
+        await self._phase_publisher.publish_phase_start(self._config, stats)
 
-            self._execution_task = self.execute_async(strategy.execute_phase())
+        self._progress_task = self.execute_async(self._progress_report_loop())
 
-            await self._wait_for_sending_complete()
+        # Start rampers BEFORE execution to ensure concurrency limits are
+        # applied from the start. Otherwise, credits could be issued at full
+        # concurrency before the ramper sets the initial (lower) limit.
+        for ramper in self._rampers:
+            ramper.start()
 
-            if self._was_cancelled:
-                if not self._lifecycle.is_complete:
-                    self._lifecycle.mark_complete(grace_period_triggered=True)
-                    self._progress.freeze_completed_counts()
-                self._progress.all_credits_returned_event.set()
-                return self._progress.create_stats(self._lifecycle)
+        # Pre-dispatch DAG SPAWN branches marked dispatch_timing='pre' before
+        # the strategy begins issuing root turn-0 credits. No-op for non-DAG
+        # runs (orchestrator is None).
+        if self._branch_orchestrator is not None:
+            await self._branch_orchestrator.dispatch_pre_session_branches()
 
-            # 11. Seamless mode: phase flows into next without waiting for returns
-            #     Progress task continues in background until phase complete
-            if self._config.seamless and not is_final_phase:
-                self._return_wait_task = self.execute_async(
-                    self._wait_for_returning_complete()
-                )
-                self._return_wait_task.add_done_callback(self._on_return_wait_complete)
-            else:
-                await self._wait_for_returning_complete()
-                self._progress_task.cancel()
+        self._execution_task = self.execute_async(strategy.execute_phase())
 
-            for ramper in self._rampers:
-                ramper.stop()
-            self._scheduler.cancel_all()
+        await self._wait_for_sending_complete()
 
+        if self._was_cancelled:
+            if not self._lifecycle.is_complete:
+                self._lifecycle.mark_complete(grace_period_triggered=True)
+                self._progress.freeze_completed_counts()
+            self._progress.all_credits_returned_event.set()
             return self._progress.create_stats(self._lifecycle)
 
-        except Exception as e:
-            # TODO: This can be improved a bit by having a better way to notify other services
-            # and the system controller of a failure in the benchmark.
-            # If there is an error while setting up or executing the phase,
-            # we need to flush it through the lifecycle to ensure the other services
-            # are notified that the phase has ended, and the benchmark does not hang forever.
-            self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
-            if not self._was_cancelled:
-                self.cancel()
+        # Seamless mode: phase flows into next without waiting for returns.
+        # Progress task continues in background until phase complete.
+        if self._config.seamless and not is_final_phase:
+            self._return_wait_task = self.execute_async(
+                self._wait_for_returning_complete()
+            )
+            self._return_wait_task.add_done_callback(self._on_return_wait_complete)
+        else:
+            await self._wait_for_returning_complete()
+            self._progress_task.cancel()
 
-            if not self._lifecycle.is_started:
-                self._lifecycle.start()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_start(self._config, stats)
+        for ramper in self._rampers:
+            ramper.stop()
+        self._scheduler.cancel_all()
 
-            if not self._lifecycle.is_sending_complete:
-                self._lifecycle.mark_sending_complete(timeout_triggered=False)
-                self._progress.freeze_sent_counts()
-                self._progress.all_credits_sent_event.set()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_sending_complete(stats)
+        return self._progress.create_stats(self._lifecycle)
 
-            if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=False)
-                self._progress.freeze_completed_counts()
-                self._progress.all_credits_returned_event.set()
-                stats = self._progress.create_stats(self._lifecycle)
-                await self._phase_publisher.publish_phase_complete(stats)
+    async def _publish_phase_failure_lifecycle(self) -> None:
+        """Flush phase-end lifecycle messages on a hard failure path so other
+        services see the phase end and the benchmark doesn't hang forever.
+        """
+        # TODO: This can be improved a bit by having a better way to notify
+        # other services and the system controller of a failure in the
+        # benchmark. If there is an error while setting up or executing
+        # the phase, we need to flush it through the lifecycle to ensure
+        # the other services are notified.
+        self.error(f"Error executing phase {self._config.phase.title}")
+        if not self._was_cancelled:
+            self.cancel()
 
-            raise e
+        if not self._lifecycle.is_started:
+            self._lifecycle.start()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_start(self._config, stats)
+
+        if not self._lifecycle.is_sending_complete:
+            self._lifecycle.mark_sending_complete(timeout_triggered=False)
+            self._progress.freeze_sent_counts()
+            self._progress.all_credits_sent_event.set()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_sending_complete(stats)
+
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=False)
+            self._progress.freeze_completed_counts()
+            self._progress.all_credits_returned_event.set()
+            stats = self._progress.create_stats(self._lifecycle)
+            await self._phase_publisher.publish_phase_complete(
+                stats, branch_stats=self._snapshot_branch_stats()
+            )
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
         """Create rampers for concurrency and rate if ramp durations are configured.
@@ -478,10 +620,11 @@ class PhaseRunner(TaskManagerMixin):
         """
         timed_out = False
         try:
-            if self._progress.check_all_returned_or_cancelled():
-                self.info(
-                    "All credits already returned. Setting all_credits_returned_event."
-                )
+            if self._progress.check_all_returned_or_cancelled() and (
+                self._branch_orchestrator is None
+                or not self._branch_orchestrator.has_pending_branch_work()
+            ):
+                self.info("All credits already returned. Setting event.")
                 self._progress.all_credits_returned_event.set()
                 return
 
@@ -542,7 +685,9 @@ class PhaseRunner(TaskManagerMixin):
             stats = self._progress.create_stats(self._lifecycle)
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
-            await self._phase_publisher.publish_phase_complete(stats)
+            await self._phase_publisher.publish_phase_complete(
+                stats, branch_stats=self._snapshot_branch_stats()
+            )
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""

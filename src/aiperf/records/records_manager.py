@@ -40,6 +40,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BranchStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -129,6 +130,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._error_tracker = ErrorTracker()
 
         self._previous_realtime_records: int | None = None
+
+        # Latest BranchStats snapshot received via CreditPhaseCompleteMessage
+        # for the PROFILING phase. None for non-DAG runs (TimingManager
+        # publishes None when no BranchOrchestrator is wired). Spliced
+        # into ProfileResults when the records pipeline finalizes.
+        self._latest_branch_stats: BranchStats | None = None
+
+        # Per-phase BranchStats snapshots. Populated on every
+        # CreditPhaseCompleteMessage that carries a non-None
+        # ``branch_stats``; ``_snapshot_branch_stats`` reads back the
+        # value for a specific phase. Used by analyzer paths that need
+        # warmup vs profiling separation.
+        self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -408,7 +422,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
+        # Capture per-phase BranchStats for any phase that publishes them.
+        if message.branch_stats is not None:
+            self._phase_branch_stats[message.stats.phase] = message.branch_stats
         if message.stats.phase == CreditPhase.PROFILING:
+            # Capture the BranchStats snapshot so it flows into
+            # ProfileResults when the records pipeline finalizes.
+            # Non-DAG runs publish None and leave this unset.
+            if message.branch_stats is not None:
+                self._latest_branch_stats = message.branch_stats
             phase_stats = self._records_tracker.create_stats_for_phase(
                 message.stats.phase
             )
@@ -427,6 +449,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             message.stats.phase
         ):
             await self._handle_all_records_received(message.stats.phase)
+
+    def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
+        """Return the orchestrator-published BranchStats for ``phase``.
+
+        Returns ``None`` for non-DAG runs or for phases where the
+        TimingManager never published sub-agent counters on
+        ``CreditPhaseCompleteMessage``.
+        """
+        return self._phase_branch_stats.get(phase)
 
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _on_credits_complete(self, message: CreditsCompleteMessage) -> None:
@@ -634,6 +665,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
                 was_cancelled=cancelled,
+                branch_stats=self._latest_branch_stats
+                if phase == CreditPhase.PROFILING
+                else None,
             ),
             errors=error_results,
         )
