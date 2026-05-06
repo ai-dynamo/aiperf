@@ -290,3 +290,153 @@ async def test_child_hook_does_not_require_can_send_any_turn():
     # phase is draining. (The strategy itself is a no-op when the credit is
     # final — a separate concern from the callback-handler gating.)
     strategy.handle_credit_return.assert_awaited_once_with(child_credit)
+
+
+# ============================================================================
+# Drain-observer wiring tests
+# ============================================================================
+#
+# Regression for the concurrency>=2 race where the orchestrator's last drain
+# step (`_handle_child_done` decrement, `dispatch_join_turn` returning False
+# under cap, all-children-rolled-back path) lands BETWEEN concurrent
+# `on_credit_return` callbacks. Without the drain-observer hook,
+# `all_credits_returned_event` is never set from the callback path; the
+# phase runner relies on its pre-wait short-circuit (eager) or drain-timeout
+# backstop (slow). This suite verifies the source-side fix in
+# CreditCallbackHandler.set_branch_orchestrator wires the observer correctly
+# and the closure honors the AND-of-predicates contract.
+
+
+@pytest.mark.component_integration
+def test_set_branch_orchestrator_registers_drain_observer() -> None:
+    """Attaching an orchestrator must register the handler's drain
+    callback. Detaching (set None) must clear it."""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    handler, _strategy = _make_handler_with_phase(None)
+
+    handler.set_branch_orchestrator(orchestrator)
+    orchestrator.set_drain_observer.assert_called_once()
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    assert callable(callback)
+
+    handler.set_branch_orchestrator(None)
+    # The previously-attached orchestrator gets a None observer to detach.
+    orchestrator.set_drain_observer.assert_called_with(None)
+
+
+@pytest.mark.component_integration
+def test_drain_observer_sets_event_when_predicate_satisfied() -> None:
+    """When the orchestrator fires its drain observer AND
+    check_all_returned_or_cancelled() AND has_pending_branch_work()=False,
+    the deferred all_credits_returned_event MUST fire. This is the
+    race-closing path: the last drain step lands after every callback's
+    deferred check has already run with `pending=True`, so without this
+    hook the event is never set from the callback path."""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler, _strategy = _make_handler_with_phase(None)
+
+    # Set the phase counters to "all returned" before attaching.
+    progress = handler._phase_handlers[CreditPhase.PROFILING].progress
+    progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+    assert not progress.all_credits_returned_event.is_set()
+
+    handler.set_branch_orchestrator(orchestrator)
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    callback()
+
+    assert progress.all_credits_returned_event.is_set(), (
+        "drain observer must set all_credits_returned_event when both "
+        "counter check and orchestrator predicate are satisfied"
+    )
+
+
+@pytest.mark.component_integration
+def test_drain_observer_no_op_when_pending_work_remains() -> None:
+    """When has_pending_branch_work() is True the drain callback must NOT
+    fire the event — there is still DAG work in flight; firing now would
+    cause the phase to declare itself complete with children still
+    running."""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+    handler, _strategy = _make_handler_with_phase(None)
+    progress = handler._phase_handlers[CreditPhase.PROFILING].progress
+    progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+
+    handler.set_branch_orchestrator(orchestrator)
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    callback()
+
+    assert not progress.all_credits_returned_event.is_set(), (
+        "drain observer must defer when orchestrator still has pending work"
+    )
+
+
+@pytest.mark.component_integration
+def test_drain_observer_no_op_when_counters_disagree() -> None:
+    """When check_all_returned_or_cancelled() is False the callback must
+    not fire the event — sending isn't actually complete yet."""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler, _strategy = _make_handler_with_phase(None)
+    progress = handler._phase_handlers[CreditPhase.PROFILING].progress
+    progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
+
+    handler.set_branch_orchestrator(orchestrator)
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    callback()
+
+    assert not progress.all_credits_returned_event.is_set(), (
+        "drain observer must defer when counters say sending isn't complete"
+    )
+
+
+@pytest.mark.component_integration
+def test_drain_observer_skips_completed_phase_handlers() -> None:
+    """If a phase's lifecycle is already complete, the drain callback
+    must skip it — that handler's event was already finalized through
+    the normal phase-end path, and re-setting from here would be racy."""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler, _strategy = _make_handler_with_phase(None)
+    ctx = handler._phase_handlers[CreditPhase.PROFILING]
+    ctx.lifecycle.is_complete = True
+    ctx.progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+
+    handler.set_branch_orchestrator(orchestrator)
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    callback()
+
+    assert not ctx.progress.all_credits_returned_event.is_set(), (
+        "drain observer must skip phase handlers whose lifecycle is "
+        "already complete (their event has already been handled by the "
+        "normal phase-end path)"
+    )
+
+
+@pytest.mark.component_integration
+def test_drain_observer_idempotent_on_already_set_event() -> None:
+    """If the event is already set, calling the drain callback again
+    must be a benign no-op. (The observer can fire multiple times in
+    rapid succession — _handle_child_done plus dispatch_join_turn plus
+    rollback paths all call _notify_drain.)"""
+    orchestrator = MagicMock()
+    orchestrator.set_drain_observer = MagicMock()
+    orchestrator.has_pending_branch_work = MagicMock(return_value=False)
+    handler, _strategy = _make_handler_with_phase(None)
+    progress = handler._phase_handlers[CreditPhase.PROFILING].progress
+    progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+    progress.all_credits_returned_event.set()
+
+    handler.set_branch_orchestrator(orchestrator)
+    callback = orchestrator.set_drain_observer.call_args.args[0]
+    callback()
+    callback()
+    callback()
+
+    assert progress.all_credits_returned_event.is_set()
