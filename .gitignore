@@ -21,7 +21,6 @@ profile.json
 profile.html
 .vscode
 *.jsonl
-!docs/traces/inference-day-2026/dataset.jsonl
 coverage.xml
 *.egg-info/
 coverage.json

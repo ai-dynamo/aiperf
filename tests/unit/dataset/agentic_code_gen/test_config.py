@@ -27,16 +27,9 @@ class TestLoadConfig:
         assert config.inter_turn_delay.agentic_delay.max != 1
         assert config.inter_turn_delay.human_delay.max != 1
 
-    def test_load_bundled_inference_day_2026(self) -> None:
-        config = load_config("inference-day-2026")
-        assert config.max_prompt_tokens == 200_000
-        assert config.restart_initial_probability == 0.3
-        assert config.cache.layer1_5_groups.num_groups == 100
-
     def test_list_bundled_configs(self) -> None:
         names = list_bundled_configs()
         assert "default" in names
-        assert "inference-day-2026" in names
         assert "spec" not in names
         assert names == sorted(names)
 

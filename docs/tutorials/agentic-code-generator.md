@@ -186,7 +186,7 @@ Important fields:
 ## Configuration
 
 Pass a bundled config name, a config JSON path, or a prior run manifest.
-Bundled runnable configs include `default` and `inference-day-2026`.
+Currently, the only bundled runnable config is `default`.
 
 The default config models long coding-agent sessions with:
 
@@ -225,55 +225,6 @@ aiperf synthesize agentic-code \
 
 The config schema is generated at
 `src/aiperf/dataset/agentic_code_gen/configs/spec.json`.
-
-## Inference Day 2026 Trace
-
-The `inference-day-2026` bundled config captures the Agentic Code KV-reuse
-workload used to produce the Inference Day 2026 AIPerf dataset. The exact
-Mooncake replay trace is checked in under `docs/traces/inference-day-2026/`.
-
-- `dataset.jsonl`: Mooncake-compatible trace with 13,167 requests from
-  1,131 emitted sessions.
-- `manifest.json`: original generation metadata, including `seed: 42` and
-  the generation parameters. The public bundled config alias is
-  `inference-day-2026`.
-- `quality.json` and `comparison.txt`: observed distribution summaries.
-- `SHA256SUMS`: checksums for verifying downloaded artifacts.
-
-Validate the published trace:
-
-```bash
-aiperf validate mooncake-trace \
-  --input docs/traces/inference-day-2026/dataset.jsonl
-```
-
-Replay it as a Mooncake trace:
-
-```bash
-aiperf profile \
-  --model YOUR_MODEL \
-  --tokenizer YOUR_MODEL \
-  --url http://localhost:8000 \
-  --endpoint-type chat \
-  --input-file docs/traces/inference-day-2026/dataset.jsonl \
-  --custom-dataset-type mooncake_trace \
-  --fixed-schedule \
-  --streaming
-```
-
-Regenerate the same workload shape from the bundled config:
-
-```bash
-aiperf synthesize agentic-code \
-  --config inference-day-2026 \
-  --num-sessions 1061 \
-  --seed 42 \
-  --output .test/
-```
-
-The original run used 1,061 primary sessions; restart continuations bring the
-published trace to 1,131 emitted sessions. Use the checked-in
-`dataset.jsonl` when exact request identity matters.
 
 ## Related Tutorials
 

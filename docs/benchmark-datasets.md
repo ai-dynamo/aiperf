@@ -43,14 +43,10 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <td>Mooncake trace file <a href="benchmark-modes/trace-replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
-      <td><strong>Agentic Code Inference Day 2026</strong></td>
-      <td style="text-align: center;">✅</td>
-      <td>Published Mooncake trace from the Agentic Code generator <a href="tutorials/agentic-code-generator.md#inference-day-2026-trace"><code>--input-file traces/inference-day-2026/dataset.jsonl --custom-dataset-type mooncake_trace</code></a></td>
-    </tr>
-    <tr>
       <td><strong>ShareGPT</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></a></td>
     </tr>
   </tbody>
 </table>
+
