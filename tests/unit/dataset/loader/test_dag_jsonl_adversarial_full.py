@@ -611,19 +611,16 @@ def test_jsonl_with_trailing_whitespace_strict_strip(tmp_path: Path):
     assert convs[0].session_id == "A"
 
 
-def test_jsonl_bom_rejected(tmp_path: Path):
-    """A leading UTF-8 BOM is NOT stripped; orjson rejects it.
-
-    Document strict behavior: callers must write BOM-free JSONL. (Pre-existing
-    behavior — not a regression of the DAG refactor.)
-    """
+def test_jsonl_bom_accepted(tmp_path: Path):
+    """A leading UTF-8 BOM is stripped before parsing so files saved by
+    Windows/Excel tools load cleanly."""
     path = tmp_path / "dag.jsonl"
     body = json.dumps(
         {"session_id": "A", "turns": [{"messages": [{"role": "user", "content": "u"}]}]}
     ).encode()
     path.write_bytes(b"\xef\xbb\xbf" + body + b"\n")
-    with pytest.raises(DagLoadError, match="invalid JSON"):
-        DagJsonlLoader(filename=path).load()
+    convs = DagJsonlLoader(filename=path).load()
+    assert convs[0].session_id == "A"
 
 
 # ---------------------------------------------------------------------------

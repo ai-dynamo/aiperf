@@ -399,7 +399,14 @@ class BurstGPTTrace(AIPerfBaseModel):
 
 
 class RawPayload(AIPerfBaseModel):
-    """A single raw API request payload for verbatim replay."""
+    """A single raw API request payload for verbatim replay.
+
+    On-disk schema for ``--input-type raw_payload`` (loaded by
+    ``RawPayloadDatasetLoader``); the parsed payload becomes
+    ``Turn.raw_payload``, which ``RawEndpoint`` (or any endpoint) ships
+    verbatim. Distinct from ``RawRecordInfo``, which is the export-side
+    record produced by ``raw_record_writer_processor``.
+    """
 
     payload: dict[str, Any] = Field(description="Complete API request payload.")
 

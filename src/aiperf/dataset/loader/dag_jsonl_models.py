@@ -22,7 +22,7 @@ load time so typos surface immediately.
 
 from typing import Any
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.models import validate_chat_messages
@@ -54,7 +54,8 @@ class DagFork(AIPerfBaseModel):
         default=False,
         description="If True, the parent continues with its remaining turns "
         "after this fork dispatches. Default False (parent terminates after "
-        "fork — the bare-string default).",
+        "fork — the bare-string default). Synonym: 'fork-and-continue' (used "
+        "in user-facing docs and PR descriptions) — same as ``background=True``.",
     )
 
 
@@ -163,6 +164,20 @@ class DagTurn(AIPerfBaseModel):
     def _validate_messages(self) -> "DagTurn":
         validate_chat_messages(self.messages)
         return self
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _reject_bool_max_tokens(cls, v: Any) -> Any:
+        # bool is a subclass of int in Python, so Pydantic accepts True/False
+        # for ``int | None`` fields and silently coerces them to 1/0. That
+        # makes ``"max_tokens": true`` (a typo or copy-paste from another
+        # config shape) round-trip into a 1-token response with no error.
+        if isinstance(v, bool):
+            raise ValueError(
+                "max_tokens must be an integer, not a boolean (got "
+                f"{v!r}); check for a typo in your DAG JSONL file"
+            )
+        return v
 
 
 class DagConversation(AIPerfBaseModel):

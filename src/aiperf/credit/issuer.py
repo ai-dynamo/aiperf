@@ -310,13 +310,22 @@ class CreditIssuer:
         return await self._dispatch_dag_turn(turn)
 
     async def abort_session(self, x_correlation_id: str) -> None:
-        """No-op hook for AIPERF_DAG_FAIL_FAST parent/orphan abort.
+        """Abort an in-flight session (FORK/SPAWN parent or orphan).
 
-        The orchestrator calls this to surrender any in-flight bookkeeping
-        for a session being torn down. No-op here because the current
-        slot-release path (driven by credit returns) already covers the
-        reachable cases; this exists so the orchestrator's
-        ``hasattr(self._issuer, "abort_session")`` guard finds the method.
+        Currently a no-op: the credit-return slot-release path covers every
+        reachable case under the v1 orchestrator. This method exists so the
+        orchestrator's ``hasattr(self._issuer, "abort_session")`` guard
+        resolves; under ``AIPERF_DAG_FAIL_FAST=true`` the orchestrator calls
+        this when a child errors and the parent / orphan siblings must be
+        torn down.
+
+        If implemented in the future, the contract is:
+
+        - Cancel any in-flight credit for ``x_correlation_id`` (via the router).
+        - Release the session slot (do NOT release sibling sessions' slots).
+        - Be idempotent -- orchestrator calls it once per session, but errors
+          mid-tear-down may re-enter.
+        - Be exception-safe -- orchestrator does not retry.
         """
         return None
 

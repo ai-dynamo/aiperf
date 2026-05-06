@@ -262,7 +262,11 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         reject the full URI scheme as the format).
         """
         if "," not in format_and_b64:
-            raise ValueError("Audio content must be in the format 'format,b64_audio'.")
+            raise ValueError(
+                f"audio content must be in the format 'format,b64_audio' "
+                f"(got {format_and_b64[:40]!r}, length={len(format_and_b64)}); "
+                f"pass either 'wav,<b64>' or a 'data:audio/<fmt>;base64,<b64>' URI"
+            )
         if format_and_b64.startswith("data:audio/"):
             header, _, b64 = format_and_b64.partition(",")
             fmt = header[len("data:audio/") :].split(";", 1)[0] or "wav"
@@ -288,7 +292,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         MediaType.VIDEO: {"video_url"},
     }
 
-    def extract_payload_inputs(self, payload: dict) -> ExtractedPayload:
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
         """Single-pass extraction of tokenisable text + media counts from a
         wire-ready payload.
 

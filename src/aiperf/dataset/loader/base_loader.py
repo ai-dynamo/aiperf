@@ -3,6 +3,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
@@ -11,6 +12,14 @@ from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.dataset.loader.models import CustomDatasetT
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+LoaderProbeData = dict[str, Any]
+"""First-line probe shape passed to ``can_load`` overrides.
+
+Any of ``session_id``, ``turns``, ``messages``, ``data``, ``conversation_id``
+may be present depending on the on-disk format. Loaders branch on which keys
+exist to decide whether they recognise the file.
+"""
 
 
 class BaseLoader(AIPerfLoggerMixin, ABC):

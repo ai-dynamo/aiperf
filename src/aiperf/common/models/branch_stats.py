@@ -1,9 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import TypedDict
+
 from pydantic import Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
+
+
+class BranchStatsDict(TypedDict):
+    """Stable shape produced by ``BranchStats.stats_dict()`` for exporters."""
+
+    children_spawned: int
+    children_completed: int
+    children_errored: int
+    children_truncated: int
+    parents_suspended: int
+    parents_resumed: int
+    parents_failed_due_to_child_error: int
+    joins_suppressed: int
 
 
 class BranchStats(AIPerfBaseModel):
@@ -57,6 +72,6 @@ class BranchStats(AIPerfBaseModel):
         "from dispatching. Counts each join once. Reportable but not a failure.",
     )
 
-    def stats_dict(self) -> dict[str, int]:
+    def stats_dict(self) -> BranchStatsDict:
         """Snapshot the counters as a plain dict (stable shape for exporters)."""
         return self.model_dump()

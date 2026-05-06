@@ -52,10 +52,29 @@ class BranchOrchestrator(
     BranchOrchestratorLoggingMixin,
     BranchOrchestratorSpawnMixin,
 ):
-    """Handles DAG branch dispatch (FORK and SPAWN modes).
+    """DAG branch orchestrator: dispatches FORK/SPAWN children and gates parent joins.
 
-    See the module docstring for the credit-return flow, stop-condition
-    guards, and cleanup semantics.
+    Single-instance-per-phase, owned by ``PhaseRunner``; constructed once
+    the dataset is loaded and a ``CreditIssuer`` exists. Public lifecycle:
+
+    1. ``await dispatch_pre_session_branches()`` -- ONCE before the strategy
+       issues its first root-turn-0 credit. Idempotent.
+    2. ``await intercept(credit)`` -- called from ``CreditCallbackHandler``
+       on EVERY credit return. Returns True iff the strategy must suppress
+       its next-turn dispatch (next turn gated by an unsatisfied SPAWN_JOIN).
+       Side-effect: spawns branches declared on the completed turn.
+    3. ``await on_child_leaf_reached(child_corr)`` /
+       ``on_child_stopped(...)`` / ``on_child_errored(...)`` -- called by
+       the worker when a child session terminates; drives gate satisfaction.
+    4. ``has_pending_branch_work()`` -- strategy polls this to decide whether
+       the phase can finalize.
+    5. ``cleanup()`` -- idempotent; logs final ``BranchStats``. Call once
+       at phase teardown.
+
+    FORK children sticky-route via ``StickyCreditRouter.release_child_routing``
+    paired with ``on_child_*``; under ``AIPERF_DAG_FAIL_FAST=true`` the first
+    child error aborts the parent and every orphan sibling.
+    See ``docs/benchmark-modes/dag.md``.
     """
 
     def __init__(
@@ -137,21 +156,21 @@ class BranchOrchestrator(
                 )
 
     async def intercept(self, credit: Credit) -> bool:
-        """Intercept the credit-return path.
+        """Credit-callback hook: dispatch DAG branches and gate parent joins.
 
-        Spawn any branches declared on the completed turn. Independently,
-        check whether the credit's session NEXT turn is a gated turn with
-        unsatisfied prereqs; return True only in that case. Returning True
-        suppresses the strategy's default next-turn dispatch. FORK-mode
-        children sticky-route to the parent's worker; SPAWN-mode children
-        route freely.
+        Called by ``CreditCallbackHandler`` on every credit return. Two things
+        happen independently:
 
-        Runs for every credit return, including ``agent_depth > 0`` (a
-        FORK-spawned child can itself declare forks on one of its turns,
-        producing a grandchild). Per-session locking via ``_parent_locks``
-        is keyed by the credit's own ``x_correlation_id``, so concurrent
-        intercepts at different depths in the same tree don't contend
-        unless they share a session.
+        1. Side-effect: any FORK/SPAWN branches declared on the completed
+           turn are spawned (FORK sticky-pinned, SPAWN with explicit
+           ``join_at`` registered as a future-join).
+        2. Returns ``True`` iff the parent's NEXT turn is gated by an
+           unsatisfied SPAWN_JOIN -- the strategy MUST then suppress its
+           own default next-turn dispatch.
+
+        Per-session locking via ``_parent_locks[credit.x_correlation_id]``
+        serializes intercepts within a session; intercepts at different
+        correlation_ids run concurrently. Safe at any ``agent_depth``.
         """
         if self._cleaning_up:
             return False

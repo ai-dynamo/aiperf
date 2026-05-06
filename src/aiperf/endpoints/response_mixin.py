@@ -9,11 +9,36 @@ from aiperf.common.models import InferenceServerResponse, ParsedResponse
 
 
 class JMESPathResponseMixin:
-    """Mixin: JMESPath + auto-detect response parsing.
+    """Response-parsing mixin: JMESPath + auto-detect.
 
-    Reads optional ``response_field`` from endpoint.extra to compile a JMESPath
-    query used during response parsing.  Falls back to auto-detection when no
-    query is configured or when the query fails to match.
+    Reads ``endpoint.extra.response_field`` once at init, compiles it as a
+    JMESPath query (https://jmespath.org), and uses the query as a first-pass
+    extractor in ``parse_response``. Falls back to auto-detect (embeddings,
+    then rankings, then text) when the query is absent, mismatched, or raises.
+
+    Wiring contract -- required for the mixin to function:
+
+    1. Mix it in to the LEFT of ``BaseEndpoint`` so this class's
+       ``parse_response`` wins MRO::
+
+           class MyEndpoint(JMESPathResponseMixin, BaseEndpoint):
+               ...
+
+    2. Call ``self._init_response_parser()`` from ``__init__`` AFTER
+       ``super().__init__(*args, **kwargs)``::
+
+           def __init__(self, *args, **kwargs):
+               super().__init__(*args, **kwargs)
+               self._init_response_parser()
+
+       Skipping step 2 makes the first ``parse_response`` raise
+       ``AttributeError`` on ``_compiled_jmespath``.
+
+    3. Do NOT override ``parse_response``; override
+       ``convert_to_response_data`` / ``auto_detect_and_extract`` (inherited
+       from ``BaseEndpoint``) to change the typed shape returned.
+
+    See ``RawEndpoint`` for a reference subclass.
     """
 
     def _init_response_parser(self) -> None:

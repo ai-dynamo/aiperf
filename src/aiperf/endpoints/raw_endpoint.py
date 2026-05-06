@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.models import RequestInfo
+from aiperf.common.models import ModelEndpointInfo, RequestInfo
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.response_mixin import JMESPathResponseMixin
 
@@ -20,13 +20,13 @@ class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
     endpoint type, and regular endpoints provide structured response parsing.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
         """Initialize and compile the optional JMESPath ``response_field`` from ``endpoint.extra``.
 
-        Forwards all args/kwargs to ``BaseEndpoint``; the ``_init_response_parser``
+        Forwards args/kwargs to ``BaseEndpoint``; the ``_init_response_parser``
         call is what distinguishes ``RawEndpoint`` from a plain ``BaseEndpoint``.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(model_endpoint, **kwargs)
         self._init_response_parser()
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:

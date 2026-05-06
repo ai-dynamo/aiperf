@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Turn
+from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 
@@ -37,7 +38,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
     @classmethod
     def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+        cls, data: LoaderProbeData | None = None, filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
@@ -89,7 +90,11 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
         if msg_trace_count > 0 and payload_trace_count > 0:
             raise ValueError(
-                "Mixed Mooncake sessions with both `payload` and `messages` traces are unsupported."
+                f"mooncake trace: mixed session contains {msg_trace_count} "
+                f"`messages` trace(s) and {payload_trace_count} `payload` "
+                f"trace(s); each session must use exactly one mode. Split "
+                f"the offending sessions or convert all entries to a single "
+                f"self-contained mode."
             )
         if self_contained_count == len(traces) and self_contained_count > 0:
             return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES

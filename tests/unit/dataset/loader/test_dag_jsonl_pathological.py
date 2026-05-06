@@ -370,20 +370,56 @@ def test_dag_turn_empty_forks_and_spawns_emit_no_branches(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_jsonl_empty_file_returns_empty_dataset(tmp_path: Path):
-    """Empty file is valid: loader returns an empty conversation list."""
+def test_jsonl_empty_file_raises(tmp_path: Path):
+    """Empty file is rejected with a friendly DagLoadError (the runtime can
+    never proceed with 0 conversations, so failing fast at load time is
+    the actionable behavior)."""
     path = _write_bytes(tmp_path, b"")
     loader = DagJsonlLoader(filename=path)
-    assert loader.load_dataset() == {}
-    assert loader.load() == []
+    with pytest.raises(DagLoadError, match="empty|no conversations"):
+        loader.load_dataset()
 
 
-def test_jsonl_only_blank_lines_returns_empty_dataset(tmp_path: Path):
-    """File of only blank/whitespace lines is valid and yields zero
-    conversations (loader is lenient on whitespace, strict on content)."""
+def test_jsonl_only_blank_lines_raises(tmp_path: Path):
+    """File of only blank/whitespace lines is rejected with the same
+    friendly DagLoadError as an empty file."""
     path = _write_bytes(tmp_path, b"\n\n\r\n   \n\t\n")
+    with pytest.raises(DagLoadError, match="empty|no conversations"):
+        DagJsonlLoader(filename=path).load()
+
+
+def test_jsonl_utf8_bom_first_line_accepted(tmp_path: Path):
+    """A UTF-8 BOM at the start of the file (common from Windows/Excel exports)
+    is stripped instead of producing an opaque ``invalid JSON: unexpected
+    character`` error."""
+    body = b"\xef\xbb\xbf" + json.dumps(_basic_conv()).encode() + b"\n"
+    path = _write_bytes(tmp_path, body)
     convs = DagJsonlLoader(filename=path).load()
-    assert convs == []
+    assert len(convs) == 1
+    assert convs[0].session_id == "a"
+
+
+def test_jsonl_huge_uncapped_delay_warns(tmp_path: Path, caplog):
+    """An authored delay > 60s with no cap configured silently hangs the
+    benchmark. Loader must surface a single load-time warning so the user
+    sees the problem before the credit phase starts sleeping."""
+    convs = [
+        {
+            "session_id": "a",
+            "turns": [
+                {"messages": [{"role": "user", "content": "x"}]},
+                {"messages": [{"role": "user", "content": "x"}], "delay": 99_999_999.0},
+            ],
+        }
+    ]
+    path = _write_lines(tmp_path, convs)
+    with caplog.at_level("WARNING", logger="aiperf.dataset.loader.dag_jsonl"):
+        DagJsonlLoader(filename=path).load()
+    matched = [r for r in caplog.records if "inter-turn delay" in r.message.lower()]
+    assert matched, (
+        f"expected a delay warning, got: {[r.message for r in caplog.records]}"
+    )
+    assert matched[0].levelname == "WARNING"
 
 
 # ---------------------------------------------------------------------------

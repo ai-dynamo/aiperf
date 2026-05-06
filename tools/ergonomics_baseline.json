@@ -208,6 +208,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/timing/concurrency.py",
       ""
     ],

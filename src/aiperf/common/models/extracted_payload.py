@@ -37,6 +37,6 @@ class ExtractedPayload(AIPerfBaseModel):
         description="Token count contributed by pre-tokenised input shapes "
         "(OpenAI embeddings ``input: list[list[int]]`` and ``input: list[int]``). "
         "These bypass the tokeniser entirely - the count is the sum of inner "
-        "list lengths and is added to ISL by the consumer alongside any "
-        "``texts`` it tokenises.",
+        "list lengths and is added to ISL (Input Sequence Length) by the "
+        "consumer alongside any ``texts`` it tokenises.",
     )

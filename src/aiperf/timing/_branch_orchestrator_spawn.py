@@ -35,7 +35,12 @@ logger = logging.getLogger(__name__)
 
 
 class BranchOrchestratorSpawnMixin:
-    """Spawn pipeline + child-dispatch rollback. See ``BranchOrchestrator``."""
+    """Spawn pipeline + child-dispatch rollback. See ``BranchOrchestrator``.
+
+    Note: "spawn" here means dispatching a child conversation in DAG mode
+    (``ConversationBranchMode.SPAWN``) -- unrelated to ``SpawnWorkersCommand``,
+    which spawns worker subprocesses.
+    """
 
     async def _fire_pre_session_children(self, branch: ConversationBranchInfo) -> None:
         """Issue turn-0 for every child of a pre-session SPAWN branch."""

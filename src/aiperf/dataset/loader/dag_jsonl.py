@@ -31,7 +31,7 @@ from aiperf.dataset.loader._dag_jsonl_helpers import (
     validate_system_message_placement,
 )
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
-from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.base_loader import BaseFileLoader, LoaderProbeData
 from aiperf.dataset.loader.dag_jsonl_models import DagConversation, DagFork, DagTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -68,6 +68,18 @@ class DagJsonlLoader(BaseFileLoader):
     Constructor shapes:
     - Plugin contract: ``DagJsonlLoader(filename=..., user_config=...)``
     - Standalone: ``DagJsonlLoader(path)`` (unit tests, offline tooling).
+
+    Standalone Python usage (offline tooling, tests)::
+
+        >>> loader = DagJsonlLoader("tests/fixtures/dag/small.dag.jsonl")
+        >>> conversations = loader.load()  # list[Conversation]
+        >>> roots = loader.root_session_ids()  # set[str]; not referenced as a child
+
+    Plugin usage (the framework calls these, not user code)::
+
+        loader = DagJsonlLoader(filename=path, user_config=cfg)
+        per_session = loader.load_dataset()  # dict[session_id, list[Conversation]]
+        conversations = loader.convert_to_conversations(per_session)
     """
 
     def __init__(
@@ -111,7 +123,7 @@ class DagJsonlLoader(BaseFileLoader):
 
     @classmethod
     def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+        cls, data: LoaderProbeData | None = None, filename: str | Path | None = None
     ) -> bool:
         """Return True when data looks like a DAG conversation line.
 
@@ -199,10 +211,19 @@ class DagJsonlLoader(BaseFileLoader):
     def _parse_lines(self) -> None:
         with self._path.open("rb") as f:
             for lineno, raw in enumerate(f, start=1):
+                # Tolerate a UTF-8 BOM on the first line (common from
+                # Windows/Excel exports). Bare bytes everywhere else.
+                if lineno == 1 and raw.startswith(b"\xef\xbb\xbf"):
+                    raw = raw[3:]
                 raw = raw.strip()
                 if not raw:
                     continue
                 self._parse_one_line(lineno, raw)
+        if not self._conversations:
+            raise DagLoadError(
+                f"DAG JSONL file '{self._path}' is empty (no conversations "
+                "parsed); supply at least one conversation line"
+            )
 
     def _parse_one_line(self, lineno: int, raw: bytes) -> None:
         prefix = f"failed to parse DAG JSONL '{self._path}'"

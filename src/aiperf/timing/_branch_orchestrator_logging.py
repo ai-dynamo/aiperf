@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class BranchOrchestratorLoggingMixin:
-    """Cleanup-time logging. See module docstring."""
+    """Cleanup-time stats logging: emits one structured ``BranchStats`` line
+    when the orchestrator drains. See module docstring.
+    """
 
     def _log_stats(self) -> None:
         s = self.stats

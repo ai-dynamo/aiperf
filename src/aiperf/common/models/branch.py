@@ -21,10 +21,9 @@ class ConversationBranchInfo(AIPerfBaseModel):
     the two; the ``dispatch_timing`` field gates pre-session SPAWN.
 
     Disambiguation note: this "branch" is a DAG conversation branch (a
-    parent turn fanning out to one or more child conversations). It is
-    NOT a git branch, and it is NOT the phase/credit "branch" terminology
-    used by the timing-manager BranchOrchestrator / BranchStats (those
-    track per-mode credit-issuance buckets within a single phase).
+    parent turn fanning out to one or more child conversations). Not a
+    git branch. The same DAG-branch concept is tracked at runtime by
+    ``BranchOrchestrator`` and counted in ``BranchStats``.
     """
 
     branch_id: str = Field(

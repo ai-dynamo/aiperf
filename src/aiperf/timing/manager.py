@@ -153,7 +153,10 @@ class TimingManager(BaseComponentService):
             )
             if not done:
                 raise asyncio.TimeoutError(
-                    "Timed out waiting for dataset configuration"
+                    f"timed out waiting for dataset configuration after "
+                    f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; check "
+                    f"dataset-manager logs and consider raising "
+                    f"AIPERF_DATASET_CONFIGURATION_TIMEOUT"
                 )
         finally:
             for task in (configured_task, failed_task):

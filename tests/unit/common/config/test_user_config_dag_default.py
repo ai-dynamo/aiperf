@@ -156,3 +156,111 @@ class TestUserConfigHelpers:
         config = _make_config(dag_file, concurrency=2)
 
         assert config._count_dag_root_entries() == 5
+
+    def test_count_dag_root_entries_excludes_object_form_forks(
+        self, tmp_path: Path
+    ) -> None:
+        # Object-form forks ({"child": "x", "background": true}) reference
+        # children just like bare-string forks do — root counter must walk
+        # both shapes or BG-fork targets get counted as roots.
+        dag_file = tmp_path / "x.dag.jsonl"
+        records = [
+            {
+                "session_id": "P",
+                "turns": [
+                    {
+                        "messages": [{"role": "user", "content": "t0"}],
+                        "forks": [{"child": "BG", "background": True}],
+                    },
+                    {"messages": [{"role": "user", "content": "t1"}]},
+                ],
+            },
+            {
+                "session_id": "BG",
+                "turns": [{"messages": [{"role": "user", "content": "c"}]}],
+            },
+        ]
+        with open(dag_file, "wb") as f:
+            for r in records:
+                f.write(orjson.dumps(r))
+                f.write(b"\n")
+        config = _make_config(dag_file, concurrency=1)
+
+        # Only P is a root; BG is the FORK target.
+        assert config._count_dag_root_entries() == 1
+
+    def test_count_dag_root_entries_excludes_spawn_targets(
+        self, tmp_path: Path
+    ) -> None:
+        # SPAWN children (bare-string and DagSpawn object form) must be
+        # excluded from the root count; they are dispatched by their parent
+        # and would over-instantiate if treated as standalone roots.
+        dag_file = tmp_path / "x.dag.jsonl"
+        records = [
+            {
+                "session_id": "P",
+                "turns": [
+                    {
+                        "messages": [{"role": "user", "content": "t0"}],
+                        "spawns": ["B", {"children": ["C", "D"], "join_at": 2}],
+                    },
+                    {"messages": [{"role": "user", "content": "t1"}]},
+                    {"messages": [{"role": "user", "content": "t2"}]},
+                ],
+            },
+            {
+                "session_id": "B",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+            {
+                "session_id": "C",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+            {
+                "session_id": "D",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+        ]
+        with open(dag_file, "wb") as f:
+            for r in records:
+                f.write(orjson.dumps(r))
+                f.write(b"\n")
+        config = _make_config(dag_file, concurrency=1)
+
+        # Only P is a root; B / C / D are SPAWN targets.
+        assert config._count_dag_root_entries() == 1
+
+    def test_count_dag_root_entries_excludes_pre_session_spawn_targets(
+        self, tmp_path: Path
+    ) -> None:
+        # pre_session_spawns children get fired by the orchestrator as
+        # background sub-agents of the declaring root — they are not
+        # standalone roots and must not be sampled as such.
+        dag_file = tmp_path / "x.dag.jsonl"
+        records = [
+            {
+                "session_id": "ROOT",
+                "turns": [{"messages": [{"role": "user", "content": "t0"}]}],
+                "pre_session_spawns": ["x1", "x2", "x3"],
+            },
+            {
+                "session_id": "x1",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+            {
+                "session_id": "x2",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+            {
+                "session_id": "x3",
+                "turns": [{"messages": [{"role": "user", "content": "x"}]}],
+            },
+        ]
+        with open(dag_file, "wb") as f:
+            for r in records:
+                f.write(orjson.dumps(r))
+                f.write(b"\n")
+        config = _make_config(dag_file, concurrency=1)
+
+        # Only ROOT is a true root.
+        assert config._count_dag_root_entries() == 1

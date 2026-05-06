@@ -10,13 +10,12 @@ directly to the transport with zero endpoint formatting.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import orjson
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader
+from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader, LoaderProbeData
 from aiperf.dataset.loader.models import InputsJsonSession
 
 
@@ -34,7 +33,7 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
 
     @classmethod
     def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+        cls, data: LoaderProbeData | None = None, filename: str | Path | None = None
     ) -> bool:
         """Return True for InputsFile format: top-level ``data`` list with ``payloads`` items."""
         if isinstance(data, dict):

@@ -289,8 +289,8 @@ Reusable response-parsing behavior lives in mixins applied to endpoint classes:
 ```python
 # src/aiperf/endpoints/raw_endpoint.py - composing a mixin
 class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
+        super().__init__(model_endpoint, **kwargs)
         self._init_response_parser()
 ```
 

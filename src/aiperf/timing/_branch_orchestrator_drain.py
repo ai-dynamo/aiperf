@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 class BranchOrchestratorDrainMixin:
-    """Drain-observer plumbing. See module docstring."""
+    """Drain-observer plumbing: PhaseRunner registers a callback here so it
+    learns when the orchestrator transitions to ``has_pending_branch_work() is False``.
+    See module docstring for the full credit-return / cleanup semantics.
+    """
 
     _drain_observer: Callable[[], None] | None = None
 

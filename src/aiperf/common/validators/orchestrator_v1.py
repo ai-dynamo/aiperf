@@ -256,9 +256,32 @@ def _validate_conversation(
 
 
 def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
-    """Raise NotImplementedError for any construct v1 cannot honor.
+    """Gate a DatasetMetadata against the v1 BranchOrchestrator's capability set.
 
-    Centralized so every loader emits the same error shapes.
+    Call from the end of any loader's ``load_dataset`` so unsupported
+    constructs surface before any credit is issued. Already wired into
+    ``DagJsonlLoader.load_dataset``; hand-built ``DatasetMetadata`` (e.g.
+    in tests or external integrations) must call this explicitly:
+
+        >>> from aiperf.common.models import DatasetMetadata
+        >>> from aiperf.common.validators import validate_for_orchestrator_v1
+        >>> validate_for_orchestrator_v1(metadata)  # raises on first violation
+
+    Rules enforced (each violation raises ``NotImplementedError`` with a
+    ``"conversation '<id>' turn <N>: <reason>"`` location prefix):
+
+    - prerequisite kinds other than ``SPAWN_JOIN`` (TIMER, EXTERNAL_EVENT, ...)
+    - per-child / barrier / timer / event reserved fields on ``TurnPrerequisite``
+    - branch modes other than ``FORK`` / ``SPAWN``
+    - ``child_conversation_id`` not present in the dataset
+    - duplicate ``branch_id`` on the same parent turn
+    - ``SPAWN_JOIN`` whose referenced branch is on the same or later turn
+    - pre-session SPAWN (``dispatch_timing='pre'``) on a non-root or non-turn-0
+    - multiple FORK parents claiming the same child across the dataset
+
+    Raises:
+        NotImplementedError: First unsupported construct found (fail-fast).
+        ValueError: Duplicate ``SPAWN_JOIN`` prereq for the same branch on one turn.
     """
     all_conversation_ids = {c.conversation_id for c in metadata.conversations}
     for conv in metadata.conversations:

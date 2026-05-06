@@ -62,6 +62,36 @@ def _should_quote_arg(x: Any) -> bool:
     return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
 
 
+def _collect_pre_session_refs(data: dict, into: set[str]) -> None:
+    """Add ``pre_session_spawns`` child ids (bare strings only) into ``into``."""
+    for child in data.get("pre_session_spawns", []) or []:
+        if isinstance(child, str):
+            into.add(child)
+
+
+def _collect_turn_refs(turn: dict, into: set[str]) -> None:
+    """Add child ids referenced from one turn's ``forks`` and ``spawns`` into ``into``.
+
+    ``forks`` entries are a bare ``"<sid>"`` or a ``{"child": "<sid>", ...}``
+    object. ``spawns`` entries are a bare ``"<sid>"`` or a
+    ``{"children": [...], ...}`` object (DagSpawn form).
+    """
+    for fork_entry in turn.get("forks", []) or []:
+        if isinstance(fork_entry, str):
+            into.add(fork_entry)
+        elif isinstance(fork_entry, dict):
+            child = fork_entry.get("child")
+            if isinstance(child, str):
+                into.add(child)
+    for spawn_entry in turn.get("spawns", []) or []:
+        if isinstance(spawn_entry, str):
+            into.add(spawn_entry)
+        elif isinstance(spawn_entry, dict):
+            for child in spawn_entry.get("children", []) or []:
+                if isinstance(child, str):
+                    into.add(child)
+
+
 class UserConfig(BaseConfig):
     """
     A configuration class for defining top-level user settings.
@@ -465,7 +495,14 @@ class UserConfig(BaseConfig):
 
     @staticmethod
     def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str]]:
-        """Walk a dag_jsonl file once, returning (all_session_ids, referenced_ids)."""
+        """Walk a dag_jsonl file once, returning (all_session_ids, referenced_ids).
+
+        ``referenced_ids`` covers every id that the orchestrator dispatches as
+        a child of another conversation: bare-string and object-form
+        ``forks`` entries, bare-string and ``DagSpawn``-object ``spawns``
+        entries, and top-level ``pre_session_spawns``. Anything in
+        ``referenced_ids`` is NOT a root and must not be sampled standalone.
+        """
         all_ids: set[str] = set()
         referenced_ids: set[str] = set()
         with open(file_path) as f:
@@ -479,12 +516,10 @@ class UserConfig(BaseConfig):
                 sid = data.get("session_id")
                 if isinstance(sid, str):
                     all_ids.add(sid)
+                _collect_pre_session_refs(data, referenced_ids)
                 for turn in data.get("turns", []) or []:
-                    if not isinstance(turn, dict):
-                        continue
-                    for fork_id in turn.get("forks", []) or []:
-                        if isinstance(fork_id, str):
-                            referenced_ids.add(fork_id)
+                    if isinstance(turn, dict):
+                        _collect_turn_refs(turn, referenced_ids)
         return all_ids, referenced_ids
 
     def _count_dag_root_entries(self) -> int:

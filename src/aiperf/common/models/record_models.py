@@ -828,10 +828,10 @@ class ToolCallResponseData(BaseResponseData):
 
     Mirrors the ``ReasoningResponseData`` shape - two fields, one for the
     type's primary content and one for any prose that arrived alongside
-    it. Both contribute to client-side OSL via :meth:`get_text`; the
-    distinct fields let downstream metrics that want to categorise output
-    (e.g. "what fraction of OSL was tool-call dispatch?") read each
-    portion separately.
+    it. Both contribute to client-side OSL (Output Sequence Length) via
+    :meth:`get_text`; the distinct fields let downstream metrics that
+    want to categorise output (e.g. "what fraction of OSL was tool-call
+    dispatch?") read each portion separately.
     """
 
     tool_call_text: str

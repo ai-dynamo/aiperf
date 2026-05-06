@@ -14,13 +14,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 import orjson
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader
+from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader, LoaderProbeData
 from aiperf.dataset.loader.models import RawPayload
 
 
@@ -41,7 +40,7 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
 
     @classmethod
     def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+        cls, data: LoaderProbeData | None = None, filename: str | Path | None = None
     ) -> bool:
         """Return True when data is a chat API payload or filename is a directory of JSONL files.
 

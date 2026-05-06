@@ -65,8 +65,10 @@ aiperf profile \
     --url localhost:8000 \
     --input-file examples/dag_jsonl/example.dag.jsonl \
     --custom-dataset-type dag_jsonl \
-    --concurrency 4
+    --concurrency 1
 ```
+
+The example file has exactly one root (`root`); `branch-a` and `branch-b` are FORK targets, not roots. The autodefault sets `--num-conversations` to the root count, so `--concurrency` may not exceed `1` here. To exercise concurrency, supply your own multi-root DAG file or pass `--num-conversations N` explicitly. (FORK fanout still produces multiple in-flight requests per session — see the "concurrency" reference section below.)
 
 That is enough to get started. The rest of this document is reference material you can skim on demand.
 
@@ -385,7 +387,7 @@ aiperf profile \
     --url localhost:8000 \
     --input-file three-roots.dag.jsonl \
     --custom-dataset-type dag_jsonl \
-    --concurrency 4
+    --concurrency 3
 ```
 
 With neither `--num-conversations` nor `--request-count` supplied, AIPerf logs `defaulting --num-conversations to 3` (one per root). The wire sees exactly nine requests: three roots and six children. `BranchStats.children_spawned` will be `6`, `children_completed` will be `6`, and all other counters will be `0`.
