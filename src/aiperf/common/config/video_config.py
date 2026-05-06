@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
@@ -11,6 +11,16 @@ from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import VideoAudioDefaults, VideoDefaults
 from aiperf.common.config.groups import Groups
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+
+
+def _coerce_int_literal(value: Any) -> Any:
+    """Coerce numeric strings (e.g., from YAML/JSON configs) to int for Literal validation."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+    return value
+
 
 VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
     VideoFormat.WEBM: VideoAudioCodec.LIBVORBIS,
@@ -30,20 +40,18 @@ class VideoAudioConfig(BaseConfig):
             )
         return self
 
-    _CLI_GROUP = Groups.VIDEO_INPUT
-
     sample_rate: Annotated[
-        int,
+        float,
         Field(
-            ge=8000,
-            le=96000,
-            description="Audio sample rate in Hz for the embedded audio track. "
-            "Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). "
+            ge=8.0,
+            le=96.0,
+            description="Audio sample rate in kHz for the embedded audio track. "
+            "Common values: 8 (telephony), 16 (speech), 44.1 (CD quality), 48 (professional). "
             "Higher sample rates increase audio fidelity and file size.",
         ),
         CLIParameter(
             name=("--video-audio-sample-rate",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoAudioDefaults.SAMPLE_RATE
 
@@ -59,7 +67,7 @@ class VideoAudioConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-audio-num-channels",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoAudioDefaults.CHANNELS
 
@@ -73,7 +81,7 @@ class VideoAudioConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-audio-codec",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoAudioDefaults.CODEC
 
@@ -84,9 +92,10 @@ class VideoAudioConfig(BaseConfig):
             "Supported values: 8, 16, 24, or 32 bits. "
             "Higher bit depths provide greater dynamic range but increase file size.",
         ),
+        BeforeValidator(_coerce_int_literal),
         CLIParameter(
             name=("--video-audio-depth",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoAudioDefaults.DEPTH
 
@@ -107,8 +116,6 @@ class VideoConfig(BaseConfig):
             raise ValueError("Height is specified but width is not")
         return self
 
-    _CLI_GROUP = Groups.VIDEO_INPUT
-
     batch_size: Annotated[
         int,
         Field(
@@ -122,7 +129,7 @@ class VideoConfig(BaseConfig):
                 "--video-batch-size",
                 "--batch-size-video",
             ),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.BATCH_SIZE
 
@@ -136,7 +143,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-duration",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.DURATION
 
@@ -150,7 +157,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-fps",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.FPS
 
@@ -163,7 +170,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-width",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.WIDTH
 
@@ -176,7 +183,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-height",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.HEIGHT
 
@@ -189,7 +196,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-synth-type",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.SYNTH_TYPE
 
@@ -202,7 +209,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-format",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.FORMAT
 
@@ -220,7 +227,7 @@ class VideoConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--video-codec",),
-            group=_CLI_GROUP,
+            group=Groups.VIDEO_INPUT,
         ),
     ] = VideoDefaults.CODEC
 

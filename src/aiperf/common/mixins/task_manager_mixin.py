@@ -56,6 +56,7 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     def start_background_task(
         self,
         method: Callable,
+        *,
         interval: float | Callable[[TaskManagerProtocol], float] | None = None,
         immediate: bool = False,
         stop_on_error: bool = False,

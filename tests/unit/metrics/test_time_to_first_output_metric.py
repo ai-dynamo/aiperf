@@ -9,6 +9,7 @@ from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
     TokenCounts,
+    ToolCallResponseData,
 )
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.time_to_first_output_token_metric import (
@@ -141,7 +142,7 @@ class TestTimeToFirstOutputMetric:
         """Test error when first non-reasoning token timestamp is before request start"""
         record = create_record(start_ns=100, responses=[90])
         metric = TimeToFirstOutputTokenMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())
 
     def test_ttfo_no_responses(self):
@@ -149,7 +150,7 @@ class TestTimeToFirstOutputMetric:
         record = create_record(start_ns=100)
         record.responses = []
         metric = TimeToFirstOutputTokenMetric()
-        with pytest.raises(NoMetricValue, match="Invalid Record"):
+        with pytest.raises(NoMetricValue, match="missing or marked invalid"):
             metric.parse_record(record, MetricRecordDict())
 
     @pytest.mark.parametrize(
@@ -169,3 +170,91 @@ class TestTimeToFirstOutputMetric:
             match="Record must have at least one non-reasoning token",
         ):
             metric.parse_record(record, MetricRecordDict())
+
+    def test_ttfo_tool_call_response(self):
+        """Test TTFO with a tool-call-only response"""
+        record = _create_record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(
+                    perf_ns=115, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [15]
+
+    def test_ttfo_tool_call_after_reasoning(self):
+        """Test TTFO skips reasoning-only tokens and finds tool call as first output"""
+        record = _create_record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(
+                    perf_ns=105,
+                    data=ReasoningResponseData(reasoning="thinking", content=None),
+                ),
+                ParsedResponse(
+                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [20]
+
+    def test_ttfo_text_before_tool_call(self):
+        """Test TTFO picks text response when it appears before tool call"""
+        record = _create_record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(perf_ns=110, data=TextResponseData(text="hello")),
+                ParsedResponse(
+                    perf_ns=120, data=ToolCallResponseData(text="func_name{}")
+                ),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [10]
+
+    def test_ttfo_tool_call_empty_text_not_counted(self):
+        """Test that tool call with empty text is not counted as first output"""
+        record = _create_record_with_responses(
+            start_ns=100,
+            responses=[
+                ParsedResponse(perf_ns=110, data=ToolCallResponseData(text="")),
+                ParsedResponse(perf_ns=120, data=TextResponseData(text="content")),
+            ],
+        )
+        metric_results = run_simple_metrics_pipeline(
+            [record], TimeToFirstOutputTokenMetric.tag
+        )
+        assert metric_results[TimeToFirstOutputTokenMetric.tag] == [20]
+
+
+def _create_record_with_responses(
+    start_ns: int,
+    responses: list[ParsedResponse],
+) -> ParsedResponseRecord:
+    """Helper to create test records from pre-built ParsedResponse objects."""
+    request = RequestRecord(
+        conversation_id="test-conversation",
+        turn_index=0,
+        model_name="test-model",
+        start_perf_ns=start_ns,
+        timestamp_ns=start_ns,
+        end_perf_ns=responses[-1].perf_ns,
+    )
+    return ParsedResponseRecord(
+        request=request,
+        responses=responses,
+        token_counts=TokenCounts(
+            input=None,
+            output=len(responses),
+            reasoning=None,
+        ),
+    )

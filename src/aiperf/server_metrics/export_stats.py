@@ -43,6 +43,7 @@ def compute_stats(
     metric_type: PrometheusMetricType,
     time_series: ScalarTimeSeries | HistogramTimeSeries,
     time_filter: TimeRangeFilter | None = None,
+    *,
     labels: dict[str, str] | None = None,
     slice_duration: float | None = None,
 ) -> GaugeSeries | CounterSeries | HistogramSeries | None:

@@ -40,6 +40,9 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Video Metrics](#video-metrics)
     - [Video Inference Time](#video-inference-time)
     - [Video Peak Memory](#video-peak-memory)
+  - [Audio Metrics](#audio-metrics)
+    - [Audio Duration](#audio-duration)
+    - [Inverse Real-Time Factor (RTFx)](#inverse-real-time-factor-rtfx)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
@@ -101,6 +104,8 @@ The sections below provide detailed descriptions, requirements, and notes for ea
 ## Understanding Metric Types
 
 AIPerf computes metrics in three distinct phases during benchmark execution: **Record Metrics**, **Aggregate Metrics**, and **Derived Metrics**.
+
+> The metric type also determines which stat fields appear in `profile_export_aiperf.json` per metric — see [JSON Export Schema](reference/json-export-schema.md) for the per-field presence rules and version history.
 
 ## Record Metrics
 
@@ -557,6 +562,39 @@ video_peak_memory = response.data.peak_memory_mb
 **Notes:**
 - Value comes from the server, not computed by AIPerf.
 - Unit is megabytes.
+
+---
+
+## Audio Metrics
+
+> [!NOTE]
+> Metrics in this section require an audio input on the request (e.g., ASR datasets such as LibriSpeech, GigaSpeech, AMI, VoxPopuli). They are not computed for text-only or non-audio requests.
+
+### Audio Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Per-request input audio duration in seconds. Hidden from the console summary; available in JSON / CSV record exports for characterizing dataset shape and verifying RTFx calculations.
+
+**Notes:**
+- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech).
+- Aggregate stats (avg, p50, p99) are computed automatically.
+
+### Inverse Real-Time Factor (RTFx)
+
+**Type:** [Record Metric](#record-metrics)
+
+The ratio of input audio duration to request latency. The standard ASR throughput metric, used by the HuggingFace Open ASR Leaderboard, NVIDIA Riva, and NVIDIA NeMo.
+
+**Formula:**
+```python
+rtfx = audio_duration_seconds / request_latency_seconds
+```
+
+**Notes:**
+- Higher is better. A value of 10 means the server transcribed audio 10× faster than real-time playback.
+- RTFx < 1 means the server is slower than real-time and not suitable for live transcription.
+- Requires `audio_duration` and `request_latency` metrics to be computed first.
 
 ---
 
@@ -1331,7 +1369,7 @@ The aggregate output also includes metadata about the multi-run benchmark:
 - **failed_runs**: List of failed runs with error details
 - **confidence_level**: Confidence level used for intervals (e.g., 0.95)
 - **cooldown_seconds**: Cooldown duration between runs
-- **run_labels**: Labels for each run (e.g., ["run_0001", "run_0002", ...])
+- **run_labels**: Labels for each run (e.g., ["trial_0001", "trial_0002", ...])
 
 ---
 

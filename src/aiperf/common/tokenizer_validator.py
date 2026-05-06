@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Early tokenizer validation before spawning services."""
+"""Early tokenizer validation and preloading before spawning services."""
 
 from __future__ import annotations
 
+import asyncio
+import os
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -75,6 +77,22 @@ def validate_tokenizer_early(
         logger.debug("Using tiktoken tokenizer, skipping HF alias resolution")
         return {model: tokenizer_cfg.name for model in model_names}
 
+    # Fake-model-name fallback: when --tokenizer is unset, names that look
+    # like LLM-hallucinated placeholders default to builtin instead of an HF
+    # Hub lookup. Explicit --tokenizer always wins.
+    fake_to_builtin: dict[str, str] = {}
+    if not tokenizer_cfg.name:
+        fake_to_builtin, real_models = _partition_fake_models(model_names, logger)
+        if not real_models:
+            # All models are placeholders. Mutate tokenizer_cfg.name so every
+            # downstream consumer (child processes that read
+            # cfg.tokenizer.name directly, the preload step, the dataset
+            # manager's tokenizer loader) sees `builtin` without depending
+            # on resolved_names propagation.
+            tokenizer_cfg.name = BUILTIN_TOKENIZER_NAME
+            return fake_to_builtin
+        names = real_models
+
     # Validate and resolve aliases
     console = Console()
     entries: list[TokenizerDisplayEntry] = []
@@ -106,4 +124,133 @@ def validate_tokenizer_early(
     # Build final mapping
     if tokenizer_cfg.name:
         return {model: resolved[tokenizer_cfg.name] for model in model_names}
-    return resolved
+    return {**fake_to_builtin, **resolved}
+
+
+def _partition_fake_models(
+    model_names: list[str], logger: AIPerfLogger
+) -> tuple[dict[str, str], list[str]]:
+    """Split ``model_names`` into (fake → builtin map, real names list).
+
+    Emits one ``WARNING`` log line per detected placeholder. Called only
+    when ``--tokenizer`` was not explicitly set.
+    """
+    from aiperf.common.tokenizer import BUILTIN_TOKENIZER_NAME
+    from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
+    fake_to_builtin: dict[str, str] = {}
+    real_models: list[str] = []
+    for model in model_names:
+        if is_fake_model_name(model):
+            logger.warning(
+                f"Model name '{model}' looks like a placeholder; defaulting "
+                f"tokenizer to '{BUILTIN_TOKENIZER_NAME}' (tiktoken o200k_base). "
+                f"Pass --tokenizer <name> to override."
+            )
+            fake_to_builtin[model] = BUILTIN_TOKENIZER_NAME
+        else:
+            real_models.append(model)
+    return fake_to_builtin, real_models
+
+
+async def preload_tokenizers(
+    resolved_names: dict[str, str] | None,
+    trust_remote_code: bool = False,
+    revision: str = "main",
+    logger: AIPerfLogger | None = None,
+) -> None:
+    """Preload tokenizer files into HF disk cache before spawning child processes.
+
+    Child processes call _is_hf_cached() inside Tokenizer.from_pretrained().
+    When True, they use local_files_only=True and make zero HF network calls.
+
+    Args:
+        resolved_names: Mapping of model names to resolved tokenizer names.
+                        If None or empty (validation was skipped), this is a no-op.
+        trust_remote_code: Whether to trust remote code when loading.
+        revision: The specific model version to use.
+        logger: Optional logger for progress output.
+    """
+    from pathlib import Path
+
+    from aiperf.common.tokenizer import (
+        BUILTIN_TOKENIZER_NAME,
+        TIKTOKEN_ENCODING_NAMES,
+        Tokenizer,
+        _is_hf_cached,
+    )
+
+    if not resolved_names:
+        if logger:
+            logger.debug("Tokenizer preload skipped: validation was not run")
+        return
+
+    names_to_load: list[str] = []
+    for name in set(resolved_names.values()):
+        # tiktoken/builtin: no HF download needed
+        if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
+            if logger:
+                logger.debug(
+                    f"Tokenizer preload skipped for '{name}': tiktoken backend"
+                )
+            continue
+        # Local path: files already on disk
+        p = Path(name)
+        if p.is_absolute() or name.startswith(("./", "../")) or p.is_dir():
+            if logger:
+                logger.debug(f"Tokenizer preload skipped for '{name}': local path")
+            continue
+        # Already in HF disk cache
+        if _is_hf_cached(name, revision):
+            if logger:
+                logger.debug(
+                    f"Tokenizer preload skipped for '{name}': already in HF cache"
+                )
+            continue
+        names_to_load.append(name)
+
+    if not names_to_load:
+        if logger:
+            logger.debug(
+                "Tokenizer preload: all tokenizers already cached, no download needed"
+            )
+        _enable_hf_offline_mode(logger)
+        return
+
+    if logger:
+        logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
+
+    failed: list[str] = []
+    for name in names_to_load:
+        if logger:
+            logger.info(f"  Caching tokenizer: {name}")
+        try:
+            # Discard result — side effect is populating the HF disk cache so
+            # child processes find it cached and skip all network calls.
+            await asyncio.to_thread(
+                Tokenizer.from_pretrained,
+                name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+                resolve_alias=False,  # already resolved by validate_tokenizer_early
+            )
+        except Exception:  # noqa: BLE001
+            failed.append(name)
+
+    if failed:
+        if logger:
+            names_str = ", ".join(f"'{n}'" for n in failed)
+            logger.warning(
+                f"Failed to preload {len(failed)} tokenizer(s): {names_str}. "
+                "Child processes will attempt to load them themselves."
+            )
+    else:
+        _enable_hf_offline_mode(logger)
+
+
+def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
+    """Set HF environment variables so spawned processes never make network calls."""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    if logger:
+        logger.debug("Enabled HF offline mode for child processes")

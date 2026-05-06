@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from cyclopts import Parameter
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
@@ -17,7 +17,130 @@ from aiperf.plugin.enums import ArrivalPattern
 class LoadGeneratorConfig(BaseConfig):
     """A configuration class for defining top-level load generator settings."""
 
-    _CLI_GROUP = Groups.LOAD_GENERATOR
+    @field_validator("concurrency", mode="before")
+    @classmethod
+    def parse_concurrency_list(
+        cls, v: int | str | list[int] | None
+    ) -> int | list[int] | None:
+        """Parse comma-separated concurrency values from CLI input.
+
+        Converts comma-separated strings like "10,20,30" into lists [10, 20, 30].
+        Single values like "10" or 10 remain as integers for backward compatibility.
+
+        Args:
+            v: Input value from CLI (can be int, str, list[int], or None)
+
+        Returns:
+            - None if input is None
+            - int if input is a single integer value (>= 1)
+            - list[int] if input is a comma-separated string or already a list (all >= 1)
+
+        Raises:
+            ValueError: If string contains non-integer values or values < 1
+        """
+        if v is None:
+            return None
+
+        # Already an int - validate and return
+        if isinstance(v, int):
+            if v < 1:
+                raise ValueError(
+                    f"Invalid concurrency value: {v}. "
+                    f"Must be a positive integer (>= 1)."
+                )
+            return v
+
+        # Already a list - validate all elements and return
+        if isinstance(v, list):
+            validated = []
+            for item in v:
+                try:
+                    # Reject non-integer floats to prevent silent truncation
+                    if isinstance(item, float) and not item.is_integer():
+                        raise ValueError(
+                            f"Invalid concurrency list element: '{item}'. "
+                            f"All values must be positive integers (>= 1)."
+                        )
+                    val = int(item)
+                    if val < 1:
+                        raise ValueError(
+                            f"Invalid concurrency value: {val}. "
+                            f"All concurrency values must be at least 1."
+                        )
+                    validated.append(val)
+                except (ValueError, TypeError) as err:
+                    raise ValueError(
+                        f"Invalid concurrency list element: '{item}'. "
+                        f"All values must be positive integers (>= 1)."
+                    ) from err
+            return validated
+
+        # String input - parse comma-separated values
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            parts = [part.strip() for part in v.split(",")]
+
+            # Single value without comma - return as int
+            if len(parts) == 1:
+                try:
+                    val = int(parts[0])
+                    if val < 1:
+                        raise ValueError(
+                            f"Invalid concurrency value: {val}. "
+                            f"Must be a positive integer (>= 1)."
+                        )
+                    return val
+                except ValueError as err:
+                    raise ValueError(
+                        f"Invalid concurrency value: '{parts[0]}'. "
+                        f"Must be a positive integer (>= 1). "
+                        f"Examples: --concurrency 10, --concurrency 20"
+                    ) from err
+
+            # Multiple values - parse as list
+            try:
+                validated = []
+                for part in parts:
+                    val = int(part)
+                    if val < 1:
+                        raise ValueError(
+                            f"Invalid concurrency value: {val}. "
+                            f"All concurrency values must be at least 1."
+                        )
+                    validated.append(val)
+                return validated
+            except ValueError as err:
+                # Try to identify which value failed
+                invalid_value = None
+                for part in parts:
+                    try:
+                        val = int(part)
+                        if val < 1:
+                            invalid_value = part
+                            break
+                    except ValueError:
+                        invalid_value = part
+                        break
+
+                if invalid_value:
+                    raise ValueError(
+                        f"Invalid concurrency list: '{v}'. "
+                        f"Failed to parse value: '{invalid_value}'. "
+                        f"All values must be positive integers (>= 1). "
+                        f"Examples: --concurrency 10,20,30 or --concurrency 5,10,15,20"
+                    ) from err
+                else:
+                    raise ValueError(
+                        f"Invalid concurrency list: '{v}'. "
+                        f"All values must be positive integers (>= 1). "
+                        f"Examples: --concurrency 10,20,30 or --concurrency 5,10,15,20"
+                    ) from err
+
+        raise ValueError(
+            f"Internal error: Invalid concurrency type {type(v).__name__}. "
+            f"This is a bug - please report it. "
+            f"Expected int, str, list[int], or None."
+        )
 
     benchmark_duration: Annotated[
         float | None,
@@ -28,7 +151,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--benchmark-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -42,24 +165,67 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--benchmark-grace-period",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
 
     concurrency: Annotated[
-        int | None,
+        Any,  # CLI accepts string, validator converts to Union[int, list[int], None]
         Field(
-            ge=1,
-            description="Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, "
-            "maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.",
+            description="Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. "
+            "AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. "
+            "Can be combined with `--request-rate` to control the request rate. "
+            "When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.",
         ),
         CLIParameter(
             name=(
                 "--concurrency",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
+
+    parameter_sweep_mode: Annotated[
+        Literal["repeated", "independent"],
+        Field(
+            description="Sweep execution mode: 'repeated' (default) runs full sweep N times, "
+            "'independent' runs N trials at each sweep value"
+        ),
+        CLIParameter(
+            name=("--parameter-sweep-mode",),
+            group=Groups.PARAMETER_SWEEP,
+        ),
+    ] = "repeated"
+
+    parameter_sweep_cooldown_seconds: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="Cooldown duration between sweep values (seconds). "
+            "Only applies when sweeping parameters (e.g., --concurrency 10,20,30). "
+            "Allows the system to stabilize between different parameter values. "
+            "Default is 0 (no cooldown).",
+        ),
+        CLIParameter(
+            name=("--parameter-sweep-cooldown-seconds",),
+            group=Groups.PARAMETER_SWEEP,
+        ),
+    ] = 0.0
+
+    parameter_sweep_same_seed: Annotated[
+        bool,
+        Field(
+            description="Use same random seed across all sweep values (default: derive different seeds). "
+            "Only applies when sweeping parameters (e.g., --concurrency 10,20,30). "
+            "When False (default), each sweep value uses a different derived seed (base_seed + sweep_index) "
+            "to avoid artificial correlation between measurements. "
+            "When True, all sweep values use the same base seed for correlated workload comparisons.",
+        ),
+        CLIParameter(
+            name=("--parameter-sweep-same-seed",),
+            group=Groups.PARAMETER_SWEEP,
+        ),
+    ] = False
 
     prefill_concurrency: Annotated[
         int | None,
@@ -70,7 +236,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--prefill-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -86,7 +252,7 @@ class LoadGeneratorConfig(BaseConfig):
             name=(
                 "--request-rate",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -100,7 +266,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--arrival-pattern", "--request-rate-mode"),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = LoadGeneratorDefaults.ARRIVAL_PATTERN
 
@@ -117,7 +283,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--arrival-smoothness", "--vllm-burstiness"),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -133,7 +299,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--request-count",  # GenAI-Perf
                 "--num-requests",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -149,7 +315,7 @@ class LoadGeneratorConfig(BaseConfig):
                 "--warmup-request-count",  # GenAI-Perf
                 "--num-warmup-requests",  # GenAI-Perf
             ),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -162,7 +328,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -174,7 +340,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--num-warmup-sessions",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -186,7 +352,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -199,7 +365,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-prefill-concurrency",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -211,7 +377,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-request-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -225,7 +391,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-arrival-pattern",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
             show_choices=False,
         ),
     ] = None
@@ -240,7 +406,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-grace-period",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -255,7 +421,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-cancellation-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -269,7 +435,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-cancellation-delay",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = 0.0
 
@@ -286,7 +452,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--user-centric-rate",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -298,7 +464,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--num-users",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -311,7 +477,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -323,7 +489,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--prefill-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -336,7 +502,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -349,7 +515,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-prefill-concurrency-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -363,7 +529,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-rate-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -377,7 +543,7 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-request-rate-ramp-duration",),
-            group=_CLI_GROUP,
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -533,6 +699,30 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = ConvergenceMode.CI_WIDTH
 
+    def get_sweep_parameter(self) -> tuple[str, list] | None:
+        """Detect which parameter is being swept (if any).
+
+        This method checks all sweepable parameters to determine if any
+        are configured as lists, which indicates a parameter sweep.
+
+        Returns:
+            Tuple of (parameter_name, values) if sweeping, None otherwise.
+            For example: ("concurrency", [10, 20, 30])
+
+        Note:
+            Currently only concurrency supports sweep mode. Future parameters
+            can be added here as they become sweepable.
+        """
+        # Check concurrency
+        if isinstance(self.concurrency, list):
+            return ("concurrency", self.concurrency)
+
+        # Future: Add other sweepable parameters here
+        # if isinstance(self.request_rate, list):
+        #     return ("request_rate", self.request_rate)
+
+        return None
+
     def disable_warmup(self) -> None:
         """Disable all warmup-related parameters.
 
@@ -562,6 +752,58 @@ class LoadGeneratorConfig(BaseConfig):
         self.warmup_concurrency_ramp_duration = None
         self.warmup_prefill_concurrency_ramp_duration = None
         self.warmup_request_rate_ramp_duration = None
+
+    @model_validator(mode="after")
+    def validate_concurrency_list(self) -> "LoadGeneratorConfig":
+        """Validate that concurrency values are all >= 1 and lists have at least 2 elements.
+
+        Raises:
+            ValueError: If concurrency is < 1 (single value), any list value is < 1,
+                       or list has fewer than 2 elements.
+        """
+        if isinstance(self.concurrency, int):
+            if self.concurrency < 1:
+                raise ValueError(
+                    f"Invalid concurrency value: {self.concurrency}. "
+                    f"Concurrency must be at least 1 (cannot have zero or negative concurrent requests). "
+                    f"Use --concurrency 1 or higher."
+                )
+        elif isinstance(self.concurrency, list):
+            # Check minimum list length for parameter sweep
+            if len(self.concurrency) < 2:
+                raise ValueError(
+                    f"Invalid concurrency list: {self.concurrency}. "
+                    f"Parameter sweep requires at least 2 values to compare. "
+                    f"For a single concurrency value, use --concurrency {self.concurrency[0] if self.concurrency else 1} (without comma). "
+                    f"For parameter sweep, provide multiple values: --concurrency 10,20,30"
+                )
+
+            # Check for duplicate values
+            if len(set(self.concurrency)) < len(self.concurrency):
+                duplicates = sorted(
+                    {v for v in self.concurrency if self.concurrency.count(v) > 1}
+                )
+                raise ValueError(
+                    f"Invalid concurrency list: {self.concurrency}. "
+                    f"Duplicate values would overwrite each other's artifacts: {duplicates}. "
+                    f"For variance / confidence reporting at a single concurrency, use "
+                    f"--num-profile-runs N instead of repeating the value."
+                )
+
+            # Check all values are >= 1
+            invalid_values = [v for v in self.concurrency if v < 1]
+            if invalid_values:
+                # Build helpful message showing positions
+                positions = [i for i, v in enumerate(self.concurrency, 1) if v < 1]
+                # Create a suggested fix
+                fixed_list = ",".join(str(max(1, v)) for v in self.concurrency)
+                raise ValueError(
+                    f"Invalid concurrency values at position(s) {positions}: {invalid_values}. "
+                    f"All concurrency values must be at least 1 (cannot have zero or negative concurrent requests). "
+                    f"Current list: {self.concurrency}. "
+                    f"Example fix: --concurrency {fixed_list}"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_multi_run_params(self) -> "LoadGeneratorConfig":
@@ -602,29 +844,33 @@ class LoadGeneratorConfig(BaseConfig):
             # Check if confidence_level was explicitly set by the user
             if "confidence_level" in self.model_fields_set:
                 raise ValueError(
-                    "--confidence-level only applies when --num-profile-runs > 1. "
-                    "Remove --confidence-level or increase --num-profile-runs."
+                    "--confidence-level only applies when running multiple trials (--num-profile-runs > 1). "
+                    "Confidence intervals require at least 2 runs to compute. "
+                    "Either remove --confidence-level or add --num-profile-runs 5 (or higher)."
                 )
 
             # Check if profile_run_disable_warmup_after_first was explicitly set by the user
             if "profile_run_disable_warmup_after_first" in self.model_fields_set:
                 raise ValueError(
-                    "--profile-run-disable-warmup-after-first only applies when --num-profile-runs > 1. "
-                    "Remove --profile-run-disable-warmup-after-first or increase --num-profile-runs."
+                    "--profile-run-disable-warmup-after-first only applies when running multiple trials (--num-profile-runs > 1). "
+                    "This parameter controls whether warmup runs after the first trial. "
+                    "Either remove --profile-run-disable-warmup-after-first or add --num-profile-runs 5 (or higher)."
                 )
 
             # Check if profile_run_cooldown_seconds was explicitly set by the user
             if "profile_run_cooldown_seconds" in self.model_fields_set:
                 raise ValueError(
-                    "--profile-run-cooldown-seconds only applies when --num-profile-runs > 1. "
-                    "Remove --profile-run-cooldown-seconds or increase --num-profile-runs."
+                    "--profile-run-cooldown-seconds only applies when running multiple trials (--num-profile-runs > 1). "
+                    "This parameter adds a pause between trials to let the system stabilize. "
+                    "Either remove --profile-run-cooldown-seconds or add --num-profile-runs 5 (or higher)."
                 )
 
             # Check if set_consistent_seed was explicitly set by the user
             if "set_consistent_seed" in self.model_fields_set:
                 raise ValueError(
-                    "--set-consistent-seed only applies when --num-profile-runs > 1. "
-                    "Remove --set-consistent-seed or increase --num-profile-runs."
+                    "--set-consistent-seed only applies when running multiple trials (--num-profile-runs > 1). "
+                    "This parameter ensures identical workloads across trials for valid statistical comparison. "
+                    "Either remove --set-consistent-seed or add --num-profile-runs 5 (or higher)."
                 )
 
             # Check if convergence_metric was explicitly set by the user
@@ -635,11 +881,54 @@ class LoadGeneratorConfig(BaseConfig):
                 )
 
             # Check if other convergence flags were explicitly set
+            convergence_dependent_flags = {
+                "convergence_mode": "--convergence-mode",
+                "convergence_threshold": "--convergence-threshold",
+                "convergence_stat": "--convergence-stat",
+            }
             for field_name, flag_name in convergence_dependent_flags.items():
                 if field_name in self.model_fields_set:
                     raise ValueError(
                         f"{flag_name} only applies when --num-profile-runs > 1. "
                         f"Remove {flag_name} or increase --num-profile-runs."
                     )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_sweep_params(self) -> "LoadGeneratorConfig":
+        """Validate that parameter sweep specific parameters are only set when sweeping.
+
+        Raises:
+            ValueError: If parameter_sweep_mode, parameter_sweep_cooldown_seconds,
+                       or parameter_sweep_same_seed are explicitly set when not sweeping.
+        """
+        is_sweep = isinstance(self.concurrency, list)
+
+        if not is_sweep:
+            # Check if parameter_sweep_mode was explicitly set by the user
+            if "parameter_sweep_mode" in self.model_fields_set:
+                raise ValueError(
+                    "--parameter-sweep-mode only applies when sweeping parameters (e.g., --concurrency 10,20,30). "
+                    "This parameter controls whether to run the full sweep repeatedly (repeated mode) "
+                    "or run all trials at each value independently (independent mode). "
+                    "Either remove --parameter-sweep-mode or provide a comma-separated list: --concurrency 10,20,30"
+                )
+
+            # Check if parameter_sweep_cooldown_seconds was explicitly set by the user
+            if "parameter_sweep_cooldown_seconds" in self.model_fields_set:
+                raise ValueError(
+                    "--parameter-sweep-cooldown-seconds only applies when sweeping parameters (e.g., --concurrency 10,20,30). "
+                    "This parameter adds a pause between different parameter values to let the system stabilize. "
+                    "Either remove --parameter-sweep-cooldown-seconds or provide a comma-separated list: --concurrency 10,20,30"
+                )
+
+            # Check if parameter_sweep_same_seed was explicitly set by the user
+            if "parameter_sweep_same_seed" in self.model_fields_set:
+                raise ValueError(
+                    "--parameter-sweep-same-seed only applies when sweeping parameters (e.g., --concurrency 10,20,30). "
+                    "This parameter controls whether all sweep values use the same random seed for correlated workload comparisons. "
+                    "Either remove --parameter-sweep-same-seed or provide a comma-separated list: --concurrency 10,20,30"
+                )
 
         return self

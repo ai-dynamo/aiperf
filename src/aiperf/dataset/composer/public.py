@@ -93,14 +93,15 @@ class PublicDatasetComposer(BaseDatasetComposer):
             if subset is not None:
                 kwargs["hf_subset"] = subset
 
-        if loader_metadata.prompt_column is not None:
-            kwargs["prompt_column"] = loader_metadata.prompt_column
-
-        if loader_metadata.image_column is not None:
-            kwargs["image_column"] = loader_metadata.image_column
-
-        if loader_metadata.video_column is not None:
-            kwargs["video_column"] = loader_metadata.video_column
+        optional_fields = {
+            "prompt_column": loader_metadata.prompt_column,
+            "image_column": loader_metadata.image_column,
+            "video_column": loader_metadata.video_column,
+            "audio_column": loader_metadata.audio_column,
+            "category": loader_metadata.category,
+            "prompt_template": loader_metadata.prompt_template,
+        }
+        kwargs.update({k: v for k, v in optional_fields.items() if v is not None})
 
         if loader_metadata.conversation_column is not None:
             kwargs["conversation_column"] = loader_metadata.conversation_column
@@ -108,11 +109,5 @@ class PublicDatasetComposer(BaseDatasetComposer):
 
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
-
-        if loader_metadata.category is not None:
-            kwargs["category"] = loader_metadata.category
-
-        if loader_metadata.prompt_template is not None:
-            kwargs["prompt_template"] = loader_metadata.prompt_template
 
         return kwargs

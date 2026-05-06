@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs tests/ci/test_docs_end_to_end/setup_test.sh on the AMD GPU runner.
+#
+# Triggers:
+#   pull_request      — auto-runs on PRs that touch tutorial markdown or the
+#                       test runner itself.
+#   workflow_dispatch — manual trigger from the Actions UI / gh CLI.
+#   workflow_call     — invoked by nightly.yml so the nightly stays green.
+#
+# A cheap ubuntu-latest detect-changes job pre-flights the work and skips the
+# AMD GPU job when a PR doesn't actually change anything the parser would
+# extract from the tutorials.
+
+name: Test Docs End-to-End
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/tutorials/**'
+      - 'tests/ci/test_docs_end_to_end/**'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Commit SHA or ref to checkout when invoked from another workflow."
+        required: false
+        type: string
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_test: ${{ steps.compare.outputs.run_test }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - id: compare
+        name: Compare parser-extracted config between base and head
+        run: |
+          set -euo pipefail
+
+          # Non-PR triggers (workflow_dispatch, workflow_call from nightly)
+          # have no base/head to compare; always run the test.
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          # Safety net: any change under the test runner directory always runs
+          # the test (covers parser.py, test_runner.py, constants, etc.).
+          if git diff --name-only "$BASE" "$HEAD" -- 'tests/ci/test_docs_end_to_end/' | grep -q .; then
+            echo "Test runner code changed; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Compare parser-extracted server config between base and head.
+          # If the script fails on either side, fall back to running the test.
+          git worktree add /tmp/base-tree "$BASE"
+          if ! BASE_HASH=$(python3 /tmp/base-tree/tests/ci/test_docs_end_to_end/dump_config_hash.py); then
+            echo "::warning::Could not compute base hash; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            git worktree remove /tmp/base-tree --force
+            exit 0
+          fi
+          git worktree remove /tmp/base-tree --force
+
+          if ! HEAD_HASH=$(python3 tests/ci/test_docs_end_to_end/dump_config_hash.py); then
+            echo "::warning::Could not compute head hash; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$BASE_HASH" == "$HEAD_HASH" ]]; then
+            echo "::notice::No parser-relevant changes; skipping GPU test."
+            echo "run_test=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Parser-extracted config differs; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-docs-end-to-end:
+    name: Test Docs End-to-End
+    needs: detect-changes
+    if: needs.detect-changes.outputs.run_test == 'true'
+    runs-on: prod-aiperf-tester-amd-gpu-v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Run test_docs_end_to_end
+        env:
+          AIPERF_SOURCE_DIR: ${{ github.workspace }}
+          CI_JOB_NAME: test_docs_end_to_end
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+
+      - name: Cleanup Docker containers
+        if: always()
+        run: docker compose -f docker-compose.yml down || true

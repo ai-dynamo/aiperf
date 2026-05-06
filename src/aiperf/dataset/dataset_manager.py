@@ -395,14 +395,43 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
+    async def _load_accuracy_dataset(self) -> list[Conversation]:
+        from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
+        from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
+
+        if self.user_config.timing_mode == TimingMode.FIXED_SCHEDULE:
+            raise self._service_error(
+                "Accuracy mode requires sequential request order; "
+                "fixed-schedule timing is not supported in accuracy mode."
+            )
+
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+            self.user_config.input.dataset_sampling_strategy = (
+                DatasetSamplingStrategy.SEQUENTIAL
+            )
+        elif (
+            self.user_config.input.dataset_sampling_strategy
+            != DatasetSamplingStrategy.SEQUENTIAL
+        ):
+            raise self._service_error(
+                f"Accuracy mode requires sequential request order; "
+                f"'{self.user_config.input.dataset_sampling_strategy}' sampling is not supported. "
+                f"Remove --dataset-sampling-strategy or set it to 'sequential'."
+            )
+
+        loader = AccuracyDatasetLoader(user_config=self.user_config)
+        return await loader.load()
+
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
-
         self._default_context_mode = None
-        if self.user_config.input.public_dataset is not None:
+
+        if self.user_config.accuracy.enabled:
+            conversations = await self._load_accuracy_dataset()
+        elif self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
             self.user_config.input.custom_dataset_type is not None

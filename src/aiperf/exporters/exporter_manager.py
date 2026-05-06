@@ -28,6 +28,7 @@ class ExporterManager(AIPerfLoggerMixin):
 
     def __init__(
         self,
+        *,
         results: ProfileResults,
         user_config: UserConfig,
         service_config: ServiceConfig,

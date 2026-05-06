@@ -459,6 +459,7 @@ class AioHttpTransport(BaseTransport):
         job_id: str,
         poll_url: str,
         headers: dict[str, str],
+        *,
         timeout: float,
         poll_interval: float,
     ) -> tuple[dict[str, Any], float] | ErrorDetails:

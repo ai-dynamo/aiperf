@@ -67,11 +67,28 @@ class MetricResult(JsonMetricResult):
         return to_display_unit(self, MetricRegistry)
 
     def to_json_result(self) -> JsonMetricResult:
-        """Convert the metric result to a JsonMetricResult."""
-        result = JsonMetricResult(unit=self.unit)
-        for stat in [
-            s for s in STAT_KEYS if s != "sum"
-        ]:  # sum is not included in the JsonMetricResult
+        """Convert the metric result to a JsonMetricResult.
+
+        `count` is omitted for non-RECORD metrics (derived/aggregate scalars),
+        where it would trivially be 1 and risks being misread as the request
+        count. Tags from other registries (e.g. GPU telemetry) are not in
+        MetricRegistry; those keep `count` as-is. Future MetricType members
+        also keep `count` by default — opt them in here explicitly.
+        """
+        from aiperf.common.enums import MetricType
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        metric_class = MetricRegistry.get_class_or_none(self.tag)
+        is_scalar = metric_class is not None and metric_class.type in {
+            MetricType.AGGREGATE,
+            MetricType.DERIVED,
+        }
+
+        result = JsonMetricResult(
+            unit=self.unit,
+            count=None if is_scalar else self.count,
+        )
+        for stat in STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
         return result
 
@@ -701,6 +718,18 @@ class ReasoningResponseData(BaseResponseData):
         return "".join([self.reasoning or "", self.content or ""])
 
 
+@dataclass(slots=True)
+class ToolCallResponseData(BaseResponseData):
+    """Parsed tool call response data (streaming delta or complete message)."""
+
+    text: str
+    """Combined model-generated text from tool calls (function names and arguments)."""
+
+    def get_text(self) -> str:
+        """Get the text of the response."""
+        return self.text
+
+
 class RAGSources(RootModel[dict[str, Any] | list[Any]]):
     """RAG sources can be either a dictionary or list format."""
 
@@ -835,6 +864,7 @@ class ParsedResponse:
     data: SerializeAsAny[
         ReasoningResponseData
         | TextResponseData
+        | ToolCallResponseData
         | EmbeddingResponseData
         | RankingsResponseData
         | ImageRetrievalResponseData

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
@@ -65,6 +66,6 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
-    def __init__(self, *, filename: str, user_config: UserConfig, **kwargs):
+    def __init__(self, *, filename: str | Path, user_config: UserConfig, **kwargs):
         super().__init__(user_config=user_config, **kwargs)
-        self.filename = filename
+        self.filename = Path(filename) if isinstance(filename, str) else filename

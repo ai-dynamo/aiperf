@@ -199,13 +199,13 @@ class TestMetricResultSumField:
 
 
 class TestMetricResultToJsonResult:
-    """Test that to_json_result excludes sum."""
+    """Test that to_json_result preserves all stats including sum and count."""
 
-    def test_sum_excluded_from_json_result(self) -> None:
+    def test_record_metric_includes_count_and_sum(self) -> None:
         result = MetricResult(
-            tag="throughput",
-            header="Throughput",
-            unit="req/s",
+            tag="request_latency",
+            header="Request Latency",
+            unit="ms",
             avg=50.0,
             min=10.0,
             max=90.0,
@@ -215,10 +215,53 @@ class TestMetricResultToJsonResult:
         json_result = result.to_json_result()
 
         assert isinstance(json_result, JsonMetricResult)
-        assert not hasattr(json_result, "sum")
+        assert json_result.sum == 5000.0
+        assert json_result.count == 100
         assert json_result.avg == 50.0
         assert json_result.min == 10.0
         assert json_result.max == 90.0
+
+    def test_derived_metric_omits_count(self) -> None:
+        """Derived/aggregate scalars get count=1 trivially; we suppress it."""
+        result = MetricResult(
+            tag="request_throughput",
+            header="Request Throughput",
+            unit="requests/sec",
+            avg=1.5,
+            sum=1.5,
+            count=1,
+        )
+        json_result = result.to_json_result()
+
+        assert json_result.count is None
+        assert json_result.sum == 1.5
+        assert json_result.avg == 1.5
+
+    def test_aggregate_metric_omits_count(self) -> None:
+        result = MetricResult(
+            tag="request_count",
+            header="Request Count",
+            unit="requests",
+            avg=20.0,
+            count=1,
+        )
+        json_result = result.to_json_result()
+
+        assert json_result.count is None
+        assert json_result.avg == 20.0
+
+    def test_unknown_tag_keeps_count(self) -> None:
+        """Tags from other registries (e.g. GPU telemetry) keep count as-is."""
+        result = MetricResult(
+            tag="gpu_power_usage",
+            header="GPU Power Usage",
+            unit="W",
+            avg=250.0,
+            count=42,
+        )
+        json_result = result.to_json_result()
+
+        assert json_result.count == 42
 
     def test_stat_keys_preserved_in_json_result(self) -> None:
         result = MetricResult(

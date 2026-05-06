@@ -22,7 +22,7 @@ dependencies = [
     "prometheus-client>=0.20.0"
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 
 [tool.setuptools]
 packages = ["aiperf_mock_server"]

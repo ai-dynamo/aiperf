@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
@@ -36,7 +37,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     def __init__(
         self,
         *,
-        filename: str,
+        filename: str | Path,
         prompt_generator: PromptGenerator,
         user_config: UserConfig,
         default_block_size: int | None = None,
