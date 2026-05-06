@@ -28,6 +28,7 @@ from aiperf.dataset.generator.video import VideoGenerator
 class ResolvedTurn:
     """Per-turn media generation plan produced by MediaMixResolver."""
 
+    archetype_name: str | None = None
     include_text: bool = True
     input_tokens_mean: int | None = None
     input_tokens_stddev: float | None = None
@@ -72,7 +73,10 @@ class MediaMixResolver(AIPerfLoggerMixin):
         a_idx = self._sample_weighted(self._archetype_weights, self._archetype_rng)
         archetype = self._archetypes[a_idx]
 
-        resolved = ResolvedTurn(include_text=archetype.include_text)
+        resolved = ResolvedTurn(
+            archetype_name=archetype.name,
+            include_text=archetype.include_text,
+        )
         self._apply_text_overrides(archetype, resolved)
 
         for entry in archetype.modalities:

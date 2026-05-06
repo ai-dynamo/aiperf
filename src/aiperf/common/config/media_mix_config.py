@@ -246,3 +246,128 @@ def parse_media_mix(value: Any) -> Any:
         raise ValueError("Media mix shorthand cannot be empty.")
 
     return archetypes
+
+
+def normalize_media_mix_input(value: Any) -> list | None:
+    """Parse string shorthand to list, validate list is non-empty.
+
+    Returns None if input is None/empty/invalid (caller should leave data unchanged).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = parse_media_mix(value)
+    if not isinstance(value, list) or not value:
+        return None
+    return value
+
+
+def _as_dict(value: Any) -> dict:
+    """Return value as dict, or empty dict if not a dict."""
+    return value if isinstance(value, dict) else {}
+
+
+def _build_image_modality_entry(image_cfg: dict) -> dict:
+    """Build an image ModalityEntry dict from sibling --image-* config values."""
+    return {
+        "modality": "image",
+        "batch_size": max(1, image_cfg.get("batch_size", 1)),
+        "profiles": [
+            {
+                "weight": 1.0,
+                "width": image_cfg.get("width", {}),
+                "height": image_cfg.get("height", {}),
+                "format": image_cfg.get("format", "png"),
+            }
+        ],
+    }
+
+
+def _build_audio_modality_entry(audio_cfg: dict) -> dict:
+    """Build an audio ModalityEntry dict from sibling --audio-* config values."""
+    return {
+        "modality": "audio",
+        "batch_size": max(1, audio_cfg.get("batch_size", 1)),
+        "profiles": [
+            {
+                "weight": 1.0,
+                "length": audio_cfg.get("length", {}),
+                "format": audio_cfg.get("format", "wav"),
+                "depths": audio_cfg.get("depths", [16]),
+                "sample_rates": audio_cfg.get("sample_rates", [16.0]),
+                "num_channels": audio_cfg.get("num_channels", 1),
+            }
+        ],
+    }
+
+
+def _build_video_modality_entry(video_cfg: dict) -> dict:
+    """Build a video ModalityEntry dict from sibling --video-* config values."""
+    return {
+        "modality": "video",
+        "batch_size": max(1, video_cfg.get("batch_size", 1)),
+        "profiles": [
+            {
+                "weight": 1.0,
+                "width": video_cfg.get("width") or 640,
+                "height": video_cfg.get("height") or 480,
+                "duration": video_cfg.get("duration", 5.0),
+                "fps": video_cfg.get("fps", 4),
+                "format": video_cfg.get("format", "webm"),
+                "codec": video_cfg.get("codec", "libvpx-vp9"),
+                "synth_type": video_cfg.get("synth_type", "moving_shapes"),
+            }
+        ],
+    }
+
+
+_MODALITY_BUILDERS = {
+    "image": _build_image_modality_entry,
+    "audio": _build_audio_modality_entry,
+    "video": _build_video_modality_entry,
+}
+
+
+def inflate_shorthand_archetypes(media_mix: list, sibling_data: dict) -> list[dict]:
+    """Inflate a list of shorthand sentinel dicts into full archetype dicts.
+
+    Args:
+        media_mix: List of shorthand sentinel dicts (each must have _shorthand=True).
+        sibling_data: Raw InputConfig data dict for accessing sibling image/audio/video config.
+
+    Returns:
+        List of full archetype dicts ready for Pydantic validation.
+
+    Raises:
+        ValueError: If any entry is not a shorthand dict.
+    """
+    sibling_cfgs = {
+        "image": _as_dict(sibling_data.get("image")),
+        "audio": _as_dict(sibling_data.get("audio")),
+        "video": _as_dict(sibling_data.get("video")),
+    }
+    return [_inflate_shorthand_entry(entry, sibling_cfgs) for entry in media_mix]
+
+
+def _inflate_shorthand_entry(entry: Any, sibling_cfgs: dict[str, dict]) -> dict:
+    """Inflate a single shorthand sentinel dict into a full MediaMixArchetype dict."""
+    if not isinstance(entry, dict) or not entry.get("_shorthand"):
+        raise ValueError(
+            "Cannot mix shorthand and full media mix archetype definitions."
+        )
+    modality = entry["modality"]
+    builder = _MODALITY_BUILDERS[modality]
+    return {
+        "weight": entry["weight"],
+        "name": modality,
+        "modalities": [builder(sibling_cfgs[modality])],
+    }
+
+
+def is_shorthand_list(media_mix: list) -> bool:
+    """Return True if the list contains shorthand sentinel dicts."""
+    return (
+        bool(media_mix)
+        and isinstance(media_mix[0], dict)
+        and media_mix[0].get("_shorthand") is True
+    )

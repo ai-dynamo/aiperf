@@ -34,6 +34,16 @@ from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 
+def _extract_archetype_name(record: ParsedResponseRecord) -> str | None:
+    """Pull archetype_name from the active turn (set by media mix dataset generation)."""
+    turns = record.request_info.turns
+    if not turns:
+        return None
+    idx = record.request_info.turn_index
+    turn = turns[idx] if 0 <= idx < len(turns) else turns[-1]
+    return turn.archetype_name
+
+
 class RecordProcessor(PullClientMixin, BaseComponentService):
     """RecordProcessor is responsible for processing the records and pushing them to the RecordsManager.
     This service is meant to be run in a distributed fashion, where the amount of record processors can be scaled
@@ -164,6 +174,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
+            archetype_name=_extract_archetype_name(record),
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)

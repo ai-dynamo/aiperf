@@ -127,27 +127,43 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         Returns:
             Turn: A dataset turn with modalities determined by the sampled archetype.
         """
-        turn = Turn()
         resolved = self._media_mix_resolver.resolve_turn()
+        turn = Turn(archetype_name=resolved.archetype_name)
 
         if resolved.include_text and self.prompt_generator is not None:
             turn.texts.append(
                 self._generate_text_payloads_with_override(turn, is_first, resolved)
             )
 
-        for generator, batch_size in resolved.image_generators:
+        self._populate_image_payloads(turn, resolved.image_generators)
+        self._populate_audio_payloads(turn, resolved.audio_generators)
+        self._populate_video_payloads(turn, resolved.video_generators)
+
+        self._apply_turn_delay(turn, is_first)
+        self._cache_resolved_sequence_lengths(turn, resolved)
+
+        self._finalize_turn(turn)
+        return turn
+
+    def _populate_image_payloads(self, turn: Turn, items: list[tuple]) -> None:
+        """Generate and attach image payloads to the turn for each (generator, batch_size)."""
+        for generator, batch_size in items:
             image = Image(name="image_url")
             for _ in range(batch_size):
                 image.contents.append(generator.generate())
             turn.images.append(image)
 
-        for generator, batch_size in resolved.audio_generators:
+    def _populate_audio_payloads(self, turn: Turn, items: list[tuple]) -> None:
+        """Generate and attach audio payloads to the turn for each (generator, batch_size)."""
+        for generator, batch_size in items:
             audio = Audio(name="input_audio")
             for _ in range(batch_size):
                 audio.contents.append(generator.generate())
             turn.audios.append(audio)
 
-        for generator, batch_size in resolved.video_generators:
+    def _populate_video_payloads(self, turn: Turn, items: list[tuple]) -> None:
+        """Generate and attach video payloads to the turn for each (generator, batch_size)."""
+        for generator, batch_size in items:
             video = Video(name="video_url")
             for _ in range(batch_size):
                 data = generator.generate()
@@ -155,24 +171,24 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                     video.contents.append(data)
             turn.videos.append(video)
 
-        if not is_first and self.config.input.conversation.turn.delay.mean > 0:
-            delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                self.config.input.conversation.turn.delay.mean,
-                self.config.input.conversation.turn.delay.stddev,
-            )
-            turn.delay = delay * self.config.input.conversation.turn.delay.ratio
+    def _apply_turn_delay(self, turn: Turn, is_first: bool) -> None:
+        """Apply inter-turn delay if configured and this isn't the first turn."""
+        if is_first or self.config.input.conversation.turn.delay.mean <= 0:
+            return
+        delay = self._delay_sampler_rng.sample_positive_normal_integer(
+            self.config.input.conversation.turn.delay.mean,
+            self.config.input.conversation.turn.delay.stddev,
+        )
+        turn.delay = delay * self.config.input.conversation.turn.delay.ratio
 
-        # Cache overridden ISL/OSL so _finalize_turn picks them up
-        turn_id = id(turn)
-        osl = resolved.output_tokens_mean
-        if osl is not None:
-            isl = (
-                resolved.input_tokens_mean or self.config.input.prompt.input_tokens.mean
-            )
-            self._turn_sequence_cache[turn_id] = (isl, osl)
-
-        self._finalize_turn(turn)
-        return turn
+    def _cache_resolved_sequence_lengths(
+        self, turn: Turn, resolved: ResolvedTurn
+    ) -> None:
+        """Cache overridden ISL/OSL so _finalize_turn picks them up via _set_max_tokens."""
+        if resolved.output_tokens_mean is None:
+            return
+        isl = resolved.input_tokens_mean or self.config.input.prompt.input_tokens.mean
+        self._turn_sequence_cache[id(turn)] = (isl, resolved.output_tokens_mean)
 
     def _generate_text_payloads_with_override(
         self, turn: Turn, is_first: bool, resolved: ResolvedTurn

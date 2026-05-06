@@ -28,7 +28,9 @@ from aiperf.common.config.groups import Groups
 from aiperf.common.config.image_config import ImageConfig
 from aiperf.common.config.media_mix_config import (
     MediaMixArchetype,
-    parse_media_mix,
+    inflate_shorthand_archetypes,
+    is_shorthand_list,
+    normalize_media_mix_input,
 )
 from aiperf.common.config.prompt_config import PromptConfig
 from aiperf.common.config.rankings_config import RankingsConfig
@@ -172,107 +174,14 @@ class InputConfig(BaseConfig):
         if not isinstance(data, dict):
             return data
 
-        media_mix = data.get("media_mix")
+        media_mix = normalize_media_mix_input(data.get("media_mix"))
         if media_mix is None:
             return data
 
-        # Parse string shorthand first
-        if isinstance(media_mix, str):
-            media_mix = parse_media_mix(media_mix)
-            if media_mix is None:
-                return data
-
-        if not isinstance(media_mix, list) or not media_mix:
-            return data
-
-        # Check if this is shorthand (list of dicts with _shorthand key)
-        if not isinstance(media_mix[0], dict) or not media_mix[0].get("_shorthand"):
+        if is_shorthand_list(media_mix):
+            data["media_mix"] = inflate_shorthand_archetypes(media_mix, data)
+        else:
             data["media_mix"] = media_mix
-            return data
-
-        image_cfg = data.get("image") or {}
-        audio_cfg = data.get("audio") or {}
-        video_cfg = data.get("video") or {}
-        if not isinstance(image_cfg, dict):
-            image_cfg = {}
-        if not isinstance(audio_cfg, dict):
-            audio_cfg = {}
-        if not isinstance(video_cfg, dict):
-            video_cfg = {}
-
-        archetypes = []
-        for entry in media_mix:
-            if not isinstance(entry, dict) or not entry.get("_shorthand"):
-                raise ValueError(
-                    "Cannot mix shorthand and full media mix archetype definitions."
-                )
-            modality = entry["modality"]
-            weight = entry["weight"]
-
-            modality_entries = []
-            if modality == "image":
-                modality_entries.append(
-                    {
-                        "modality": "image",
-                        "batch_size": max(1, image_cfg.get("batch_size", 1)),
-                        "profiles": [
-                            {
-                                "weight": 1.0,
-                                "width": image_cfg.get("width", {}),
-                                "height": image_cfg.get("height", {}),
-                                "format": image_cfg.get("format", "png"),
-                            }
-                        ],
-                    }
-                )
-            elif modality == "audio":
-                modality_entries.append(
-                    {
-                        "modality": "audio",
-                        "batch_size": max(1, audio_cfg.get("batch_size", 1)),
-                        "profiles": [
-                            {
-                                "weight": 1.0,
-                                "length": audio_cfg.get("length", {}),
-                                "format": audio_cfg.get("format", "wav"),
-                                "depths": audio_cfg.get("depths", [16]),
-                                "sample_rates": audio_cfg.get("sample_rates", [16.0]),
-                                "num_channels": audio_cfg.get("num_channels", 1),
-                            }
-                        ],
-                    }
-                )
-            elif modality == "video":
-                modality_entries.append(
-                    {
-                        "modality": "video",
-                        "batch_size": max(1, video_cfg.get("batch_size", 1)),
-                        "profiles": [
-                            {
-                                "weight": 1.0,
-                                "width": video_cfg.get("width") or 640,
-                                "height": video_cfg.get("height") or 480,
-                                "duration": video_cfg.get("duration", 5.0),
-                                "fps": video_cfg.get("fps", 4),
-                                "format": video_cfg.get("format", "webm"),
-                                "codec": video_cfg.get("codec", "libvpx-vp9"),
-                                "synth_type": video_cfg.get(
-                                    "synth_type", "moving_shapes"
-                                ),
-                            }
-                        ],
-                    }
-                )
-
-            archetypes.append(
-                {
-                    "weight": weight,
-                    "name": modality,
-                    "modalities": modality_entries,
-                }
-            )
-
-        data["media_mix"] = archetypes
         return data
 
     extra: Annotated[
@@ -489,7 +398,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--media-mix",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = None
 

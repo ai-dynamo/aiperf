@@ -163,6 +163,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    archetype_name: str | None = Field(
+        default=None,
+        description="Name of the media mix archetype that produced this record's turn (if any). "
+        "Used to group per-archetype metrics during reporting. None when media mix is not in use.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
