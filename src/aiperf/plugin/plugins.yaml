@@ -988,6 +988,13 @@ plot:
       display_name: Time Window Summary
       category: aggregated
 
+  latency_throughput_uncertainty:
+    class: aiperf.plot.handlers.multi_run_handlers:LatencyThroughputUncertaintyHandler
+    description: Latency vs throughput with crosshair error bars and confidence ellipses.
+    metadata:
+      display_name: Uncertainty Scatter
+      category: comparison
+
 # =============================================================================
 # GPU Telemetry Collector
 # =============================================================================
