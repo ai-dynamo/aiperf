@@ -1,296 +1,287 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
+import json
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.dataset.loader.models import MultiTurn
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
-@pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-
-
-@pytest.fixture
-async def loader(user_config: UserConfig) -> SpeedBenchLoader:
-    return SpeedBenchLoader(
-        user_config=user_config,
-        hf_dataset_name="nvidia/SPEED-Bench",
-        hf_split="test",
-        hf_subset="qualitative",
-    )
-
-
-@pytest.fixture
-async def coding_loader(user_config: UserConfig) -> SpeedBenchLoader:
-    return SpeedBenchLoader(
-        user_config=user_config,
-        hf_dataset_name="nvidia/SPEED-Bench",
-        hf_split="test",
-        hf_subset="qualitative",
-        category="coding",
-    )
-
-
 def _make_speed_bench_row(
-    turns: list[str | None],
+    question_id: str = "speed-coding-1",
     category: str = "coding",
-    question_id: str = "q1",
+    messages: list[dict[str, str]] | None = None,
 ) -> dict:
+    if messages is None:
+        messages = [{"role": "user", "content": "Implement binary search."}]
+
     return {
         "question_id": question_id,
         "category": category,
-        "turns": turns,
+        "sub_category": None,
+        "source": "https://example.test/speed-bench",
+        "src_id": question_id,
+        "difficulty": None,
+        "multiturn": len(messages) > 1,
+        "messages": messages,
     }
 
 
-@pytest.mark.asyncio
+def _write_speed_bench_file(create_jsonl_file, rows: list[dict]) -> str:
+    return create_jsonl_file([json.dumps(row) for row in rows])
+
+
+def _load_speed_bench_file(
+    create_jsonl_file,
+    default_user_config,
+    rows: list[dict],
+    category: str | None = None,
+):
+    filename = _write_speed_bench_file(create_jsonl_file, rows)
+    loader = SpeedBenchLoader(
+        filename=filename,
+        user_config=default_user_config,
+        category=category,
+    )
+    return loader, loader.load_dataset()
+
+
 class TestSpeedBenchLoader:
-    async def test_preferred_sampling_strategy_is_sequential(self, loader):
+    def test_preferred_sampling_strategy_is_sequential(self):
         assert (
-            loader.get_preferred_sampling_strategy()
+            SpeedBenchLoader.get_preferred_sampling_strategy()
             == DatasetSamplingStrategy.SEQUENTIAL
         )
 
-    async def test_converts_single_turn_row(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["What is Python?"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-        assert conversations[0].turns[0].texts[0].contents[0] == "What is Python?"
+    def test_loads_single_speed_bench_jsonl_row(
+        self, create_jsonl_file, default_user_config
+    ):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(
+                    question_id="speed-coding-1",
+                    category="coding",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Write a Python function that flips letter case.",
+                        }
+                    ],
+                )
+            ],
+        )
 
-    async def test_uses_first_turn_only(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["First turn", "Second turn", "Third turn"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-        assert len(conversations[0].turns) == 1
-        assert conversations[0].turns[0].texts[0].contents[0] == "First turn"
+        assert set(dataset) == {"speed-coding-1"}
 
-    async def test_each_row_becomes_one_conversation(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row([f"Question {i}"], question_id=f"q{i}")
-                for i in range(5)
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 5
-        assert all(isinstance(c, Conversation) for c in conversations)
+        multi_turn = dataset["speed-coding-1"][0]
+        assert isinstance(multi_turn, MultiTurn)
+        assert multi_turn.session_id == "speed-coding-1"
+        assert len(multi_turn.turns) == 1
+        assert multi_turn.turns[0].role == "user"
+        assert multi_turn.turns[0].text == (
+            "Write a Python function that flips letter case."
+        )
 
-    async def test_session_ids_are_unique(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row([f"Q{i}"], question_id=f"q{i}") for i in range(5)
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        session_ids = [c.session_id for c in conversations]
-        assert len(set(session_ids)) == 5
+    def test_loads_each_jsonl_row_as_separate_session(
+        self, create_jsonl_file, default_user_config
+    ):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(
+                    question_id="speed-coding-1",
+                    category="coding",
+                    messages=[{"role": "user", "content": "Implement merge sort."}],
+                ),
+                _make_speed_bench_row(
+                    question_id="speed-math-1",
+                    category="math",
+                    messages=[{"role": "user", "content": "Find the factors of 84."}],
+                ),
+            ],
+        )
 
-    async def test_strips_whitespace_from_prompt(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["  What is Python?  "]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert conversations[0].turns[0].texts[0].contents[0] == "What is Python?"
+        assert set(dataset) == {"speed-coding-1", "speed-math-1"}
+        assert dataset["speed-coding-1"][0].session_id == "speed-coding-1"
+        assert dataset["speed-math-1"][0].session_id == "speed-math-1"
+        assert dataset["speed-coding-1"][0].turns[0].text == "Implement merge sort."
+        assert dataset["speed-math-1"][0].turns[0].text == "Find the factors of 84."
 
-    async def test_empty_dataset_returns_empty_list(self, loader):
-        conversations = await loader.convert_to_conversations({"dataset": []})
-        assert conversations == []
+    def test_loads_all_messages_in_order(self, create_jsonl_file, default_user_config):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(
+                    question_id="speed-chat-1",
+                    category="qa",
+                    messages=[
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                )
+            ],
+        )
 
-    @pytest.mark.parametrize(
-        "invalid_row",
-        [
-            pytest.param(
-                {"question_id": "q1", "category": "coding"}, id="missing_turns"
-            ),
-            pytest.param(
-                {"question_id": "q1", "category": "coding", "turns": None},
-                id="none_turns",
-            ),
-            pytest.param(
-                {"question_id": "q1", "category": "coding", "turns": "not a list"},
-                id="non_list_turns",
-            ),
-            pytest.param(_make_speed_bench_row([]), id="empty_turns_list"),
-            pytest.param(_make_speed_bench_row([""]), id="empty_first_turn"),
-            pytest.param(_make_speed_bench_row(["   "]), id="whitespace_first_turn"),
-            pytest.param(_make_speed_bench_row([None]), id="none_first_turn"),
-        ],
-    )
-    async def test_skips_invalid_row(self, loader, invalid_row):
-        data = {
-            "dataset": [
-                invalid_row,
-                _make_speed_bench_row(["Valid"]),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-        assert conversations[0].turns[0].texts[0].contents[0] == "Valid"
+        turns = dataset["speed-chat-1"][0].turns
+        assert [turn.role for turn in turns] == ["system", "user"]
+        assert [turn.text for turn in turns] == ["Answer tersely.", "What is Python?"]
 
+    def test_blank_lines_are_skipped(self, create_jsonl_file, default_user_config):
+        row = _make_speed_bench_row(question_id="speed-coding-1")
+        filename = create_jsonl_file(["", json.dumps(row), "   "])
+        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
 
-@pytest.mark.asyncio
-class TestSpeedBenchLoaderCategoryFiltering:
-    async def test_no_category_returns_all_rows(self, loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["Code question"], category="coding"),
-                _make_speed_bench_row(["Math question"], category="math"),
-                _make_speed_bench_row(["Writing prompt"], category="writing"),
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 3
+        dataset = loader.load_dataset()
 
-    async def test_category_filter_returns_matching_rows(self, coding_loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["Code question"], category="coding"),
-                _make_speed_bench_row(["Math question"], category="math"),
-                _make_speed_bench_row(["Another code Q"], category="coding"),
-                _make_speed_bench_row(["Writing prompt"], category="writing"),
-            ]
-        }
-        conversations = await coding_loader.convert_to_conversations(data)
+        assert set(dataset) == {"speed-coding-1"}
+
+    def test_empty_file_returns_empty_dataset(
+        self, create_jsonl_file, default_user_config
+    ):
+        filename = create_jsonl_file([])
+        loader = SpeedBenchLoader(filename=filename, user_config=default_user_config)
+
+        assert dict(loader.load_dataset()) == {}
+
+    def test_converts_loaded_dataset_to_conversations(
+        self, create_jsonl_file, default_user_config
+    ):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(
+                    question_id="speed-chat-1",
+                    category="qa",
+                    messages=[
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                ),
+                _make_speed_bench_row(
+                    question_id="speed-coding-1",
+                    category="coding",
+                    messages=[{"role": "user", "content": "Implement quicksort."}],
+                ),
+            ],
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
         assert len(conversations) == 2
-        assert conversations[0].turns[0].texts[0].contents[0] == "Code question"
-        assert conversations[1].turns[0].texts[0].contents[0] == "Another code Q"
+        assert all(
+            isinstance(conversation, Conversation) for conversation in conversations
+        )
 
-    async def test_category_filter_no_matches_returns_empty(self, coding_loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["Math Q"], category="math"),
-                _make_speed_bench_row(["Writing Q"], category="writing"),
-            ]
+        conversations_by_id = {
+            conversation.session_id: conversation for conversation in conversations
         }
-        conversations = await coding_loader.convert_to_conversations(data)
-        assert conversations == []
+        chat_conversation = conversations_by_id["speed-chat-1"]
+        assert len(chat_conversation.turns) == 2
+        assert chat_conversation.turns[0].role == "system"
+        assert chat_conversation.turns[0].texts[0].contents == ["Answer tersely."]
+        assert chat_conversation.turns[1].role == "user"
+        assert chat_conversation.turns[1].texts[0].contents == ["What is Python?"]
 
-    async def test_category_filter_with_empty_turns_skipped(self, coding_loader):
-        data = {
-            "dataset": [
-                _make_speed_bench_row([], category="coding"),
-                _make_speed_bench_row([""], category="coding"),
-                _make_speed_bench_row(["Valid code Q"], category="coding"),
-            ]
-        }
-        conversations = await coding_loader.convert_to_conversations(data)
-        assert len(conversations) == 1
-        assert conversations[0].turns[0].texts[0].contents[0] == "Valid code Q"
+        coding_conversation = conversations_by_id["speed-coding-1"]
+        assert len(coding_conversation.turns) == 1
+        assert coding_conversation.turns[0].role == "user"
+        assert coding_conversation.turns[0].texts[0].contents == [
+            "Implement quicksort."
+        ]
 
-    async def test_category_stored_on_loader(self, coding_loader, loader):
-        assert coding_loader.category == "coding"
-        assert loader.category is None
 
-    async def test_throughput_entropy_tier_filtering(self, user_config):
-        low_entropy_loader = SpeedBenchLoader(
-            user_config=user_config,
-            hf_dataset_name="nvidia/SPEED-Bench",
-            hf_split="test",
-            hf_subset="throughput_1k",
+class TestSpeedBenchLoaderCategoryFiltering:
+    def test_no_category_returns_all_rows(self, create_jsonl_file, default_user_config):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(question_id="speed-coding-1", category="coding"),
+                _make_speed_bench_row(question_id="speed-math-1", category="math"),
+            ],
+        )
+
+        assert set(dataset) == {"speed-coding-1", "speed-math-1"}
+
+    def test_category_filter_returns_matching_rows(
+        self, create_jsonl_file, default_user_config
+    ):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(question_id="speed-coding-1", category="coding"),
+                _make_speed_bench_row(question_id="speed-math-1", category="math"),
+            ],
+            category="coding",
+        )
+
+        assert loader.category == "coding"
+        assert set(dataset) == {"speed-coding-1"}
+        assert dataset["speed-coding-1"][0].turns[0].text == "Implement binary search."
+
+    def test_category_filter_no_matches_returns_empty(
+        self, create_jsonl_file, default_user_config
+    ):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(question_id="speed-math-1", category="math"),
+                _make_speed_bench_row(question_id="speed-stem-1", category="stem"),
+            ],
+            category="coding",
+        )
+
+        assert dict(dataset) == {}
+
+    def test_category_stored_on_loader(self, create_jsonl_file, default_user_config):
+        unfiltered_loader, _ = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [_make_speed_bench_row(question_id="speed-coding-1", category="coding")],
+        )
+        filtered_loader, _ = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [_make_speed_bench_row(question_id="speed-coding-1", category="coding")],
+            category="coding",
+        )
+
+        assert unfiltered_loader.category is None
+        assert filtered_loader.category == "coding"
+
+    def test_throughput_entropy_tier_filtering(
+        self, create_jsonl_file, default_user_config
+    ):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            default_user_config,
+            [
+                _make_speed_bench_row(
+                    question_id="speed-low-entropy-1",
+                    category="low_entropy",
+                    messages=[{"role": "user", "content": "Complete the code sample."}],
+                ),
+                _make_speed_bench_row(
+                    question_id="speed-high-entropy-1",
+                    category="high_entropy",
+                    messages=[
+                        {"role": "user", "content": "Continue this novel excerpt."}
+                    ],
+                ),
+            ],
             category="low_entropy",
         )
-        data = {
-            "dataset": [
-                _make_speed_bench_row(["Code sort"], category="low_entropy"),
-                _make_speed_bench_row(["Creative writing"], category="high_entropy"),
-                _make_speed_bench_row(["More code"], category="low_entropy"),
-                _make_speed_bench_row(["Exam question"], category="mixed"),
-            ]
-        }
-        conversations = await low_entropy_loader.convert_to_conversations(data)
-        assert len(conversations) == 2
 
-
-@pytest.mark.asyncio
-class TestSpeedBenchLoaderStreaming:
-    async def test_non_streaming_returns_all_rows(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
+        assert set(dataset) == {"speed-low-entropy-1"}
+        assert dataset["speed-low-entropy-1"][0].turns[0].text == (
+            "Complete the code sample."
         )
-        loader = SpeedBenchLoader(
-            user_config=config,
-            hf_dataset_name="nvidia/SPEED-Bench",
-            hf_split="test",
-            hf_subset="qualitative",
-            streaming=False,
-        )
-        data = {
-            "dataset": [
-                _make_speed_bench_row([f"Q{i}"], question_id=f"q{i}") for i in range(10)
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 10
-
-    async def test_streaming_capped_by_request_count(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=3),
-        )
-        loader = SpeedBenchLoader(
-            user_config=config,
-            hf_dataset_name="nvidia/SPEED-Bench",
-            hf_split="test",
-            hf_subset="qualitative",
-            streaming=True,
-        )
-        data = {
-            "dataset": [
-                _make_speed_bench_row([f"Q{i}"], question_id=f"q{i}") for i in range(10)
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 3
-
-    async def test_streaming_with_category_filter(self, user_config):
-        from aiperf.common.config.loadgen_config import LoadGeneratorConfig
-
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            loadgen=LoadGeneratorConfig(request_count=2),
-        )
-        loader = SpeedBenchLoader(
-            user_config=config,
-            hf_dataset_name="nvidia/SPEED-Bench",
-            hf_split="test",
-            hf_subset="qualitative",
-            category="coding",
-            streaming=True,
-        )
-        data = {
-            "dataset": [
-                _make_speed_bench_row(
-                    [f"Code {i}"], category="coding", question_id=f"c{i}"
-                )
-                for i in range(5)
-            ]
-            + [
-                _make_speed_bench_row(
-                    [f"Math {i}"], category="math", question_id=f"m{i}"
-                )
-                for i in range(5)
-            ]
-        }
-        conversations = await loader.convert_to_conversations(data)
-        assert len(conversations) == 2
-        assert conversations[0].turns[0].texts[0].contents[0] == "Code 0"
-        assert conversations[1].turns[0].texts[0].contents[0] == "Code 1"
