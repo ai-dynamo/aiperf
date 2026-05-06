@@ -22,7 +22,7 @@ We split the total wire-token cost into three components, each compensated at a 
 | **(b) Chat-template wrapping** | Role headers, end-of-turn tokens, BOS, and the assistant-prompt suffix that the model server's tokenizer adds on top of the bare content. | Subtract from every user turn's bare prompt — first turn pays the per-request fixed cost + per-message wrap; later turns pay only the per-message wrap. |
 | **(c) System message length when marker lands on system** | When `--cache-bust system_*` lands the marker on the synthetic shared system prompt, the prompt's wire length grows by the marker token cost. | Reduce the synthetic shared system prompt length by the marker cost so the wire system message still matches `--shared-system-prompt-length`. |
 
-Component (a) only ever has a non-zero value when the user actually has cache-bust enabled, and `validate_cache_bust_compatibility` (in `src/aiperf/common/config/user_config.py`) refuses `--cache-bust` outside the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`) with `--endpoint-type chat` or `responses`. That validator is what lets the composer assume the worker really will inject the marker — every other combination would silently no-op, and the composer would over-subtract by `marker_tokens`. Configurations that fail the validator never reach the composer, so component (a) compensation can be unconditional once `target != NONE` and the routing in "Marker placement routing" decides which slot it lands on.
+Component (a) only ever has a non-zero value when the user actually has cache-bust enabled, and `validate_cache_bust_compatibility` (in `src/aiperf/common/config/user_config.py`) refuses `--cache-bust` outside the `agentic_replay` timing mode (set today by `--scenario inferencex-agentx-mvp`) and refuses it outside `--endpoint-type chat` / `responses` — the two checks raise as separate `ValueError`s in sequence. That validator is what lets the composer assume the worker really will inject the marker — every other combination would silently no-op, and the composer would over-subtract by `marker_tokens`. Configurations that fail the validator never reach the composer, so component (a) compensation can be unconditional once `target != NONE` and the routing in "Marker placement routing" decides which slot it lands on.
 
 This page focuses on **(b)**, which is the most subtle of the three.
 
@@ -191,7 +191,7 @@ target ∈ {FIRST_TURN_PREFIX, FIRST_TURN_SUFFIX}
                                       → marker lands on first user turn → component (a)
 ```
 
-This must agree exactly with `worker._apply_cache_bust` in `src/aiperf/workers/worker.py` — if the composer decides "first user turn" but the worker decides "system message", wire ISL drifts by ±`marker_tokens` from the user's `--isl` target. The test suite covers all 9 cells (4 non-NONE targets × {has shared system prompt, has none} + NONE).
+This must agree exactly with `worker._apply_cache_bust` in `src/aiperf/workers/worker.py:257` — if the composer decides "first user turn" but the worker decides "system message", wire ISL drifts by ±`marker_tokens` from the user's `--isl` target. The test suite covers all 9 cells (4 non-NONE targets × {has shared system prompt, has none} + NONE).
 
 The routing also drives whether the marker estimator runs at all. When `target == NONE`, no encode round-trip happens. When `target != NONE`, the estimator runs once and the same token count is reused for whichever slot the routing selected.
 
