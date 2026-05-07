@@ -282,8 +282,11 @@ vLLM is a high-performance inference engine. These metrics provide deep visibili
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
 | `vllm:kv_cache_usage_perc` | gauge | ratio | `engine`, `model_name` | **KV cache utilization** (0.0-1.0). Key capacity indicator. Values near 1.0 cause performance degradation. Monitor `stats.max`. |
+| `vllm:cpu_cache_usage_perc` | gauge | ratio | `engine`, `model_name` | **CPU offload tier utilization** (0.0-1.0). Emitted only when `SimpleCPUOffloadConnector` is active. Watch alongside `vllm:kv_cache_usage_perc` to see whether the CPU tier is buffering blocks evicted from the GPU tier. |
 | `vllm:prefix_cache_hits` | counter | tokens | `engine`, `model_name` | Tokens served from prefix cache. Higher = better prompt reuse. |
 | `vllm:prefix_cache_queries` | counter | tokens | `engine`, `model_name` | Tokens queried against prefix cache. `hits/queries` = hit rate. |
+| `vllm:external_prefix_cache_hits` | counter | tokens | `engine`, `model_name` | Tokens served from the external (CPU offload) prefix cache. Emitted only when CPU offload is active. |
+| `vllm:external_prefix_cache_queries` | counter | tokens | `engine`, `model_name` | Tokens queried against the external (CPU offload) prefix cache. `external_hits/external_queries` = CPU-tier hit rate. |
 | `vllm:num_preemptions` | counter | preemptions | `engine`, `model_name` | Requests preempted due to memory pressure. Non-zero indicates capacity issues. |
 
 ### Queue State
