@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
+import shutil
+import tempfile
 import time
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -45,6 +49,7 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset import mmap_cache
 from aiperf.dataset.payload_formatting import format_conversation_payloads
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
@@ -116,6 +121,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # _preformat_payloads ran. Used by the inputs.json skip decision so
         # synthesized payloads (preformatted at runtime) still get exported.
         self._all_turns_source_loaded_payloads: bool = False
+        # Cache key for the current run; None on synthetic-only / accuracy /
+        # cache-disabled. On MISS we keep the key so the post-run populate
+        # writes under the same key the lookup would have used.
+        self._cache_key_for_run: str | None = None
+        self._cache_hit_used: bool = False
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -150,6 +160,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _do_profile_configure(self, message: ProfileConfigureCommand) -> None:
         """Inner implementation of PROFILE_CONFIGURE handling."""
+        cache_hit = self._try_cache_lookup()
+        if cache_hit is not None:
+            self.info(
+                f"Memory-mapped dataset cache HIT (key={cache_hit.manifest.cache_key}); "
+                "skipping tokenizer + composer."
+            )
+            await self._configure_from_cache_hit(cache_hit)
+            await self._configure_dataset_client_and_free_memory()
+            return
+
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.user_config.endpoint.type
         )
@@ -188,6 +208,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         else:
             await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
+
+        if self._cache_key_for_run is not None:
+            self._populate_cache_after_run()
 
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
@@ -689,6 +712,159 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 client_metadata=client_metadata,
             )
         )
+
+    def _run_mmap_paths(self) -> tuple[Path, Path]:
+        """Return the (data, index) paths the backing store will write to."""
+        base_path = Environment.DATASET.MMAP_BASE_PATH or Path(tempfile.gettempdir())
+        mmap_dir = base_path / f"aiperf_mmap_{self.user_config.benchmark_id}"
+        ext = ".dat.zst" if self._compress_only else ".dat"
+        return mmap_dir / f"dataset{ext}", mmap_dir / f"index{ext}"
+
+    def _try_cache_lookup(self) -> mmap_cache.CacheHit | None:
+        """Return a CacheHit when the run can reuse a cached mmap, else None.
+
+        Sets ``self._cache_key_for_run`` when caching is applicable so the
+        post-run populate writes under the same key.
+        """
+        if not mmap_cache.cache_enabled():
+            return None
+        try:
+            key = mmap_cache.compute_cache_key_from_user_config(self.user_config)
+        except Exception as e:
+            self.warning(f"Skipping mmap cache: failed to compute key: {e!r}")
+            return None
+        if key is None:
+            return None
+        self._cache_key_for_run = key
+        try:
+            return mmap_cache.lookup(key, compressed=self._compress_only)
+        except Exception as e:
+            self.warning(f"Skipping mmap cache lookup: {e!r}")
+            return None
+
+    async def _configure_from_cache_hit(self, hit: mmap_cache.CacheHit) -> None:
+        """Restore mmap files + metadata from a cache HIT, then init backing store.
+
+        Restores ``dataset.dat`` / ``index.dat`` into the run's mmap dir so the
+        rest of the pipeline (backing-store cleanup, worker mmap reads, k8s
+        download) sees byte-identical files to a non-cached run. Also restores
+        ``inputs.json`` into the artifact dir when present in the cache entry.
+        """
+        run_data_path, run_index_path = self._run_mmap_paths()
+        mmap_cache.restore_to_run_dir(hit, run_data_path, run_index_path)
+
+        manifest = hit.manifest
+        try:
+            self.dataset_metadata = DatasetMetadata.model_validate_json(
+                manifest.dataset_metadata_json
+            )
+        except Exception as e:
+            self.warning(
+                f"Cache HIT manifest dataset_metadata_json invalid; treating as MISS: {e!r}"
+            )
+            self._cache_hit_used = False
+            try:
+                run_data_path.unlink(missing_ok=True)
+                run_index_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+
+        self._default_context_mode = self.dataset_metadata.default_context_mode
+        self._all_turns_source_loaded_payloads = (
+            manifest.all_turns_source_loaded_payloads
+        )
+
+        BackingStoreClass = plugins.get_class(
+            PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
+        )
+        self._backing_store = BackingStoreClass(
+            benchmark_id=self.user_config.benchmark_id,
+            compress_only=self._compress_only,
+            format=MemoryMapFormat(manifest.mmap_format),
+        )
+        # On-disk files already exist; adopt them without running the writer.
+        # The on-stop cleanup hook still unlinks the run mmap dir at shutdown.
+        session_ids = [c.conversation_id for c in self.dataset_metadata.conversations]
+        self._backing_store.adopt_existing_files(
+            session_ids=session_ids,
+            total_size_bytes=manifest.total_size_bytes,
+            compressed_size_bytes=manifest.compressed_size_bytes,
+        )
+
+        if hit.inputs_json_path is not None:
+            try:
+                target = (
+                    self.user_config.output.artifact_directory
+                    / OutputDefaults.INPUTS_JSON_FILE
+                )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(hit.inputs_json_path, target)
+                self.info(f"Restored inputs.json from cache to {target}")
+            except OSError as e:
+                self.warning(f"Failed to restore inputs.json from cache: {e!r}")
+
+        client_metadata = self._backing_store.get_client_metadata()
+        self._cache_hit_used = True
+
+        self.info(
+            f"sampling strategy: {self.dataset_metadata.sampling_strategy}, "
+            f"unique conversations: {len(self.dataset_metadata.conversations)}, "
+            f"unique turn count: {self.dataset_metadata.total_turn_count}"
+        )
+        await self.publish(
+            DatasetConfiguredNotification(
+                service_id=self.service_id,
+                metadata=self.dataset_metadata,
+                client_metadata=client_metadata,
+            )
+        )
+
+    def _populate_cache_after_run(self) -> None:
+        """Write the just-finalized run's mmap files into the cache."""
+        if self._cache_hit_used:
+            return
+        if self._cache_key_for_run is None or self._backing_store is None:
+            return
+        if self.dataset_metadata is None:
+            return
+        run_data_path, run_index_path = self._run_mmap_paths()
+        if not run_data_path.exists() or not run_index_path.exists():
+            return
+
+        mmap_metadata = self._backing_store.get_client_metadata()
+        manifest = mmap_cache.CacheManifest(
+            cache_key=self._cache_key_for_run,
+            created_at=time.time(),
+            aiperf_version=os.environ.get("AIPERF_VERSION") or None,
+            num_conversations=mmap_metadata.conversation_count,
+            total_size_bytes=mmap_metadata.total_size_bytes,
+            compressed=mmap_metadata.compressed,
+            compressed_size_bytes=mmap_metadata.compressed_size_bytes,
+            mmap_format=str(mmap_metadata.format),
+            default_context_mode=(
+                str(self._default_context_mode)
+                if self._default_context_mode is not None
+                else None
+            ),
+            all_turns_source_loaded_payloads=self._all_turns_source_loaded_payloads,
+            dataset_metadata_json=self.dataset_metadata.model_dump_json(),
+        )
+        inputs_json_path = (
+            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
+        )
+        try:
+            mmap_cache.populate(
+                cache_key=self._cache_key_for_run,
+                run_data_path=run_data_path,
+                run_index_path=run_index_path,
+                manifest=manifest,
+                inputs_json_path=(
+                    inputs_json_path if inputs_json_path.exists() else None
+                ),
+            )
+        except Exception as e:
+            self.warning(f"Failed to populate mmap cache: {e!r}")
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
