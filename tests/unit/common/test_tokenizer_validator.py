@@ -367,10 +367,12 @@ class TestPreloadConfigStub:
         assert not config_path.exists()
 
     @pytest.mark.asyncio
-    async def test_oserror_on_stub_write_is_swallowed_and_logged(
+    async def test_oserror_on_stub_write_aborts_initialization(
         self, tmp_path, monkeypatch
     ) -> None:
-        """OSError while writing the stub config.json is caught and debug-logged."""
+        """OSError while writing the stub config.json propagates so initialization
+        fails fast instead of silently breaking offline tokenizer loading in
+        child processes."""
         name = "hf-internal-testing/llama-tokenizer"
         snapshot = self._setup_fake_cache(
             tmp_path, monkeypatch, name, with_config=False
@@ -389,13 +391,19 @@ class TestPreloadConfigStub:
 
         monkeypatch.setattr(_Path, "write_text", selective_write_text)
 
-        with patch.object(Tokenizer, "from_pretrained"):
-            # Must not raise.
+        with (
+            patch.object(Tokenizer, "from_pretrained"),
+            pytest.raises(OSError, match="read-only filesystem"),
+        ):
             await preload_tokenizers({"model": name}, logger=logger)
 
         assert not config_path.exists()
-        debug_msgs = [str(c) for c in logger.debug.call_args_list]
-        assert any("Could not write stub config.json" in m for m in debug_msgs)
+        error_msgs = [str(c) for c in logger.error.call_args_list]
+        assert any("Could not write stub config.json" in m for m in error_msgs)
+        assert any("aborting initialization" in m for m in error_msgs)
+        # Offline mode env vars must not be set when stub write fails.
+        assert "HF_HUB_OFFLINE" not in os.environ
+        assert "TRANSFORMERS_OFFLINE" not in os.environ
 
     @pytest.mark.asyncio
     async def test_logs_debug_after_successful_stub_write(

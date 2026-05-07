@@ -261,7 +261,14 @@ async def preload_tokenizers(
 def _ensure_offline_config_stub(
     name: str, revision: str, logger: AIPerfLogger | None = None
 ) -> None:
-    """Write a stub ``config.json`` into the cached snapshot if missing."""
+    """Write a stub ``config.json`` into the cached snapshot if missing.
+
+    Raises:
+        OSError: If the stub cannot be written. Failing here aborts startup
+            before HF offline mode is enabled, so the user sees the real
+            filesystem error instead of a misleading offline-load failure
+            from a child process.
+    """
     from aiperf.common.tokenizer import _get_revision_snapshot_dir
 
     snapshot_dir = _get_revision_snapshot_dir(name, revision)
@@ -274,8 +281,12 @@ def _ensure_offline_config_stub(
         config_path.write_text("{}")
     except OSError as e:
         if logger:
-            logger.debug(f"Could not write stub config.json for '{name}': {e!r}")
-        return
+            logger.error(
+                f"Could not write stub config.json for tokenizer '{name}' "
+                f"at {config_path}: {e!r}. Offline tokenizer load would fail "
+                "in child processes; aborting initialization."
+            )
+        raise
     if logger:
         logger.debug(f"Wrote stub config.json for tokenizer-only repo '{name}'")
 
