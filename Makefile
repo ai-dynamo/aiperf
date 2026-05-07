@@ -241,7 +241,7 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
-	$(activate_venv) && pytest tests/integration/ -m 'integration and not stress and not performance and not slow' -n auto --tb=short --no-looptime $(args)
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/integration/ -m 'integration and not stress and not performance and not slow' -n auto --tb=short --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server integration tests passed!$(reset)\n"
 
 integration-tests-ci test-integration-ci: #? run integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).

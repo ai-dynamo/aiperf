@@ -69,8 +69,9 @@ def bootstrap_and_run_service(
 
     if hasattr(signal, "SIGUSR1"):
         # Already registered, or in a context where signal handlers can't
-        # be installed (best-effort).
-        with contextlib.suppress(ValueError, RuntimeError):
+        # be installed (best-effort). AttributeError covers test harnesses
+        # that wrap stderr in a stream without fileno() (e.g. TeeStream).
+        with contextlib.suppress(ValueError, RuntimeError, AttributeError):
             faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
 
     from aiperf.plugin import plugins

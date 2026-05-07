@@ -91,6 +91,33 @@ def hash_file_bytes(path: Path) -> str:
     return h.hexdigest()
 
 
+def hash_dir_contents(path: Path) -> str:
+    """Return a sha256 over the relative paths and bytes of every file under ``path``.
+
+    Walks ``path`` recursively in sorted order so the digest is stable regardless
+    of filesystem traversal order. Used so directory inputs (e.g. the weka_trace
+    one-file-per-trace corpus) get a content-addressed cache key that
+    differentiates two directories with the same name but different contents.
+    """
+    h = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if not child.is_file():
+            continue
+        rel = child.relative_to(path).as_posix()
+        h.update(rel.encode("utf-8"))
+        h.update(b"\0")
+        with child.open("rb") as f:
+            while chunk := f.read(_HASH_CHUNK_BYTES):
+                h.update(chunk)
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _hash_input_path(path: Path) -> str:
+    """Return a content digest for ``path`` (file or directory)."""
+    return hash_dir_contents(path) if path.is_dir() else hash_file_bytes(path)
+
+
 def compute_cache_key(
     *,
     input_file: Path | None,
@@ -103,7 +130,10 @@ def compute_cache_key(
     """Build the content+settings cache key.
 
     Args:
-        input_file: Path to the user-supplied input file, or None for synthetic.
+        input_file: Path to the user-supplied input file or directory, or None
+            for synthetic. Directories are hashed via :func:`hash_dir_contents`
+            so two directories with the same name but different contents (e.g.
+            distinct weka_trace corpora under tmp_path) produce distinct keys.
         public_dataset: Public-dataset name (None when not used).
         custom_dataset_type: Custom-dataset-type identifier (None when not used).
         tokenizer_identity: Stable dict identifying the tokenizer.
@@ -117,7 +147,7 @@ def compute_cache_key(
     payload: dict[str, object] = {
         "v": MANIFEST_VERSION,
         "input_file_sha256": (
-            hash_file_bytes(input_file) if input_file is not None else None
+            _hash_input_path(input_file) if input_file is not None else None
         ),
         "input_file_name": input_file.name if input_file is not None else None,
         "public_dataset": public_dataset,
@@ -415,6 +445,10 @@ def _settings_payload_from_user_config(
         "prompt": prompt_dump,
         "endpoint_type": str(user_config.endpoint.type),
         "model_name": user_config.endpoint.model_names[0],
+        "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
+        "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        "max_isl": inp.synthesis.max_isl,
+        "max_osl": inp.synthesis.max_osl,
     }
 
 
@@ -432,7 +466,7 @@ def compute_cache_key_from_user_config(user_config: UserConfig) -> str | None:
     input_file: Path | None = None
     if inp.file is not None:
         candidate = Path(inp.file)
-        if candidate.is_file():
+        if candidate.is_file() or candidate.is_dir():
             input_file = candidate
     has_source = (
         input_file is not None
