@@ -111,6 +111,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 - OpenAI chat completions, completions, embeddings, audio, images
 - NIM embeddings, rankings
+- Cohere-compatible embeddings and reranking
 
 ## Tutorials and Feature Guides
 
@@ -162,6 +163,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ### Endpoint Types
 - [Embeddings](docs/tutorials/embeddings.md) - Profile embedding models
+- [Cohere Embeddings](docs/tutorials/cohere-embeddings.md) - Profile Cohere Embed v2-compatible endpoints
 - [Rankings](docs/tutorials/rankings.md) - Profile ranking models
 - [OpenAI Responses API](docs/tutorials/openai-responses.md) - Profile OpenAI Responses API endpoints
 - [Audio](docs/tutorials/audio.md) - Profile audio language models

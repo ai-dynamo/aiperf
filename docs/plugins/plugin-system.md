@@ -368,6 +368,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
 | `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |
 | `completions` | `CompletionsEndpoint` | OpenAI Completions API |
+| `cohere_embeddings` | `CohereEmbeddingsEndpoint` | Cohere Embed v2 API |
 | `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
