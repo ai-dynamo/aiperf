@@ -42,7 +42,7 @@ def _user_config(
     inter_turn_delay_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
-    cache_bust_target: CacheBustTarget = CacheBustTarget.SYSTEM_PREFIX,
+    cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
 ) -> MagicMock:
     """Build a MagicMock UserConfig pre-shaped for the scenario validator."""
     cfg = MagicMock()

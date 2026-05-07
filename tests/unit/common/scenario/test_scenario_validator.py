@@ -26,7 +26,7 @@ def _user_config(
     inter_turn_delay_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
-    cache_bust_target: CacheBustTarget = CacheBustTarget.SYSTEM_PREFIX,
+    cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
 ) -> MagicMock:
     cfg = MagicMock()
     cfg.scenario = scenario
@@ -267,7 +267,7 @@ class _ReadOnlyTimingModeConfig:
         self.loadgen.inter_turn_delay_cap_seconds = 60.0
         self.loadgen._inter_turn_delay_cap_explicitly_set = False
         self.prompt = MagicMock()
-        self.input.prompt.cache_bust.target = CacheBustTarget.SYSTEM_PREFIX
+        self.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
 
     @property
     def timing_mode(self) -> TimingMode:
@@ -296,18 +296,18 @@ def test_timing_mode_property_assignment(
 # Cache-bust enforcement under inferencex-agentx-mvp
 # =============================================================================
 #
-# The scenario pins `require_cache_bust=CacheBustTarget.SYSTEM_PREFIX`. The
-# validator auto-injects SYSTEM_PREFIX when the user didn't explicitly set
+# The scenario pins `require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX`. The
+# validator auto-injects FIRST_TURN_PREFIX when the user didn't explicitly set
 # --cache-bust (mirroring ignore_eos / use_think_time_only / cap auto-inject),
 # rejects any other target value when explicitly set, and downgrades to a
 # warning under --unsafe-override.
 
 
-def test_agentx_mvp_unset_cache_bust_auto_injected_to_system_prefix(
+def test_agentx_mvp_unset_cache_bust_auto_injected_to_first_turn_prefix(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Default `target=NONE` with no explicit user opt-in is auto-set to
-    SYSTEM_PREFIX (same auto-inject pattern as the other locked settings)."""
+    FIRST_TURN_PREFIX (same auto-inject pattern as the other locked settings)."""
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
         cache_bust_target=CacheBustTarget.NONE,
@@ -317,7 +317,7 @@ def test_agentx_mvp_unset_cache_bust_auto_injected_to_system_prefix(
         outcome = validate_scenario(cfg)
     assert outcome.violations == []
     assert outcome.submission_valid is True
-    assert cfg.input.prompt.cache_bust.target == CacheBustTarget.SYSTEM_PREFIX
+    assert cfg.input.prompt.cache_bust.target == CacheBustTarget.FIRST_TURN_PREFIX
     assert any("cache-bust" in r.message.lower() for r in caplog.records)
 
 
@@ -335,13 +335,15 @@ def test_agentx_mvp_explicit_cache_bust_none_raises() -> None:
     assert len(exc.value.violations) == 1
     assert exc.value.violations[0].flag == "--cache-bust"
     assert exc.value.violations[0].current_value == str(CacheBustTarget.NONE)
-    assert exc.value.violations[0].required_value == str(CacheBustTarget.SYSTEM_PREFIX)
+    assert exc.value.violations[0].required_value == str(
+        CacheBustTarget.FIRST_TURN_PREFIX
+    )
 
 
-def test_agentx_mvp_rejects_cache_bust_system_suffix() -> None:
+def test_agentx_mvp_rejects_cache_bust_system_prefix() -> None:
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
-        cache_bust_target=CacheBustTarget.SYSTEM_SUFFIX,
+        cache_bust_target=CacheBustTarget.SYSTEM_PREFIX,
     )
     cfg.input.prompt.cache_bust._target_explicitly_set = True
     with pytest.raises(ScenarioLockError) as exc:
@@ -349,14 +351,16 @@ def test_agentx_mvp_rejects_cache_bust_system_suffix() -> None:
     assert "cache_bust" in str(exc.value).lower()
     assert len(exc.value.violations) == 1
     assert exc.value.violations[0].flag == "--cache-bust"
-    assert exc.value.violations[0].current_value == str(CacheBustTarget.SYSTEM_SUFFIX)
-    assert exc.value.violations[0].required_value == str(CacheBustTarget.SYSTEM_PREFIX)
+    assert exc.value.violations[0].current_value == str(CacheBustTarget.SYSTEM_PREFIX)
+    assert exc.value.violations[0].required_value == str(
+        CacheBustTarget.FIRST_TURN_PREFIX
+    )
 
 
-def test_agentx_mvp_accepts_cache_bust_system_prefix() -> None:
+def test_agentx_mvp_accepts_cache_bust_first_turn_prefix() -> None:
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
-        cache_bust_target=CacheBustTarget.SYSTEM_PREFIX,
+        cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
     )
     outcome = validate_scenario(cfg)
     assert outcome.violations == []

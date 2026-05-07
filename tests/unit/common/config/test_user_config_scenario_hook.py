@@ -82,7 +82,7 @@ def test_scenario_lock_error_raises_without_unsafe_override(tmp_path):
     # Default UserConfig has benchmark_duration=0, which violates the
     # inferencex-agentx-mvp invariants. timing_mode and cache_bust.target
     # would also conflict, but the validator auto-injects agentic_replay /
-    # SYSTEM_PREFIX before the lock check, so neither surfaces as a violation.
+    # FIRST_TURN_PREFIX before the lock check, so neither surfaces as a violation.
     assert "--benchmark-duration" in str(exc_info.value)
 
 

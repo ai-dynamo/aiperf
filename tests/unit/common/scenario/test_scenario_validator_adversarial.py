@@ -33,7 +33,7 @@ def _user_config(
     inter_turn_delay_cap_seconds: float | None = 60.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
-    cache_bust_target: CacheBustTarget = CacheBustTarget.SYSTEM_PREFIX,
+    cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
 ) -> MagicMock:
     """Build a MagicMock UserConfig pre-shaped for the scenario validator."""
     cfg = MagicMock()
@@ -334,7 +334,7 @@ def test_all_seven_invariants_unsafe_override_warns_and_invalidates(
 # ---------------------------------------------------------------------------
 def test_list_concurrency_rejected_as_sweep_violation() -> None:
     cfg = _user_config(extra_inputs={"ignore_eos": True})
-    cfg.prompt.cache_bust.target = "system_prefix"
+    cfg.prompt.cache_bust.target = "first_turn_prefix"
     cfg.loadgen.concurrency = [10, 20, 30]
     with pytest.raises(ScenarioLockError) as exc:
         validate_scenario(cfg)
@@ -345,7 +345,7 @@ def test_list_concurrency_rejected_as_sweep_violation() -> None:
 
 def test_int_concurrency_passes_lock() -> None:
     cfg = _user_config(extra_inputs={"ignore_eos": True})
-    cfg.prompt.cache_bust.target = "system_prefix"
+    cfg.prompt.cache_bust.target = "first_turn_prefix"
     cfg.loadgen.concurrency = 10
     outcome = validate_scenario(cfg)
     assert outcome.violations == []
@@ -354,7 +354,7 @@ def test_int_concurrency_passes_lock() -> None:
 
 def test_list_concurrency_with_unsafe_override_warns_only() -> None:
     cfg = _user_config(extra_inputs={"ignore_eos": True}, unsafe_override=True)
-    cfg.prompt.cache_bust.target = "system_prefix"
+    cfg.prompt.cache_bust.target = "first_turn_prefix"
     cfg.loadgen.concurrency = [10, 20, 30]
     outcome = validate_scenario(cfg)
     assert outcome.submission_valid is False
