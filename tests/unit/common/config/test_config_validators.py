@@ -417,6 +417,26 @@ class TestNormalizeHttpUrl:
                 "http://httpbin.org",
                 id="hostname_starting_with_http_letters_still_normalized",
             ),
+            pytest.param(
+                "HTTP://host:8000",
+                "HTTP://host:8000",
+                id="uppercase_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "Https://example.com",
+                "Https://example.com",
+                id="mixed_case_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "ftp://host",
+                "ftp://host",
+                id="non_http_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "ws://host:8080/socket",
+                "ws://host:8080/socket",
+                id="websocket_scheme_preserved_not_corrupted",
+            ),
         ],
     )
     def test_normalize_http_url(self, given: str, expected: str) -> None:

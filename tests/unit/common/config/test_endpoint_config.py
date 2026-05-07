@@ -171,6 +171,30 @@ class TestURLSchemeNormalization:
             "http://server3",
         ]
 
+    def test_default_url_is_normalized(self):
+        """The default `EndpointDefaults.URL` is scheme-less; with
+        `validate_default=True` the AfterValidator runs on it too, so a
+        config built without `--url` (e.g. just `--wait-for-model-timeout 30`)
+        still yields a well-formed URL.
+        """
+        config = EndpointConfig(model_names=["gpt2"])  # no urls= argument
+        assert all(u.startswith(("http://", "https://")) for u in config.urls), (
+            f"Default URLs were not normalized: {config.urls}"
+        )
+
+    def test_uppercase_scheme_not_corrupted(self):
+        """Pre-existing schemes are preserved regardless of case (no
+        ``http://`` is prepended to ``HTTP://host``)."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["HTTP://host:8000"])
+        assert config.urls == ["HTTP://host:8000"]
+
+    def test_non_http_scheme_not_corrupted(self):
+        """A non-http(s) scheme is left alone — the validator should not
+        produce ``http://ftp://host``. aiohttp will reject it downstream,
+        which is the correct error behavior."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["ftp://host:21"])
+        assert config.urls == ["ftp://host:21"]
+
 
 class TestWaitForModelValidation:
     """Tests for the readiness-probe flag coherence + bounds validation.

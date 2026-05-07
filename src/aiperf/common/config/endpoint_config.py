@@ -166,8 +166,12 @@ class EndpointConfig(BaseConfig):
             description="Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing "
             "across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). "
             "The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). "
-            "URLs without an `http://` or `https://` scheme have `http://` prepended automatically.",
+            "URLs that do not include a scheme (no `://`) have `http://` prepended automatically.",
             min_length=1,
+            # Run the validator chain on the default too — without this, a
+            # bare `--wait-for-model-timeout 30` (no `--url`) would send the
+            # un-normalized default to aiohttp and reproduce the original bug.
+            validate_default=True,
         ),
         BeforeValidator(parse_str_or_list),
         AfterValidator(normalize_http_urls),
