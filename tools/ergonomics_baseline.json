@@ -328,6 +328,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/exporters/mlflow_data_exporter.py",
+      "MLflowDataExporter._export_sync"
+    ],
+    [
+      "function-size",
       "src/aiperf/gpu_telemetry/accumulator.py",
       "GPUTelemetryAccumulator.export_results"
     ],
@@ -750,6 +755,11 @@
       "function-size",
       "src/aiperf/plot/utils.py",
       "parse_server_metric_spec"
+    ],
+    [
+      "function-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "function-size",
@@ -1185,6 +1195,11 @@
       "nesting-depth",
       "src/aiperf/plugin/types.py",
       "PluginEntry.validate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      "run_otel_streaming_fanout"
     ],
     [
       "nesting-depth",

@@ -78,6 +78,56 @@ class TestExporterManager:
         mock_instance.export.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_export_runs_mlflow_after_other_data_exporters(
+        self, endpoint_config, output_config, sample_records, mock_user_config
+    ):
+        execution_order: list[str] = []
+
+        async def _export_csv() -> None:
+            execution_order.append("csv")
+
+        async def _export_mlflow() -> None:
+            execution_order.append("mlflow")
+
+        csv_instance = MagicMock()
+        csv_instance.export = AsyncMock(side_effect=_export_csv)
+        csv_class = MagicMock(return_value=csv_instance)
+        csv_entry = MagicMock()
+        csv_entry.name = "csv"
+
+        mlflow_instance = MagicMock()
+        mlflow_instance.export = AsyncMock(side_effect=_export_mlflow)
+        mlflow_class = MagicMock(return_value=mlflow_instance)
+        mlflow_entry = MagicMock()
+        mlflow_entry.name = "mlflow"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[
+                (mlflow_entry, mlflow_class),
+                (csv_entry, csv_class),
+            ],
+        ):
+            manager = ExporterManager(
+                results=ProfileResults(
+                    records=sample_records,
+                    start_ns=0,
+                    end_ns=0,
+                    completed=0,
+                    was_cancelled=False,
+                    error_summary=[],
+                ),
+                user_config=mock_user_config,
+                service_config=ServiceConfig(),
+                telemetry_results=None,
+            )
+            await manager.export_data()
+
+        assert execution_order == ["csv", "mlflow"]
+        csv_instance.export.assert_awaited_once()
+        mlflow_instance.export.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_export_console(
         self, endpoint_config, output_config, sample_records, mock_user_config
     ):

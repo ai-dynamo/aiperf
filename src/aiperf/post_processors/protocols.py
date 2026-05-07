@@ -10,7 +10,7 @@ from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
     from aiperf.common.messages.inference_messages import MetricRecordsData
-    from aiperf.common.models import MetricResult
+    from aiperf.common.models import CreditPhaseStats, MetricResult
     from aiperf.common.models.record_models import MetricRecordMetadata
     from aiperf.metrics.metric_dicts import MetricRecordDict
 
@@ -29,6 +29,15 @@ class ResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a results processor that processes the results of multiple
     record processors, and provides the ability to summarize the results."""
 
-    async def process_result(self, record_data: MetricRecordsData) -> None: ...
+    async def process_result(
+        self, record_data: MetricRecordsData | CreditPhaseStats
+    ) -> None: ...
 
     async def summarize(self) -> list[MetricResult]: ...
+
+
+@runtime_checkable
+class FlushableResultsProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
+    """Protocol for metric results processors that support explicit flushing."""
+
+    async def flush(self, *, force: bool = False) -> None: ...

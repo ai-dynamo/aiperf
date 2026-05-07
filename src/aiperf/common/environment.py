@@ -16,6 +16,8 @@ Structure:
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
     Environment.METRICS.*        - Metrics collection and storage
+    Environment.MLFLOW.*         - MLflow export settings
+    Environment.OTEL.*           - OTel metrics streaming
     Environment.RECORD.*         - Record processing
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
@@ -461,6 +463,62 @@ class _MetricsSettings(BaseSettings):
         le=10000,
         default=500,
         description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
+    )
+
+
+class _OTelSettings(BaseSettings):
+    """OpenTelemetry metrics streaming configuration.
+
+    Controls buffering and flush behavior for OTLP metric streaming.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_OTEL_",
+    )
+
+    FLUSH_INTERVAL_SECONDS: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Interval in seconds between periodic OTel metrics flushes",
+    )
+    MAX_BATCH_RECORDS: int = Field(
+        ge=1,
+        le=1000000,
+        default=500,
+        description="Maximum number of metric records to include in a single OTel flush",
+    )
+    MAX_BUFFERED_RECORDS: int = Field(
+        ge=1,
+        le=10000000,
+        default=10000,
+        description="Maximum number of buffered metric records before oldest records are dropped",
+    )
+    REQUEST_TIMEOUT_SECONDS: float = Field(
+        ge=0.1,
+        le=300.0,
+        default=10.0,
+        description="Timeout in seconds for OTel collector HTTP requests",
+    )
+
+
+class _MLflowSettings(BaseSettings):
+    """MLflow export configuration.
+
+    Controls timeout behavior for post-run MLflow artifact uploads.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_MLFLOW_",
+    )
+
+    EXPORT_TIMEOUT_SECONDS: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Timeout in seconds for the post-run MLflow export operation. "
+        "If the MLflow tracking server is unreachable, the export will be abandoned "
+        "after this duration rather than blocking indefinitely.",
     )
 
 
@@ -1043,6 +1101,14 @@ class _Environment(BaseSettings):
     METRICS: _MetricsSettings = Field(
         default_factory=_MetricsSettings,
         description="Metrics collection and storage settings",
+    )
+    MLFLOW: _MLflowSettings = Field(
+        default_factory=_MLflowSettings,
+        description="MLflow export settings",
+    )
+    OTEL: _OTelSettings = Field(
+        default_factory=_OTelSettings,
+        description="OpenTelemetry metrics streaming settings",
     )
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,

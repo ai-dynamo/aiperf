@@ -295,3 +295,136 @@ cov = np.array([[4.0, 1.0], [1.0, 9.0]])
 vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
 # Returns list of (x, y) tuples forming a closed polygon
 ```
+
+## Strategy Protocol Pattern
+
+The OTel results processor uses a strategy protocol to dispatch incoming data
+to specialised handlers. Each strategy declares what data it supports and
+processes matching records independently:
+
+```python
+from typing import Protocol, runtime_checkable
+
+from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.common.models import CreditPhaseStats
+
+OTelResultData = MetricRecordsData | CreditPhaseStats
+
+
+@runtime_checkable
+class OTelResultsStrategyProtocol(Protocol):
+    """Protocol for OTel result processing strategies."""
+
+    def supports(self, record_data: OTelResultData) -> bool: ...
+
+    async def process(self, record_data: OTelResultData) -> None: ...
+```
+
+Concrete strategies accept a context object at construction time and implement
+the two-method interface:
+
+```python
+from aiperf.post_processors.strategies.core import (
+    OTelResultData,
+    OTelResultsStrategyProtocol,
+    OTelStrategyContextProtocol,
+)
+
+
+class MetricResultsStrategy(OTelResultsStrategyProtocol):
+    """Streams per-request metric records as histogram observations."""
+
+    def __init__(self, context: OTelStrategyContextProtocol) -> None:
+        self._context = context
+
+    def supports(self, record_data: OTelResultData) -> bool:
+        return isinstance(record_data, MetricRecordsData)
+
+    async def process(self, record_data: OTelResultData) -> None:
+        # Emit histogram observations for each metric in the record.
+        ...
+
+
+class TimingResultsStrategy(OTelResultsStrategyProtocol):
+    """Streams phase-level timing snapshots using counters and gauges."""
+
+    def __init__(self, context: OTelStrategyContextProtocol) -> None:
+        self._context = context
+
+    def supports(self, record_data: OTelResultData) -> bool:
+        return isinstance(record_data, CreditPhaseStats)
+
+    async def process(self, record_data: OTelResultData) -> None:
+        # Emit counter deltas and gauge snapshots for timing data.
+        ...
+```
+
+The processor iterates registered strategies on each incoming record:
+
+```python
+for strategy in self._strategies:
+    if strategy.supports(record_data):
+        await strategy.process(record_data)
+```
+
+**Conventions:**
+- One strategy class per file under `post_processors/strategies/`.
+- `supports()` uses `isinstance` checks — no dynamic dispatch tables.
+- `OTelStrategyContextProtocol` exposes instrument factories (`get_or_create_histogram`, etc.) so strategies never construct OTel instruments directly.
+
+## Drop-Oldest Fanout Queue
+
+`OTelMetricsResultsProcessor` fans out metric events to a dedicated child
+process via a bounded `multiprocessing.Queue`. The queue uses drop-oldest
+semantics so the hot path (the main benchmark loop) is never blocked by a slow
+downstream consumer.
+
+```mermaid
+flowchart LR
+    A[Hot-path service] -->|put_nowait| Q[multiprocessing.Queue<br/>maxsize=MAX_BUFFERED_RECORDS]
+    Q -->|get| B[Fanout process<br/>OTel + MLflow]
+    A -.->|on Full: drop oldest, retry once| Q
+```
+
+**Queue sizing:**
+
+```python
+import multiprocessing as mp
+from aiperf.common.config import Environment
+
+event_queue = mp.Queue(maxsize=Environment.OTEL.MAX_BUFFERED_RECORDS)  # default 10 000
+```
+
+**Backpressure algorithm:**
+
+1. Attempt `queue.put_nowait(event)`.
+2. On `queue.Full`, call `queue.get_nowait()` to discard the oldest event.
+3. Retry `queue.put_nowait(event)` once.
+4. If the retry also fails, increment `_fanout_dropped_events` and log at
+   thresholds (1, 100, 1 000 drops).
+
+```python
+from queue import Empty, Full
+
+def _emit_fanout_event(self, event_type: str, payload: dict) -> None:
+    event = {"type": event_type, "payload": payload}
+    try:
+        self._fanout_queue.put_nowait(event)
+        self._fanout_sent_events += 1
+    except Full:
+        if self._drop_oldest_fanout_event():
+            try:
+                self._fanout_queue.put_nowait(event)
+                self._fanout_sent_events += 1
+                return
+            except Full:
+                pass
+        self._record_fanout_drop("Fanout queue full after drop-oldest retry")
+```
+
+**Design rationale:**
+- The benchmark hot path must never block on telemetry I/O.
+- Dropping the oldest event (rather than the newest) preserves the most recent
+  state, which is more useful for live dashboards.
+- The counter `_fanout_dropped_events` is reported at shutdown so operators can
+  tune `AIPERF_OTEL_MAX_BUFFERED_RECORDS` if drops are frequent.
