@@ -116,6 +116,18 @@ class _AgentXSettings(BaseSettings):
         "support additional inference-server vocabularies (vLLM, TGI, "
         "TensorRT-LLM, ...). Empty list disables runtime detection.",
     )
+    CONTEXT_OVERFLOW_RATE_LIMIT: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.01,
+        description="Strict upper bound on the per-run context-overflow rate "
+        "(context_overflow_count / total_responses) before a scenario "
+        "submission is flipped to submission_valid=false with reason "
+        "'context_overflow_rate_exceeded'. Default 0.01 (1%) matches the "
+        "scenario spec RFC 2026-04-26 §7. Comparison is strictly greater-than: "
+        "rate exactly equal to the limit is accepted. Has no effect on "
+        "non-scenario runs (no --scenario flag) or runs with zero responses.",
+    )
 
 
 class _CompressionSettings(BaseSettings):
@@ -216,6 +228,20 @@ class _DatasetSettings(BaseSettings):
         "Set to a shared filesystem path for Kubernetes mounted volumes. "
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
+    )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under <dir>/<key>/ and contains "
+        "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,

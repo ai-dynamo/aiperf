@@ -8,11 +8,23 @@ from pathlib import Path
 
 import aiofiles
 
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.orchestrator.aggregation.base import AggregateResult
 
-CONTEXT_OVERFLOW_RATE_LIMIT = 0.01
-"""Strict upper bound on context-overflow rate before submission_valid flips false."""
+
+def __getattr__(name: str) -> float:
+    """Module-level back-compat shim for ``CONTEXT_OVERFLOW_RATE_LIMIT``.
+
+    The threshold now lives on ``Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT``
+    (env var ``AIPERF_AGENTX_CONTEXT_OVERFLOW_RATE_LIMIT``); this shim keeps
+    existing imports working and resolves the value lazily so test-time env
+    overrides take effect without re-importing the module.
+    """
+    if name == "CONTEXT_OVERFLOW_RATE_LIMIT":
+        return Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 CONTEXT_OVERFLOW_REASON = "context_overflow_rate_exceeded"
 
@@ -72,7 +84,9 @@ def compute_submission_outcome(
     in runtime-only thresholds that are only knowable post-run -- presently
     just the >1% context-overflow rate per spec §7.
 
-    Rate semantics: strictly greater than ``CONTEXT_OVERFLOW_RATE_LIMIT``
+    Rate semantics: strictly greater than
+    ``Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT`` (default 0.01 per
+    spec §7, override via ``AIPERF_AGENTX_CONTEXT_OVERFLOW_RATE_LIMIT``)
     flips ``submission_valid`` to False; equal-to is accepted (boundary
     behavior pinned by tests). When ``total_responses == 0`` the rate is
     treated as 0 (undefined / no successful responses), so the overflow
@@ -112,7 +126,7 @@ def compute_submission_outcome(
 
     if total_responses > 0:
         rate = context_overflow_count / total_responses
-        if rate > CONTEXT_OVERFLOW_RATE_LIMIT:
+        if rate > Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT:
             valid = False
             if CONTEXT_OVERFLOW_REASON not in reasons:
                 reasons.append(CONTEXT_OVERFLOW_REASON)
