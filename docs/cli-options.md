@@ -196,7 +196,7 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 #### `--use-server-token-count`
 
-Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
+Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled. Recommended whenever the AIPerf tokenizer can disagree with the server's tokenizer (e.g. unmatched tokenizer revision, vendor-specific BPE merges, or chat templates that differ from the server) — this most often shows up as an output sequence length (OSL) mismatch even when the server is honoring the request (e.g. with ignore_eos=true).
 <br/>_Flag (no value required)_
 
 #### `--connection-reuse-strategy` `<str>`
