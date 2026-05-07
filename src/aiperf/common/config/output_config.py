@@ -187,6 +187,10 @@ class OutputConfig(BaseConfig):
         return self.artifact_directory / self._profile_export_csv_file
 
     @property
+    def outputs_json_file(self) -> Path:
+        return self.artifact_directory / OutputDefaults.OUTPUTS_JSON_FILE
+
+    @property
     def profile_export_json_file(self) -> Path:
         return self.artifact_directory / self._profile_export_json_file
 

@@ -819,6 +819,10 @@ data_exporter:
       CSV exporter for accuracy benchmarking results. Exports per-problem grading
       details for offline analysis. Self-disables when accuracy mode is off.
 
+  outputs_json:
+    class: aiperf.exporters.outputs_json_exporter:OutputsJsonExporter
+    description: Exports per-request output metadata to outputs.json for downstream post-processing.
+
 # =============================================================================
 # Console Exporters
 # =============================================================================
