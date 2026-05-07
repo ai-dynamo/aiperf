@@ -220,6 +220,7 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 | `AIPERF_UI_NOTIFICATION_TIMEOUT` | `3` | ≥ 1, ≤ 100000 | Duration in seconds to display UI notifications before auto-dismissing |
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `None` | ≥ 0.0, ≤ 1000.0 | Interval in seconds between real-time metrics publishes (and the per-tick stats log block). 0 disables the log block; dashboards still poll. When unset, defaults to 5.0 under --ui dashboard, 30.0 otherwise. |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
+| `AIPERF_UI_CONSOLE_EXPORT_WIDTH` | `140` | ≥ 40, ≤ 10000 | Fixed column width used to render the post-run console exporter tables. Applied both to the recording console that produces profile_export_console.txt and to the live console when stdout is not a tty (so non-tty CI logs match the saved artifact). |
 
 ## WORKER
 

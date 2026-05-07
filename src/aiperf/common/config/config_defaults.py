@@ -183,6 +183,7 @@ class OutputDefaults:
     )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_CONSOLE_TXT_FILE = Path("profile_export_console.txt")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
     SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
     SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
