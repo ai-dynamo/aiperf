@@ -120,6 +120,19 @@ producing an invalid result.
 > [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md)
 > for the full picture.
 
+> **Optional: `--use-server-token-count` (OSL mismatch fix).** By default
+> AIPerf computes output sequence length (OSL) by re-tokenizing the
+> server's response with the model's local tokenizer. If that tokenizer
+> disagrees with the server's own tokenizer — different revision, vendor
+> BPE merges, a different chat template — the reported OSL can drift from
+> the server's actual emitted token count, and the per-run console will
+> show an "Output Sequence Length Mismatch Warning" panel even though
+> `ignore_eos=true` is locked and the server really did emit
+> `max_tokens`. Pass `--use-server-token-count` to make AIPerf trust the
+> server's `usage.completion_tokens` instead of re-tokenizing locally;
+> the mismatch goes away. The scenario does not lock this flag either
+> way — it's safe to add to an AgentX MVP submission.
+
 ---
 
 ## What `--scenario inferencex-agentx-mvp` Locks for You

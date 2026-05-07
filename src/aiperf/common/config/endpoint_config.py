@@ -302,7 +302,12 @@ class EndpointConfig(BaseConfig):
                 "for computing metrics. Token count fields will be None if the server "
                 "does not provide usage information. For OpenAI-compatible streaming "
                 "endpoints (chat/completions), stream_options.include_usage is automatically "
-                "configured when this flag is enabled."
+                "configured when this flag is enabled. Recommended whenever the AIPerf "
+                "tokenizer can disagree with the server's tokenizer (e.g. unmatched "
+                "tokenizer revision, vendor-specific BPE merges, or chat templates that "
+                "differ from the server) — this most often shows up as an output sequence "
+                "length (OSL) mismatch even when the server is honoring the request "
+                "(e.g. with ignore_eos=true)."
             ),
         ),
         CLIParameter(

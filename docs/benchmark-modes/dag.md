@@ -184,6 +184,10 @@ Both shorthands may appear on the same turn. The loader disambiguates the genera
 
 `max_tokens`, `model`, and `tools` are AIPerf-native Turn fields and sit at the top level of the turn. For any other OpenAI chat-completions parameter — `temperature`, `top_p`, `seed`, `stop`, `response_format`, `logprobs`, etc. — put it in `extra_body`. Vendor-specific knobs (`ignore_eos`, `min_tokens`, `top_k`, …) go in the same place and are merged into the top level of the wire body at dispatch time, matching the CLI's `--extra-inputs` convention.
 
+### OSL mismatch with `ignore_eos`: pass `--use-server-token-count`
+
+By default AIPerf computes output sequence length (OSL) by re-tokenizing the server's response text with the model's local tokenizer. If your local tokenizer disagrees with the server's tokenizer (different revision, vendor BPE merges, a different chat template), the reported OSL can differ from the server's actual emitted token count — and you'll see an "Output Sequence Length Mismatch Warning" panel at end-of-run even when you correctly passed `ignore_eos:true` and the server really did emit `max_tokens`. Pass `--use-server-token-count` to make AIPerf trust the server's `usage.completion_tokens` (auto-enabling `stream_options.include_usage` for streaming chat/completions) instead of re-tokenizing locally; the mismatch goes away.
+
 ## Reference: accumulation semantics (pure append)
 
 DAG mode uses AIPerf's standard `DELTAS_WITHOUT_RESPONSES` context mode: each turn's `messages` is appended onto the session's `turn_list`, and after the response arrives AIPerf appends a captured `{role: assistant, content: <response_text>}` Turn for the next turn to see. The chat endpoint walks `turn_list` at dispatch time and concatenates every turn's messages into the wire body — so the merge is pure concatenation. No role inspection, no system-prompt rewriting, no deduplication.
