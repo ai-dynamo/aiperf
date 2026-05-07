@@ -330,10 +330,21 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         the existing value is preserved. Per-line values take precedence over
         global --osl and --seq-dist settings.
 
+        ``max_tokens`` is clamped to a minimum of 1: the OpenAI-compatible
+        chat-completions API rejects ``max_completion_tokens=0`` outright on
+        most servers (and silently produces empty completions on others),
+        which surfaces as opaque request failures during a benchmark.
+
         Args:
             turn: The turn object to finalize.
         """
         if turn.max_tokens is not None:
+            if turn.max_tokens <= 0:
+                self.warning(
+                    f"max_tokens={turn.max_tokens} on turn is invalid (must be > 0); "
+                    "clamping to 1"
+                )
+                turn.max_tokens = 1
             return
 
         if self._seq_distribution is not None:
@@ -348,6 +359,13 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
                     output_tokens_config.mean, stddev
                 )
+
+        if turn.max_tokens is not None and turn.max_tokens <= 0:
+            self.warning(
+                f"Sampled max_tokens={turn.max_tokens} is invalid (must be > 0); "
+                "clamping to 1"
+            )
+            turn.max_tokens = 1
 
     def _finalize_turn(self, turn: Turn) -> None:
         """Finalize a turn by populating all required metadata fields.
