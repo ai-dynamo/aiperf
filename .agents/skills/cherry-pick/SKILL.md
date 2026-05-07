@@ -2,7 +2,7 @@
 name: cherry-pick
 description: Cherry-pick a commit from origin/main into a release branch using a temporary git worktree
 disable-model-invocation: true
-allowed-tools: Bash(git fetch *), Bash(git log *), Bash(git branch *), Bash(git worktree *), Bash(git cherry-pick *), Bash(git -C * status), Bash(git -C * cherry-pick *), Bash(git -C * checkout *), Bash(git -C * push *), Bash(git push *), Bash(git commit *), Bash(git checkout *), Bash(mktemp *), Bash(make *), Bash(gh pr create *), Bash(gh pr view *), AskUserQuestion
+allowed-tools: Bash(git fetch *), Bash(git log *), Bash(git branch *), Bash(git worktree *), Bash(git cherry-pick *), Bash(git -C * status), Bash(git -C * cherry-pick *), Bash(git -C * checkout *), Bash(git -C * push *), Bash(git -C * branch *), Bash(git push *), Bash(git commit *), Bash(git checkout *), Bash(mktemp *), Bash(make *), Bash(gh pr create *), Bash(gh api *), AskUserQuestion
 ---
 
 # Cherry-Pick to Release Branch
@@ -23,7 +23,13 @@ If there is a worktree on a `cherry-pick/*` branch, a previous cherry-pick may h
    ```
    - If the cherry-pick is still in progress (conflicts resolved, staged), run `git -C "$WORKTREE_DIR" cherry-pick --continue` to finalize.
    - If the working tree is clean (cherry-pick already completed), proceed to push.
-3. Look up the cherry-picked commit from the worktree log (`git -C "$WORKTREE_DIR" log --oneline -1`) and run step 4 to gather the original PR metadata.
+3. Recover the original source commit SHA from the worktree's branch name (it's encoded as `cherry-pick/<source-sha>-to-<release-branch>`):
+   ```bash
+   BRANCH=$(git -C "$WORKTREE_DIR" branch --show-current)
+   SOURCE_SHA=${BRANCH#cherry-pick/}
+   SOURCE_SHA=${SOURCE_SHA%-to-*}
+   ```
+   Do NOT use the worktree's HEAD SHA — that's the new cherry-pick commit, not the original. Then run step 4 with `$SOURCE_SHA` to gather the original PR metadata.
 4. Continue from step 10 (push) onward.
 
 If the user does not want to resume, clean up the stale worktree first, then start fresh.
@@ -42,8 +48,10 @@ If the user does not want to resume, clean up the stale worktree first, then sta
    Use `AskUserQuestion` to present the recent commits as options. Let the user select one.
 
 4. **Look up the original PR for the selected commit:**
+   `gh pr view` does not accept a commit SHA, so query the commits→pulls API directly:
    ```bash
-   gh pr view <commit-hash> --json number,title --jq '"\(.number)\t\(.title)"'
+   gh api repos/ai-dynamo/aiperf/commits/<source-commit-sha>/pulls \
+     --jq '.[0] | "\(.number)\t\(.title)"'
    ```
    Save the PR number and title for use in steps 11 and 13. If the commit message contains a PR number (e.g. `(#669)`), you can also use that directly.
 
