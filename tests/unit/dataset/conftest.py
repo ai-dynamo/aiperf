@@ -12,9 +12,22 @@ import pytest
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 import aiperf.transports  # noqa: F401  # Import to register transports
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
+from aiperf.common.environment import Environment
 from aiperf.common.models import Conversation
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
+
+
+@pytest.fixture(autouse=True)
+def _isolate_mmap_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Pin the mmap cache to a per-test tmpdir so dataset tests never share cache state.
+
+    Tests that exercise the cache deliberately (test_mmap_cache.py /
+    test_dataset_manager_cache.py) override this with their own
+    ``MMAP_CACHE_ENABLED`` toggle.
+    """
+    monkeypatch.setattr(Environment.DATASET, "MMAP_CACHE_DIR", tmp_path / "_mmap_cache")
+    monkeypatch.setattr(Environment.DATASET, "MMAP_CACHE_ENABLED", False)
 
 
 @pytest.fixture
