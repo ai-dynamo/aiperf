@@ -15,6 +15,14 @@ from multiprocessing.context import SpawnProcess
 from pathlib import Path
 from typing import Any
 
+# Cap glibc's per-thread arena count before any malloc activity (and before
+# any C extension is imported). Under `pytest -n auto` with 24 workers each
+# spawning multi-process aiperf benchmarks, the default per-thread arenas
+# (8 * nproc on 64-bit) explode RSS/swap and trigger SIGABRT shutdowns
+# inside Python C extensions. Pinning to 2 keeps allocator behaviour
+# deterministic across the run.
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+
 import aiohttp
 import pytest
 import pytest_asyncio

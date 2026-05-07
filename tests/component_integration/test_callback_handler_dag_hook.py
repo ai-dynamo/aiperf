@@ -131,7 +131,7 @@ async def test_strategy_runs_when_orchestrator_intercept_returns_false():
     )
 
     orchestrator.intercept.assert_awaited_once_with(credit)
-    strategy.handle_credit_return.assert_awaited_once_with(credit)
+    strategy.handle_credit_return.assert_awaited_once_with(credit, error=None)
 
 
 @pytest.mark.component_integration
@@ -143,7 +143,7 @@ async def test_no_orchestrator_bypasses_intercept():
         "worker-1",
         CreditReturn(credit=credit, first_token_sent=True),
     )
-    strategy.handle_credit_return.assert_awaited_once_with(credit)
+    strategy.handle_credit_return.assert_awaited_once_with(credit, error=None)
 
 
 # =============================================================================
@@ -289,7 +289,7 @@ async def test_child_hook_does_not_require_can_send_any_turn():
     # Strategy dispatch is allowed for DAG child continuations even while the
     # phase is draining. (The strategy itself is a no-op when the credit is
     # final — a separate concern from the callback-handler gating.)
-    strategy.handle_credit_return.assert_awaited_once_with(child_credit)
+    strategy.handle_credit_return.assert_awaited_once_with(child_credit, error=None)
 
 
 # ============================================================================
