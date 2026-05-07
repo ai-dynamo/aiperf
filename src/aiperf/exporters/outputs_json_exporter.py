@@ -65,9 +65,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             await f.write(content)
         self.info(f"Exported {len(records)} records to {self._file_path}")
 
-    def _load_raw_responses(self) -> dict[int, str]:
-        """Load response text from raw record files, keyed by session_num."""
-        responses: dict[int, str] = {}
+    def _load_raw_responses(self) -> dict[str, str]:
+        """Load response text from raw record files, keyed by session_num:turn_index."""
+        responses: dict[str, str] = {}
         if not self._raw_records_dir.exists():
             return responses
 
@@ -86,11 +86,14 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                         continue
                     text = self._extract_response_text(raw)
                     if text:
-                        responses[raw.metadata.session_num] = text
+                        key = (
+                            f"{raw.metadata.session_num}:{raw.metadata.turn_index or 0}"
+                        )
+                        responses[key] = text
 
         return responses
 
-    def _read_and_parse_records(self, raw_responses: dict[int, str]) -> list[dict]:
+    def _read_and_parse_records(self, raw_responses: dict[str, str]) -> list[dict]:
         """Read JSONL and parse profiling records (runs in thread pool)."""
         records: list[dict] = []
         with open(self._jsonl_path) as f:
@@ -102,9 +105,8 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                 if record.metadata.benchmark_phase != CreditPhase.PROFILING:
                     continue
                 entry = self._build_output_entry(record)
-                # Attach response text from raw records if available
-                session_num = record.metadata.session_num
-                entry["response_text"] = raw_responses.get(session_num)
+                key = f"{record.metadata.session_num}:{record.metadata.turn_index or 0}"
+                entry["response_text"] = raw_responses.get(key)
                 records.append(entry)
         return records
 
