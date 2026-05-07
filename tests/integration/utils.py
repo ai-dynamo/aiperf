@@ -143,6 +143,28 @@ def create_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
     return dataset_path
 
 
+def create_multimodal_rankings_dataset(tmp_path: Path, num_entries: int) -> Path:
+    """Create a Cohere/vLLM multimodal rankings dataset for testing."""
+    dataset_path = tmp_path / "multimodal_rankings.jsonl"
+    image_data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+    with open(dataset_path, "w") as f:
+        for i in range(num_entries):
+            entry = {
+                "texts": [
+                    {"name": "query", "contents": [f"What is shown in image {i}?"]},
+                    {"name": "passages", "contents": [f"Image passage {i}"]},
+                ],
+                "images": [
+                    {
+                        "name": "image_url",
+                        "contents": [image_data_url],
+                    }
+                ],
+            }
+            f.write(orjson.dumps(entry).decode("utf-8") + "\n")
+    return dataset_path
+
+
 def _check_mp4_fragmentation(video_bytes: bytes) -> bool:
     """Check if MP4 video is fragmented by looking for moof (movie fragment) boxes.
 

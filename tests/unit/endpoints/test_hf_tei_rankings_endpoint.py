@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from aiperf.common.models import Text, Turn
+from aiperf.common.models import Audio, Image, Text, Turn, Video
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -203,3 +203,38 @@ class TestHFTeiRankingsEndpoint:
         assert payload["top_k"] == 5
         assert payload["return_scores"] is True
         assert payload["query"] == "Test query"
+
+    @pytest.mark.parametrize(
+        "turn_kwargs,expected_error",
+        [
+            (
+                {"images": [Image(contents=["data:image/png;base64,img1"])]},
+                "does not support image input",
+            ),
+            (
+                {"videos": [Video(contents=["data:video/mp4;base64,vid1"])]},
+                "does not support video input",
+            ),
+            (
+                {"audios": [Audio(contents=["wav,b64audio"])]},
+                "does not support audio input",
+            ),
+        ],
+    )
+    def test_format_payload_unsupported_media_rejected(
+        self, converter, model_endpoint, turn_kwargs, expected_error
+    ):
+        """Test that base rankings validation rejects unsupported media."""
+        turn = Turn(
+            texts=[
+                Text(name="query", contents=["What is AI?"]),
+                Text(name="passages", contents=["AI definition"]),
+            ],
+            model="test-model",
+            **turn_kwargs,
+        )
+
+        with pytest.raises(ValueError, match=expected_error):
+            converter.format_payload(
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            )

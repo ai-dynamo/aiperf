@@ -155,3 +155,40 @@ aiperf profile \
     --custom-dataset-type single_turn \
     --request-count 10
 ```
+
+### Profile vLLM Vision Rerank Models
+
+The `cohere_rankings` endpoint also supports vLLM multimodal rerank documents.
+Text-only requests keep the standard Cohere shape, while multimodal requests use
+structured documents with `content` parts for text and media. AIPerf pairs
+`passages`, `images`, and `videos` by index, so each non-empty modality must have
+the same number of entries.
+
+You can supply images as `data:` URLs (as in the example below), using the usual
+`data:image/<subtype>;base64,<payload>` form, or as absolute `http://` or
+`https://` URLs to a reachable image resource when the rerank server fetches media
+from the network.
+
+Create a multimodal rankings file:
+
+```bash
+cat <<EOF > multimodal-rankings.jsonl
+{"texts":[{"name":"query","contents":["Retrieve the beach image"]},{"name":"passages","contents":["A beach at sunset"]}],"images":[{"name":"image_url","contents":["data:image/png;base64,<BASE64_IMAGE>"]}]}
+{"texts":[{"name":"query","contents":["Retrieve the skyline image"]},{"name":"passages","contents":["A city skyline at night"]}],"images":[{"name":"image_url","contents":["data:image/png;base64,<BASE64_IMAGE>"]}]}
+EOF
+```
+
+Run AIPerf against a vLLM server. AIPerf keeps `/v2/rerank` as the default Cohere
+path; vLLM examples commonly expose `/rerank`, so override the endpoint path when
+needed:
+
+```bash
+aiperf profile \
+    -m jinaai/jina-reranker-m0 \
+    --endpoint-type cohere_rankings \
+    --custom-endpoint /rerank \
+    --url localhost:8080 \
+    --input-file ./multimodal-rankings.jsonl \
+    --custom-dataset-type single_turn \
+    --request-count 10
+```

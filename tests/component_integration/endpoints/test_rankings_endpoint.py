@@ -10,7 +10,10 @@ from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
 from tests.harness.utils import AIPerfCLI
-from tests.integration.utils import create_rankings_dataset
+from tests.integration.utils import (
+    create_multimodal_rankings_dataset,
+    create_rankings_dataset,
+)
 
 
 @pytest.mark.component_integration
@@ -67,6 +70,26 @@ class TestRankingsEndpoint:
             f"""
             aiperf profile \
                 --model BAAI/bge-reranker-base \
+                --endpoint-type cohere_rankings \
+                --input-file {dataset_path} \
+                --custom-dataset-type single_turn \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == defaults.request_count
+
+    def test_cohere_rankings_multimodal(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test multimodal Cohere Rankings endpoint payloads."""
+        dataset_path = create_multimodal_rankings_dataset(tmp_path, 5)
+
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model jinaai/jina-reranker-m0 \
                 --endpoint-type cohere_rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \

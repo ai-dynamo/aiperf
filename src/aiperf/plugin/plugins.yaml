@@ -215,6 +215,8 @@ endpoint:
       supports_streaming: false
       produces_tokens: false
       tokenizes_input: true
+      supports_images: true
+      supports_videos: true
       metrics_title: Ranking Metrics
 
   completions:
