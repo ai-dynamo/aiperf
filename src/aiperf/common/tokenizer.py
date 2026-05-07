@@ -154,6 +154,35 @@ def _is_revision_snapshot_cached(model_dir: Path, revision: str) -> bool:
     return (snapshots_dir / revision).is_dir()
 
 
+def _get_revision_snapshot_dir(name: str, revision: str) -> Path | None:
+    """Return the cached HF snapshot dir for ``(name, revision)``, or None."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    if not cache_dir.is_dir():
+        return None
+
+    exact = cache_dir / f"models--{name.replace('/', '--')}"
+    if exact.is_dir():
+        model_dir = exact
+    else:
+        aliases = _find_hf_cache_aliases(name)
+        if len(aliases) != 1:
+            return None
+        model_dir = aliases[0]
+
+    snapshots_dir = model_dir / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+
+    refs_file = model_dir / "refs" / revision
+    if refs_file.is_file():
+        snap = snapshots_dir / refs_file.read_text().strip()
+    else:
+        snap = snapshots_dir / revision
+    return snap if snap.is_dir() else None
+
+
 def _is_hf_cached(name: str, revision: str | None = None) -> bool:
     """Check if a HuggingFace model is available in the local cache.
 

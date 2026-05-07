@@ -185,6 +185,7 @@ async def preload_tokenizers(
             logger.debug("Tokenizer preload skipped: validation was not run")
         return
 
+    hf_names: list[str] = []
     names_to_load: list[str] = []
     for name in set(resolved_names.values()):
         # tiktoken/builtin: no HF download needed
@@ -200,6 +201,7 @@ async def preload_tokenizers(
             if logger:
                 logger.debug(f"Tokenizer preload skipped for '{name}': local path")
             continue
+        hf_names.append(name)
         # Already in HF disk cache
         if _is_hf_cached(name, revision):
             if logger:
@@ -209,33 +211,41 @@ async def preload_tokenizers(
             continue
         names_to_load.append(name)
 
-    if not names_to_load:
+    failed: set[str] = set()
+    if names_to_load:
         if logger:
-            logger.debug(
-                "Tokenizer preload: all tokenizers already cached, no download needed"
+            logger.info(
+                f"Preloading {len(names_to_load)} tokenizer(s) into local cache..."
             )
-        _enable_hf_offline_mode(logger)
-        return
+        for name in names_to_load:
+            if logger:
+                logger.info(f"  Caching tokenizer: {name}")
+            try:
+                # Discard result — side effect is populating the HF disk cache so
+                # child processes find it cached and skip all network calls.
+                await asyncio.to_thread(
+                    Tokenizer.from_pretrained,
+                    name,
+                    trust_remote_code=trust_remote_code,
+                    revision=revision,
+                    resolve_alias=False,  # already resolved by validate_tokenizer_early
+                )
+            except Exception:  # noqa: BLE001
+                failed.add(name)
+    elif logger:
+        logger.debug(
+            "Tokenizer preload: all tokenizers already cached, no download needed"
+        )
 
-    if logger:
-        logger.info(f"Preloading {len(names_to_load)} tokenizer(s) into local cache...")
-
-    failed: list[str] = []
-    for name in names_to_load:
-        if logger:
-            logger.info(f"  Caching tokenizer: {name}")
-        try:
-            # Discard result — side effect is populating the HF disk cache so
-            # child processes find it cached and skip all network calls.
-            await asyncio.to_thread(
-                Tokenizer.from_pretrained,
-                name,
-                trust_remote_code=trust_remote_code,
-                revision=revision,
-                resolve_alias=False,  # already resolved by validate_tokenizer_early
-            )
-        except Exception:  # noqa: BLE001
-            failed.append(name)
+    # Tokenizer-only repos (e.g. hf-internal-testing/llama-tokenizer) ship no
+    # config.json. AutoTokenizer's offline path calls PreTrainedConfig.from_pretrained
+    # which raises a misleading "couldn't connect" OSError when config.json is
+    # absent, even when the tokenizer files themselves are fully cached. A stub
+    # config.json lets the offline load dispatch via tokenizer_config.json.
+    for name in hf_names:
+        if name in failed:
+            continue
+        _ensure_offline_config_stub(name, revision, logger)
 
     if failed:
         if logger:
@@ -246,6 +256,28 @@ async def preload_tokenizers(
             )
     else:
         _enable_hf_offline_mode(logger)
+
+
+def _ensure_offline_config_stub(
+    name: str, revision: str, logger: AIPerfLogger | None = None
+) -> None:
+    """Write a stub ``config.json`` into the cached snapshot if missing."""
+    from aiperf.common.tokenizer import _get_revision_snapshot_dir
+
+    snapshot_dir = _get_revision_snapshot_dir(name, revision)
+    if snapshot_dir is None:
+        return
+    config_path = snapshot_dir / "config.json"
+    if config_path.exists():
+        return
+    try:
+        config_path.write_text("{}")
+    except OSError as e:
+        if logger:
+            logger.debug(f"Could not write stub config.json for '{name}': {e!r}")
+        return
+    if logger:
+        logger.debug(f"Wrote stub config.json for tokenizer-only repo '{name}'")
 
 
 def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
