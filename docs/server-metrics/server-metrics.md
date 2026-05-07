@@ -28,7 +28,9 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `vllm:num_requests_running` | gauge | Active batch size (`stats.avg`) |
 | `vllm:num_requests_waiting` | gauge | Queue depth—growing = saturation (`stats.max`) |
 | `vllm:kv_cache_usage_perc` | gauge | >0.9 = capacity limit (`stats.max`) |
+| `vllm:cpu_cache_usage_perc` | gauge | CPU offload fill (offload only — `stats.max`) |
 | `vllm:num_preemptions` | counter | >0 = memory pressure (`stats.total`) |
+| `vllm:external_prefix_cache_hits` | counter | CPU-tier prefix reuse (offload only — `stats.total`) |
 | `vllm:e2e_request_latency_seconds` | histogram | E2E latency (`stats.p99_estimate`) |
 | `vllm:time_to_first_token_seconds` | histogram | TTFT (`stats.p99_estimate`) |
 | `vllm:inter_token_latency_seconds` | histogram | ITL (`stats.p99_estimate`) |
@@ -164,6 +166,27 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
 | **JSON/CSV** (default) | Summary statistics, CI/CD thresholds | Small |
 | **Parquet** | SQL queries, pandas/DuckDB analytics | Compressed |
 | **JSONL** | Debugging, raw Prometheus snapshots | 10-100x larger |
+
+## Live realtime row
+
+When server metrics are enabled and the inference server actually serves Prometheus, the realtime stats block (printed every `--stats-interval` seconds outside `--ui dashboard`) gets an extra `srv` line summarising what the `/metrics` scrape sees right now. Each part is rendered only when its backing metric is present, so the row tells you *which* features the server is exposing at a glance:
+
+```text
+[realtime 02:30 profiling] rps=12.4 (avg 11.8) tput_in=15234/s tput_out=812/s done=...
+                            ...
+                            srv  prefix_cache_hit=68.3% ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
+```
+
+| Token | Source metric(s) | Notes |
+|-------|------------------|-------|
+| `prefix_cache_hit=X%` | `vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` | Cumulative hit rate since the first scrape. |
+| `ext_cache_hit=X%` | `vllm:external_prefix_cache_hits` / `vllm:external_prefix_cache_queries` | Only emitted when the external (CPU offload) tier has been queried, so the row stays clean on offload=none runs. |
+| `kv_usage=X%` | `vllm:kv_cache_usage_perc` (with `vllm:gpu_cache_usage_perc` v0 fallback) | Latest gauge value, max across endpoints. |
+| `cpu_kv_usage=X%` | `vllm:cpu_cache_usage_perc` | Only emitted when `SimpleCPUOffloadConnector` is active; lets you see the CPU tier filling up before the GPU tier preempts. |
+| `queue=Nr/Mw` | `vllm:num_requests_running` / `vllm:num_requests_waiting` | Scheduler running/waiting depth — useful for spotting backpressure mid-run. |
+| `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_reqs` on SGLang) | Cumulative since the first scrape; any nonzero value = backpressure. |
+
+The full set of scraped metrics is always written to `server_metrics_export.{json,csv,jsonl,parquet}` regardless of what surfaces in this row.
 
 ## Compatibility & auto-disable
 
@@ -468,9 +491,12 @@ AIPerf automatically infers units from metric names and descriptions using stand
 | `vllm:num_requests_running` | gauge | Requests in execution batches |
 | `vllm:num_requests_waiting` | gauge | Requests in queue (saturation indicator) |
 | `vllm:kv_cache_usage_perc` | gauge | KV-cache usage (0.0-1.0, >0.9 = capacity limit) |
+| `vllm:cpu_cache_usage_perc` | gauge | CPU offload tier fill (offload only) |
 | `vllm:num_preemptions` | counter | Requests preempted due to memory pressure |
 | `vllm:prefix_cache_hits` | counter | Tokens served from prefix cache |
 | `vllm:prefix_cache_queries` | counter | Tokens queried (hit_rate = hits/queries) |
+| `vllm:external_prefix_cache_hits` | counter | Tokens served from external (CPU offload) prefix cache |
+| `vllm:external_prefix_cache_queries` | counter | Queries against external prefix cache (CPU-tier hit rate denominator) |
 | `vllm:time_to_first_token_seconds` | histogram | Time to first token (TTFT) |
 | `vllm:e2e_request_latency_seconds` | histogram | End-to-end latency |
 | `vllm:inter_token_latency_seconds` | histogram | Time between output tokens (ITL) |
