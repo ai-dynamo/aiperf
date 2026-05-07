@@ -102,6 +102,20 @@ class TestCohereEmbedRequest:
             "A photo of a cat data:image/png;base64,abc123"
         ]
 
+    def test_normalized_inputs_from_images(self):
+        req = CohereEmbedRequest(
+            model="test",
+            images=["data:image/png;base64,abc123", "http://img2.png"],
+        )
+        assert req.normalized_inputs == [
+            "data:image/png;base64,abc123",
+            "http://img2.png",
+        ]
+
+    def test_normalized_inputs_without_inputs_returns_empty_list(self):
+        req = CohereEmbedRequest(model="test")
+        assert req.normalized_inputs == []
+
 
 class TestRankingRequest:
     """Tests for RankingRequest model."""

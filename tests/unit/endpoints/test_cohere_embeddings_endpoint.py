@@ -281,6 +281,46 @@ class TestCohereEmbeddingsEndpoint:
         assert parsed.usage is not None
         assert parsed.usage.prompt_tokens == 12
 
+    def test_parse_response_string_embedding_type_config(self):
+        """A string embedding_types extra should be treated as a single key."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.COHERE_EMBEDDINGS,
+            model_name="cohere-embeddings-model",
+            extra=[("embedding_types", "vendor_numeric")],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            CohereEmbeddingsEndpoint, model_endpoint
+        )
+        mock_response = create_mock_response(
+            json_data={"embeddings": {"vendor_numeric": [[1, 2]]}}
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, EmbeddingResponseData)
+        assert parsed.data.embeddings == [[1.0, 2.0]]
+
+    def test_parse_response_invalid_embedding_types_falls_back_to_float(self):
+        """Invalid embedding_types extra should fall back to float embeddings."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.COHERE_EMBEDDINGS,
+            model_name="cohere-embeddings-model",
+            extra=[("embedding_types", 123)],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            CohereEmbeddingsEndpoint, model_endpoint
+        )
+        mock_response = create_mock_response(
+            json_data={"embeddings": {"float": [[0.5, 0.75]]}}
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, EmbeddingResponseData)
+        assert parsed.data.embeddings == [[0.5, 0.75]]
+
     def test_parse_response_configured_non_numeric_embeddings_returns_usage_only(
         self,
     ):
