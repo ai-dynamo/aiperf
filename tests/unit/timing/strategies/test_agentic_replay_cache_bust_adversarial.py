@@ -191,7 +191,10 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     await strategy.setup_phase()
     await strategy.execute_phase()
     assert strategy._recycle_queue is not None
-    assert strategy._recycle_queue.qsize() == 0
+    # Full pool: queue holds all 3 traces at setup (trajectories are running
+    # live; the pop loop in _spawn_from_recycle_or_id skips them via
+    # _active_traces).
+    assert strategy._recycle_queue.qsize() == n
 
     # Each trace ends -> recycled FIFO. Drive two full passes through the pool.
     for _round in range(2):
@@ -266,9 +269,11 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
         user_config=user_config,
     )
     await strategy.setup_phase()
-    # Recycle queue holds [trace_1] after setup (trace_0 is the trajectory).
+    # Full pool: queue holds [trace_0, trace_1] after setup (trajectory is
+    # alive in _execute_profiling at PROFILING start; the pop loop skips it
+    # via _active_traces).
     assert strategy._recycle_queue is not None
-    assert strategy._recycle_queue.qsize() == 1
+    assert strategy._recycle_queue.qsize() == 2
 
     # Force a metadata-lookup miss for the recycled trace_id.
     src._metadata_lookup = {}

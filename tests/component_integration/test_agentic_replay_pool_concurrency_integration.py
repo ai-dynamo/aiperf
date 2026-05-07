@@ -248,8 +248,9 @@ async def test_concurrency_one_pool_ten_one_trajectory_nine_in_recycle() -> None
     await profiling.setup_phase()
 
     assert profiling._recycle_queue is not None
-    assert profiling._recycle_queue.qsize() == 9, (
-        "recycle queue must hold pool_size - trajectory_count = 9"
+    assert profiling._recycle_queue.qsize() == 10, (
+        "recycle queue spans the FULL pool (including the trajectory id); "
+        "the pop loop skips trace_ids whose session is currently active"
     )
 
     await profiling.execute_phase()
@@ -294,11 +295,14 @@ async def test_concurrency_one_pool_ten_one_trajectory_nine_in_recycle() -> None
 
 @pytest.mark.asyncio
 async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None:
-    """concurrency == pool_size: every trace is a trajectory; recycle queue empty.
+    """concurrency == pool_size: every trace is a trajectory; the recycle
+    queue spans the full pool, but every entry begins active.
 
-    Pin the put-then-pop behavior of ``_spawn_from_recycle_or_id`` when the
-    queue is empty: the just-finished trace_id is pushed to the (empty) queue
-    and immediately popped, so the same trace_id dispatches at turn 0.
+    Pin the put-then-pop behavior of ``_spawn_from_recycle_or_id`` when
+    every queued trace is currently in flight: finalizing one trajectory
+    discards it from ``_active_traces`` BEFORE the pop loop, the queue
+    head (now non-active) is popped, and the just-finished trace_id is
+    dispatched again at turn 0.
     """
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
     sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
@@ -319,16 +323,20 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
     await profiling.setup_phase()
 
     assert profiling._recycle_queue is not None
-    assert profiling._recycle_queue.qsize() == 0, (
-        "concurrency == pool_size => no traces left over for recycle queue"
+    assert profiling._recycle_queue.qsize() == 4, (
+        "recycle queue spans the FULL pool (concurrency == pool_size means "
+        "all trace_ids are queued, even though every one is currently active)"
     )
 
     await profiling.execute_phase()
+    # All 4 trajectories are now active.
+    assert profiling._active_traces == {t.conversation_id for t in source.trajectories}
     pre_recycle = list(log.entries)
 
-    # Pick one trajectory and finalize it. With an empty queue, put_nowait
-    # then get_nowait returns the same trace_id; the strategy then dispatches
-    # it again at turn 0.
+    # Pick one trajectory and finalize it. The strategy discards it from
+    # _active_traces before the pop loop, then enqueues it; the queue head
+    # is the just-finished id (since it was the head's own entry, now
+    # non-active), so the strategy dispatches it again at turn 0.
     finished = source.trajectories[0]
     await profiling.handle_credit_return(
         _make_credit(
@@ -340,12 +348,13 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
 
     new_dispatches = log.entries[len(pre_recycle) :]
     assert len(new_dispatches) == 1, (
-        f"empty-queue recycle should issue exactly one fresh dispatch; got {new_dispatches}"
+        f"recycle should issue exactly one fresh dispatch; got {new_dispatches}"
     )
     phase, cid, idx = new_dispatches[0]
     assert phase == CreditPhase.PROFILING
     assert cid == finished.conversation_id, (
-        "with an empty recycle queue the just-finished trace_id is the one popped"
+        "with every other queued trace still active, the only non-active "
+        "head is the just-finished trace_id itself"
     )
     assert idx == 0, "recycled session must start at turn 0, not at k_i"
 

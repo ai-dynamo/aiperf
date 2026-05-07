@@ -192,14 +192,40 @@ def _snapshot_recycle_queue(strategy: AgenticReplayStrategy) -> list[str]:
 # =============================================================================
 
 
+def _predict_next_recycle_dispatch(
+    pre_queue: list[str], finishing_cid: str, active: set[str]
+) -> str | None:
+    """Mirror ``_spawn_from_recycle_or_id`` pop semantics.
+
+    Discards ``finishing_cid`` from a copy of ``active`` (the strategy does
+    this before the pop loop), pushes ``finishing_cid`` to the tail, then
+    scans up to ``len(queue)`` entries skipping any that remain in
+    ``active``. Returns the trace_id that would be dispatched, or None if
+    every queued candidate is in flight.
+    """
+    active_copy = active - {finishing_cid}
+    queue = list(pre_queue) + [finishing_cid]
+    scan_budget = len(queue)
+    while scan_budget > 0 and queue:
+        scan_budget -= 1
+        candidate = queue.pop(0)
+        if candidate in active_copy:
+            queue.append(candidate)
+            continue
+        return candidate
+    return None
+
+
 @pytest.mark.asyncio
 async def test_multi_round_recycle_preserves_fifo_order() -> None:
-    """Push-then-pop FIFO semantics hold across many rounds.
+    """Push-then-pop FIFO semantics hold across many rounds under the
+    full-pool initial recycle queue.
 
     For each final-turn credit return, the next ``issue_credit`` call must
-    target the trace_id at the queue head AFTER the push-then-pop step. With
-    ``concurrency=2, pool=4``, drive ~12 final-turn returns and assert the
-    head-after-push prediction matches the actual fresh dispatch each round.
+    target the trace_id chosen by the strategy's pop loop, which skips
+    trace_ids whose sessions are currently active. With ``concurrency=2,
+    pool=4``, drive ~12 final-turn returns and assert each fresh dispatch
+    matches the simulated pop-loop prediction.
     """
     source = _build_source(
         num_traces=4,
@@ -208,85 +234,89 @@ async def test_multi_round_recycle_preserves_fifo_order() -> None:
     )
     assert len(source.trajectories) == 2
     trajectory_ids = [t.conversation_id for t in source.trajectories]
+    all_trace_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
 
     log = _DispatchLog()
     issuer = _make_recording_issuer(log)
     strategy = _build_profiling_strategy(source=source, issuer=issuer)
 
     await strategy.setup_phase()
-    # Recycle queue starts with the 2 non-trajectory traces in dataset order.
+    # Initial recycle queue spans the FULL dataset pool in iteration order
+    # (including trajectory ids). The pop loop skips trace_ids with active
+    # sessions, so duplicate concurrent sessions are still impossible.
     initial_queue = _snapshot_recycle_queue(strategy)
-    assert len(initial_queue) == 2
+    assert initial_queue == all_trace_ids, (
+        f"initial recycle queue must equal full dataset pool in order, "
+        f"got {initial_queue}"
+    )
     for tid in trajectory_ids:
-        assert tid not in initial_queue
+        assert tid in initial_queue, (
+            "trajectory ids are part of the full-pool initial queue"
+        )
 
     await strategy.execute_phase()
-    # Each trajectory should resume at k_i + 1 (or recycle immediately if
-    # k_i was already terminal). With turns=2 and k_i in [0, 1], k+1 may equal
-    # turns -- in that case execute_phase recycles immediately. Drain both
-    # branches by ignoring the execute-phase output and tracking dispatches
-    # below.
+    # Each trajectory resumes at k_i + 1 = 1 (n=3, k_i=0). Both trajectory
+    # sessions are now active at turn 1. We track which trace_ids are
+    # currently in flight and at which turn so we can finalize them in
+    # a controlled order.
+    in_flight: dict[str, int] = {}
+    for cid, idx in log.entries:
+        in_flight[cid] = idx  # latest dispatched turn for each trace
+    assert set(in_flight.keys()) == set(trajectory_ids)
 
     rounds = 0
     max_rounds = 12
-    last_finished: str | None = None
-    while rounds < max_rounds:
+    while rounds < max_rounds and in_flight:
         rounds += 1
-        # Pick a trace to finalize: the most-recent dispatch that has not
-        # been finalized yet. Since turn count is 2 and recycled traces start
-        # at turn 0, we step them through to turn 1 first.
-        if not log.entries:
-            break
-
-        # Find a dispatched (cid, idx) we can finalize. If idx < n-1, push it
-        # to its final turn first via a non-final return so we can then drive
-        # the recycle. Easiest: pick a recycled-at-0 dispatch and step it via
-        # handle_credit_return until it's the final turn.
-        cid, idx = log.entries[-1]
+        # Pick the in-flight session with the highest turn (closest to
+        # final) to drive next; ties broken by trace_id to keep ordering
+        # deterministic. This rotates through active lanes rather than
+        # repeatedly finalizing the same trace_id (whose recycled session
+        # would just become the next "last entry").
+        cid = sorted(in_flight.keys(), key=lambda k: (-in_flight[k], k))[0]
+        idx = in_flight[cid]
         n = len(source._metadata_lookup[cid].turns)
-        if idx < n - 1:
-            # Step it to final via non-final returns (these will dispatch the
-            # next turn directly via _dispatch_next_turn since delay_ms=None).
-            for step in range(idx, n - 1):
-                step_credit = _make_credit(
-                    conversation_id=cid, turn_index=step, num_turns=n
-                )
-                pre_step_len = len(log.entries)
-                await strategy.handle_credit_return(step_credit)
-                # Each non-final return dispatches the next turn directly.
-                assert len(log.entries) == pre_step_len + 1
-                assert log.entries[-1] == (cid, step + 1)
 
-        # Now cid is at its final turn. Predict the next dispatch trace_id by
-        # snapshotting the queue and simulating push-then-pop.
-        if cid == last_finished:
-            # Avoid double-finalizing in the loop's safety paths.
-            break
+        # Step to final via non-final returns (delay_ms=None -> direct
+        # dispatch). Each non-final return dispatches the next turn.
+        while idx < n - 1:
+            step_credit = _make_credit(conversation_id=cid, turn_index=idx, num_turns=n)
+            pre_step_len = len(log.entries)
+            await strategy.handle_credit_return(step_credit)
+            assert len(log.entries) == pre_step_len + 1
+            assert log.entries[-1] == (cid, idx + 1)
+            idx += 1
+        in_flight[cid] = idx
+
+        # Now cid is at its final turn. Predict the next dispatch trace_id
+        # by simulating the pop loop.
         pre_queue = _snapshot_recycle_queue(strategy)
-        predicted_head_after_push_pop = pre_queue[0] if pre_queue else cid
-        # Push cid to tail then pop head -> if queue was non-empty, the pop
-        # returns the original head; if empty, it returns cid itself.
+        active_snapshot = set(strategy._active_traces)
+        predicted = _predict_next_recycle_dispatch(pre_queue, cid, active_snapshot)
 
         pre_len = len(log.entries)
         final_credit = _make_credit(conversation_id=cid, turn_index=n - 1, num_turns=n)
         await strategy.handle_credit_return(final_credit)
-        last_finished = cid
+        # cid's session is done; remove from in_flight.
+        del in_flight[cid]
 
         post_len = len(log.entries)
-        # Cooldown is on (default), so a fresh dispatch must occur.
         assert post_len == pre_len + 1, (
             f"round {rounds}: final-turn return must trigger one fresh dispatch"
         )
         fresh_cid, fresh_idx = log.entries[-1]
         assert fresh_idx == 0, "fresh recycle dispatch must start at turn 0"
-        assert fresh_cid == predicted_head_after_push_pop, (
-            f"round {rounds}: FIFO violated -- expected {predicted_head_after_push_pop!r}, "
-            f"got {fresh_cid!r}; queue snapshot before push-pop was {pre_queue}"
+        assert fresh_cid == predicted, (
+            f"round {rounds}: FIFO violated -- expected {predicted!r}, "
+            f"got {fresh_cid!r}; queue snapshot before push-pop was {pre_queue}, "
+            f"active was {active_snapshot}"
         )
+        # The freshly dispatched session is now in flight at turn 0.
+        in_flight[fresh_cid] = fresh_idx
 
     # Sanity: every trace_id in the dataset must have been touched at least once.
     seen = {cid for cid, _ in log.entries}
-    for tid in [c.conversation_id for c in source.dataset_metadata.conversations]:
+    for tid in all_trace_ids:
         assert tid in seen, f"trace_id {tid!r} never dispatched over {rounds} rounds"
 
 
@@ -444,14 +474,25 @@ async def test_dispatch_next_turn_with_none_delay_dispatches_immediately() -> No
 
 @pytest.mark.asyncio
 async def test_burst_final_turn_returns_recycle_in_input_order() -> None:
-    """Three sequential final-turn returns drain three queue-head trace_ids
-    in dataset order: queue starts as [trace_3, trace_4, trace_5]."""
+    """Three sequential final-turn returns drain queue heads in iteration order.
+
+    With concurrency=3 over a 6-trace pool, the initial queue is the FULL
+    pool ``[trace_0..trace_5]`` and ``_active_traces == {trace_0, trace_1,
+    trace_2}`` after execute_phase. As each trajectory finishes, the pop
+    loop discards it from active first, then pops the queue head — which is
+    that same trajectory_id (its own entry sits at the head until its turn
+    comes through the queue). So the burst dispatches trace_0, trace_1,
+    trace_2 in trajectory-finish order. The remaining (trace_3..trace_5)
+    surface only on later cycles once the heads have rotated past the
+    still-active ids.
+    """
     source = _build_source(num_traces=6, turn_delays_ms=[None, None], concurrency=3)
     assert len(source.trajectories) == 3
     trajectory_ids = [t.conversation_id for t in source.trajectories]
     assert trajectory_ids == ["trace_0", "trace_1", "trace_2"], (
         "sequential sampler must yield trace_0..trace_2 as trajectories"
     )
+    all_trace_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
 
     log = _DispatchLog()
     issuer = _make_recording_issuer(log)
@@ -459,16 +500,19 @@ async def test_burst_final_turn_returns_recycle_in_input_order() -> None:
 
     await strategy.setup_phase()
     initial_queue = _snapshot_recycle_queue(strategy)
-    assert initial_queue == ["trace_3", "trace_4", "trace_5"], (
-        f"initial recycle queue must be FIFO of non-trajectory traces in dataset order, "
-        f"got {initial_queue}"
+    assert initial_queue == all_trace_ids, (
+        f"initial recycle queue must be FIFO of FULL dataset pool in iteration "
+        f"order (including trajectory ids), got {initial_queue}"
     )
 
     await strategy.execute_phase()
     pre_burst_len = len(log.entries)
 
     # Drive final-turn returns for trace_0, trace_1, trace_2 in that order.
-    expected_recycled = ["trace_3", "trace_4", "trace_5"]
+    # Each finishing trajectory_id is discarded from _active_traces *before*
+    # the pop loop, then re-enqueued at the tail; the queue head is its own
+    # id, which is now non-active, so the pop returns it immediately.
+    expected_recycled = ["trace_0", "trace_1", "trace_2"]
     for finishing_id in trajectory_ids:
         pre_step = len(log.entries)
         await strategy.handle_credit_return(_final_credit_for(source, finishing_id))
@@ -548,7 +592,8 @@ async def test_empty_recycle_queue_with_cooldown_no_spawn_no_exception() -> None
     on a final turn must be a clean no-op."""
     source = _build_source(num_traces=2, turn_delays_ms=[None, None], concurrency=1)
     assert len(source.trajectories) == 1
-    trajectory_id = source.trajectories[0].conversation_id
+    trajectory_id = source.trajectories[0].conversation_id  # trace_0
+    other_id = "trace_1"
 
     log = _DispatchLog()
     issuer = _make_recording_issuer(log)
@@ -559,45 +604,42 @@ async def test_empty_recycle_queue_with_cooldown_no_spawn_no_exception() -> None
 
     await strategy.setup_phase()
     initial_queue = _snapshot_recycle_queue(strategy)
-    assert len(initial_queue) == 1  # the lone non-trajectory trace
-    other_id = initial_queue[0]
+    # Initial queue spans the FULL pool: [trace_0, trace_1].
+    assert initial_queue == [trajectory_id, other_id], (
+        f"initial queue must be full pool in iteration order, got {initial_queue}"
+    )
 
     await strategy.execute_phase()
     after_execute = len(log.entries)
 
-    # Cycle 1: trajectory finishes -> other_id dispatched at turn 0.
+    # Cycle 1: trajectory finishes -> queue head is trajectory_id (just
+    # discarded from active), so it dispatches itself at turn 0.
     await strategy.handle_credit_return(_final_credit_for(source, trajectory_id))
     assert len(log.entries) == after_execute + 1
-    assert log.entries[-1][0] == other_id
-
-    # Cycle 2: other_id finishes -> trajectory_id dispatched at turn 0.
-    await strategy.handle_credit_return(_final_credit_for(source, other_id))
-    assert len(log.entries) == after_execute + 2
     assert log.entries[-1][0] == trajectory_id
 
-    # Repeat finalization to attempt to drain the queue beyond what's
-    # available. The ``_in_flight_recycled`` debug guard would forbid us
-    # from finalizing the same in-flight trace twice in one cycle, so we
-    # alternate. Drive enough cycles that one of the finalize calls
-    # encounters an effectively-empty queue (queue holds at most 1 entry,
-    # and push-then-pop always returns it; the queue is never observed
-    # empty when cooldown is on -- we instead force "empty after cooldown
-    # blocks the put").
-    #
-    # To reach the empty-queue branch deterministically, we manually drain
-    # the queue and flip cooldown OFF.
+    # Cycle 2: trajectory_id finishes again -> head is now other_id
+    # (queue rotated to [trace_1, trace_0] after cycle 1). other_id is not
+    # active, so it dispatches.
+    await strategy.handle_credit_return(_final_credit_for(source, trajectory_id))
+    assert len(log.entries) == after_execute + 2
+    assert log.entries[-1][0] == other_id
+
+    # Manually drain the queue and clear in-flight bookkeeping so we can
+    # exercise the empty-queue-plus-cooldown branch deterministically.
     assert strategy._recycle_queue is not None
     while not strategy._recycle_queue.empty():
         strategy._recycle_queue.get_nowait()
-    # Also clear the in-flight set so the debug assert doesn't fire.
     strategy._in_flight_recycled.clear()
 
     # Flip cooldown so _spawn_from_recycle_or_id short-circuits at the gate.
     stop_checker.can_start_new_session.return_value = False
     pre_call_len = len(log.entries)
 
-    # No exception raised, no new dispatch.
-    await strategy.handle_credit_return(_final_credit_for(source, trajectory_id))
+    # No exception raised, no new dispatch. We finalize other_id (the
+    # last-dispatched session) so the discard-from-active step is a clean
+    # no-op rather than a missing-correlation warning.
+    await strategy.handle_credit_return(_final_credit_for(source, other_id))
     assert len(log.entries) == pre_call_len, (
         "cooldown gate must short-circuit: no fresh dispatch on empty queue"
     )
