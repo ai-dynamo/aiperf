@@ -27,6 +27,7 @@ def _mk_user_config(*, max_isl=None, model_names=("primary",)):
     uc.input.use_think_time_only = False
     uc.input.synthesis.max_isl = max_isl
     uc.input.synthesis.max_osl = None
+    uc.input.max_context_length = None
     uc.input.synthesis.should_synthesize.return_value = False
     uc.input.prompt.input_tokens.block_size = None
     uc.tokenizer.trust_remote_code = False

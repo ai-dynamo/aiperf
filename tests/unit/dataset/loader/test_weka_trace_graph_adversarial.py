@@ -24,6 +24,7 @@ def _mk_user_config(*, max_isl=None, max_osl=None, start=None, end=None):
     uc.loadgen.inter_turn_delay_cap_seconds = None
     uc.input.synthesis.max_isl = max_isl
     uc.input.synthesis.max_osl = max_osl
+    uc.input.max_context_length = None
     uc.input.synthesis.should_synthesize.return_value = False
     uc.input.prompt.input_tokens.block_size = None
     uc.tokenizer.trust_remote_code = False

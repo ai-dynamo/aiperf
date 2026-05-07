@@ -21,6 +21,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
@@ -288,6 +289,59 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         max_isl = self.user_config.input.synthesis.max_isl
         return not (max_isl is not None and req.input_length > max_isl)
 
+    def _filter_traces_by_max_context(
+        self, data: dict[str, list[WekaTrace]], max_ctx: int
+    ) -> dict[str, list[WekaTrace]]:
+        """Drop traces whose peak recorded ``input_length`` exceeds ``max_ctx``.
+
+        Uses the per-request ``input_length`` recorded in the WEKA trace
+        (cumulative context at that turn) so no client-side re-tokenization
+        is required. The peak across requests is the conversation's worst
+        case; any conversation exceeding it would 4xx mid-run.
+        """
+        kept: dict[str, list[WekaTrace]] = {}
+        max_seen = 0
+        for trace_id, wekas in data.items():
+            peak = max(
+                (
+                    req.input_length
+                    for req in wekas[0].requests
+                    if isinstance(req, WekaNormalRequest | WekaStreamingRequest)
+                ),
+                default=0,
+            )
+            if peak > max_seen:
+                max_seen = peak
+            if peak <= max_ctx:
+                kept[trace_id] = wekas
+
+        total = len(data)
+        dropped = total - len(kept)
+        if dropped:
+            _logger.info(
+                "--max-context-length=%d: dropped %d/%d traces exceeding the "
+                "limit (largest observed: %d tokens).",
+                max_ctx,
+                dropped,
+                total,
+                max_seen,
+            )
+        else:
+            _logger.info(
+                "--max-context-length=%d: all %d traces within limit "
+                "(largest: %d tokens).",
+                max_ctx,
+                total,
+                max_seen,
+            )
+        if not kept:
+            raise DatasetLoaderError(
+                f"All {total} traces exceed --max-context-length={max_ctx} "
+                "tokens; nothing left to benchmark. Raise the limit or use "
+                "a smaller-context dataset."
+            )
+        return kept
+
     def _cap_output(self, req: _NormalRequestT) -> int:
         max_osl = self.user_config.input.synthesis.max_osl
         if max_osl is not None and req.output_length > max_osl:
@@ -393,6 +447,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # Track subagents whose branch was dropped during the second pass;
         # their child conversations must also be pruned.
         dropped_per_trace: dict[str, set[str]] = {}
+
+        max_ctx = self.user_config.input.max_context_length
+        if max_ctx is not None:
+            data = self._filter_traces_by_max_context(data, max_ctx)
 
         for trace_id, wekas in data.items():
             trace = wekas[0]
