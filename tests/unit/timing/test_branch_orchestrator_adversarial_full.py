@@ -41,7 +41,6 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     PrerequisiteKind,
 )
-from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -373,10 +372,12 @@ async def test_vacuous_gate_trap_does_not_fire_before_second_branch_registers():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_during_fail_fast_cascade_no_exception(monkeypatch):
+async def test_cleanup_during_fail_fast_cascade_no_exception(
+    monkeypatch, force_fail_fast
+):
     """Trigger fail-fast then call cleanup; verify no exception, full clear,
     and idempotent on a second call."""
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
+    force_fail_fast(True)
     cs = _mk_source(_fan_in_metadata())
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
@@ -973,12 +974,12 @@ async def test_multi_consumer_single_branch_three_gates_all_advance():
 
 @pytest.mark.asyncio
 async def test_multi_consumer_fail_fast_aborts_parent_and_drops_all_gates(
-    monkeypatch,
+    monkeypatch, force_fail_fast
 ):
     """Phase 3: same branch feeds 3 gates; child errors with fail-fast.
     Parent's ENTIRE future_joins entry is dropped (all 3 gates) plus the
     active join. Parent + every orphan aborted."""
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
+    force_fail_fast(True)
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["c1", "c2"],
@@ -1092,11 +1093,11 @@ async def test_stop_condition_during_delayed_join_increments_joins_suppressed():
 
 
 @pytest.mark.asyncio
-async def test_fail_fast_cascade_drops_all_future_gates(monkeypatch):
+async def test_fail_fast_cascade_drops_all_future_gates(monkeypatch, force_fail_fast):
     """Two SPAWNs from turn 0 each registering at different gates (T=2 and
     T=5). One child errors under fail-fast; both gates and both branches'
     children are aborted."""
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
+    force_fail_fast(True)
     branch_a = ConversationBranchInfo(
         branch_id="root:0:A",
         child_conversation_ids=["a1"],
