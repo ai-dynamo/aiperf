@@ -365,7 +365,22 @@
     [
       "BLE001",
       "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._configure_from_cache_hit"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._populate_cache_after_run"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
       "DatasetManager._profile_configure_command"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._try_cache_lookup"
     ],
     [
       "BLE001",
@@ -381,6 +396,16 @@
       "BLE001",
       "src/aiperf/dataset/memory_map_utils.py",
       "MemoryMapDatasetClient.close"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/mmap_cache.py",
+      "_read_manifest"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/mmap_cache.py",
+      "populate"
     ],
     [
       "BLE001",
@@ -1154,6 +1179,16 @@
     ],
     [
       "C901",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "C901",
+      "src/aiperf/server_metrics/accumulator.py",
+      "ServerMetricsAccumulator.realtime_snapshot"
+    ],
+    [
+      "C901",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1499,6 +1534,11 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
@@ -1706,6 +1746,11 @@
       "PLR0915",
       "src/aiperf/plot/handlers/single_run_handlers.py",
       "PercentileBandsHandler.create_plot"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
     ],
     [
       "PLR0915",
