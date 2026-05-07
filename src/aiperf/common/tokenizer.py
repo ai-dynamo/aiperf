@@ -112,6 +112,69 @@ def _is_offline_mode() -> bool:
     )
 
 
+@contextlib.contextmanager
+def _offline_model_info_patch():
+    """Stub huggingface_hub.model_info so transformers 4.57+ tokenizer loading
+    works offline.
+
+    transformers 4.57+ runs _patch_mistral_regex during tokenizer instantiation,
+    which calls huggingface_hub.model_info() to inspect repo tags — even when
+    the caller passed local_files_only=True. Replacing it with a stub returning
+    tags=None lets the regex shim run without a network call.
+    """
+    import huggingface_hub
+
+    class _OfflineModelInfo:
+        tags = None
+
+    original = huggingface_hub.model_info
+    huggingface_hub.model_info = lambda *a, **kw: _OfflineModelInfo()
+    try:
+        yield
+    finally:
+        huggingface_hub.model_info = original
+
+
+@contextlib.contextmanager
+def _offline_config_fallback(name: str, revision: str):
+    """Make PreTrainedConfig.from_pretrained return an empty config for
+    tokenizer-only repos cached without a config.json.
+
+    Mirrors the online 404-fallthrough: when the snapshot has tokenizer_config.json
+    but no config.json, AutoTokenizer's offline fallback path raises a misleading
+    "couldn't connect" OSError. The patch swallows the OSError only when the
+    on-disk evidence matches a tokenizer-only repo, returning an empty
+    PreTrainedConfig so dispatch falls through to tokenizer_config.json.
+    """
+    from transformers import PreTrainedConfig
+
+    descriptor = PreTrainedConfig.__dict__["from_pretrained"]
+    original_func = descriptor.__func__
+
+    def patched(cls, *args, **kwargs):
+        try:
+            return original_func(cls, *args, **kwargs)
+        except OSError:
+            snapshot = _get_revision_snapshot_dir(name, revision)
+            if (
+                snapshot is not None
+                and not (snapshot / "config.json").exists()
+                and (snapshot / "tokenizer_config.json").exists()
+            ):
+                _logger.debug(
+                    f"No config.json for tokenizer-only repo '{name}'; "
+                    "returning empty PreTrainedConfig for offline dispatch"
+                )
+                return cls()
+            raise
+
+    PreTrainedConfig.from_pretrained = classmethod(patched)
+    try:
+        yield
+    finally:
+        PreTrainedConfig.from_pretrained = descriptor
+
+
 def _find_hf_cache_aliases(name: str) -> list[Path]:
     """Find HF cache directories matching a model name alias.
 
@@ -430,16 +493,7 @@ class Tokenizer:
         revision: str = "main",
     ) -> "Tokenizer":
         """Load a tokenizer from local cache (offline mode)."""
-        # Workaround for transformers 4.57+ bug: _patch_mistral_regex
-        # calls model_info() even with local_files_only=True
-        import huggingface_hub
-
-        class _OfflineModelInfo:
-            tags = None
-
-        _original_model_info = huggingface_hub.model_info
-        huggingface_hub.model_info = lambda *a, **kw: _OfflineModelInfo()
-        try:
+        with _offline_model_info_patch(), _offline_config_fallback(name, revision):
             tokenizer_cls = cls()
             try:
                 tokenizer_cls._tokenizer = from_pretrained_func(
@@ -455,16 +509,15 @@ class Tokenizer:
                 if cached_id is None:
                     raise
                 _logger.debug(f"Retrying offline load with cached alias: {cached_id}")
-                tokenizer_cls._tokenizer = from_pretrained_func(
-                    cached_id,
-                    trust_remote_code=trust_remote_code,
-                    revision=revision,
-                    local_files_only=True,
-                )
+                with _offline_config_fallback(cached_id, revision):
+                    tokenizer_cls._tokenizer = from_pretrained_func(
+                        cached_id,
+                        trust_remote_code=trust_remote_code,
+                        revision=revision,
+                        local_files_only=True,
+                    )
             tokenizer_cls._apply_kwarg_overrides()
             return tokenizer_cls
-        finally:
-            huggingface_hub.model_info = _original_model_info
 
     @classmethod
     def _from_tiktoken(cls, encoding_name: str = _BUILTIN_ENCODING) -> "Tokenizer":

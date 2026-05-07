@@ -185,7 +185,6 @@ async def preload_tokenizers(
             logger.debug("Tokenizer preload skipped: validation was not run")
         return
 
-    hf_names: list[str] = []
     names_to_load: list[str] = []
     for name in set(resolved_names.values()):
         # tiktoken/builtin: no HF download needed
@@ -201,7 +200,6 @@ async def preload_tokenizers(
             if logger:
                 logger.debug(f"Tokenizer preload skipped for '{name}': local path")
             continue
-        hf_names.append(name)
         # Already in HF disk cache
         if _is_hf_cached(name, revision):
             if logger:
@@ -237,16 +235,6 @@ async def preload_tokenizers(
             "Tokenizer preload: all tokenizers already cached, no download needed"
         )
 
-    # Tokenizer-only repos (e.g. hf-internal-testing/llama-tokenizer) ship no
-    # config.json. AutoTokenizer's offline path calls PreTrainedConfig.from_pretrained
-    # which raises a misleading "couldn't connect" OSError when config.json is
-    # absent, even when the tokenizer files themselves are fully cached. A stub
-    # config.json lets the offline load dispatch via tokenizer_config.json.
-    for name in hf_names:
-        if name in failed:
-            continue
-        _ensure_offline_config_stub(name, revision, logger)
-
     if failed:
         if logger:
             names_str = ", ".join(f"'{n}'" for n in failed)
@@ -256,39 +244,6 @@ async def preload_tokenizers(
             )
     else:
         _enable_hf_offline_mode(logger)
-
-
-def _ensure_offline_config_stub(
-    name: str, revision: str, logger: AIPerfLogger | None = None
-) -> None:
-    """Write a stub ``config.json`` into the cached snapshot if missing.
-
-    Raises:
-        OSError: If the stub cannot be written. Failing here aborts startup
-            before HF offline mode is enabled, so the user sees the real
-            filesystem error instead of a misleading offline-load failure
-            from a child process.
-    """
-    from aiperf.common.tokenizer import _get_revision_snapshot_dir
-
-    snapshot_dir = _get_revision_snapshot_dir(name, revision)
-    if snapshot_dir is None:
-        return
-    config_path = snapshot_dir / "config.json"
-    if config_path.exists():
-        return
-    try:
-        config_path.write_text("{}")
-    except OSError as e:
-        if logger:
-            logger.error(
-                f"Could not write stub config.json for tokenizer '{name}' "
-                f"at {config_path}: {e!r}. Offline tokenizer load would fail "
-                "in child processes; aborting initialization."
-            )
-        raise
-    if logger:
-        logger.debug(f"Wrote stub config.json for tokenizer-only repo '{name}'")
 
 
 def _enable_hf_offline_mode(logger: AIPerfLogger | None = None) -> None:
