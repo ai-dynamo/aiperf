@@ -143,27 +143,64 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 
 ### Credit System & Request Timing
 
-The Timing Manager uses a **credit-based flow control system** to control when requests are sent. This enables accurate load pattern reproduction and prevents server overload.
+A **credit** is AIPerf's core scheduling primitive: a single token that authorizes one worker to dispatch exactly one request to the inference server. Credits are how the control plane (Timing Manager) decides *when* a request goes out, while staying decoupled from the data plane (Workers) that actually performs the I/O. Nothing else gates a request — if a worker holds a credit, it sends; if it does not, it waits.
 
-**How Credits Work:**
-- Each credit grants permission to send one request
-- The Timing Manager issues credits according to the configured timing mode:
-  - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
-  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
-  - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
+#### What a Credit Carries
 
-**Flow Control Benefits:**
-- Prevents overwhelming the inference server
-- Enables precise reproduction of load patterns
-- Provides natural backpressure when the server slows down
-- Allows accurate measurement without artificial delays
+The over-the-wire credit is the `Credit` msgspec struct in `src/aiperf/credit/structs.py`. Each credit binds together:
 
-**Credit Distribution:**
-- Credits are routed to workers via ROUTER/DEALER pattern
-- Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
-- No coordination required between workers
-- Scales to large numbers of workers without bottlenecks
-- Efficient message routing minimizes overhead
+- **Identity**: a sequential `id`, the `phase` it belongs to (`CreditPhase.WARMUP` or `CreditPhase.PROFILING`), and the `issued_at_ns` wall-clock timestamp.
+- **What to send**: a `conversation_id` (template ID in the dataset) plus `turn_index` / `num_turns` so the worker knows *which turn of which conversation* this credit pays for. The worker reads the actual prompt text from the memory-mapped dataset using these keys — payloads are never on the credit itself.
+- **Where to route**: an `x_correlation_id` (conversation instance ID) used by the `StickyCreditRouter` to pin all turns of one conversation to the same worker for KV-cache locality. DAG sub-agents additionally carry `parent_correlation_id`, `agent_depth`, `has_forks`, and `branch_mode`.
+- **Optional shaping**: `cancel_after_ns` (for simulated client disconnects), `url_index` (multi-URL load balancing), `cache_bust_marker` / `cache_bust_target` (prefix-cache busting).
+
+A credit is therefore *one request worth of intent*, not a whole multi-turn conversation. A 5-turn conversation is 5 credits; a parent turn that forks 3 children produces 1 + 3 credits.
+
+#### Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant TS as Timing Strategy
+    participant CI as CreditIssuer
+    participant CM as ConcurrencyManager
+    participant SR as StickyCreditRouter
+    participant W as Worker
+    participant Inf as Inference Server
+    participant RP as Record Processor
+
+    TS->>CI: issue_credit(TurnToSend)
+    CI->>CM: acquire session slot (first turn) + prefill slot
+    CI->>SR: send_credit(Credit)
+    SR->>W: ROUTER/DEALER deliver Credit (sticky on x_correlation_id)
+    W->>Inf: HTTP request (built from dataset)
+    Inf-->>W: first token
+    W->>SR: FirstToken (releases prefill slot)
+    Inf-->>W: stream completes
+    W->>SR: CreditReturn{credit, cancelled?, error?}
+    SR->>CI: callback releases session slot, accounts credit
+    W->>RP: push raw RequestRecord
+```
+
+The exact symbols: `CreditIssuer.issue_credit` in `src/aiperf/credit/issuer.py` acquires slots from `ConcurrencyManager` and hands the `Credit` to `StickyCreditRouter.send_credit` (`src/aiperf/credit/sticky_router.py`). The worker handles arrival in `Worker._schedule_credit_drop_task` (`src/aiperf/workers/worker.py`), wraps the credit in a `CreditContext`, dispatches the HTTP request, and — in a `finally` block — emits a `CreditReturn` (`src/aiperf/credit/messages.py`) so the slot is *always* released even on cancel/error. `FirstToken` is a separate event that releases just the prefill slot at TTFT, before the response stream finishes.
+
+#### Issuance Modes
+
+The `CreditIssuer` is timing-mode agnostic; the strategy in `src/aiperf/timing/strategies/` decides *when* to call `issue_credit`:
+
+- **Fixed schedule** (`fixed_schedule.py`): replay trace timestamps from dataset metadata.
+- **Request-rate** (`request_rate.py`): issue at a target rate with constant / Poisson / gamma / concurrency-burst arrival patterns.
+- **User-centric rate** (`user_centric_rate.py`): each session is an independent user; turn gaps come from the trace.
+- **Agentic replay** (`agentic_replay.py`): scenario-driven DAG replay where children are dispatched on parent completion via the `BranchOrchestrator`.
+
+#### Relationship to `--request-count`, `--num-conversations`, Concurrency
+
+- `--num-conversations N` caps the **number of distinct conversation instances** that ever start (via the session slot, acquired only on first-turn credits). Each conversation still issues one credit per turn.
+- `--request-count N` caps **total credits issued in the profile phase**, recycling the dataset to refill idle session slots while long traces sit in `delay_ms` waits — see the gotcha in `docs/benchmark-modes/`.
+- `--concurrency N` caps **in-flight credits** by sizing the prefill slot pool; the issuer simply blocks on `acquire_prefill_slot` when full, providing natural backpressure when the server slows.
+
+#### Why This Design
+
+Credits are deliberately a single, immutable, self-describing struct sent over a ROUTER/DEALER socket. There is no shared mutable state between Timing Manager and Workers — the credit *is* the state. This buys three things: workers can scale horizontally with no coordination protocol; backpressure is automatic (slots saturate, issuance stalls, the server is never piled on); and post-hoc accounting is exact because every credit produces exactly one `CreditReturn`, even on failure paths.
 
 ### Data Flow & Messaging
 
