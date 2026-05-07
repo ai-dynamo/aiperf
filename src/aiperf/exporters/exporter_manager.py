@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 
 from rich.console import Console
 
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
     DataExporterDisabled,
@@ -118,6 +120,21 @@ class ExporterManager(AIPerfLoggerMixin):
     async def export_console(self, console: Console) -> None:
         self.info("Exporting console data")
 
+        width = Environment.UI.CONSOLE_EXPORT_WIDTH
+
+        # Without a tty, Rich falls back to a default width that's typically
+        # too narrow for our metrics tables; pin it to the configured width
+        # so non-tty CI logs match the saved .txt artifact.
+        if not console.is_terminal:
+            console = Console(file=console.file, width=width)
+
+        recording_console = Console(
+            record=True,
+            file=io.StringIO(),
+            force_terminal=True,
+            width=width,
+        )
+
         for exporter_entry, ExporterClass in plugins.iter_all(
             PluginType.CONSOLE_EXPORTER
         ):
@@ -135,10 +152,28 @@ class ExporterManager(AIPerfLoggerMixin):
                 continue
 
             self.debug(f"Creating task for exporter: {exporter_entry.name}")
-            task = asyncio.create_task(exporter.export(console=console))
+            task = asyncio.create_task(exporter.export(console=recording_console))
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        self._write_console_txt(recording_console)
+
+        styled = recording_console.export_text(styles=True)
+        if styled.strip():
+            console.file.write(styled)
+            console.file.flush()
+
         self.debug("Exporting console data completed")
+
+    def _write_console_txt(self, recording_console: Console) -> None:
+        """Write the recorded console output to a plain-text file."""
+        try:
+            txt_path = self._user_config.output.profile_export_console_txt_file
+            plain_text = recording_console.export_text(styles=False, clear=False)
+            txt_path.write_text(plain_text, encoding="utf-8")
+            self.debug(f"Console export written to {txt_path}")
+        except (OSError, ValueError) as e:
+            self.warning(f"Failed to write console export file: {e}")
