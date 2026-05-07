@@ -215,6 +215,20 @@ class CacheBustConfig(BaseConfig):
     on each recycle of a trace_id.
     """
 
+    _target_explicitly_set: bool = False
+
+    @model_validator(mode="after")
+    def _record_explicit_set_flags(self) -> Self:
+        """Snapshot whether the user explicitly set --cache-bust.
+
+        Scenario validation distinguishes "user explicitly set target to a
+        non-required value" (raise) from "target is at default; auto-fill from
+        scenario spec" (info log). Surface a stable underscore flag for the
+        validator's defensive `getattr`.
+        """
+        self._target_explicitly_set = "target" in self.model_fields_set
+        return self
+
     target: Annotated[
         CacheBustTarget,
         Field(

@@ -45,6 +45,7 @@ def _user_config(
     # unless a test overrides them.
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
 
 
@@ -296,15 +297,38 @@ def test_timing_mode_property_assignment(
 # =============================================================================
 #
 # The scenario pins `require_cache_bust=CacheBustTarget.SYSTEM_PREFIX`. The
-# validator must reject any other target value, accept SYSTEM_PREFIX, and
-# downgrade to a warning under --unsafe-override.
+# validator auto-injects SYSTEM_PREFIX when the user didn't explicitly set
+# --cache-bust (mirroring ignore_eos / use_think_time_only / cap auto-inject),
+# rejects any other target value when explicitly set, and downgrades to a
+# warning under --unsafe-override.
 
 
-def test_agentx_mvp_rejects_cache_bust_none() -> None:
+def test_agentx_mvp_unset_cache_bust_auto_injected_to_system_prefix(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Default `target=NONE` with no explicit user opt-in is auto-set to
+    SYSTEM_PREFIX (same auto-inject pattern as the other locked settings)."""
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
         cache_bust_target=CacheBustTarget.NONE,
     )
+    cfg.input.prompt.cache_bust._target_explicitly_set = False
+    with caplog.at_level("INFO"):
+        outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+    assert cfg.input.prompt.cache_bust.target == CacheBustTarget.SYSTEM_PREFIX
+    assert any("cache-bust" in r.message.lower() for r in caplog.records)
+
+
+def test_agentx_mvp_explicit_cache_bust_none_raises() -> None:
+    """When the user explicitly passes `--cache-bust none`, the lock fires —
+    auto-injection only applies to the unset/default path."""
+    cfg = _user_config(
+        extra_inputs={"ignore_eos": True},
+        cache_bust_target=CacheBustTarget.NONE,
+    )
+    cfg.input.prompt.cache_bust._target_explicitly_set = True
     with pytest.raises(ScenarioLockError) as exc:
         validate_scenario(cfg)
     assert "cache_bust" in str(exc.value).lower()
@@ -319,6 +343,7 @@ def test_agentx_mvp_rejects_cache_bust_system_suffix() -> None:
         extra_inputs={"ignore_eos": True},
         cache_bust_target=CacheBustTarget.SYSTEM_SUFFIX,
     )
+    cfg.input.prompt.cache_bust._target_explicitly_set = True
     with pytest.raises(ScenarioLockError) as exc:
         validate_scenario(cfg)
     assert "cache_bust" in str(exc.value).lower()
@@ -346,6 +371,7 @@ def test_agentx_mvp_unsafe_override_allows_cache_bust_mismatch(
         cache_bust_target=CacheBustTarget.NONE,
         unsafe_override=True,
     )
+    cfg.input.prompt.cache_bust._target_explicitly_set = True
     with caplog.at_level("WARNING"):
         outcome = validate_scenario(cfg)
     assert outcome.submission_valid is False

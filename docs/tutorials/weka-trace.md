@@ -136,7 +136,7 @@ AIPerf can prepend a unique per-conversation marker to every prompt, so that rec
 
 The marker looks like `[rid:8a3f2c1b9e7d]` and is derived deterministically within a run from the auto-generated benchmark ID, the trace's recycle count, the trajectory index, and the trace ID — same trace, same recycle pass, same marker for every turn in that play. Markers differ across runs (the benchmark ID is a fresh UUID each time).
 
-This is locked on for the AgentX MVP scenario; outside that scenario it's optional.
+This is locked on for the AgentX MVP scenario — auto-injected as `system_prefix` when you don't pass `--cache-bust` yourself, and any explicit conflicting value is rejected at startup. Outside that scenario it's optional and defaults to `none`.
 
 A few details worth knowing if you're using `--cache-bust` outside the scenario:
 
