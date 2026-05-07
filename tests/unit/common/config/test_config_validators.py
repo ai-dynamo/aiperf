@@ -452,8 +452,3 @@ class TestNormalizeHttpUrl:
 
     def test_normalize_http_urls_empty_list_returns_empty(self) -> None:
         assert normalize_http_urls([]) == []
-
-    def test_normalize_http_url_non_string_passes_through(self) -> None:
-        # AfterValidator may run after pydantic coerces; non-strings should not crash here.
-        # The actual type enforcement happens via the list[str] field annotation.
-        assert normalize_http_url(None) is None  # type: ignore[arg-type]

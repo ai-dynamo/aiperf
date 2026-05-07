@@ -30,8 +30,6 @@ def normalize_http_url(url: str) -> str:
     ``ftp://`` etc.) and preserves the original scheme; URLs with non-HTTP
     schemes are passed through unmodified rather than corrupted.
     """
-    if not isinstance(url, str):
-        return url
     return url if "://" in url else f"http://{url}"
 
 
