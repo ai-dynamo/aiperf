@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+
+import aiofiles
 import orjson
 
 from aiperf.common.enums import CreditPhase
@@ -19,6 +22,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         self._jsonl_path = self._user_config.output.profile_export_jsonl_file
 
     def get_export_info(self) -> FileExportInfo:
+        """Return export metadata for logging."""
         return FileExportInfo(
             export_type="Outputs JSON",
             file_path=self._file_path,
@@ -32,6 +36,22 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             )
             return
 
+        records: list[dict] = await asyncio.to_thread(self._read_and_parse_records)
+        records.sort(key=lambda r: r["session_num"])
+
+        output = {
+            "schema_version": "1.0",
+            "data": records,
+        }
+
+        self._file_path.parent.mkdir(parents=True, exist_ok=True)
+        content = orjson.dumps(output, option=orjson.OPT_INDENT_2)
+        async with aiofiles.open(self._file_path, "wb") as f:
+            await f.write(content)
+        self.info(f"Exported {len(records)} records to {self._file_path}")
+
+    def _read_and_parse_records(self) -> list[dict]:
+        """Read JSONL and parse profiling records (runs in thread pool)."""
         records: list[dict] = []
         with open(self._jsonl_path) as f:
             for line in f:
@@ -42,18 +62,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                 if record.metadata.benchmark_phase != CreditPhase.PROFILING:
                     continue
                 records.append(self._build_output_entry(record))
-
-        records.sort(key=lambda r: r["session_num"])
-
-        output = {
-            "schema_version": "1.0",
-            "data": records,
-        }
-
-        self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        content = orjson.dumps(output, option=orjson.OPT_INDENT_2)
-        self._file_path.write_bytes(content)
-        self.info(f"Exported {len(records)} records to {self._file_path}")
+        return records
 
     @staticmethod
     def _build_output_entry(record: MetricRecordInfo) -> dict:
