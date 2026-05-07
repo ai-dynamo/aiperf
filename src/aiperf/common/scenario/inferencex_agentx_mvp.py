@@ -13,5 +13,5 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     require_loader=("semianalysis_cc_traces_weka", "weka_trace"),
     min_benchmark_duration_seconds=900,
     inter_turn_delay_cap_seconds=60.0,
-    require_cache_bust=CacheBustTarget.SYSTEM_PREFIX,
+    require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX,
 )

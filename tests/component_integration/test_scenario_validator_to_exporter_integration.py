@@ -91,12 +91,12 @@ def _user_config(
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
-    # Scenario lock requires cache_bust.target=SYSTEM_PREFIX. Default to it
+    # Scenario lock requires cache_bust.target=FIRST_TURN_PREFIX. Default to it
     # so tests targeting OTHER invariants don't trip the cache-bust check.
     cfg.input.prompt.cache_bust.target = (
         cache_bust_target
         if cache_bust_target is not None
-        else CacheBustTarget.SYSTEM_PREFIX
+        else CacheBustTarget.FIRST_TURN_PREFIX
     )
     cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
