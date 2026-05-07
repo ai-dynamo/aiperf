@@ -257,7 +257,7 @@ for tier in low_entropy mixed high_entropy; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --custom_dataset_type "speed_bench_throughput_1k_${tier}" \
+      --custom-dataset-type "speed_bench_throughput_1k_${tier}" \
       --input-file path/to/throughput_1k.jsonl \
       --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
