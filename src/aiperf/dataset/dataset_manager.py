@@ -613,6 +613,92 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         loader = AccuracyDatasetLoader(user_config=self.user_config)
         return await loader.load()
 
+    def _filter_by_max_context_length(
+        self, conversations: list[Conversation], max_ctx: int
+    ) -> list[Conversation]:
+        """Drop conversations whose total tokenized content exceeds ``max_ctx``.
+
+        Tokenizes the concatenated message content (raw_messages content +
+        text contents, across all turns) of each conversation and discards
+        any that exceed the limit. Pre-filtering here lets us reject
+        oversized traces once at load time rather than letting the
+        inference server reject them as 4xx mid-benchmark.
+
+        No-ops (with a warning) when no tokenizer is available — endpoints
+        that don't tokenize input have no reliable way to estimate context
+        length client-side.
+        """
+        if self.tokenizer is None:
+            self.warning(
+                f"--max-context-length={max_ctx} is set but tokenizer is not "
+                "configured for this endpoint; skipping context-length filter."
+            )
+            return conversations
+
+        kept: list[Conversation] = []
+        dropped = 0
+        max_seen = 0
+        for conv in conversations:
+            n_tokens = self._estimate_conversation_tokens(conv)
+            if n_tokens > max_seen:
+                max_seen = n_tokens
+            if n_tokens > max_ctx:
+                dropped += 1
+                continue
+            kept.append(conv)
+
+        if dropped:
+            self.info(
+                f"--max-context-length={max_ctx}: dropped {dropped}/"
+                f"{len(conversations)} conversations exceeding the limit "
+                f"(largest observed: {max_seen} tokens)"
+            )
+        else:
+            self.info(
+                f"--max-context-length={max_ctx}: all {len(conversations)} "
+                f"conversations within limit (largest: {max_seen} tokens)"
+            )
+
+        if not kept:
+            raise self._service_error(
+                f"All {len(conversations)} conversations exceed "
+                f"--max-context-length={max_ctx} tokens; nothing left to "
+                "benchmark. Raise the limit or use a smaller-context dataset."
+            )
+        return kept
+
+    def _estimate_conversation_tokens(self, conv: Conversation) -> int:
+        """Sum input tokens across every turn's messages and text content."""
+        total = 0
+        for turn in conv.turns:
+            for msg in turn.raw_messages or ():
+                total += self._count_message_content_tokens(msg.get("content"))
+            for text in turn.texts:
+                for piece in text.contents:
+                    if piece:
+                        total += len(self.tokenizer.encode(piece))
+        return total
+
+    def _count_message_content_tokens(self, content: Any) -> int:
+        """Count tokens in a single chat message's ``content`` payload.
+
+        Handles the two OpenAI-compatible shapes: a plain string, or a list
+        of typed parts (``[{"type": "text", "text": "..."}, ...]``). Other
+        shapes (e.g. ``None``, image parts without text) contribute 0.
+        """
+        if isinstance(content, str):
+            return len(self.tokenizer.encode(content)) if content else 0
+        if not isinstance(content, list):
+            return 0
+        n = 0
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                n += len(self.tokenizer.encode(text))
+        return n
+
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
@@ -639,6 +725,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = [
             conversation.session_id for conversation in conversations
         ]
+
+        max_ctx = self.user_config.input.max_context_length
+        if max_ctx is not None:
+            conversations = self._filter_by_max_context_length(conversations, max_ctx)
+            self.dataset = {conv.session_id: conv for conv in conversations}
+            self._conversation_ids_cache = [
+                conversation.session_id for conversation in conversations
+            ]
 
         # Capture pre-preformat raw_payload state. Once _preformat_payloads
         # runs, synthesized turns also gain raw_payload, which would falsely

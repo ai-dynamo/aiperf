@@ -300,6 +300,11 @@ Strategy for selecting entries from dataset during benchmarking. `sequential`: I
 
 Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
 
+#### `--max-context-length` `<int>`
+
+Maximum input context length (tokens) per conversation. DatasetManager tokenizes each conversation's combined content and drops those exceeding the limit before mmap. No-op without a tokenizer.
+<br/>_Constraints: ≥ 1_
+
 #### `--goodput` `<str>`
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
