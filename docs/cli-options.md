@@ -148,7 +148,7 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `-u`, `--url` `<list>`
 
-Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`).
+Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs without an `http://` or `https://` scheme have `http://` prepended automatically.
 <br/>_Constraints: min: 1_
 <br/>_Default: `['localhost:8000']`_
 

@@ -15,6 +15,24 @@ This module provides utility functions for validating and parsing configuration 
 """
 
 
+def normalize_http_url(url: str) -> str:
+    """Prepend ``http://`` to a URL that lacks an ``http`` or ``https`` scheme.
+
+    aiohttp rejects URLs without a recognized scheme with NonHttpUrlClientError.
+    Users commonly pass ``--url localhost:8000`` expecting an implicit scheme;
+    this normalization accepts that form. URLs already starting with
+    ``http://`` or ``https://`` are returned unchanged.
+    """
+    if not isinstance(url, str):
+        return url
+    return url if url.startswith(("http://", "https://")) else f"http://{url}"
+
+
+def normalize_http_urls(urls: list[str]) -> list[str]:
+    """Apply :func:`normalize_http_url` to each URL in the list."""
+    return [normalize_http_url(u) for u in urls]
+
+
 def parse_str_or_list(input: Any) -> list[Any] | None:
     """
     Parses the input to ensure it is either a string, a list, or None. If the input is a string,

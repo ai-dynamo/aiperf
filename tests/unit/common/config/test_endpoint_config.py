@@ -136,6 +136,42 @@ class TestMultiURLSupport:
             EndpointConfig(model_names=["gpt2"], urls=[])
 
 
+class TestURLSchemeNormalization:
+    """Regression tests for the readiness-probe scheme normalization bug.
+
+    Previously, a URL like ``localhost:8000`` worked for benchmark requests
+    (transport prepended ``http://``) but broke the readiness probe path,
+    which passed the raw URL to aiohttp and got NonHttpUrlClientError.
+    The fix centralizes scheme normalization in EndpointConfig so every
+    consumer receives a well-formed URL.
+    """
+
+    def test_bare_host_port_gets_http_prepended(self):
+        """`localhost:8000` should normalize to `http://localhost:8000`."""
+        config = EndpointConfig(model_names=["gpt2"], urls=["localhost:8000"])
+        assert config.urls == ["http://localhost:8000"]
+        assert config.url == "http://localhost:8000"
+
+    def test_existing_http_url_unchanged(self):
+        config = EndpointConfig(model_names=["gpt2"], urls=["http://localhost:8000"])
+        assert config.urls == ["http://localhost:8000"]
+
+    def test_existing_https_url_unchanged(self):
+        config = EndpointConfig(model_names=["gpt2"], urls=["https://example.com:8443"])
+        assert config.urls == ["https://example.com:8443"]
+
+    def test_mixed_list_normalized_per_element(self):
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            urls=["server1:8000", "https://server2:8443", "server3"],
+        )
+        assert config.urls == [
+            "http://server1:8000",
+            "https://server2:8443",
+            "http://server3",
+        ]
+
+
 class TestWaitForModelValidation:
     """Tests for the readiness-probe flag coherence + bounds validation.
 
