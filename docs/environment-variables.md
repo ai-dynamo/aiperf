@@ -29,6 +29,7 @@ Settings for the InferenceX AgentX scenario family. Controls runtime detection k
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS` | `['context length', 'maximum context', 'context_length_exceeded', 'prompt is too long']` | — | Case-insensitive substring allowlist used to classify a server error response as a context-overflow event. Matched against the raw response body and the OpenAI-style nested 'error.message' field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to support additional inference-server vocabularies (vLLM, TGI, TensorRT-LLM, ...). Empty list disables runtime detection. |
+| `AIPERF_AGENTX_CONTEXT_OVERFLOW_RATE_LIMIT` | `0.01` | ≥ 0.0, ≤ 1.0 | Strict upper bound on the per-run context-overflow rate (context_overflow_count / total_responses) before a scenario submission is flipped to submission_valid=false with reason 'context_overflow_rate_exceeded'. Default 0.01 (1%) matches the scenario spec RFC 2026-04-26 §7. Comparison is strictly greater-than: rate exactly equal to the limit is accepted. Has no effect on non-scenario runs (no --scenario flag) or runs with zero responses. |
 
 ## APISERVER
 
@@ -76,6 +77,8 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
 | `AIPERF_DATASET_MMAP_BASE_PATH` | `None` | — | Base path for memory-mapped dataset files. If None, uses system temp directory. Set to a shared filesystem path for Kubernetes mounted volumes. Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/ |
+| `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `True` | — | If True, AIPerf reuses memory-mapped dataset files across runs whose input bytes, tokenizer identity, and prompt/input settings are byte-identical. Set to False to force every run to re-tokenize and re-write its mmap files. Cache misses still produce byte-identical mmap files to a non-cached run. |
+| `AIPERF_DATASET_MMAP_CACHE_DIR` | `None` | — | Directory holding the content-addressed mmap cache. If None, defaults to ~/.cache/aiperf/dataset_mmap. Each cache entry lives under <dir>/<key>/ and contains dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. No automatic eviction is implemented yet -- delete the directory to reclaim disk. |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
