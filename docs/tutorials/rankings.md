@@ -164,12 +164,38 @@ structured documents with `content` parts for text and media. AIPerf pairs
 `passages`, `images`, and `videos` by index, so each non-empty modality must have
 the same number of entries.
 
+For synthetic rankings inputs, AIPerf generates one image or video per synthetic
+passage when image or video generation is enabled. This keeps the generated
+multimodal documents index-paired.
+
+Run AIPerf with synthetic multimodal rankings inputs:
+
+```bash
+aiperf profile \
+    -m nvidia/llama-nemotron-rerank-vl-1b-v2 \
+    --endpoint-type cohere_rankings \
+    --custom-endpoint /rerank \
+    --url localhost:8080 \
+    --request-count 10 \
+    --rankings-passages-mean 4 \
+    --rankings-passages-stddev 0 \
+    --rankings-passages-prompt-token-mean 32 \
+    --rankings-passages-prompt-token-stddev 0 \
+    --rankings-query-prompt-token-mean 16 \
+    --rankings-query-prompt-token-stddev 0 \
+    --image-width-mean 224 \
+    --image-width-stddev 0 \
+    --image-height-mean 224 \
+    --image-height-stddev 0 \
+    --image-batch-size 1
+```
+
 You can supply images as `data:` URLs (as in the example below), using the usual
 `data:image/<subtype>;base64,<payload>` form, or as absolute `http://` or
 `https://` URLs to a reachable image resource when the rerank server fetches media
 from the network.
 
-Create a multimodal rankings file:
+To use custom multimodal inputs, create a rankings file:
 
 ```bash
 cat <<EOF > multimodal-rankings.jsonl
@@ -178,15 +204,12 @@ cat <<EOF > multimodal-rankings.jsonl
 EOF
 ```
 
-Run AIPerf against a vLLM server. AIPerf keeps `/v2/rerank` as the default Cohere
-path; vLLM examples commonly expose `/rerank`, so override the endpoint path when
-needed:
+Run AIPerf against a vLLM server.
 
 ```bash
 aiperf profile \
-    -m jinaai/jina-reranker-m0 \
+    -m nvidia/llama-nemotron-rerank-vl-1b-v2 \
     --endpoint-type cohere_rankings \
-    --custom-endpoint /rerank \
     --url localhost:8080 \
     --input-file ./multimodal-rankings.jsonl \
     --custom-dataset-type single_turn \

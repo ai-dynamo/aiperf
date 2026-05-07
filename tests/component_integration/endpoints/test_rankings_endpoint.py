@@ -124,3 +124,31 @@ class TestRankingsEndpoint:
         )
 
         assert result.request_count == defaults.request_count
+
+    def test_synthetic_cohere_rankings_multimodal(self, cli: AIPerfCLI):
+        """Synthetic multimodal dataset test for Cohere Rankings endpoint."""
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model jinaai/jina-reranker-m0 \
+                --tokenizer gpt2 \
+                --endpoint-type cohere_rankings \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --rankings-passages-mean 2 \
+                --rankings-passages-stddev 0 \
+                --rankings-passages-prompt-token-mean 16 \
+                --rankings-passages-prompt-token-stddev 0 \
+                --rankings-query-prompt-token-mean 8 \
+                --rankings-query-prompt-token-stddev 0 \
+                --image-width-mean 8 \
+                --image-width-stddev 0 \
+                --image-height-mean 8 \
+                --image-height-stddev 0 \
+                --image-batch-size 1 \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == defaults.request_count
