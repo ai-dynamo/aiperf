@@ -63,7 +63,10 @@ class TestClassifyErrorType:
 
     def test_cause_chain_cancelled(self) -> None:
         error = SimpleNamespace(
-            code=None, type=None, cause_chain=["Request was Cancelled by user"], message=""
+            code=None,
+            type=None,
+            cause_chain=["Request was Cancelled by user"],
+            message="",
         )
         assert _classify_error_type(error) == "cancelled"
 
@@ -75,13 +78,19 @@ class TestClassifyErrorType:
 
     def test_json_decode_error_in_message(self) -> None:
         error = SimpleNamespace(
-            code=None, type=None, cause_chain=[], message="Failed to json decode response"
+            code=None,
+            type=None,
+            cause_chain=[],
+            message="Failed to json decode response",
         )
         assert _classify_error_type(error) == "parse_error"
 
     def test_unknown_error_returns_other(self) -> None:
         error = SimpleNamespace(
-            code=None, type="unknown_type", cause_chain=[], message="something went wrong"
+            code=None,
+            type="unknown_type",
+            cause_chain=[],
+            message="something went wrong",
         )
         assert _classify_error_type(error) == "_OTHER"
 
@@ -217,7 +226,9 @@ class TestTranslateTokenUsage:
         user_config.endpoint.urls = ["http://localhost"]
         user_config.gen_ai_provider = None
 
-        emission = translate("output_token_count", 200.0, record, user_config=user_config)
+        emission = translate(
+            "output_token_count", 200.0, record, user_config=user_config
+        )
         assert emission is not None
         assert emission.spec_metric_name == "gen_ai.client.token.usage"
         assert emission.attributes["gen_ai.token.type"] == "output"
@@ -225,4 +236,7 @@ class TestTranslateTokenUsage:
     def test_unknown_metric_returns_none(self) -> None:
         record = MagicMock()
         user_config = MagicMock()
-        assert translate("some_random_metric", 1.0, record, user_config=user_config) is None
+        assert (
+            translate("some_random_metric", 1.0, record, user_config=user_config)
+            is None
+        )

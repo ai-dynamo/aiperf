@@ -4,9 +4,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from queue import Empty, Full
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -140,12 +138,6 @@ class TestFanoutFlushRetry:
 
     def test_flush_retry_on_log_batch_failure(self) -> None:
         """When log_batch fails, buffer should NOT be cleared (retry on next flush)."""
-        from aiperf.post_processors.otel_streaming_fanout import (
-            OTelStreamingFanoutConfig,
-            run_otel_streaming_fanout,
-        )
-        from multiprocessing import Queue
-        from unittest.mock import patch as mock_patch
 
         # We can't easily test the full fanout process, but we can verify
         # the flush logic by testing the function that drives it.
