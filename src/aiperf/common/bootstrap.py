@@ -68,12 +68,10 @@ def bootstrap_and_run_service(
     import faulthandler
 
     if hasattr(signal, "SIGUSR1"):
-        try:
+        # Already registered, or in a context where signal handlers can't
+        # be installed (best-effort).
+        with contextlib.suppress(ValueError, RuntimeError):
             faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
-        except (ValueError, RuntimeError):
-            # Already registered, or running in a context where signal
-            # handlers cannot be installed. Best-effort.
-            pass
 
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType

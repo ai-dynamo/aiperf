@@ -963,6 +963,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "function-size",
       "src/aiperf/server_metrics/accumulator.py",
       "ServerMetricsAccumulator._compute_endpoint_summaries"
     ],

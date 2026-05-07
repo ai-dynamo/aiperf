@@ -13,10 +13,8 @@ import sys
 # handler in ``aiperf.common.bootstrap.bootstrap_and_run_service`` so
 # the entire process tree is poke-able for hangs.
 if hasattr(signal, "SIGUSR1"):
-    try:
+    with contextlib.suppress(ValueError, RuntimeError):
         faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
-    except (ValueError, RuntimeError):
-        pass
 
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
