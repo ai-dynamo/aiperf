@@ -440,3 +440,158 @@ def test_drain_observer_idempotent_on_already_set_event() -> None:
     callback()
 
     assert progress.all_credits_returned_event.is_set()
+
+
+# ============================================================================
+# Warmup spawn-skip tests
+# ============================================================================
+#
+# Regression for the warmup-hang where AgenticReplayStrategy.handle_credit_return
+# short-circuits warmup (warmup is one-shot per trajectory), so spawned children
+# never advance past their first turn. Without is_final_turn returns,
+# on_child_leaf_reached never fires, _descendant_counts leaks > 0, and
+# has_pending_branch_work() stays True forever — wedging
+# all_credits_returned_event and hanging PhaseRunner indefinitely.
+#
+# Fix: BranchOrchestrator.intercept must short-circuit when credit.phase is
+# WARMUP, before any branch-spawn machinery runs. DAG dispatch is correctly
+# active in PROFILING.
+
+
+def _make_orchestrator_with_branches(
+    branch_ids: list[str],
+) -> tuple[object, MagicMock, AsyncMock]:
+    """Build a BranchOrchestrator whose conversation source declares the given
+    branch_ids on turn 0. Returns (orch, conversation_source, dispatch_first_turn)
+    so callers can assert on spawn calls."""
+    from aiperf.common.enums import ConversationBranchMode
+    from aiperf.timing.branch_orchestrator import BranchOrchestrator
+
+    cs = MagicMock()
+    parent_meta = MagicMock()
+    parent_meta.branches = [
+        MagicMock(
+            branch_id=bid,
+            child_conversation_ids=[f"{bid}-child"],
+            is_background=False,
+            mode=ConversationBranchMode.FORK,
+        )
+        for bid in branch_ids
+    ]
+    parent_meta.turns = [MagicMock(branch_ids=branch_ids)]
+    cs.get_metadata = MagicMock(return_value=parent_meta)
+    cs.start_branch_child = MagicMock(
+        side_effect=lambda **kwargs: MagicMock(
+            x_correlation_id=f"child-{kwargs['child_conversation_id']}"
+        )
+    )
+
+    issuer = MagicMock()
+    dispatch = AsyncMock(return_value=True)
+    issuer.dispatch_first_turn = dispatch
+
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    return orch, cs, dispatch
+
+
+@pytest.mark.component_integration
+@pytest.mark.asyncio
+async def test_intercept_skips_spawn_during_warmup() -> None:
+    """A WARMUP-phase credit return with declared branches MUST NOT spawn
+    children. AgenticReplayStrategy refuses to advance child continuation
+    turns during warmup, so spawned children would never reach
+    is_final_turn — _descendant_counts would leak > 0 forever and
+    has_pending_branch_work() would wedge all_credits_returned_event.
+    Reproduced 100% on H100 + b200-nb at conc=16 with the
+    inferencex-agentx-mvp scenario before the fix."""
+    orch, cs, dispatch_first_turn = _make_orchestrator_with_branches(["root:0"])
+    warmup_credit = Credit(
+        id=1,
+        phase=CreditPhase.WARMUP,
+        conversation_id="conv1",
+        x_correlation_id="root",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns(),
+        parent_correlation_id=None,
+        agent_depth=0,
+    )
+
+    result = await orch.intercept(warmup_credit)
+
+    assert result is False, "warmup intercept must not gate the parent"
+    cs.start_branch_child.assert_not_called()
+    dispatch_first_turn.assert_not_awaited()
+    assert orch.stats.children_spawned == 0
+
+
+@pytest.mark.component_integration
+@pytest.mark.asyncio
+async def test_intercept_spawns_during_profiling() -> None:
+    """Symmetric positive case: PROFILING-phase credits with declared
+    branches MUST still spawn children. The warmup short-circuit must
+    not regress the normal DAG dispatch path."""
+    orch, cs, dispatch_first_turn = _make_orchestrator_with_branches(["root:0"])
+    credit = _make_credit(turn_index=0)
+    assert credit.phase == CreditPhase.PROFILING
+
+    result = await orch.intercept(credit)
+
+    assert result is False, "pure spawn with no gate returns False"
+    assert cs.start_branch_child.call_count == 1
+    assert dispatch_first_turn.await_count == 1
+    assert orch.stats.children_spawned == 1
+
+
+@pytest.mark.component_integration
+@pytest.mark.asyncio
+async def test_intercept_warmup_skip_runs_before_agent_depth_guard() -> None:
+    """The warmup short-circuit must run before the agent_depth guard so
+    that even a hypothetical depth-0 warmup credit with branches declared
+    is rejected. Verifies guard ordering: cleaning_up -> warmup -> child."""
+    orch, _cs, dispatch_first_turn = _make_orchestrator_with_branches(["root:0"])
+    warmup_credit = Credit(
+        id=1,
+        phase=CreditPhase.WARMUP,
+        conversation_id="conv1",
+        x_correlation_id="root",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns(),
+        parent_correlation_id=None,
+        agent_depth=0,
+    )
+
+    assert await orch.intercept(warmup_credit) is False
+    dispatch_first_turn.assert_not_awaited()
+
+
+@pytest.mark.component_integration
+@pytest.mark.asyncio
+async def test_intercept_warmup_skip_does_not_leak_descendant_counts() -> None:
+    """Direct assertion of the wedge-mechanism the fix prevents: after a
+    warmup credit return, _descendant_counts MUST remain empty and
+    has_pending_branch_work() MUST be False. Pre-fix this would leak: the
+    parent would be registered with N descendants, no child would ever
+    leaf-reach (strategy refuses warmup continuation), and the predicate
+    would stay True forever."""
+    orch, _cs, _dispatch = _make_orchestrator_with_branches(["root:0", "root:1"])
+    warmup_credit = Credit(
+        id=1,
+        phase=CreditPhase.WARMUP,
+        conversation_id="conv1",
+        x_correlation_id="root",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns(),
+        parent_correlation_id=None,
+        agent_depth=0,
+    )
+
+    await orch.intercept(warmup_credit)
+
+    assert orch._descendant_counts == {}, (
+        "warmup must not leak descendant tracking — children would never "
+        "leaf-reach and has_pending_branch_work would wedge forever"
+    )
+    assert orch.has_pending_branch_work() is False
