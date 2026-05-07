@@ -11,6 +11,7 @@ from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
+from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import CustomDatasetType
 
 
@@ -67,6 +68,73 @@ class TestMultiTurnCanLoad:
     def test_can_load(self, data, expected):
         """Test various data formats for MultiTurn pydantic validation."""
         assert MultiTurnDatasetLoader.can_load(data) is expected
+
+
+class TestSpeedBenchCanLoad:
+    """Tests for SpeedBenchLoader.can_load() method."""
+
+    @pytest.mark.parametrize(
+        "data,expected",
+        [
+            param(
+                {
+                    "question_id": "speed-coding-1",
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": "Implement binary search."}
+                    ],
+                },
+                True,
+                id="speed_bench_messages",
+            ),
+            param(
+                {
+                    "question_id": "speed-chat-1",
+                    "category": "qa",
+                    "messages": [
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                },
+                True,
+                id="multiple_messages",
+            ),
+            param(
+                {"turns": [{"text": "Turn 1"}]},
+                False,
+                id="generic_multi_turn",
+            ),
+            param(
+                {"question_id": "q1", "category": "coding", "turns": ["old"]},
+                False,
+                id="old_turns_shape",
+            ),
+            param(
+                {"question_id": "q1", "messages": [{"role": "user", "content": "Hi"}]},
+                False,
+                id="missing_category",
+            ),
+            param(
+                {"question_id": "q1", "category": "coding", "messages": []},
+                False,
+                id="empty_messages",
+            ),
+            param(
+                {
+                    "question_id": "q1",
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": SpeedBenchLoader.TURNS_PLACEHOLDER}
+                    ],
+                },
+                False,
+                id="turns_placeholder",
+            ),
+            param(None, False, id="none_data"),
+        ],
+    )
+    def test_can_load(self, data, expected):
+        assert SpeedBenchLoader.can_load(data) is expected
 
 
 class TestRandomPoolCanLoad:
@@ -141,6 +209,17 @@ class TestMooncakeTraceCanLoad:
             # hash_ids only allowed with input_length, not text_input
             param({"text_input": "Hello world", "hash_ids": [123, 456]}, False, id="text_input_with_hash_ids_invalid"),
             param({"text_input": "Hello world"}, True, id="text_input_only"),
+            param(
+                {
+                    "question_id": "speed-coding-1",
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": "Implement binary search."}
+                    ],
+                },
+                False,
+                id="speed_bench_messages",
+            ),
             param({"timestamp": 1000, "session_id": "abc"}, False, id="no_required_fields"),
             param({"output_length": 50}, False, id="only_output_length"),
             param(None, False, id="none_data"),

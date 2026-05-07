@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from aiperf.common.config.user_config import UserConfig
@@ -15,10 +16,9 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
 
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
     benchmarking speculative decoding across diverse semantic domains and
-    input sequence lengths. Each row contains a ``turns`` column with a
-    list of plain strings and a ``category`` column identifying the
-    semantic domain or entropy tier. Only the first turn is used as the
-    benchmark prompt; subsequent turns are discarded.
+    input sequence lengths. Each JSONL row contains a ``question_id``, a
+    ``category`` identifying the semantic domain or entropy tier, and a
+    ``messages`` array of OpenAI-style ``role``/``content`` dictionaries.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance rate
@@ -50,6 +50,10 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
             category: coding
     """
 
+    TURNS_PLACEHOLDER = (
+        "FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH"
+    )
+
     def __init__(
         self,
         filename: str,
@@ -59,6 +63,35 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
     ) -> None:
         self.category = category
         super().__init__(filename=filename, user_config=user_config, **kwargs)
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Return whether a JSON object matches the SPEED-Bench JSONL shape."""
+        if data is None or not isinstance(data, dict):
+            return False
+
+        question_id = data.get("question_id")
+        category = data.get("category")
+        messages = data.get("messages")
+
+        if not isinstance(question_id, str) or not question_id.strip():
+            return False
+        if not isinstance(category, str) or not category.strip():
+            return False
+        if not isinstance(messages, list) or not messages:
+            return False
+
+        return all(
+            isinstance(message, dict)
+            and isinstance(message.get("role"), str)
+            and bool(message["role"].strip())
+            and isinstance(message.get("content"), str)
+            and bool(message["content"].strip())
+            and message["content"] != cls.TURNS_PLACEHOLDER
+            for message in messages
+        )
 
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.

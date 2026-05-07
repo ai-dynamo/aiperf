@@ -353,6 +353,13 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "(e.g. 16 for Bailian, 512 for Mooncake)."
         ),
     )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Filter dataset rows to a specific category value. Used by custom "
+            "loaders that support per-category subsets (e.g. SPEED-Bench)."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -409,10 +416,6 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use true for large datasets (>10 GB) to avoid downloading the full dataset. "
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
-    )
-    category: str | None = Field(
-        default=None,
-        description="Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
     )
     prompt_template: str | None = Field(
         default=None,

@@ -221,6 +221,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 
+        if loader_metadata.category is not None:
+            kwargs["category"] = loader_metadata.category
+
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
         self.loader = LoaderClass(
             filename=self.config.input.file,
