@@ -339,6 +339,83 @@ class TestPreloadConfigStub:
         # Must not raise, must not create cache dirs either.
         assert list(tmp_path.iterdir()) == []
 
+    @pytest.mark.asyncio
+    async def test_skips_stub_when_failed_set_contains_name_even_with_snapshot(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The `failed`-set skip in the stub fan-out applies even when a snapshot
+        dir exists on disk. Forces names_to_load entry by faking _is_hf_cached
+        to False, then makes from_pretrained raise so the name enters `failed`."""
+        name = "hf-internal-testing/llama-tokenizer"
+        snapshot = self._setup_fake_cache(
+            tmp_path, monkeypatch, name, with_config=False
+        )
+        config_path = snapshot / "config.json"
+        assert not config_path.exists()
+
+        with (
+            patch("aiperf.common.tokenizer._is_hf_cached", return_value=False),
+            patch.object(
+                Tokenizer,
+                "from_pretrained",
+                side_effect=RuntimeError("network error"),
+            ),
+        ):
+            await preload_tokenizers({"model": name})
+
+        # Snapshot was on disk, but stub must not be written for failed names.
+        assert not config_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_oserror_on_stub_write_is_swallowed_and_logged(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """OSError while writing the stub config.json is caught and debug-logged."""
+        name = "hf-internal-testing/llama-tokenizer"
+        snapshot = self._setup_fake_cache(
+            tmp_path, monkeypatch, name, with_config=False
+        )
+        config_path = snapshot / "config.json"
+        logger = MagicMock()
+
+        from pathlib import Path as _Path
+
+        real_write_text = _Path.write_text
+
+        def selective_write_text(self, data, *args, **kwargs):
+            if self.name == "config.json":
+                raise OSError("read-only filesystem")
+            return real_write_text(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(_Path, "write_text", selective_write_text)
+
+        with patch.object(Tokenizer, "from_pretrained"):
+            # Must not raise.
+            await preload_tokenizers({"model": name}, logger=logger)
+
+        assert not config_path.exists()
+        debug_msgs = [str(c) for c in logger.debug.call_args_list]
+        assert any("Could not write stub config.json" in m for m in debug_msgs)
+
+    @pytest.mark.asyncio
+    async def test_logs_debug_after_successful_stub_write(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Successful stub write emits a debug log when a logger is provided."""
+        name = "hf-internal-testing/llama-tokenizer"
+        snapshot = self._setup_fake_cache(
+            tmp_path, monkeypatch, name, with_config=False
+        )
+        config_path = snapshot / "config.json"
+        logger = MagicMock()
+
+        with patch.object(Tokenizer, "from_pretrained"):
+            await preload_tokenizers({"model": name}, logger=logger)
+
+        assert config_path.is_file()
+        debug_msgs = [str(c) for c in logger.debug.call_args_list]
+        assert any("Wrote stub config.json" in m for m in debug_msgs)
+
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
 class TestValidatorTiktokenShortCircuit:

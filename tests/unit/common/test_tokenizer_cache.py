@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.tokenizer import Tokenizer, _is_hf_cached
+from aiperf.common.tokenizer import (
+    Tokenizer,
+    _get_revision_snapshot_dir,
+    _is_hf_cached,
+)
 
 
 @pytest.fixture
@@ -121,3 +125,55 @@ class TestFindCachedModelForAlias:
         (hf_cache / "models--org-a--gpt2").mkdir()
         (hf_cache / "models--org-b--gpt2").mkdir()
         assert Tokenizer._find_cached_model_for_alias("gpt2") is None
+
+
+class TestGetRevisionSnapshotDir:
+    """Branch coverage for the _get_revision_snapshot_dir helper."""
+
+    def test_returns_none_when_cache_dir_missing(self, tmp_path, monkeypatch) -> None:
+        nonexistent = tmp_path / "does_not_exist"
+        monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(nonexistent))
+        assert _get_revision_snapshot_dir("any-model", "main") is None
+
+    def test_returns_snapshot_for_exact_match_with_named_ref(self, hf_cache) -> None:
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        _make_revision_snapshot(model_dir, "main", "abc123")
+        result = _get_revision_snapshot_dir("meta-llama/Llama-2-7b-hf", "main")
+        assert result == model_dir / "snapshots" / "abc123"
+
+    def test_resolves_via_alias_when_exact_match_missing(self, hf_cache) -> None:
+        # Single alias match — exact `models--<name>` dir is not present.
+        model_dir = hf_cache / "models--openai-community--gpt2"
+        _make_revision_snapshot(model_dir, "main", "abc123")
+        result = _get_revision_snapshot_dir("gpt2", "main")
+        assert result == model_dir / "snapshots" / "abc123"
+
+    def test_returns_none_when_alias_ambiguous(self, hf_cache) -> None:
+        for org in ("org-a", "org-b"):
+            model_dir = hf_cache / f"models--{org}--gpt2"
+            _make_revision_snapshot(model_dir, "main", "abc123")
+        assert _get_revision_snapshot_dir("gpt2", "main") is None
+
+    def test_returns_none_when_no_alias_match(self, hf_cache) -> None:
+        # Empty cache — neither exact dir nor any alias matches.
+        assert _get_revision_snapshot_dir("nonexistent", "main") is None
+
+    def test_returns_none_when_snapshots_dir_missing(self, hf_cache) -> None:
+        # Model dir exists, but `snapshots/` subdir is absent.
+        (hf_cache / "models--meta-llama--Llama-2-7b-hf").mkdir()
+        assert _get_revision_snapshot_dir("meta-llama/Llama-2-7b-hf", "main") is None
+
+    def test_uses_revision_as_snapshot_name_when_no_refs_file(self, hf_cache) -> None:
+        # No refs/<rev> file: the revision is treated as a direct commit hash.
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        (model_dir / "snapshots" / "abc123").mkdir(parents=True)
+        result = _get_revision_snapshot_dir("meta-llama/Llama-2-7b-hf", "abc123")
+        assert result == model_dir / "snapshots" / "abc123"
+
+    def test_returns_none_when_resolved_snapshot_dir_missing(self, hf_cache) -> None:
+        # refs/main points to a hash whose snapshots/<hash>/ was never created.
+        model_dir = hf_cache / "models--meta-llama--Llama-2-7b-hf"
+        (model_dir / "refs").mkdir(parents=True)
+        (model_dir / "refs" / "main").write_text("def456")
+        (model_dir / "snapshots").mkdir(parents=True)
+        assert _get_revision_snapshot_dir("meta-llama/Llama-2-7b-hf", "main") is None
