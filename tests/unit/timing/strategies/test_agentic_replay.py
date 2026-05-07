@@ -251,7 +251,11 @@ def test_report_warmup_failures_silent_when_no_failures():
 
 
 @pytest.mark.asyncio
-async def test_profiling_setup_seeds_recycle_queue_minus_trajectories():
+async def test_profiling_setup_seeds_recycle_queue_with_full_pool():
+    """PROFILING setup seeds the recycle queue with the FULL dataset pool
+    (including trajectory trace_ids). The pop loop in
+    ``_spawn_from_recycle_or_id`` skips trace_ids whose session is currently
+    active, so duplicate concurrent sessions are still avoided."""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_2", start_turn_index=1),
@@ -269,7 +273,8 @@ async def test_profiling_setup_seeds_recycle_queue_minus_trajectories():
     while not queue.empty():
         queued.append(queue.get_nowait())
 
-    assert sorted(queued) == ["trace_1", "trace_3", "trace_4"]
+    # Full pool in iteration order from dataset_metadata.conversations.
+    assert queued == ["trace_0", "trace_1", "trace_2", "trace_3", "trace_4"]
 
 
 @pytest.mark.asyncio
@@ -327,9 +332,12 @@ async def test_profiling_skips_trajectory_at_last_turn_and_recycles():
     # No resume issued for the trajectory; instead a recycle session at turn 0.
     assert all(idx == 0 for _, idx in captured)
     assert len(captured) == 1
-    # The dispatched session should NOT be the just-recycled trace_0 because
-    # the queue had trace_1 and trace_2 ahead of it.
-    assert captured[0][0] in {"trace_1", "trace_2"}
+    # With the full-pool recycle queue, the head is "trace_0" (iteration
+    # order from dataset_metadata.conversations). The trajectory's session
+    # is discarded from _active_traces inside _spawn_from_recycle_or_id
+    # before the pop loop runs, so trace_0 is popped and dispatched at
+    # turn 0 as the first recycled session.
+    assert captured[0][0] == "trace_0"
 
 
 # =============================================================================
@@ -435,14 +443,17 @@ async def test_handle_credit_return_recycles_on_final_turn():
     )
     await strategy.setup_phase()
 
-    # Recycle queue should currently be ["trace_1", "trace_2"].
+    # Recycle queue should currently be the full pool ["trace_0", "trace_1", "trace_2"].
     initial_queue_size = strategy._recycle_queue.qsize()
-    assert initial_queue_size == 2
+    assert initial_queue_size == 3
 
     # Register the in-flight session's lane bookkeeping (normally done by
     # _execute_profiling); handle_credit_return's recycle path now requires
-    # finished_correlation_id to be in _correlation_to_lane.
+    # finished_correlation_id to be in _correlation_to_lane. Also seed
+    # _active_traces so the new full-pool pop loop's skip-active-on-pop
+    # logic mirrors a real run.
     strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces.add("trace_0")
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
@@ -451,18 +462,26 @@ async def test_handle_credit_return_recycles_on_final_turn():
     final_credit = _make_credit(conversation_id="trace_0", turn_index=3, num_turns=4)
     await strategy.handle_credit_return(final_credit)
 
-    # trace_0 went to the tail; trace_1 was popped from head and dispatched at turn 0.
-    assert issued_sessions == [("trace_1", 0)]
-    # Queue now contains [trace_2, trace_0] (trace_1 popped, trace_0 pushed).
+    # Spawn flow: discard trace_0 from active (was alive); push trace_0 to
+    # tail of [trace_0, trace_1, trace_2] -> [trace_0, trace_1, trace_2, trace_0];
+    # pop head trace_0 (not active anymore, just discarded), dispatch at turn 0.
+    assert issued_sessions == [("trace_0", 0)]
+    # Queue now contains [trace_1, trace_2, trace_0] (head trace_0 popped).
     remaining: list[str] = []
     while not strategy._recycle_queue.empty():
         remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == ["trace_2", "trace_0"]
+    assert remaining == ["trace_1", "trace_2", "trace_0"]
 
 
 @pytest.mark.asyncio
 async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
-    """Single-trace dataset: just-finished trace_id is reused immediately."""
+    """Single-trace dataset: just-finished trace_id is reused immediately.
+
+    With the full-pool recycle queue, a single-trace dataset means the queue
+    holds [trace_0] at setup; the trajectory's session is still alive there
+    (tracked in _active_traces), so the only available pop after re-enqueue
+    is the just-finished trace_0 itself.
+    """
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -475,15 +494,19 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
         trajectories=trajectories,
-        num_traces=1,  # trajectories consume the only trace
+        num_traces=1,  # single-trace dataset
         turns_per_trace=3,
         issuer=issuer,
     )
     await strategy.setup_phase()
-    assert strategy._recycle_queue.qsize() == 0
+    # Full pool: queue is [trace_0] at setup.
+    assert strategy._recycle_queue.qsize() == 1
 
     # Register the in-flight session's lane (normally done by _execute_profiling).
+    # Also seed _active_traces so the new pop loop skips trace_0 while it is
+    # nominally alive — discard happens at the top of _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces.add("trace_0")
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
@@ -491,7 +514,8 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
     final_credit = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(final_credit)
 
-    # trace_0 pushed to empty queue, immediately popped, dispatched at turn 0.
+    # trace_0 discarded from active, pushed to tail, immediately popped and
+    # dispatched at turn 0.
     assert issued_sessions == [("trace_0", 0)]
 
 

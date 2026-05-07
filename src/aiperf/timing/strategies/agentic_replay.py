@@ -96,6 +96,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         self._recycle_queue: asyncio.Queue[str] | None = None
         self._in_flight_recycled: set[str] = set()
+        # Trace_ids whose session is currently dispatched (any turn in flight
+        # or scheduled). Used by ``_spawn_from_recycle_or_id`` to skip
+        # popping a trace whose session is still alive — prevents two
+        # concurrent sessions for the same trace_id, which would otherwise
+        # be possible when the initial recycle queue spans the full pool
+        # (trajectories appear in the queue while their sessions are still
+        # running at PROFILING start).
+        self._active_traces: set[str] = set()
         self._failed_warmup_traces: list[str] = []
         # Track which x_correlation_ids correspond to trajectories in WARMUP
         # so that terminal failures can be attributed to a trace_id.
@@ -132,8 +140,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         WARMUP: nothing - trajectories already built by TrajectorySource at
         TimingManager construction time.
 
-        PROFILING: build the FIFO recycle queue with all loader trace_ids minus
-        the trajectories.
+        PROFILING: build the FIFO recycle queue with the FULL set of loader
+        trace_ids (including trajectory ids). Trajectories run live at
+        PROFILING start (resumed at k_i+1); the pop loop in
+        ``_spawn_from_recycle_or_id`` skips trace_ids whose session is
+        currently active so we never spawn a duplicate concurrent session.
         """
         if self.config.phase == CreditPhase.PROFILING:
             if not self.conversation_source.trajectories:
@@ -143,17 +154,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     "PROFILING can start. Check loader output and warmup failures."
                 )
             self._recycle_queue = asyncio.Queue()
+            # Recycle pool spans the FULL dataset, not (full - trajectories).
+            # Trajectories run live at PROFILING start (resumed at k_i+1) and
+            # are pushed to the queue tail when their session ends; including
+            # them in the initial pool means recycled lanes draw from the
+            # full diversity of dataset_metadata.conversations rather than
+            # being capped at (pool_size - concurrency) distinct trace_ids.
             trajectory_ids = {
                 trajectory.conversation_id
                 for trajectory in self.conversation_source.trajectories
             }
             for conv in self.conversation_source.dataset_metadata.conversations:
-                trace_id = conv.conversation_id
-                if trace_id not in trajectory_ids:
-                    self._recycle_queue.put_nowait(trace_id)
+                self._recycle_queue.put_nowait(conv.conversation_id)
             self.info(
                 f"PROFILING setup: trajectories={len(trajectory_ids)} traces, "
-                f"recycle_queue={self._recycle_queue.qsize()} traces"
+                f"recycle_queue={self._recycle_queue.qsize()} traces (full pool)"
             )
 
     async def execute_phase(self) -> None:
@@ -172,6 +187,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
+            self._active_traces.add(trajectory.conversation_id)
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -206,6 +222,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             session = self.conversation_source.session_for(trajectory)
             self._correlation_to_lane[session.x_correlation_id] = lane
+            self._active_traces.add(trajectory.conversation_id)
             self._mint_marker_for_session(
                 session.x_correlation_id, trajectory.conversation_id, lane
             )
@@ -306,38 +323,23 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         Skipped when the phase has already entered cooldown (stop condition
         fired): in-flight credits returning during cooldown must not re-pop a
         fresh trace from the queue. Cooldown is for finishing, not starting.
-        """
-        # Drop the finished session's marker bookkeeping unconditionally so
-        # every early-return path below leaves the dicts pruned.
-        self._session_marker.pop(finished_correlation_id, None)
 
-        # Lane bookkeeping: the correlation_id should be present. A missing
-        # entry means the per-session bookkeeping invariant has already been
-        # violated upstream (e.g. credit returning twice, or the session was
-        # never registered on dispatch). Log a warning so the misuse is loud,
-        # but fall back to lane 0 so the recycle still progresses (the
-        # alternative — silent skip — leaves the queue head wedged and breaks
-        # the test contract that recycle is unconditional on final-turn
-        # return).
-        if finished_correlation_id not in self._correlation_to_lane:
-            self.warning(
-                lambda: (
-                    f"Recycle: finished_correlation_id={finished_correlation_id!r} "
-                    f"missing from _correlation_to_lane; bookkeeping invariant "
-                    f"violated. Falling back to lane 0 for trace_id={finished_trace_id!r}."
-                )
-            )
-            lane = 0
-        else:
-            lane = self._correlation_to_lane.pop(finished_correlation_id)
+        The initial recycle queue spans the full dataset pool (including
+        trajectory trace_ids whose sessions are running live at PROFILING
+        start). The pop loop skips trace_ids in ``_active_traces`` and
+        re-enqueues them to avoid duplicate concurrent sessions.
+        """
+        # Prune unconditionally so every early-return path leaves dicts clean.
+        self._session_marker.pop(finished_correlation_id, None)
+        self._active_traces.discard(finished_trace_id)
+
+        lane = self._release_lane_for(finished_correlation_id, finished_trace_id)
 
         if self._recycle_queue is None:
             return
 
-        # Unconditional double-recycle guard. Previously gated on __debug__,
-        # which `python -O` strips, silently allowing the duplicate-final-turn
-        # corruption to escape into production. Raise loudly here — this is a
-        # programming error, not a runtime condition we can recover from.
+        # Double-recycle guard. Raise rather than gate on __debug__ — `python -O`
+        # would otherwise let the duplicate-final-turn corruption escape silently.
         if finished_trace_id in self._in_flight_recycled:
             raise RuntimeError(
                 f"Double recycle of trace_id {finished_trace_id!r} - "
@@ -345,18 +347,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
         self._in_flight_recycled.add(finished_trace_id)
 
-        # Re-enqueue the finished trace_id BEFORE checking cooldown so that an
-        # in-flight credit returning during cooldown does not permanently drop
-        # the trace_id from the recycle pool. Cooldown gates *starting* a new
-        # session; preserving FIFO recycle state is independent of that.
+        # Re-enqueue BEFORE the cooldown check so an in-flight credit returning
+        # during cooldown can't drop the trace_id from the recycle pool.
         self._recycle_queue.put_nowait(finished_trace_id)
 
         if not self.stop_checker.can_start_new_session():
             return
 
-        try:
-            next_trace_id = self._recycle_queue.get_nowait()
-        except asyncio.QueueEmpty:
+        next_trace_id = self._pop_next_eligible_trace()
+        if next_trace_id is None:
             return
 
         self._in_flight_recycled.discard(next_trace_id)
@@ -366,10 +365,52 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
+        self._active_traces.add(next_trace_id)
         self._mint_marker_for_session(session.x_correlation_id, next_trace_id, lane)
 
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
+
+    def _release_lane_for(
+        self, finished_correlation_id: str, finished_trace_id: str
+    ) -> int:
+        """Pop and return the lane for a finished correlation_id.
+
+        Missing entry means upstream bookkeeping was violated; log loudly and
+        fall back to lane 0 so recycle still progresses. Silent skip would
+        wedge the queue head.
+        """
+        if finished_correlation_id not in self._correlation_to_lane:
+            self.warning(
+                lambda: (
+                    f"Recycle: finished_correlation_id={finished_correlation_id!r} "
+                    f"missing from _correlation_to_lane; bookkeeping invariant "
+                    f"violated. Falling back to lane 0 for trace_id={finished_trace_id!r}."
+                )
+            )
+            return 0
+        return self._correlation_to_lane.pop(finished_correlation_id)
+
+    def _pop_next_eligible_trace(self) -> str | None:
+        """Pop next queued trace_id whose session isn't currently active.
+
+        Bounded by initial qsize so we never busy-loop in the degenerate
+        small-pool case where every queued trace_id has a live session.
+        """
+        if self._recycle_queue is None:
+            return None
+        scan_budget = self._recycle_queue.qsize()
+        while scan_budget > 0:
+            scan_budget -= 1
+            try:
+                candidate = self._recycle_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return None
+            if candidate in self._active_traces:
+                self._recycle_queue.put_nowait(candidate)
+                continue
+            return candidate
+        return None
 
     def _build_session_for_trace(self, trace_id: str) -> SampledSession | None:
         """Build a fresh SampledSession for a recycled trace_id starting at turn 0."""

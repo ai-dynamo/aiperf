@@ -137,7 +137,11 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
         issuer=issuer,
     )
     await strategy.setup_phase()
+    # Seed lane and _active_traces (the new full-pool pop loop skips alive
+    # trace_ids). The finishing trace is discarded from _active_traces at
+    # the top of _spawn_from_recycle_or_id before the pop loop runs.
     strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces.add("trace_0")
 
     # Mid-trajectory turn (index 2 of 5) errors with context-overflow.
     mid = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=5)
@@ -145,13 +149,18 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
         mid, error="This model's maximum context length is 131072 tokens"
     )
 
-    # Should NOT have dispatched turn 3 of trace_0; should have recycled into
-    # trace_1's turn 0 (the next entry in the FIFO recycle queue).
+    # Should NOT have dispatched turn 3 of trace_0 — overflow short-circuit
+    # terminates the trajectory mid-flight rather than continuing.
     assert ("trace_0", 3) not in issued, (
         f"trajectory should not advance after overflow; got issued={issued}"
     )
-    assert ("trace_1", 0) in issued, (
-        f"recycle should have spawned the next trace's turn 0; got issued={issued}"
+    # With the full-pool recycle queue, the head is trace_0 (iteration order
+    # from dataset_metadata.conversations). After the discard-at-top removes
+    # trace_0 from _active_traces, the pop loop pulls trace_0 and spawns a
+    # fresh session for it at turn 0. This is the spec-correct recycle —
+    # the trajectory's own trace_id is back in the rotation pool.
+    assert ("trace_0", 0) in issued, (
+        f"recycle should have spawned a fresh session at turn 0; got issued={issued}"
     )
 
 
@@ -221,15 +230,22 @@ async def test_final_turn_overflow_recycles_normally():
         issuer=issuer,
     )
     await strategy.setup_phase()
+    # Seed lane and _active_traces (the new full-pool pop loop skips alive
+    # trace_ids; the finishing trace is discarded at the top of
+    # _spawn_from_recycle_or_id before the pop loop runs).
     strategy._correlation_to_lane["xcorr"] = 0
+    strategy._active_traces.add("trace_0")
 
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(
         final, error="context_length_exceeded: prompt too long"
     )
 
-    # Final-turn return always recycles, independent of error status.
-    assert ("trace_1", 0) in issued, (
+    # Final-turn return always recycles, independent of error status. With the
+    # full-pool recycle queue, head=trace_0; after the top-of-function discard
+    # removes trace_0 from _active_traces, the pop loop spawns a fresh session
+    # for trace_0 at turn 0.
+    assert ("trace_0", 0) in issued, (
         f"final-turn return should recycle; got issued={issued}"
     )
 

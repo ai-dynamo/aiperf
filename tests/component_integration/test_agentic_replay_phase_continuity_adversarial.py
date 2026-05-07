@@ -265,9 +265,11 @@ class TestWarmupGraceExceedsEstimate:
         await profiling_strategy.setup_phase()
         await profiling_strategy.execute_phase()
 
-        # Recycle queue holds the non-trajectory traces (6 traces - 3 trajectory = 3).
+        # Recycle queue holds the FULL pool (6 traces), including the 3
+        # trajectory ids; the pop loop skips trace_ids whose session is
+        # currently active.
         assert profiling_strategy._recycle_queue is not None
-        assert profiling_strategy._recycle_queue.qsize() == 3
+        assert profiling_strategy._recycle_queue.qsize() == 6
 
         # Each trajectory resumed at k_i + 1.
         resumed = {
@@ -366,13 +368,16 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
             phase=CreditPhase.PROFILING, source=source, issuer=issuer
         )
         await profiling_strategy.setup_phase()
-        # Initial recycle queue: all non-trajectory traces.
+        # Initial recycle queue spans the FULL dataset pool (including the
+        # trajectory id); the pop loop skips trace_ids whose session is
+        # currently active.
+        all_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
         non_trajectory_ids = {
             c.conversation_id
             for c in source.dataset_metadata.conversations
             if c.conversation_id != trajectory.conversation_id
         }
-        assert profiling_strategy._recycle_queue.qsize() == len(non_trajectory_ids)
+        assert profiling_strategy._recycle_queue.qsize() == len(all_ids)
 
         # _execute_profiling registers the trajectory's correlation_id; we need
         # to dispatch the WARMUP-then-PROFILING resume path so the lane map is
@@ -399,15 +404,21 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         # Exactly one new credit issued: the recycled head, started at turn 0.
         assert len(captured) == 1
         recycled_cid, recycled_turn, _ = captured[0]
-        assert recycled_cid in non_trajectory_ids, (
-            "Recycle pulls from the queue head (a non-trajectory trace), "
-            "not the just-finished trajectory trace"
+        # Under the full-pool initial queue, the queue head is the
+        # trajectory id itself; the strategy discards it from
+        # ``_active_traces`` before the pop loop, so the head is now
+        # non-active and the trajectory replays at turn 0.
+        assert recycled_cid == trajectory.conversation_id, (
+            "Initial queue head IS the trajectory id (full-pool ordering); "
+            "after discarding from active it pops itself"
         )
         assert recycled_turn == 0, (
             "Recycled session must start at turn 0, NOT at the original k_i"
         )
 
-        # The just-finished trajectory trace is now at the queue tail.
+        # The just-finished trajectory trace was pushed to the tail before
+        # the pop, then dispatched off the head; its tail copy remains in
+        # the queue.
         remaining: list[str] = []
         while not profiling_strategy._recycle_queue.empty():
             remaining.append(profiling_strategy._recycle_queue.get_nowait())
@@ -415,13 +426,21 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         assert remaining[-1] == trajectory.conversation_id, (
             "Just-finished trajectory trace must be at the recycle queue tail"
         )
+        # Sanity: non_trajectory_ids set is still part of the residual queue.
+        for nt in non_trajectory_ids:
+            assert nt in remaining
 
     @pytest.mark.asyncio
     async def test_same_trace_id_replays_at_turn_zero_when_picked_by_other_slot(self):
-        """Drains and re-dispatches enough times that the trajectory trace_id
-        comes back around as the recycle queue head, then assert it dispatches
-        at turn_index=0 — byte-exact same trace, starting at turn 0 rather
-        than at k_i."""
+        """Drains and re-dispatches enough times that a trace_id resurfaces
+        from the recycle queue, then assert it dispatches at turn_index=0 —
+        byte-exact same trace, starting at turn 0 rather than at k_i.
+
+        Under the full-pool initial queue, finalizing the trajectory pops
+        the queue head — which is the trajectory id itself (just discarded
+        from ``_active_traces``). Finalizing a second time then surfaces the
+        OTHER trace id from the queue head. Both fresh dispatches must
+        start at turn 0."""
         source = _make_real_source(
             num_traces=2, turns_per_trace=3, concurrency=1, seed=2024
         )
@@ -452,7 +471,8 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         }
         trajectory_xcorr = lane_to_correlation[0]
 
-        # Cycle 1: trajectory finishes, queue head (other_id) plays at 0.
+        # Cycle 1: trajectory finishes. Queue head is the trajectory id
+        # itself (just discarded from active), so it replays at turn 0.
         final_credit_trajectory = _make_credit(
             conversation_id=trajectory.conversation_id,
             turn_index=2,
@@ -461,27 +481,30 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         )
         captured.clear()
         await strategy.handle_credit_return(final_credit_trajectory)
-        assert captured == [(other_id, 0)]
+        assert captured == [(trajectory.conversation_id, 0)], (
+            "Initial queue head IS the trajectory id (full-pool ordering); "
+            "the trajectory must replay at turn 0, not at the original k_i"
+        )
 
-        # The recycled session for other_id was just registered at lane 0.
+        # The recycled session for the trajectory was just registered at lane 0.
         lane_to_correlation = {
             lane: cid for cid, lane in strategy._correlation_to_lane.items()
         }
-        other_xcorr = lane_to_correlation[0]
+        replay_xcorr = lane_to_correlation[0]
 
-        # Cycle 2: other_id finishes, queue head is now trajectory,
-        # which must dispatch at turn 0 (not k_i).
-        final_credit_other = _make_credit(
-            conversation_id=other_id,
+        # Cycle 2: the recycled trajectory session finishes. Queue head is
+        # now ``other_id``, which must dispatch at turn 0.
+        final_credit_replay = _make_credit(
+            conversation_id=trajectory.conversation_id,
             turn_index=2,
             num_turns=3,
-            x_correlation_id=other_xcorr,
+            x_correlation_id=replay_xcorr,
         )
         captured.clear()
-        await strategy.handle_credit_return(final_credit_other)
+        await strategy.handle_credit_return(final_credit_replay)
 
-        assert captured == [(trajectory.conversation_id, 0)], (
-            "When the trajectory trace_id resurfaces from the recycle queue, the "
+        assert captured == [(other_id, 0)], (
+            "When the other trace_id resurfaces from the recycle queue, the "
             "fresh play must start at turn 0, not at the original k_i"
         )
 
@@ -538,7 +561,10 @@ class TestMultiMachineDeterminism:
             "Two independent runs with the same dataset + seed must produce "
             "identical recycle queue order"
         )
-        assert len(order_a) == 12 - 5, "recycle queue = pool minus trajectory"
+        assert len(order_a) == 12, (
+            "recycle queue spans the FULL dataset pool (the pop loop skips "
+            "trace_ids whose session is currently active)"
+        )
 
     @pytest.mark.asyncio
     async def test_different_seeds_produce_distinguishable_trajectories(self):

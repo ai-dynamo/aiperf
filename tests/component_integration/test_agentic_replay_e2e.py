@@ -443,9 +443,11 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
     )
     await profiling.setup_phase()
-    # Recycle queue holds the non-trajectory traces (10 - 4 = 6).
+    # Recycle queue spans the FULL dataset pool (including trajectory ids);
+    # the pop loop in _spawn_from_recycle_or_id skips trace_ids whose
+    # session is currently active.
     trajectory_ids = {trajectory.conversation_id for trajectory in source.trajectories}
-    expected_recycle = 10 - len(trajectory_ids)
+    expected_recycle = len(source.dataset_metadata.conversations)
     assert profiling._recycle_queue is not None
     assert profiling._recycle_queue.qsize() == expected_recycle
 
