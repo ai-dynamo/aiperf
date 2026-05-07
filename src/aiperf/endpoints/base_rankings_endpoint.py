@@ -15,6 +15,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.types import RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.plugin import plugins
 
 
 class BaseRankingsEndpoint(BaseEndpoint):
@@ -182,8 +183,6 @@ class BaseRankingsEndpoint(BaseEndpoint):
         endpoint_type: str,
     ) -> None:
         """Reject media inputs that the selected rankings endpoint does not support."""
-        from aiperf.plugin import plugins
-
         endpoint_metadata = plugins.get_endpoint_metadata(endpoint_type)
         unsupported = []
         if images and not endpoint_metadata.supports_images:
