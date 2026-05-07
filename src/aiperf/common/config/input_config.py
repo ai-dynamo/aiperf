@@ -448,6 +448,18 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.RANDOM_SEED
 
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum input context length (tokens) per conversation. "
+            "DatasetManager tokenizes each conversation's combined content and drops "
+            "those exceeding the limit before mmap. No-op without a tokenizer.",
+        ),
+        CLIParameter(name=("--max-context-length",), group=Groups.INPUT),
+    ] = None
+
     goodput: Annotated[
         Any | None,
         Field(
