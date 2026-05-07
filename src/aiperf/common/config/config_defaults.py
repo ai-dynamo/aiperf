@@ -39,7 +39,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.CHAT
     STREAMING = False
-    URL = "localhost:8000"
+    URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
     API_KEY = None
