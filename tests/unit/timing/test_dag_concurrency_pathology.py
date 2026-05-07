@@ -583,15 +583,16 @@ async def test_stop_flips_during_release_increments_joins_suppressed_only_once()
 
 
 @pytest.mark.asyncio
-async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(monkeypatch):
+async def test_fail_fast_two_simultaneous_child_errors_aborts_parent_once(
+    monkeypatch, force_fail_fast
+):
     """Under fail-fast, two children of the same parent fire
     ``on_child_errored`` concurrently via ``asyncio.gather``. The parent
     should be aborted exactly once (or at most once per orchestrator
     semantics). Sibling cascades must not double-abort the parent.
     """
-    from aiperf.common.environment import Environment
 
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
+    force_fail_fast(True)
     cs = _mk_source(_simple_spawn_metadata(3))
     issuer = _mk_issuer()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)

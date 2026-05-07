@@ -307,10 +307,10 @@ async def test_dispatch_join_turn_raises_when_issuer_lacks_method():
 
 
 @pytest.mark.asyncio
-async def test_child_error_decrements_join_when_not_fail_fast(monkeypatch):
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", False)
+async def test_child_error_decrements_join_when_not_fail_fast(
+    monkeypatch, force_fail_fast
+):
+    force_fail_fast(False)
 
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock(return_value=True)
@@ -344,10 +344,8 @@ async def test_child_error_decrements_join_when_not_fail_fast(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_child_error_fail_fast_aborts_parent(monkeypatch):
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.DAG, "FAIL_FAST", True)
+async def test_child_error_fail_fast_aborts_parent(monkeypatch, force_fail_fast):
+    force_fail_fast(True)
 
     issuer = MagicMock()
     issuer.dispatch_join_turn = AsyncMock()
