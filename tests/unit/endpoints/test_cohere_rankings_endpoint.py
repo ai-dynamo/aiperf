@@ -71,6 +71,20 @@ class TestCohereRankingsEndpoint:
             "documents": ["AI passage"],
         }
 
+    def test_build_payload_direct_audio_rejected(self, converter):
+        """Test direct Cohere payload construction rejects audio input."""
+        with pytest.raises(ValueError, match="does not support audio input"):
+            converter.build_payload(
+                "What is AI?",
+                ["AI passage"],
+                "test-model",
+                audios=["wav,b64audio"],
+            )
+
+    def test_document_count_empty_inputs_returns_zero(self, converter):
+        """Test empty multimodal inputs produce zero documents."""
+        assert converter._document_count(passages=[], images=[], videos=[]) == 0
+
     def test_format_payload_single_passage(self, converter, model_endpoint):
         """Test payload formatting with single passage."""
         turn = Turn(

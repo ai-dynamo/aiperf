@@ -142,6 +142,23 @@ def test_synthetic_images_and_videos_match_passage_count(
         assert len(turn.videos[0].contents) == passage_count
 
 
+def test_generate_video_payloads_skips_empty_generated_video(
+    synthetic_config, mock_tokenizer
+):
+    """Empty generated videos are omitted from synthetic video payloads."""
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+
+    with patch.object(
+        composer.video_generator,
+        "generate",
+        side_effect=["data:video/webm;base64,test", ""],
+    ):
+        video = composer._generate_video_payloads(count=2)
+
+    assert video.name == "video_url"
+    assert video.contents == ["data:video/webm;base64,test"]
+
+
 def test_synthetic_rankings_media_batch_size_zero_disables_media(
     synthetic_config, mock_tokenizer
 ):
