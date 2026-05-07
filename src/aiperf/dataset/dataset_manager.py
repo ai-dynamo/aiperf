@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import gc
 import os
 import shutil
@@ -160,16 +159,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             raise
 
     async def _do_profile_configure(self, message: ProfileConfigureCommand) -> None:
-        """Inner implementation of PROFILE_CONFIGURE handling.
-
-        Fast path: cache HIT — restore mmap files and return.
-
-        Slow path: cache MISS — acquire an exclusive per-key flock so
-        concurrent processes targeting the same key share one tokenize +
-        populate cycle. Re-check the cache under the lock so a waiter that
-        wakes after the winner populates uses the cached entry instead of
-        repeating the work.
-        """
+        """Inner implementation of PROFILE_CONFIGURE handling."""
         cache_hit = self._try_cache_lookup()
         if cache_hit is not None:
             self.info(
@@ -179,38 +169,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             await self._configure_from_cache_hit(cache_hit)
             await self._configure_dataset_client_and_free_memory()
             return
-
-        # When a cache key was computed, serialize the populate path with a
-        # file lock so concurrent jobs don't all repeat the expensive
-        # tokenize. nullcontext when caching is disabled or no key.
-        lock_ctx: contextlib.AbstractAsyncContextManager[Any]
-        if self._cache_key_for_run is not None:
-            lock_ctx = mmap_cache.acquire_cache_lock(self._cache_key_for_run)
-        else:
-            lock_ctx = contextlib.nullcontext()
-
-        async with lock_ctx:
-            await self._configure_dataset_locked()
-
-    async def _configure_dataset_locked(self) -> None:
-        """Run the cache-miss configure pipeline under the populate lock.
-
-        Re-checks the cache (a concurrent process may have populated it
-        while we were blocked on the lock acquire), then drives tokenizer
-        configure + dataset configure + inputs.json + client init, and
-        finally writes the result into the cache on the way out.
-        """
-        if self._cache_key_for_run is not None:
-            hit_under_lock = self._lookup_under_lock()
-            if hit_under_lock is not None:
-                self.info(
-                    f"Memory-mapped dataset cache HIT under lock "
-                    f"(key={hit_under_lock.manifest.cache_key}); "
-                    "another process populated while we waited."
-                )
-                await self._configure_from_cache_hit(hit_under_lock)
-                await self._configure_dataset_client_and_free_memory()
-                return
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.user_config.endpoint.type
@@ -240,7 +198,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         if (
             dataset_type
-            in (CustomDatasetType.RAW_PAYLOAD, CustomDatasetType.INPUTS_JSON)
+            in (
+                CustomDatasetType.RAW_PAYLOAD,
+                CustomDatasetType.INPUTS_JSON,
+            )
             or is_mooncake_payload_mode
         ):
             self.info("Skipping inputs.json generation (payloads are pre-built)")
@@ -253,17 +214,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
-
-    def _lookup_under_lock(self) -> mmap_cache.CacheHit | None:
-        """Re-check the cache for a HIT after the populate lock is held."""
-        assert self._cache_key_for_run is not None
-        try:
-            return mmap_cache.lookup(
-                self._cache_key_for_run, compressed=self._compress_only
-            )
-        except (OSError, ValueError) as e:
-            self.warning(f"Cache re-lookup under lock failed: {e!r}")
-            return None
 
     async def _configure_dataset_client_and_free_memory(self) -> None:
         """Configure the dataset client for serving fallback requests, then free memory."""

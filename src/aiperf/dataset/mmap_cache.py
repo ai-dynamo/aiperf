@@ -39,7 +39,6 @@ Manifest version:
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import os
 import shutil
@@ -52,7 +51,6 @@ from pydantic import Field
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.dataset.mmap_cache_lock import acquire_cache_lock as _acquire_cache_lock
 
 if TYPE_CHECKING:
     from aiperf.common.config import UserConfig
@@ -62,11 +60,6 @@ _logger = AIPerfLogger(__name__)
 MANIFEST_VERSION = 1
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
-
-# Re-exported with cache_dir resolver pre-bound.
-acquire_cache_lock = functools.partial(
-    _acquire_cache_lock, cache_dir_resolver=lambda: cache_dir()
-)
 
 # Bytes hashed in one read pass. 8 MiB strikes a balance between memory use
 # and syscall count for very large input files.

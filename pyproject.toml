@@ -28,7 +28,6 @@ dependencies = [
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
   "datasets>=3.0",
-  "filelock>=3.12", # mmap-cache populate serialization; transitive via huggingface-hub today, declared here for stability.
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5", # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
