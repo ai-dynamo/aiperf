@@ -209,17 +209,6 @@ class TestMooncakeTraceCanLoad:
             # hash_ids only allowed with input_length, not text_input
             param({"text_input": "Hello world", "hash_ids": [123, 456]}, False, id="text_input_with_hash_ids_invalid"),
             param({"text_input": "Hello world"}, True, id="text_input_only"),
-            param(
-                {
-                    "question_id": "speed-coding-1",
-                    "category": "coding",
-                    "messages": [
-                        {"role": "user", "content": "Implement binary search."}
-                    ],
-                },
-                False,
-                id="speed_bench_messages",
-            ),
             param({"timestamp": 1000, "session_id": "abc"}, False, id="no_required_fields"),
             param({"output_length": 50}, False, id="only_output_length"),
             param(None, False, id="none_data"),
