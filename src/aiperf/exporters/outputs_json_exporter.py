@@ -6,20 +6,30 @@ import asyncio
 import aiofiles
 import orjson
 
+from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models.record_models import MetricRecordInfo
+from aiperf.common.models.record_models import MetricRecordInfo, RawRecordInfo
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 
 class OutputsJsonExporter(AIPerfLoggerMixin):
-    """Exports per-request output metadata to outputs.json for downstream post-processing."""
+    """Exports per-request output metadata and response text to outputs.json.
+
+    When raw records are available (--export-level raw), includes the full
+    response text for downstream safety/accuracy evaluation. Otherwise,
+    includes metrics only.
+    """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._user_config = exporter_config.user_config
         self._file_path = self._user_config.output.outputs_json_file
         self._jsonl_path = self._user_config.output.profile_export_jsonl_file
+        self._raw_records_dir = (
+            self._user_config.output.artifact_directory
+            / OutputDefaults.RAW_RECORDS_FOLDER
+        )
 
     def get_export_info(self) -> FileExportInfo:
         """Return export metadata for logging."""
@@ -29,14 +39,19 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
-        """Read per-request records from the JSONL file and write outputs.json."""
+        """Read per-request records and write outputs.json with response text when available."""
         if not self._jsonl_path.exists():
             self.debug(
                 f"JSONL file not found, skipping outputs.json export: {self._jsonl_path}"
             )
             return
 
-        records: list[dict] = await asyncio.to_thread(self._read_and_parse_records)
+        # Load raw records for response text (if available)
+        raw_responses = await asyncio.to_thread(self._load_raw_responses)
+
+        records: list[dict] = await asyncio.to_thread(
+            self._read_and_parse_records, raw_responses
+        )
         records.sort(key=lambda r: r["session_num"])
 
         output = {
@@ -50,7 +65,32 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             await f.write(content)
         self.info(f"Exported {len(records)} records to {self._file_path}")
 
-    def _read_and_parse_records(self) -> list[dict]:
+    def _load_raw_responses(self) -> dict[int, str]:
+        """Load response text from raw record files, keyed by session_num."""
+        responses: dict[int, str] = {}
+        if not self._raw_records_dir.exists():
+            return responses
+
+        for raw_file in self._raw_records_dir.glob("*.jsonl"):
+            with open(raw_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw = RawRecordInfo.model_validate_json(line)
+                    except (ValueError, KeyError) as e:
+                        self.debug(f"Skipping malformed raw record: {e}")
+                        continue
+                    if raw.metadata.benchmark_phase != CreditPhase.PROFILING:
+                        continue
+                    text = self._extract_response_text(raw)
+                    if text:
+                        responses[raw.metadata.session_num] = text
+
+        return responses
+
+    def _read_and_parse_records(self, raw_responses: dict[int, str]) -> list[dict]:
         """Read JSONL and parse profiling records (runs in thread pool)."""
         records: list[dict] = []
         with open(self._jsonl_path) as f:
@@ -61,8 +101,23 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                 record = MetricRecordInfo.model_validate_json(line)
                 if record.metadata.benchmark_phase != CreditPhase.PROFILING:
                     continue
-                records.append(self._build_output_entry(record))
+                entry = self._build_output_entry(record)
+                # Attach response text from raw records if available
+                session_num = record.metadata.session_num
+                entry["response_text"] = raw_responses.get(session_num)
+                records.append(entry)
         return records
+
+    @staticmethod
+    def _extract_response_text(raw: RawRecordInfo) -> str | None:
+        """Extract concatenated response text from raw record responses."""
+        parts: list[str] = []
+        for resp in raw.responses:
+            if hasattr(resp, "text") and resp.text:
+                parts.append(resp.text)
+            elif hasattr(resp, "data") and resp.data:
+                parts.append(str(resp.data))
+        return "".join(parts) if parts else None
 
     @staticmethod
     def _build_output_entry(record: MetricRecordInfo) -> dict:
@@ -80,5 +135,6 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             "request_start_ns": record.metadata.request_start_ns,
             "request_end_ns": record.metadata.request_end_ns,
             "metrics": metrics,
+            "response_text": None,
             "error": record.error.model_dump() if record.error else None,
         }
