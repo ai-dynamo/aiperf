@@ -449,6 +449,7 @@ def _settings_payload_from_user_config(
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
+        "max_context_length": inp.max_context_length,
     }
 
 

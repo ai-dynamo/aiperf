@@ -176,6 +176,7 @@ def _make_user_config(model_names: tuple[str, ...]) -> Any:
     uc.input.use_think_time_only = False
     uc.input.synthesis.max_isl = None
     uc.input.synthesis.max_osl = None
+    uc.input.max_context_length = None
     uc.input.synthesis.should_synthesize.return_value = False
     uc.input.prompt.input_tokens.block_size = None
     uc.tokenizer.trust_remote_code = False
