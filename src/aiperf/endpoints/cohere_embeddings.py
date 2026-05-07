@@ -82,11 +82,11 @@ class CohereEmbeddingsEndpoint(BaseEmbeddingsEndpoint):
             return None
 
         embeddings_obj = json_obj.get("embeddings")
-        embeddings = self._extract_float_embeddings(embeddings_obj)
+        embeddings = self._extract_numeric_embeddings(embeddings_obj)
         usage = self._extract_usage(json_obj)
 
         if embeddings is None:
-            self.debug(lambda: f"No float embeddings found in response: {json_obj}")
+            self.debug(lambda: f"No numeric embeddings found in response: {json_obj}")
             if usage is None:
                 return None
             return ParsedResponse(perf_ns=response.perf_ns, usage=usage)
@@ -97,17 +97,37 @@ class CohereEmbeddingsEndpoint(BaseEmbeddingsEndpoint):
             usage=usage,
         )
 
-    def _extract_float_embeddings(
+    def _extract_numeric_embeddings(
         self, embeddings_obj: Any
     ) -> list[list[float]] | None:
-        """Extract float embeddings from a Cohere response."""
+        """Extract requested numeric embeddings from a Cohere response."""
         if not isinstance(embeddings_obj, dict):
             return None
 
-        value = embeddings_obj.get("float")
-        if not self._is_numeric_embedding_batch(value):
-            return None
-        return value
+        for embedding_type in self._requested_embedding_types():
+            value = embeddings_obj.get(embedding_type)
+            if self._is_numeric_embedding_batch(value):
+                return [[float(component) for component in vector] for vector in value]
+        return None
+
+    def _requested_embedding_types(self) -> tuple[str, ...]:
+        """Return configured embedding type keys, defaulting to float."""
+        extra = dict(self.model_endpoint.endpoint.extra)
+        embedding_types = extra.get("embedding_types")
+        if embedding_types is None:
+            return ("float",)
+
+        if isinstance(embedding_types, str):
+            embedding_types = [embedding_types]
+
+        if isinstance(embedding_types, list):
+            return tuple(
+                embedding_type
+                for embedding_type in embedding_types
+                if isinstance(embedding_type, str)
+            )
+
+        return ("float",)
 
     def _extract_usage(self, json_obj: dict[str, Any]) -> dict[str, int] | None:
         """Normalize Cohere meta.billed_units into AIPerf's usage shape."""

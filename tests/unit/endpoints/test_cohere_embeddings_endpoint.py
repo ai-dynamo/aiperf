@@ -256,6 +256,57 @@ class TestCohereEmbeddingsEndpoint:
         assert parsed.usage.prompt_tokens == 12
         assert parsed.usage.completion_tokens == 0
 
+    def test_parse_response_configured_numeric_embeddings(self):
+        """Configured numeric embedding types should parse from Cohere responses."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.COHERE_EMBEDDINGS,
+            model_name="cohere-embeddings-model",
+            extra=[("embedding_types", ["vendor_numeric"])],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            CohereEmbeddingsEndpoint, model_endpoint
+        )
+        mock_response = create_mock_response(
+            json_data={
+                "embeddings": {"vendor_numeric": [[1, -2], [3, 4]]},
+                "meta": {"billed_units": {"input_tokens": 12}},
+            }
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, EmbeddingResponseData)
+        assert parsed.data.embeddings == [[1.0, -2.0], [3.0, 4.0]]
+        assert parsed.usage is not None
+        assert parsed.usage.prompt_tokens == 12
+
+    def test_parse_response_configured_non_numeric_embeddings_returns_usage_only(
+        self,
+    ):
+        """Configured embedding type keys must still contain numeric embeddings."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.COHERE_EMBEDDINGS,
+            model_name="cohere-embeddings-model",
+            extra=[("embedding_types", ["vendor_numeric"])],
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            CohereEmbeddingsEndpoint, model_endpoint
+        )
+        mock_response = create_mock_response(
+            json_data={
+                "embeddings": {"vendor_numeric": [["not", "numbers"]]},
+                "meta": {"billed_units": {"input_tokens": 6}},
+            }
+        )
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.usage is not None
+        assert parsed.usage.prompt_tokens == 6
+
     @pytest.mark.parametrize("json_data", [None, {}])
     def test_parse_response_without_json_object_returns_none(self, endpoint, json_data):
         """Falsy JSON payloads should return None."""
@@ -265,8 +316,8 @@ class TestCohereEmbeddingsEndpoint:
 
         assert parsed is None
 
-    def test_parse_response_without_float_embeddings_returns_usage_only(self, endpoint):
-        """Non-float embedding payloads should be ignored."""
+    def test_parse_response_base64_embeddings_returns_usage_only(self, endpoint):
+        """Non-numeric embedding payloads should be ignored."""
         mock_response = create_mock_response(
             json_data={
                 "embeddings": {"base64": ["AAAAAA=="]},
