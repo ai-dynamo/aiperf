@@ -401,82 +401,89 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             return {}
         out: dict[str, float] = {}
 
-        def _counter_delta_first_to_last(metric_name: str) -> float | None:
-            total = 0.0
-            found = False
-            for ep in endpoints:
-                for key, entry in ep.metrics.items():
-                    if key.name != metric_name:
-                        continue
-                    vals = entry.data.values
-                    if len(vals) >= 2:
-                        total += float(vals[-1] - vals[0])
-                        found = True
-                    elif len(vals) == 1:
-                        total += float(vals[-1])
-                        found = True
-            return total if found else None
-
-        def _gauge_latest_max(metric_name: str) -> float | None:
-            best: float | None = None
-            for ep in endpoints:
-                for key, entry in ep.metrics.items():
-                    if key.name != metric_name:
-                        continue
-                    vals = entry.data.values
-                    if len(vals) > 0:
-                        v = float(vals[-1])
-                        best = v if best is None else max(best, v)
-            return best
-
-        hits = _counter_delta_first_to_last("vllm:prefix_cache_hits")
-        queries = _counter_delta_first_to_last("vllm:prefix_cache_queries")
+        hits = self._counter_delta(endpoints, "vllm:prefix_cache_hits")
+        queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries")
         if hits is not None and queries and queries > 0:
             out["prefix_cache_hit_rate"] = 100.0 * hits / queries
 
         # External (CPU-offload) prefix cache. Only emit when there has been
-        # any query against the external tier — otherwise a 0/0 division
-        # produces a misleading "ext_cache_hit=0.0%" row mid-run on
-        # offload=none configs that happen to share the metric family with
-        # offload=cpu peers.
-        ext_hits = _counter_delta_first_to_last("vllm:external_prefix_cache_hits")
-        ext_queries = _counter_delta_first_to_last("vllm:external_prefix_cache_queries")
+        # any query against the external tier — a 0/0 division otherwise
+        # produces a misleading "ext_cache_hit=0.0%" row on offload=none
+        # configs that share the metric family with offload=cpu peers.
+        ext_hits = self._counter_delta(endpoints, "vllm:external_prefix_cache_hits")
+        ext_queries = self._counter_delta(
+            endpoints, "vllm:external_prefix_cache_queries"
+        )
         if ext_hits is not None and ext_queries and ext_queries > 0:
             out["external_prefix_cache_hit_rate"] = 100.0 * ext_hits / ext_queries
 
         # GPU KV cache fill (gauge, 0–1 fraction in vLLM v1 → normalize to %).
-        kv = _gauge_latest_max("vllm:kv_cache_usage_perc")
+        # v0 fallback: vllm:gpu_cache_usage_perc.
+        kv = self._gauge_latest_max(endpoints, "vllm:kv_cache_usage_perc")
         if kv is None:
-            # vLLM v0 fallback name.
-            kv = _gauge_latest_max("vllm:gpu_cache_usage_perc")
+            kv = self._gauge_latest_max(endpoints, "vllm:gpu_cache_usage_perc")
         if kv is not None:
             out["kv_cache_usage_pct"] = kv * 100.0 if kv <= 1.0 else kv
 
-        # CPU KV cache fill — only present when the server is configured with
-        # CPU offload (vllm:cpu_cache_usage_perc emitted by
-        # SimpleCPUOffloadConnector). Surfacing this lets you see the CPU
-        # tier filling up before the GPU tier preempts.
-        cpu_kv = _gauge_latest_max("vllm:cpu_cache_usage_perc")
+        # CPU KV cache fill — present only on CPU-offload runs
+        # (SimpleCPUOffloadConnector emits vllm:cpu_cache_usage_perc).
+        cpu_kv = self._gauge_latest_max(endpoints, "vllm:cpu_cache_usage_perc")
         if cpu_kv is not None:
             out["cpu_kv_cache_usage_pct"] = cpu_kv * 100.0 if cpu_kv <= 1.0 else cpu_kv
 
-        # vLLM scheduler queue depth — running + waiting. Useful for spotting
-        # backpressure mid-run before it manifests as preemptions/latency.
-        running = _gauge_latest_max("vllm:num_requests_running")
+        # vLLM scheduler queue depth — running + waiting. Catches backpressure
+        # before it shows up as preemptions / latency.
+        running = self._gauge_latest_max(endpoints, "vllm:num_requests_running")
         if running is not None:
             out["num_running"] = running
-        waiting = _gauge_latest_max("vllm:num_requests_waiting")
+        waiting = self._gauge_latest_max(endpoints, "vllm:num_requests_waiting")
         if waiting is not None:
             out["num_waiting"] = waiting
 
-        # Preemptions — vLLM v1 retracts running requests when KV is
-        # exhausted; SGLang exposes the same concept under `num_retracted_reqs`.
-        # Cumulative since the first observed sample so the mid-run delta is
-        # what you'd expect (any nonzero = backpressure).
-        preempt = _counter_delta_first_to_last("vllm:num_preemptions")
+        # Preemptions — vLLM retracts running requests on KV exhaustion;
+        # SGLang exposes the same concept under num_retracted_reqs. Cumulative
+        # since first observed sample (any nonzero = backpressure).
+        preempt = self._counter_delta(endpoints, "vllm:num_preemptions")
         if preempt is None:
-            preempt = _counter_delta_first_to_last("sglang:num_retracted_reqs")
+            preempt = self._counter_delta(endpoints, "sglang:num_retracted_reqs")
         if preempt is not None:
             out["num_preemptions"] = preempt
 
         return out
+
+    @staticmethod
+    def _counter_delta(endpoints: list, metric_name: str) -> float | None:
+        """Sum (last - first) across endpoints for a counter metric.
+
+        Returns None if no endpoint observed the metric. Single-sample
+        endpoints contribute their lone value (treating "first observed"
+        as the start of the window).
+        """
+        total = 0.0
+        found = False
+        for ep in endpoints:
+            for key, entry in ep.metrics.items():
+                if key.name != metric_name:
+                    continue
+                vals = entry.data.values
+                if len(vals) >= 2:
+                    total += float(vals[-1] - vals[0])
+                    found = True
+                elif len(vals) == 1:
+                    total += float(vals[-1])
+                    found = True
+        return total if found else None
+
+    @staticmethod
+    def _gauge_latest_max(endpoints: list, metric_name: str) -> float | None:
+        """Max of latest gauge values across endpoints, or None if absent."""
+        best: float | None = None
+        for ep in endpoints:
+            for key, entry in ep.metrics.items():
+                if key.name != metric_name:
+                    continue
+                vals = entry.data.values
+                if len(vals) > 0:
+                    v = float(vals[-1])
+                    best = v if best is None else max(best, v)
+        return best
