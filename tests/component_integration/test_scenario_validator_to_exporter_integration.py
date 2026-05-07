@@ -98,6 +98,7 @@ def _user_config(
         if cache_bust_target is not None
         else CacheBustTarget.SYSTEM_PREFIX
     )
+    cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
 
 

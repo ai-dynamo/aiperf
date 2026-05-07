@@ -10,6 +10,8 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
+from aiperf.common.config.prompt_config import CacheBustConfig
+from aiperf.common.enums import CacheBustTarget
 
 
 def _minimal_endpoint() -> EndpointConfig:
@@ -77,10 +79,10 @@ def test_scenario_lock_error_raises_without_unsafe_override(tmp_path):
             scenario="inferencex-agentx-mvp",
         )
     assert "Scenario invariants violated" in str(exc_info.value)
-    # Default UserConfig has benchmark_duration=0 and cache_bust.target=NONE,
-    # both of which violate the inferencex-agentx-mvp invariants. timing_mode
-    # would also conflict, but the validator auto-injects agentic_replay before
-    # the lock check, so it doesn't surface as a violation.
+    # Default UserConfig has benchmark_duration=0, which violates the
+    # inferencex-agentx-mvp invariants. timing_mode and cache_bust.target
+    # would also conflict, but the validator auto-injects agentic_replay /
+    # SYSTEM_PREFIX before the lock check, so neither surfaces as a violation.
     assert "--benchmark-duration" in str(exc_info.value)
 
 
@@ -128,6 +130,15 @@ class TestExplicitlySetFlags:
     def test_inter_turn_delay_cap_explicit_flag_when_omitted(self):
         cfg = LoadGeneratorConfig()
         assert cfg._inter_turn_delay_cap_explicitly_set is False
+
+    def test_cache_bust_target_explicit_flag_when_passed(self):
+        cfg = CacheBustConfig(target=CacheBustTarget.SYSTEM_PREFIX)
+        assert cfg._target_explicitly_set is True
+
+    def test_cache_bust_target_explicit_flag_when_omitted(self):
+        cfg = CacheBustConfig()
+        assert cfg._target_explicitly_set is False
+        assert cfg.target == CacheBustTarget.NONE
 
     def test_extra_inputs_parsed_canonicalizes_dict_input(self):
         cfg = InputConfig(extra={"ignore_eos": True})

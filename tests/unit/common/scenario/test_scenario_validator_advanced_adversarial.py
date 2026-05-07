@@ -60,6 +60,7 @@ def _user_config(
     cfg.input.prompt.cache_bust.target = cache_bust_target
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
+    cfg.input.prompt.cache_bust._target_explicitly_set = False
     return cfg
 
 

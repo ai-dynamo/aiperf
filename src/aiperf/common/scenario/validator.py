@@ -269,19 +269,29 @@ def validate_scenario(
             None,
         )
         actual_cache_bust = getattr(cache_bust_cfg, "target", None)
+        cache_bust_explicit = getattr(cache_bust_cfg, "_target_explicitly_set", False)
         if actual_cache_bust != spec.require_cache_bust:
-            violations.append(
-                ScenarioViolation(
-                    flag="--cache-bust",
-                    current_value=str(actual_cache_bust),
-                    required_value=str(spec.require_cache_bust),
-                    message=(
-                        f"scenario {spec.name!r} requires "
-                        f"cache_bust.target={spec.require_cache_bust}; "
-                        f"got {actual_cache_bust}"
-                    ),
+            if cache_bust_explicit:
+                violations.append(
+                    ScenarioViolation(
+                        flag="--cache-bust",
+                        current_value=str(actual_cache_bust),
+                        required_value=str(spec.require_cache_bust),
+                        message=(
+                            f"scenario {spec.name!r} requires "
+                            f"cache_bust.target={spec.require_cache_bust}; "
+                            f"got {actual_cache_bust}"
+                        ),
+                    )
                 )
-            )
+            elif cache_bust_cfg is not None:
+                cache_bust_cfg.target = spec.require_cache_bust
+                _logger.info(
+                    "Scenario %r: auto-set --cache-bust=%s (was at default %s).",
+                    spec.name,
+                    spec.require_cache_bust,
+                    actual_cache_bust,
+                )
 
     # Reject parameter sweeps for fixed-spec scenarios. `--concurrency`
     # accepts comma-separated lists for sweeping; list-shape values must be

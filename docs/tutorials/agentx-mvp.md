@@ -68,8 +68,7 @@ aiperf profile \
     --num-dataset-entries 739 \
     --concurrency 100 \
     --benchmark-duration 900 \
-    --num-profile-runs 3 \
-    --cache-bust system_prefix
+    --num-profile-runs 3
 ```
 
 That's the whole thing. A few notes:
@@ -149,21 +148,18 @@ flag.
 | `--use-think-time-only` is on | Inter-turn delays use the agent's recorded "think time" only, not "send-to-send time" | Send-to-send delays include the *previous* server's response time, which would unfairly slow your replay if your server is faster than the recording. |
 | `--ignore-trace-delays` is off | Trace-derived inter-turn delays (the recorded `think_time`, see the row above) are not stripped — only clamped (see below) | The whole point of replay is to preserve the agent's pacing. |
 | `--inter-turn-delay-cap-seconds = 60` | Any single inter-turn delay over 60s is clamped to 60s | Real coding sessions have 10-minute coffee-break gaps that would distort steady-state measurement. |
-| `--cache-bust system_prefix` | Inject a unique per-conversation marker into the system message at the start of every play (or, if there is no system message, into the first user turn) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. |
+| `--cache-bust system_prefix` | Inject a unique per-conversation marker into the system message at the start of every play (or, if there is no system message, into the first user turn) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
 | Loader is `semianalysis_cc_traces_weka` or `weka_trace` | The dataset is the public `semianalysisai/cc-traces-weka-042026` HF dataset (via `--public-dataset semianalysis_cc_traces_weka`) or a local copy of the same corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; `--input-file` alone won't auto-detect, you must pass the explicit type). Both produce byte-identical conversations — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against this exact, hash-verifiable corpus so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
-If you forgot to pass `ignore_eos`, `--use-think-time-only`, or
-`--random-seed`, AIPerf injects a sensible value and tells you at INFO log
-level. **`--cache-bust system_prefix` is the one locked setting that the
-validator does NOT auto-inject** — you have to pass it explicitly, or the
-run will refuse to start with a clear error. Same goes for
-`--inter-turn-delay-cap-seconds 60` if you previously had a different value
-explicitly set. If you passed something *conflicting*, AIPerf errors with
-all the violations listed at once — you don't have to fix them one at a
-time.
+If you forgot to pass `ignore_eos`, `--use-think-time-only`, `--cache-bust`,
+or `--random-seed`, AIPerf injects the locked value and tells you at INFO log
+level. The same goes for `--inter-turn-delay-cap-seconds` when you didn't set
+it explicitly. If you *did* pass one of these explicitly with a value that
+conflicts with the scenario, AIPerf errors with all the violations listed at
+once — you don't have to fix them one at a time.
 
 ---
 
@@ -392,11 +388,12 @@ If you're trying to replay a *different* corpus under this scenario, that's
 not a supported submission — but you can pass `--unsafe-override` to run
 anyway; the result will be marked `submission_valid=false`.
 
-**"scenario requires `cache_bust.target=system_prefix`; got `none`"**
-The cache-bust target is one of the locked settings, but unlike
-`ignore_eos` and `--use-think-time-only` it isn't auto-injected by the
-validator. You have to pass `--cache-bust system_prefix` on the command
-line. If you genuinely need a different cache-bust target for an ablation
+**"scenario requires `cache_bust.target=system_prefix`; got `<other>`"**
+You explicitly passed `--cache-bust <other>` (e.g. `system_suffix` or `none`)
+alongside `--scenario`, and AIPerf refuses to silently override an explicit
+user choice. If you didn't pass `--cache-bust` at all, the validator
+auto-injects `system_prefix` and you'll never see this error. If you
+genuinely need a different cache-bust target for an ablation
 study, pass `--unsafe-override` and accept the
 `submission_valid: false` stamp.
 
