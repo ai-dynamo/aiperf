@@ -9,6 +9,23 @@ from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
 
+def _coalesce_input_to_text(data: Any) -> Any:
+    """Map JSONL ``input`` onto ``text`` when ``text`` is absent or identical (OpenAI-style exports)."""
+    if not isinstance(data, dict):
+        return data
+    raw_input = data.get("input")
+    text = data.get("text")
+    if raw_input is None:
+        return data
+    if text is not None and text != raw_input:
+        raise ValueError("Cannot specify both 'input' and 'text' with different values")
+    out = dict(data)
+    if text is None:
+        out["text"] = raw_input
+    out.pop("input", None)
+    return out
+
+
 class SingleTurn(AIPerfBaseModel):
     """Defines the schema for single-turn data.
 
@@ -66,6 +83,11 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def coalesce_input_key(cls, data: Any) -> Any:
+        return _coalesce_input_to_text(data)
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -162,6 +184,11 @@ class RandomPool(AIPerfBaseModel):
         None,
         description="List of video strings or Video objects format",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def coalesce_input_key(cls, data: Any) -> Any:
+        return _coalesce_input_to_text(data)
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "RandomPool":

@@ -22,6 +22,27 @@ from aiperf.plugin.enums import CustomDatasetType
 class TestRandomPool:
     """Tests for RandomPool model validation and functionality."""
 
+    def test_create_with_input_alias_for_text(self):
+        """RandomPool must map 'input' to 'text' for compatibility with OpenAI-style JSONL exports."""
+        data = RandomPool.model_validate(
+            {"type": "random_pool", "input": "What is machine learning?"}
+        )
+        assert data.text == "What is machine learning?"
+
+    def test_input_and_text_conflict_raises(self):
+        """Providing 'input' and 'text' with different values must raise a ValidationError."""
+        with pytest.raises(ValueError, match="input.*text"):
+            RandomPool.model_validate(
+                {"type": "random_pool", "input": "a", "text": "b"}
+            )
+
+    def test_input_and_text_same_value_accepted(self):
+        """When input and text carry the same value, coalescing should succeed silently."""
+        data = RandomPool.model_validate(
+            {"type": "random_pool", "input": "hello", "text": "hello"}
+        )
+        assert data.text == "hello"
+
     def test_create_with_text_only(self):
         """Test creating RandomPool with simple text."""
         data = RandomPool(text="What is machine learning?")
