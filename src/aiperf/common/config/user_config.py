@@ -899,9 +899,7 @@ class UserConfig(BaseConfig):
 
         if self.otel_url is None:
             # Warn/reject if OTel secondary options set without --otel-url.
-            has_otel_secondary = bool(
-                self.stream or self.otel_resource_attributes
-            )
+            has_otel_secondary = bool(self.stream or self.otel_resource_attributes)
             if has_otel_secondary:
                 raise ValueError(
                     "--stream and --otel-resource-attributes "

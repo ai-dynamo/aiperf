@@ -231,15 +231,15 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                     try:
                         from mlflow.exceptions import MlflowException
 
-                        if isinstance(exc, MlflowException) and getattr(
-                            exc, "error_code", None
-                        ) == "RESOURCE_DOES_NOT_EXIST":
+                        if (
+                            isinstance(exc, MlflowException)
+                            and getattr(exc, "error_code", None)
+                            == "RESOURCE_DOES_NOT_EXIST"
+                        ):
                             is_resource_missing = True
                     except ImportError:
                         # Fallback for older mlflow versions without error_code.
-                        is_resource_missing = (
-                            "RESOURCE_DOES_NOT_EXIST" in repr(exc)
-                        )
+                        is_resource_missing = "RESOURCE_DOES_NOT_EXIST" in repr(exc)
                 if is_resource_missing:
                     self.warning(
                         f"parent_run_id {resolved_parent_run_id} not found; "
