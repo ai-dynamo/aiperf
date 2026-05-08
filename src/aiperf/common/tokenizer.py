@@ -137,8 +137,26 @@ def _find_hf_cache_aliases(name: str) -> list[Path]:
     ]
 
 
+def _is_within(child: Path, parent: Path) -> bool:
+    """Return True iff *child* resolves to a path inside *parent*.
+
+    Resolution follows symlinks, so a symlinked sibling outside *parent* is
+    rejected. Used to reject path-traversal attempts from a user-controlled
+    revision string.
+    """
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _get_revision_snapshot_dir(name: str, revision: str) -> Path | None:
-    """Return the cached HF snapshot dir for ``(name, revision)``, or None."""
+    """Return the cached HF snapshot dir for ``(name, revision)``, or None.
+
+    Rejects revisions that would resolve outside the model's snapshots/
+    directory (e.g. ``../sibling`` or absolute paths).
+    """
     from huggingface_hub.constants import HF_HUB_CACHE
 
     cache_dir = Path(HF_HUB_CACHE)
@@ -158,11 +176,14 @@ def _get_revision_snapshot_dir(name: str, revision: str) -> Path | None:
     if not snapshots_dir.is_dir():
         return None
 
-    refs_file = model_dir / "refs" / revision
-    if refs_file.is_file():
+    refs_dir = model_dir / "refs"
+    refs_file = refs_dir / revision
+    if _is_within(refs_file, refs_dir) and refs_file.is_file():
         snap = snapshots_dir / refs_file.read_text().strip()
     else:
         snap = snapshots_dir / revision
+    if not _is_within(snap, snapshots_dir):
+        return None
     return snap if snap.is_dir() else None
 
 
