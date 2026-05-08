@@ -368,6 +368,40 @@ class TestHFConversationDatasetLoader:
         assert conversations[0].turns[0].images == []
         assert len(conversations[1].turns[0].images) == 1
 
+    async def test_skips_truncated_pil_image_at_load_time(self, user_config):
+        # Lazy PIL Image (from PILImage.open on truncated bytes) passes the
+        # isinstance(PILImage.Image) check but raises OSError when _pil_to_image
+        # forces re-encode. Locks in the symmetric try/except on the PIL branch
+        # so HF decode=True datasets carrying a corrupt lazy image are also
+        # skipped instead of aborting the loader.
+        full = _jpeg_bytes(256, 256)
+        truncated_pil = PILImage.open(io.BytesIO(full[: int(len(full) * 0.95)]))
+        good_pil = _make_pil_image()
+        loader = HFConversationDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="lmarena-ai/VisionArena-Chat",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            image_column="images",
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [{"role": "user", "content": "Truncated PIL"}],
+                    "images": [truncated_pil],
+                },
+                {
+                    "conversation": [{"role": "user", "content": "Good"}],
+                    "images": [good_pil],
+                },
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        assert conversations[0].turns[0].images == []
+        assert len(conversations[1].turns[0].images) == 1
+
     async def test_no_images_when_image_column_not_set(self, loader):
         data = {
             "dataset": [{"conversation": [{"role": "user", "content": "Text only"}]}]

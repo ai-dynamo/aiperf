@@ -79,23 +79,31 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         with ``Image(decode=False)``, e.g. VisionArena, return raw byte dicts).
 
         Path-only dicts (``bytes is None``) aren't handled — VisionArena (the
-        dataset that motivated this fix) embeds bytes inline. The byte-decode
-        path catches both header-detection errors (``UnidentifiedImageError``)
-        and load-time errors raised when ``_pil_to_image`` re-encodes
-        (``OSError`` from truncated payloads), so a single bad image doesn't
-        abort the loader.
+        dataset that motivated this fix) embeds bytes inline; we log a debug
+        message so an operator pointing aiperf at a path-only dataset can see
+        why ``inputs.json`` is text-only. Both branches are wrapped in the same
+        ``try`` so header-detection errors (``UnidentifiedImageError``) and
+        load-time errors raised when ``_pil_to_image`` re-encodes (``OSError``
+        from truncated payloads) skip the bad image instead of aborting the
+        loader.
         """
         value = row.get(image_column)
         items = value if isinstance(value, list) else [value]
         for item in items:
-            if isinstance(item, PILImage.Image):
-                return [self._pil_to_image(item)]
-            if isinstance(item, dict) and item.get("bytes"):
-                try:
+            try:
+                if isinstance(item, PILImage.Image):
+                    return [self._pil_to_image(item)]
+                if not isinstance(item, dict):
+                    continue
+                if item.get("bytes"):
                     pil = PILImage.open(io.BytesIO(item["bytes"]))
                     return [self._pil_to_image(pil)]
-                except (OSError, PILImage.UnidentifiedImageError):
-                    continue
+                if item.get("path"):
+                    self.debug(
+                        f"path-only HF image dict not supported: {item.get('path')}"
+                    )
+            except (OSError, PILImage.UnidentifiedImageError):
+                continue
         return []
 
     def _extract_videos(self, row: dict[str, Any], video_column: str) -> list[Video]:
