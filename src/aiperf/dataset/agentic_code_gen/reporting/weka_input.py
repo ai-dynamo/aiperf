@@ -152,31 +152,55 @@ def load_weka_as_parsed(
     return parsed
 
 
+def infer_weka_block_size(path: Path, max_context_length: int | None = None) -> int:
+    """Return the single block_size used by matching weka trace files."""
+    block_sizes: set[int] = set()
+    for trace in _load_weka_traces(path):
+        if (
+            max_context_length is not None
+            and _parent_peak_input_length(trace) > max_context_length
+        ):
+            continue
+        block_sizes.add(trace.block_size)
+    if not block_sizes:
+        raise ValueError("No weka traces matched the input")
+    if len(block_sizes) > 1:
+        values = ", ".join(str(v) for v in sorted(block_sizes))
+        raise ValueError(f"Weka traces use multiple block sizes: {values}")
+    return next(iter(block_sizes))
+
+
 def parsed_to_sim_sessions(
     parsed: dict[str, list[ParsedTurn]],
 ) -> list[dict]:
     """Convert ParsedTurn sessions to the dict shape `render_simulation` expects.
 
-    Mirrors `trace.load_simulation_sessions` but operates in-memory rather
-    than reading a JSONL file. cumulative_input_length is the running sum
-    of input + output tokens up to and including the current turn's input.
+    Weka trace input_length is already cumulative context at that turn. The
+    simulation shape also includes per-turn incremental input_length, so derive
+    the delta from the previous cumulative input and output.
     """
     result: list[dict] = []
     for session_id, turns in parsed.items():
-        cumulative = 0
+        prev_input_length = 0
+        prev_output_length = 0
         sim_turns: list[dict] = []
-        for turn in turns:
-            cumulative += turn.input_length
+        for i, turn in enumerate(turns):
+            input_delta = (
+                turn.input_length
+                if i == 0
+                else max(turn.input_length - prev_input_length - prev_output_length, 0)
+            )
             sim_turns.append(
                 {
-                    "input_length": turn.input_length,
+                    "input_length": input_delta,
                     "output_length": turn.output_length,
                     "delay_ms": turn.delay_ms,
                     "hash_ids": turn.hash_ids,
-                    "cumulative_input_length": cumulative,
+                    "cumulative_input_length": turn.input_length,
                 }
             )
-            cumulative += turn.output_length
+            prev_input_length = turn.input_length
+            prev_output_length = turn.output_length
 
         first = turns[0] if turns else None
         result.append(

@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.dataset.agentic_code_gen.reporting.weka_input import load_weka_as_parsed
+from aiperf.dataset.agentic_code_gen.reporting.weka_input import (
+    infer_weka_block_size,
+    load_weka_as_parsed,
+)
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "weka_traces"
 
@@ -128,7 +131,10 @@ def test_parsed_to_sim_sessions_shape() -> None:
     # cumulative += input_length (before append), then cumulative += output_length.
     assert t0["cumulative_input_length"] == 200
 
-    assert t1["input_length"] == 250
+    assert t1["input_length"] == 20
     assert t1["delay_ms"] == pytest.approx(5000.0)
-    # 200 (in0) + 30 (out0) + 250 (in1) = 480
-    assert t1["cumulative_input_length"] == 480
+    assert t1["cumulative_input_length"] == 250
+
+
+def test_infer_weka_block_size_from_trace_files() -> None:
+    assert infer_weka_block_size(FIXTURES / "simple.json") == 64
