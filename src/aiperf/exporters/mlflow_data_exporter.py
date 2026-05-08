@@ -193,13 +193,6 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
         existing_metadata = self._load_existing_metadata()
         existing_live_run_id = self._resolve_live_streaming_run_id(existing_metadata)
-        existing_live_run_name = existing_metadata.get("run_name")
-        run_name = self._run_name
-        if run_name is None and isinstance(existing_live_run_name, str):
-            normalized_run_name = existing_live_run_name.strip()
-            if normalized_run_name:
-                run_name = normalized_run_name
-        run_name = run_name or self._derive_default_run_name()
         timestamp_ms = int(time.time() * 1000)
         metric_payload = self._build_metric_payload()
         param_payload = self._build_param_payload()
@@ -216,12 +209,20 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             run_context = mlflow.start_run(run_id=existing_live_run_id)
         else:
             resolved_parent_run_id = self._user_config.mlflow_parent_run_id
+            # Fresh run: compute the name up front so _start_new_run can pass it
+            # to mlflow.start_run. Reused runs keep the name MLflow already stored.
+            new_run_name = self._run_name or self._derive_default_run_name()
             run_context, resolved_parent_run_id = self._start_new_run(
-                mlflow, run_name, resolved_parent_run_id
+                mlflow, new_run_name, resolved_parent_run_id
             )
 
         with run_context as run:
             run_id = run.info.run_id
+            # Authoritative run name = the name MLflow actually has on disk.
+            # On reuse, the fanout may have let MLflow auto-generate one when
+            # the user did not pass --mlflow-run-name, so re-reading from the
+            # run info is the only way to avoid a metadata / MLflow desync.
+            run_name = run.info.run_name or self._derive_default_run_name()
 
             # Log batched metrics/params/tags atomically (single round-trip).
             metrics = [

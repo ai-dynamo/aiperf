@@ -20,6 +20,7 @@ from aiperf.common.redact import (
     redact_cli_command,
     redact_headers,
     redact_string,
+    redact_url,
 )
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 
@@ -1278,6 +1279,67 @@ class TestAioHttpTraceRedaction:
         assert trace_data.request_headers["Authorization"] == REDACTED_VALUE
         assert trace_data.request_headers["X-API-Key"] == REDACTED_VALUE
         assert trace_data.request_headers["Content-Type"] == "application/json"
+
+
+# =============================================================================
+# redact_url
+# =============================================================================
+
+
+class TestRedactUrl:
+    """Tests for redact_url() — strip userinfo from URLs without false positives."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param(
+                "https://user:pass@host.com/api",
+                f"https://{REDACTED_VALUE}@host.com/api",
+                id="scheme-with-userinfo",
+            ),
+            param(
+                "http://user:pass@host.com:8080",
+                f"http://{REDACTED_VALUE}@host.com:8080",
+                id="scheme-userinfo-with-port",
+            ),
+            param(
+                "https://user:pass@[::1]:8080/path",
+                f"https://{REDACTED_VALUE}@[::1]:8080/path",
+                id="scheme-userinfo-ipv6",
+            ),
+            param(
+                "user:pass@host:8080",
+                f"{REDACTED_VALUE}@host:8080",
+                id="bare-userinfo",
+            ),
+        ],
+    )  # fmt: skip
+    def test_userinfo_is_redacted(self, url: str, expected: str):
+        assert redact_url(url) == expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://localhost:5000", id="no-userinfo"),
+            param(
+                "https://host.com/api/users@example.com",
+                id="at-in-path",
+            ),
+            param(
+                "https://host.com/?email=a@b.com",
+                id="at-in-query",
+            ),
+            param(
+                "https://host.com/path?q=a@b.com&x=y",
+                id="at-in-query-with-extra-params",
+            ),
+            param("https://host.com/path#frag@tag", id="at-in-fragment"),
+            param("", id="empty-string"),
+        ],
+    )  # fmt: skip
+    def test_url_without_userinfo_is_unchanged(self, url: str):
+        """@ appearing in path, query, or fragment must not trigger redaction."""
+        assert redact_url(url) == url
 
 
 # =============================================================================

@@ -37,6 +37,9 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         "log_batch_calls": [],
         "artifacts": [],
         "artifact_contents": {},
+        # run_id -> pre-existing run_name (simulates a live-streaming run that
+        # MLflow already auto-named before the deferred exporter starts).
+        "live_run_names": {},
     }
     default_run_id = "run-123"
 
@@ -76,11 +79,12 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
             )
 
     class FakeRunContext:
-        def __init__(self, run_id: str) -> None:
+        def __init__(self, run_id: str, run_name: str | None) -> None:
             self._run_id = run_id
+            self._run_name = run_name
 
         def __enter__(self) -> Any:
-            info = types.SimpleNamespace(run_id=self._run_id)
+            info = types.SimpleNamespace(run_id=self._run_id, run_name=self._run_name)
             return types.SimpleNamespace(info=info)
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -102,7 +106,14 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         state["run_names"].append(run_name)
         state["run_ids"].append(run_id)
         selected_run_id = run_id or default_run_id
-        return FakeRunContext(selected_run_id)
+        # Mimic MLflow: when an existing run is reused via run_id, the stored
+        # run_name is whatever it was assigned at creation time (tracked via
+        # `state["live_run_names"]` if the test installed one).
+        if run_id is not None:
+            selected_run_name = state.get("live_run_names", {}).get(run_id)
+        else:
+            selected_run_name = run_name
+        return FakeRunContext(selected_run_id, selected_run_name)
 
     def log_artifact(local_path: str, artifact_path: str | None = None) -> None:
         state["artifacts"].append((local_path, artifact_path))
@@ -356,6 +367,13 @@ class TestMLflowDataExporter:
         (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(metadata))
 
         state = _install_fake_mlflow_modules(monkeypatch)
+        # Simulate the live-streaming fanout having let MLflow auto-name the
+        # run (the user did not pass --mlflow-run-name). The deferred
+        # exporter must propagate that MLflow-assigned name into the final
+        # mlflow_export.json, not the stale name from the live metadata.
+        mlflow_assigned_name = "bustling-kit-384"
+        state["live_run_names"][live_run_id] = mlflow_assigned_name
+
         config = ExporterConfig(
             results=sample_results,
             user_config=mlflow_user_config,
@@ -379,6 +397,9 @@ class TestMLflowDataExporter:
         )
         assert written_metadata["run_id"] == live_run_id
         assert written_metadata["reused_live_run"] is True
+        # Regression: the final metadata must use the MLflow-assigned run name
+        # (not the stale placeholder written by the live-streaming fanout).
+        assert written_metadata["run_name"] == mlflow_assigned_name
         uploaded_metadata = orjson.loads(
             state["artifact_contents"][str(tmp_path / "mlflow_export.json")]
         )

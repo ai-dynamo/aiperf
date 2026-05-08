@@ -38,6 +38,9 @@ def _install_fake_mlflow_with_parent_tracking() -> dict[str, Any]:
         "start_run_calls": [],
         "artifacts_uploaded": {},
         "run_id_counter": 0,
+        # run_id -> pre-existing run_name (simulates a live-streaming run that
+        # MLflow already named before the deferred exporter reuses it).
+        "live_run_names": {},
     }
 
     class FakeMetric:
@@ -57,11 +60,12 @@ def _install_fake_mlflow_with_parent_tracking() -> dict[str, Any]:
             pass
 
     class FakeRunContext:
-        def __init__(self, run_id: str) -> None:
+        def __init__(self, run_id: str, run_name: str | None) -> None:
             self._run_id = run_id
+            self._run_name = run_name
 
         def __enter__(self) -> Any:
-            info = types.SimpleNamespace(run_id=self._run_id)
+            info = types.SimpleNamespace(run_id=self._run_id, run_name=self._run_name)
             return types.SimpleNamespace(info=info)
 
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -81,7 +85,14 @@ def _install_fake_mlflow_with_parent_tracking() -> dict[str, Any]:
         state["start_run_calls"].append(kwargs)
         run_id = kwargs.get("run_id") or f"new-run-{state['run_id_counter']}"
         state["run_id_counter"] += 1
-        return FakeRunContext(run_id)
+        # Mimic MLflow: reusing by run_id returns the stored run_name (if the
+        # test registered one); a fresh start_run echoes back the supplied name
+        # or None when the caller did not pass one.
+        if kwargs.get("run_id") is not None:
+            run_name = state.get("live_run_names", {}).get(kwargs["run_id"])
+        else:
+            run_name = kwargs.get("run_name")
+        return FakeRunContext(run_id, run_name)
 
     def log_artifact(local_path: str, artifact_path: str | None = None) -> None:
         state["artifacts_uploaded"][local_path] = Path(local_path).read_bytes()

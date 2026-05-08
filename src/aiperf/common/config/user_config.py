@@ -924,7 +924,6 @@ class UserConfig(BaseConfig):
             self.mlflow_artifact_globs = normalized_globs
 
         if self.mlflow_tracking_uri is None:
-            # Warn if secondary mlflow flags are set without the primary URI.
             has_secondary = (
                 self.mlflow_experiment != MLflowDefaults.EXPERIMENT
                 or self.mlflow_run_name is not None
@@ -933,10 +932,13 @@ class UserConfig(BaseConfig):
                 or self.mlflow_parent_run_id is not None
             )
             if has_secondary:
-                raise ValueError(
+                # Warn (don't raise): users commonly pre-seed MLflow flags in a
+                # shared config profile and only pass --mlflow-tracking-uri on
+                # some runs. Raising here would break that workflow.
+                _logger.warning(
                     "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
                     "--mlflow-artifact-glob, and --mlflow-parent-run-id "
-                    "require --mlflow-tracking-uri to be set."
+                    "are ignored because --mlflow-tracking-uri is not set."
                 )
             return self
 

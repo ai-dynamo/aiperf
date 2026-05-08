@@ -136,9 +136,15 @@ def redact_url(url: str) -> str:
     Handles both scheme-prefixed (http://user:pass@host) and bare (user:pass@host) URLs.
     Returns the URL unchanged if no credentials are embedded.
     """
-    # Scheme-prefixed: http://user:pass@host or https://user:pass@host
-    result = re.sub(r"(https?://)([^@]+)@", r"\1" + REDACTED_VALUE + "@", url)
-    if result != url:
+    # Scheme-prefixed: http://user:pass@host. Restrict the userinfo segment to the
+    # authority component by forbidding /, ?, # — otherwise '@' in a path (e.g.
+    # `/users@example.com`) or a query string (e.g. `?email=a@b.com`) would be
+    # matched as if it were userinfo and the URL would be silently mangled.
+    result = re.sub(r"(https?://)([^@/?#]+)@", r"\1" + REDACTED_VALUE + "@", url)
+    # Once a scheme is present, do not fall through to the bare-userinfo regex:
+    # that regex matches on ^[^@:]+:[^@]+@ which would eat `https://host/?a@b`
+    # starting from the `https:` prefix.
+    if result != url or "://" in url:
         return result
     # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
     return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)

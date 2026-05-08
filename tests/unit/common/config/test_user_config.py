@@ -737,6 +737,22 @@ class TestMLflowConfig:
         assert config.mlflow_enabled is True
         assert config.mlflow_tracking_uri == "http://localhost:5000"
 
+    def test_mlflow_secondary_flags_without_tracking_uri_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """Secondary MLflow flags without --mlflow-tracking-uri should warn,
+        not raise — users commonly pre-seed them in a shared config profile.
+        """
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            config = make_config(mlflow_experiment="pre-seeded-experiment")
+        assert config.mlflow_enabled is False
+        assert any(
+            "--mlflow-experiment" in rec.message and "ignored" in rec.message
+            for rec in caplog.records
+        )
+
 
 # =============================================================================
 # Load Generator Validation Tests
