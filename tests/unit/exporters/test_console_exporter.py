@@ -109,9 +109,9 @@ class TestConsoleExporter:
         [
             # ERROR_ONLY flags - always hidden
             (ErrorRequestCountMetric.tag, False),  # ERROR_ONLY flag
-            # NO_CONSOLE flags - hidden
-            (BenchmarkDurationMetric.tag, False),  # NO_CONSOLE flag
-            (OutputTokenCountMetric.tag, False),  # NO_CONSOLE flag
+            # console_group=NONE - hidden
+            (BenchmarkDurationMetric.tag, False),  # console_group=NONE
+            (OutputTokenCountMetric.tag, False),  # console_group=NONE
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag
             # INTERNAL flags - hidden
             (CreditDropLatencyMetric.tag, False),  # INTERNAL flag

@@ -3,7 +3,12 @@
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, MetricFlags, ModelSelectionStrategy
+from aiperf.common.enums import (
+    CreditPhase,
+    MetricConsoleGroup,
+    MetricFlags,
+    ModelSelectionStrategy,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
@@ -127,7 +132,7 @@ class TestRequestedOSLMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert RequestedOSLMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert RequestedOSLMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert RequestedOSLMetric.console_group == MetricConsoleGroup.NONE
         assert RequestedOSLMetric.has_flags(MetricFlags.INTERNAL)
 
 
@@ -208,7 +213,7 @@ class TestOSLMismatchDiffMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert OSLMismatchDiffMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert OSLMismatchDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert OSLMismatchDiffMetric.console_group == MetricConsoleGroup.NONE
 
 
 class TestOSLMismatchCountMetric:
@@ -317,5 +322,5 @@ class TestOSLMismatchCountMetric:
     def test_has_correct_flags(self):
         """Test that the metric has the correct flags."""
         assert OSLMismatchCountMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert OSLMismatchCountMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert OSLMismatchCountMetric.console_group == MetricConsoleGroup.NONE
         assert OSLMismatchCountMetric.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS)
