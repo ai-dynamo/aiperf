@@ -56,3 +56,31 @@ def test_duplicate_trace_id_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Duplicate trace id 'trace_simple'"):
         load_weka_as_parsed(tmp_path)
+
+
+def test_subagent_becomes_separate_session() -> None:
+    parsed = load_weka_as_parsed(FIXTURES / "one_subagent.json")
+
+    # 1 parent + 1 subagent
+    assert set(parsed.keys()) == {"trace_sa", "trace_sa::sa:agent_001"}
+
+    parent = parsed["trace_sa"]
+    # parent has two normals (the subagent entry between them is skipped)
+    assert len(parent) == 2
+    # delay between the two normals: (6.0 - 0.0) * 1000
+    assert parent[0].delay_ms == 0.0
+    assert parent[1].delay_ms == pytest.approx(6000.0)
+
+    sub = parsed["trace_sa::sa:agent_001"]
+    assert len(sub) == 1
+    assert sub[0].input_length == 100
+    assert sub[0].output_length == 50
+    assert sub[0].hash_ids == [10, 11]
+    assert sub[0].delay_ms == 0.0  # first turn of a session
+
+
+def test_no_subagents_flag_omits_subagent_sessions() -> None:
+    parsed = load_weka_as_parsed(
+        FIXTURES / "one_subagent.json", include_subagents=False
+    )
+    assert set(parsed.keys()) == {"trace_sa"}
