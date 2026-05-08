@@ -1230,8 +1230,7 @@ Parent directory for the auto-named run directory.
 
 #### `--block-size` `<int>`
 
-KV cache block size for cache statistics.
-<br/>_Default: `512`_
+KV cache block size for cache statistics; inferred from weka traces when omitted.
 
 #### `--max-context-length` `<int>`
 

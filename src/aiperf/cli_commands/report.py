@@ -6,9 +6,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from cyclopts import App, Parameter
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
 
 app = App(name="report")
 
@@ -22,7 +27,7 @@ def report(
     path: Path,
     *,
     output: Path = Path("."),
-    block_size: int = 512,
+    block_size: int | None = None,
     max_context_length: int | None = None,
     no_subagents: bool = False,
     prefill_tps: float = 20_000,
@@ -41,7 +46,7 @@ def report(
         target: Trace flavor (currently only `weka-trace`).
         path: Path to a trace file or a directory of *.json trace files.
         output: Parent directory for the auto-named run directory.
-        block_size: KV cache block size for cache statistics.
+        block_size: KV cache block size for cache statistics; inferred from weka traces when omitted.
         max_context_length: Drop traces whose peak input_length exceeds this.
         no_subagents: Skip subagent sessions; report only parent traces.
         prefill_tps: Synthetic prefill throughput for latency estimates.
@@ -64,7 +69,7 @@ def report_weka_trace(
     *,
     path: Path,
     output: Path = Path("."),
-    block_size: int = 512,
+    block_size: int | None = None,
     max_context_length: int | None = None,
     no_subagents: bool = False,
     prefill_tps: float = 20_000,
@@ -79,6 +84,7 @@ def report_weka_trace(
     from rich.console import Console
 
     from aiperf.dataset.agentic_code_gen.reporting.weka_input import (
+        infer_weka_block_size,
         load_weka_as_parsed,
     )
 
@@ -95,6 +101,12 @@ def report_weka_trace(
         )
         raise SystemExit(1)
 
+    resolved_block_size = (
+        block_size
+        if block_size is not None
+        else infer_weka_block_size(path, max_context_length=max_context_length)
+    )
+
     basename = path.stem if path.is_file() else path.name
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_dir = output / f"weka-report_{basename}_{ts}"
@@ -103,7 +115,7 @@ def report_weka_trace(
     _render_all(
         parsed=parsed,
         run_dir=run_dir,
-        block_size=block_size,
+        block_size=resolved_block_size,
         prefill_tps=prefill_tps,
         decode_tps=decode_tps,
         console=console,
@@ -112,12 +124,12 @@ def report_weka_trace(
 
 def _render_all(
     *,
-    parsed,
+    parsed: dict[str, list[ParsedTurn]],
     run_dir: Path,
     block_size: int,
     prefill_tps: float,
     decode_tps: float,
-    console,
+    console: Console,
 ) -> None:
     """Render all four report artifacts and print summary to console."""
     from aiperf.dataset.agentic_code_gen.reporting.cache_explorer import (
@@ -142,8 +154,15 @@ def _render_all(
         parsed_to_sim_sessions,
     )
 
-    metrics = extract_metrics(parsed, prefill_tps=prefill_tps, decode_tps=decode_tps)
-    metrics.update(extract_cache_metrics(parsed, block_size=block_size))
+    metrics = extract_metrics(
+        parsed,
+        prefill_tps=prefill_tps,
+        decode_tps=decode_tps,
+        input_lengths_are_cumulative=True,
+    )
+    metrics.update(
+        extract_cache_metrics(parsed, block_size=block_size, hash_scope="local")
+    )
     report_data = build_report_data(metrics, manifest=None)
 
     render_plot_report(metrics, parsed, run_dir)

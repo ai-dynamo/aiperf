@@ -178,6 +178,31 @@ class TestExtractMetrics:
         assert metrics["initial_context"].tolist() == [1000.0]
         assert metrics["new_tokens_per_turn"].tolist() == [75.0, 125.0]
 
+    def test_new_tokens_can_derive_from_cumulative_weka_input_length(self) -> None:
+        sessions = {
+            "s1": [
+                ParsedTurn(
+                    session_id="s1",
+                    input_length=200,
+                    output_length=30,
+                    hash_ids=[],
+                    delay_ms=0.0,
+                ),
+                ParsedTurn(
+                    session_id="s1",
+                    input_length=250,
+                    output_length=40,
+                    hash_ids=[],
+                    delay_ms=1.0,
+                ),
+            ]
+        }
+
+        metrics = extract_metrics(sessions, input_lengths_are_cumulative=True)
+
+        assert metrics["initial_context"].tolist() == [200.0]
+        assert metrics["new_tokens_per_turn"].tolist() == [20.0]
+
 
 class TestBuildReportData:
     def test_comparisons_include_target_metrics(self, run_dir: Path) -> None:
@@ -315,6 +340,38 @@ class TestExtractCacheMetrics:
         for session_turns in sessions.values():
             assert cache["per_session_cache_hit_rate"][idx] == 0.0
             idx += len(session_turns)
+
+    def test_local_hash_scope_does_not_share_seen_blocks_between_sessions(
+        self,
+    ) -> None:
+        sessions = {
+            "a": [
+                ParsedTurn(
+                    session_id="a",
+                    input_length=128,
+                    output_length=1,
+                    hash_ids=[1, 2],
+                    delay_ms=0.0,
+                )
+            ],
+            "b": [
+                ParsedTurn(
+                    session_id="b",
+                    input_length=128,
+                    output_length=1,
+                    hash_ids=[1, 2],
+                    delay_ms=0.0,
+                )
+            ],
+        }
+
+        global_cache = extract_cache_metrics(sessions, block_size=64)
+        local_cache = extract_cache_metrics(sessions, block_size=64, hash_scope="local")
+
+        assert global_cache["sequential_cache_hit_rate"].tolist() == [0.0, 1.0]
+        assert local_cache["sequential_cache_hit_rate"].tolist() == [0.0, 0.0]
+        assert global_cache["prefix_length"].tolist() == [128.0, 128.0]
+        assert local_cache["prefix_length"].tolist() == [0.0, 0.0]
 
 
 class TestRenderCacheExplorer:
