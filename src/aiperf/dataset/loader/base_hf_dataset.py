@@ -86,13 +86,13 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         abort the loader.
         """
         value = row.get(image_column)
-        candidates = value if isinstance(value, list) else [value]
-        for candidate in candidates:
-            if isinstance(candidate, PILImage.Image):
-                return [self._pil_to_image(candidate)]
-            if isinstance(candidate, dict) and candidate.get("bytes"):
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            if isinstance(item, PILImage.Image):
+                return [self._pil_to_image(item)]
+            if isinstance(item, dict) and item.get("bytes"):
                 try:
-                    pil = PILImage.open(io.BytesIO(candidate["bytes"]))
+                    pil = PILImage.open(io.BytesIO(item["bytes"]))
                     return [self._pil_to_image(pil)]
                 except (OSError, PILImage.UnidentifiedImageError):
                     continue
