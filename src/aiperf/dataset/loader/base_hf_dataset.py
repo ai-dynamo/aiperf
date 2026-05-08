@@ -111,6 +111,10 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
         Handles URL strings and dicts with raw bytes (HF video format).
         URL strings are passed through directly; bytes are base64-encoded.
+
+        Scalar-only: if a future dataset declares ``Sequence(Video(decode=False))``,
+        mirror ``_extract_images``' list-unwrap loop here to avoid the same
+        silent-empty regression that motivated this file's image fix.
         """
         value = row.get(video_column)
         if isinstance(value, str) and value:
