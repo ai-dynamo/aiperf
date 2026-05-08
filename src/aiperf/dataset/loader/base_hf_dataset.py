@@ -73,10 +73,16 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def _extract_images(self, row: dict[str, Any], image_column: str) -> list[Image]:
         """Extract images from a dataset row column.
 
-        Handles HF-decoded PIL Images and undecoded ``{"bytes": ..., "path": ...}``
-        dicts — datasets declared with ``Image(decode=False)`` (e.g. VisionArena)
-        return raw byte dicts. Returns the first valid image found, scalar or
-        list-wrapped.
+        Accepts scalar or list-wrapped values; returns the first valid image as
+        a single-element list, or ``[]`` if none. Handles HF-decoded PIL Images
+        and undecoded ``{"bytes": ..., "path": ...}`` dicts (datasets declared
+        with ``Image(decode=False)``, e.g. VisionArena, return raw byte dicts).
+
+        Path-only dicts (``bytes is None``) aren't handled — VisionArena and
+        other in-repo datasets embed bytes inline. The byte-decode path catches
+        both header-detection errors (``UnidentifiedImageError``) and load-time
+        errors raised when ``_pil_to_image`` re-encodes (``OSError`` from
+        truncated payloads), so a single bad image doesn't abort the loader.
         """
         value = row.get(image_column)
         candidates = value if isinstance(value, list) else [value]
@@ -86,9 +92,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             if isinstance(candidate, dict) and candidate.get("bytes"):
                 try:
                     pil = PILImage.open(io.BytesIO(candidate["bytes"]))
+                    return [self._pil_to_image(pil)]
                 except (OSError, PILImage.UnidentifiedImageError):
                     continue
-                return [self._pil_to_image(pil)]
         return []
 
     def _extract_videos(self, row: dict[str, Any], video_column: str) -> list[Video]:

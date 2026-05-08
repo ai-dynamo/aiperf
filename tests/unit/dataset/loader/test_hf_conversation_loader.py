@@ -315,6 +315,37 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].images == []
 
+    async def test_skips_truncated_image_at_load_time(self, user_config):
+        # Truncated valid JPEG: header passes PILImage.open (lazy) but the
+        # subsequent re-encode in _pil_to_image raises OSError. Locks in the
+        # widened try/except so one corrupt row can't abort the full loader run.
+        full = _jpeg_bytes(256, 256)
+        truncated = full[: int(len(full) * 0.95)]
+        loader = HFConversationDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="lmarena-ai/VisionArena-Chat",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            image_column="images",
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [{"role": "user", "content": "Truncated"}],
+                    "images": [{"bytes": truncated, "path": None}],
+                },
+                {
+                    "conversation": [{"role": "user", "content": "Good"}],
+                    "images": [{"bytes": full, "path": None}],
+                },
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        assert conversations[0].turns[0].images == []
+        assert len(conversations[1].turns[0].images) == 1
+
     async def test_no_images_when_image_column_not_set(self, loader):
         data = {
             "dataset": [{"conversation": [{"role": "user", "content": "Text only"}]}]
