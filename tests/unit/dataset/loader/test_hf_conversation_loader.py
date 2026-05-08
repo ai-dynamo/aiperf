@@ -315,6 +315,28 @@ class TestHFConversationDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].images == []
 
+    async def test_path_only_dict_returns_no_images(self, user_config):
+        # Locks in the documented "not handled" contract for path-only HF dicts
+        # (bytes is None, path is a string). Update if path-only is ever supported.
+        loader = HFConversationDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="lmarena-ai/VisionArena-Chat",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            image_column="images",
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [{"role": "user", "content": "Path only"}],
+                    "images": [{"bytes": None, "path": "/tmp/some_image.jpg"}],
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].images == []
+
     async def test_skips_truncated_image_at_load_time(self, user_config):
         # Truncated valid JPEG: header passes PILImage.open (lazy) but the
         # subsequent re-encode in _pil_to_image raises OSError. Locks in the

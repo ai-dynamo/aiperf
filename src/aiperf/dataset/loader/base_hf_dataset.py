@@ -78,11 +78,12 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         and undecoded ``{"bytes": ..., "path": ...}`` dicts (datasets declared
         with ``Image(decode=False)``, e.g. VisionArena, return raw byte dicts).
 
-        Path-only dicts (``bytes is None``) aren't handled — VisionArena and
-        other in-repo datasets embed bytes inline. The byte-decode path catches
-        both header-detection errors (``UnidentifiedImageError``) and load-time
-        errors raised when ``_pil_to_image`` re-encodes (``OSError`` from
-        truncated payloads), so a single bad image doesn't abort the loader.
+        Path-only dicts (``bytes is None``) aren't handled — VisionArena (the
+        dataset that motivated this fix) embeds bytes inline. The byte-decode
+        path catches both header-detection errors (``UnidentifiedImageError``)
+        and load-time errors raised when ``_pil_to_image`` re-encodes
+        (``OSError`` from truncated payloads), so a single bad image doesn't
+        abort the loader.
         """
         value = row.get(image_column)
         candidates = value if isinstance(value, list) else [value]
