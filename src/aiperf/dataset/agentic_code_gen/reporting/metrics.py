@@ -255,23 +255,26 @@ def build_report_data(
     manifest: DatasetManifest | None = None,
 ) -> ReportData:
     comparisons: list[TargetComparison] = []
-    for key, target_mean, target_median, display in _target_table(manifest):
-        arr = metrics.get(key)
-        if arr is None or len(arr) == 0:
-            continue
-        observed = _percentile_stats(arr)
-        pct_err = (
-            _pct_error(target_mean, observed.mean) if target_mean is not None else None
-        )
-        comparisons.append(
-            TargetComparison(
-                metric_name=display,
-                target_mean=target_mean,
-                target_median=target_median,
-                observed=observed,
-                pct_error_mean=round(pct_err, 2) if pct_err is not None else None,
+    if manifest is not None:
+        for key, target_mean, target_median, display in _target_table(manifest):
+            arr = metrics.get(key)
+            if arr is None or len(arr) == 0:
+                continue
+            observed = _percentile_stats(arr)
+            pct_err = (
+                _pct_error(target_mean, observed.mean)
+                if target_mean is not None
+                else None
             )
-        )
+            comparisons.append(
+                TargetComparison(
+                    metric_name=display,
+                    target_mean=target_mean,
+                    target_median=target_median,
+                    observed=observed,
+                    pct_error_mean=round(pct_err, 2) if pct_err is not None else None,
+                )
+            )
 
     cache_fields: dict[str, PercentileStats | None] = {}
     for field_name, metric_key in [
