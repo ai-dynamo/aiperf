@@ -98,20 +98,44 @@ def _subagent_session_turns(
     return session_id, turns
 
 
+def _parent_peak_input_length(trace: WekaTrace) -> int:
+    """Peak `input_length` across the parent's normal/streaming requests.
+
+    Mirrors WekaTraceLoader._filter_traces_by_max_context's rule.
+    """
+    peak = 0
+    for req in trace.requests:
+        if (
+            isinstance(req, WekaNormalRequest | WekaStreamingRequest)
+            and req.input_length > peak
+        ):
+            peak = req.input_length
+    return peak
+
+
 def load_weka_as_parsed(
     path: Path,
     *,
     include_subagents: bool = True,
+    max_context_length: int | None = None,
 ) -> dict[str, list[ParsedTurn]]:
     """Read a weka trace file or directory of *.json into ParsedTurn sessions.
 
     Each parent trace becomes one session keyed by `trace.id`. When
     include_subagents=True (default), each `WekaSubagentEntry` in the parent's
     request list also becomes a session keyed by `f"{trace.id}::sa:{agent_id}"`.
+
+    When max_context_length is set, traces whose parent peak input_length
+    exceeds the cap are dropped entirely (parent and subagents).
     """
     traces = _load_weka_traces(path)
     parsed: dict[str, list[ParsedTurn]] = {}
     for trace in traces:
+        if (
+            max_context_length is not None
+            and _parent_peak_input_length(trace) > max_context_length
+        ):
+            continue
         if trace.id in parsed:
             raise ValueError(f"Duplicate trace id '{trace.id}' across input files")
         parsed[trace.id] = _parent_session_turns(trace)

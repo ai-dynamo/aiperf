@@ -84,3 +84,20 @@ def test_no_subagents_flag_omits_subagent_sessions() -> None:
         FIXTURES / "one_subagent.json", include_subagents=False
     )
     assert set(parsed.keys()) == {"trace_sa"}
+
+
+def test_max_context_length_drops_oversized_traces() -> None:
+    # simple.json has peak input_length=250; cap below that drops it.
+    parsed = load_weka_as_parsed(FIXTURES / "simple.json", max_context_length=100)
+    assert parsed == {}
+
+    # Cap above the peak keeps it.
+    parsed = load_weka_as_parsed(FIXTURES / "simple.json", max_context_length=1000)
+    assert "trace_simple" in parsed
+
+
+def test_max_context_length_drops_subagents_with_parent() -> None:
+    # one_subagent.json parent peak input_length=400; cap=100 drops parent
+    # and its subagent.
+    parsed = load_weka_as_parsed(FIXTURES / "one_subagent.json", max_context_length=100)
+    assert parsed == {}
