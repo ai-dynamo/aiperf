@@ -73,15 +73,21 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def _extract_images(self, row: dict[str, Any], image_column: str) -> list[Image]:
         """Extract images from a dataset row column.
 
-        Handles both a single PIL Image and a list of PIL Images,
-        returning the first valid image found.
+        Handles HF-decoded PIL Images and undecoded ``{"bytes": ..., "path": ...}``
+        dicts — datasets declared with ``Image(decode=False)`` (e.g. VisionArena)
+        return raw byte dicts. Returns the first valid image found, scalar or
+        list-wrapped.
         """
         value = row.get(image_column)
-        if isinstance(value, PILImage.Image):
-            return [self._pil_to_image(value)]
-        if isinstance(value, list):
-            pil = next((v for v in value if isinstance(v, PILImage.Image)), None)
-            if pil:
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, PILImage.Image):
+                return [self._pil_to_image(candidate)]
+            if isinstance(candidate, dict) and candidate.get("bytes"):
+                try:
+                    pil = PILImage.open(io.BytesIO(candidate["bytes"]))
+                except (OSError, PILImage.UnidentifiedImageError):
+                    continue
                 return [self._pil_to_image(pil)]
         return []
 

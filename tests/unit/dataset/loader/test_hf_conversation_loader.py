@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import io
+
 import pytest
 from PIL import Image as PILImage
+from pytest import param
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
@@ -12,6 +15,12 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 def _make_pil_image(width: int = 4, height: int = 4) -> PILImage.Image:
     return PILImage.new("RGB", (width, height), color=(255, 0, 0))
+
+
+def _jpeg_bytes(width: int = 4, height: int = 4) -> bytes:
+    buf = io.BytesIO()
+    _make_pil_image(width, height).save(buf, format="JPEG")
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -241,6 +250,70 @@ class TestHFConversationDatasetLoader:
         }
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations[0].turns[0].images) == 1
+
+    @pytest.mark.parametrize(
+        "images_value",
+        [
+            param(
+                {"bytes": _jpeg_bytes(), "path": None},
+                id="undecoded-bytes-dict-scalar",
+            ),
+            param(
+                [{"bytes": _jpeg_bytes(), "path": None}],
+                id="undecoded-bytes-dict-list",
+            ),
+            param(
+                [
+                    {"bytes": _jpeg_bytes(), "path": None},
+                    {"bytes": _jpeg_bytes(8, 8), "path": None},
+                ],
+                id="undecoded-bytes-dict-list-multiple",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_attaches_image_from_undecoded_hf_dict(
+        self, user_config, images_value
+    ):
+        loader = HFConversationDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="lmarena-ai/VisionArena-Chat",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            image_column="images",
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [{"role": "user", "content": "What is this?"}],
+                    "images": images_value,
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        turn = conversations[0].turns[0]
+        assert len(turn.images) == 1
+        assert turn.images[0].contents[0].startswith("data:image/jpeg;base64,")
+
+    async def test_skips_corrupt_image_bytes(self, user_config):
+        loader = HFConversationDatasetLoader(
+            user_config=user_config,
+            hf_dataset_name="lmarena-ai/VisionArena-Chat",
+            hf_split="train",
+            conversation_column="conversation",
+            message_content_key="content",
+            image_column="images",
+        )
+        data = {
+            "dataset": [
+                {
+                    "conversation": [{"role": "user", "content": "Bad image"}],
+                    "images": [{"bytes": b"not-a-real-image", "path": None}],
+                }
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert conversations[0].turns[0].images == []
 
     async def test_no_images_when_image_column_not_set(self, loader):
         data = {
