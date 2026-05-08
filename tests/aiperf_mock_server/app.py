@@ -58,7 +58,7 @@ from aiperf_mock_server.utils import (
     stream_tgi_completion,
     with_error_injection,
 )
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
@@ -775,6 +775,76 @@ async def image_generation(
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_image_response_data(ctx, req))
+
+
+_FORM_REQUIRED = Form(...)
+_FORM_NONE = Form(None)
+_FORM_DEFAULT_MODEL = Form("black-forest-labs/FLUX.2-klein-4B")
+_FORM_N_DEFAULT = Form(1)
+_FORM_B64_JSON = Form("b64_json")
+_FILE_NONE = File(None)
+
+
+@app.post("/v1/images/edits", response_model=None)
+@with_error_injection
+async def image_edits(
+    request: Request,
+    prompt: str = _FORM_REQUIRED,
+    image: UploadFile | None = _FILE_NONE,
+    url: str | None = _FORM_NONE,
+    model: str = _FORM_DEFAULT_MODEL,
+    n: int = _FORM_N_DEFAULT,
+    response_format: str = _FORM_B64_JSON,
+    size: str | None = _FORM_NONE,
+    num_inference_steps: int | None = _FORM_NONE,
+    guidance_scale: float | None = _FORM_NONE,
+    true_cfg_scale: float | None = _FORM_NONE,
+    seed: int | None = _FORM_NONE,
+) -> ORJSONResponse:
+    """Mock OpenAI Image Edit endpoint.
+
+    Drains the uploaded image so multipart parsing is exercised, then
+    returns a deterministic b64-encoded JPEG.
+    """
+    endpoint = "/v1/images/edits"
+    if image is None and not url:
+        raise HTTPException(
+            status_code=422, detail="Field 'image' or 'url' is required"
+        )
+
+    if image is not None:
+        upload_bytes = await image.read()
+        upload_size = len(upload_bytes)
+    else:
+        upload_size = 0
+
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=model, messages=[{"role": "user", "content": prompt}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+
+    img_req = ImageGenerationRequest(
+        prompt=prompt,
+        model=model,
+        n=n,
+        response_format=response_format,
+        size=size,
+    )
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        body = _build_image_response_data(ctx, img_req)
+        body["input_image_bytes"] = upload_size
+        if num_inference_steps is not None:
+            body["num_inference_steps"] = num_inference_steps
+        if guidance_scale is not None:
+            body["guidance_scale"] = guidance_scale
+        if true_cfg_scale is not None:
+            body["true_cfg_scale"] = true_cfg_scale
+        if seed is not None:
+            body["seed"] = seed
+        return ORJSONResponse(body)
 
 
 # ============================================================================

@@ -269,3 +269,57 @@ class TestWaitForModelValidation:
                 wait_for_model_timeout=60.0,
                 wait_for_model_mode="something-else",  # type: ignore[arg-type]
             )
+
+
+class TestRequestContentTypeAutoDefault:
+    """Auto-default request_content_type for endpoints declaring requires_form_data."""
+
+    def test_image_edit_defaults_to_multipart(self):
+        """image_edit endpoint metadata.requires_form_data is True -> multipart default."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["black-forest-labs/FLUX.2-klein-4B"],
+            type=EndpointType.IMAGE_EDIT,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_video_generation_defaults_to_multipart(self):
+        """Same auto-default applies to other requires_form_data endpoints."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["any"],
+            type=EndpointType.VIDEO_GENERATION,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_chat_endpoint_keeps_default_none(self):
+        """JSON-only endpoints (requires_form_data=False) stay at None."""
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            type=EndpointType.CHAT,
+        )
+        assert config.request_content_type is None
+
+    def test_explicit_json_override_preserved(self):
+        """Explicit application/json on a multipart-required endpoint is left as-is."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["any"],
+            type=EndpointType.IMAGE_EDIT,
+            request_content_type=RequestContentType.APPLICATION_JSON,
+        )
+        assert config.request_content_type == RequestContentType.APPLICATION_JSON
+
+    def test_explicit_multipart_on_chat_rejected(self):
+        """Explicit multipart on a JSON-only endpoint still raises."""
+        from aiperf.common.enums import RequestContentType
+
+        with pytest.raises(ValueError, match="does not support it"):
+            EndpointConfig(
+                model_names=["gpt2"],
+                type=EndpointType.CHAT,
+                request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+            )
