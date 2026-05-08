@@ -3,6 +3,7 @@
 
 
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 from aiperf.common.models import (
@@ -10,8 +11,11 @@ from aiperf.common.models import (
     ParsedResponse,
     RankingsResponseData,
     RequestInfo,
+    Turn,
 )
+from aiperf.common.types import RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.plugin import plugins
 
 
 class BaseRankingsEndpoint(BaseEndpoint):
@@ -19,7 +23,14 @@ class BaseRankingsEndpoint(BaseEndpoint):
 
     @abstractmethod
     def build_payload(
-        self, query_text: str, passages: list[str], model_name: str
+        self,
+        query_text: str,
+        passages: Sequence[str],
+        model_name: str,
+        *,
+        images: Sequence[str] = (),
+        videos: Sequence[str] = (),
+        audios: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Build payload based on the endpoint"""
 
@@ -27,7 +38,7 @@ class BaseRankingsEndpoint(BaseEndpoint):
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
         """Parse ranking results into a list."""
 
-    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
+    def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format payload for a rankings request.
 
         Accepts texts with specific names:
@@ -54,6 +65,43 @@ class BaseRankingsEndpoint(BaseEndpoint):
 
         if turn.max_tokens:
             self.warning("Max_tokens is provided but is not supported for rankings.")
+
+        query_texts, passage_texts = self._extract_rankings_texts(turn)
+        images, videos, audios = self._extract_media_contents(turn)
+        query_text = self._select_query_text(query_texts)
+
+        self._validate_media_support(
+            images=images,
+            videos=videos,
+            audios=audios,
+            endpoint_type=model_endpoint.endpoint.type,
+        )
+        self._warn_if_no_documents(
+            passage_texts=passage_texts,
+            images=images,
+            videos=videos,
+            audios=audios,
+        )
+
+        extra = model_endpoint.endpoint.extra or []
+        model_name = turn.model or model_endpoint.primary_model_name
+
+        payload = self.build_payload(
+            query_text,
+            passage_texts,
+            model_name,
+            images=images,
+            videos=videos,
+            audios=audios,
+        )
+        if extra:
+            payload.update(extra)
+
+        self.trace(lambda: f"Formatted rankings payload: {payload}")
+        return payload
+
+    def _extract_rankings_texts(self, turn: Turn) -> tuple[list[str], list[str]]:
+        """Extract query and passage texts from the rankings turn."""
         query_texts = []
         passage_texts = []
 
@@ -68,6 +116,34 @@ class BaseRankingsEndpoint(BaseEndpoint):
                         f"Ignoring text with name '{text.name}' - rankings expects 'query'/'queries' and 'passages'"
                     )
 
+        return query_texts, passage_texts
+
+    def _extract_media_contents(
+        self, turn: Turn
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Extract non-empty image, video, and audio contents from the turn."""
+        images = [
+            image_content
+            for image in turn.images
+            for image_content in image.contents
+            if image_content
+        ]
+        videos = [
+            video_content
+            for video in turn.videos
+            for video_content in video.contents
+            if video_content
+        ]
+        audios = [
+            audio_content
+            for audio in turn.audios
+            for audio_content in audio.contents
+            if audio_content
+        ]
+        return images, videos, audios
+
+    def _select_query_text(self, query_texts: list[str]) -> str:
+        """Select the single query used for the rankings request."""
         if not query_texts:
             raise ValueError(
                 "Rankings request requires a text with name 'query' or 'queries'. "
@@ -79,23 +155,49 @@ class BaseRankingsEndpoint(BaseEndpoint):
                 f"Multiple query texts found, using the first one. Found {len(query_texts)} queries."
             )
 
-        query_text = query_texts[0]
+        return query_texts[0]
 
-        if not passage_texts:
-            self.warning(
-                "Rankings request has query but no passages to rank. "
-                "Consider adding a Text object with name='passages' containing texts to rank."
+    def _warn_if_no_documents(
+        self,
+        *,
+        passage_texts: Sequence[str],
+        images: Sequence[str],
+        videos: Sequence[str],
+        audios: Sequence[str],
+    ) -> None:
+        """Warn when the request has no rankable text or media documents."""
+        if passage_texts or images or videos or audios:
+            return
+
+        self.warning(
+            "Rankings request has query but no passages to rank. "
+            "Consider adding a Text object with name='passages' containing texts to rank."
+        )
+
+    def _validate_media_support(
+        self,
+        *,
+        images: Sequence[str],
+        videos: Sequence[str],
+        audios: Sequence[str],
+        endpoint_type: str,
+    ) -> None:
+        """Reject media inputs that the selected rankings endpoint does not support."""
+        endpoint_metadata = plugins.get_endpoint_metadata(endpoint_type)
+        unsupported = []
+        if images and not endpoint_metadata.supports_images:
+            unsupported.append("image")
+        if videos and not endpoint_metadata.supports_videos:
+            unsupported.append("video")
+        if audios and not endpoint_metadata.supports_audio:
+            unsupported.append("audio")
+
+        if unsupported:
+            media_names = ", ".join(unsupported)
+            raise ValueError(
+                f"Rankings endpoint '{endpoint_type}' does not support "
+                f"{media_names} input."
             )
-
-        extra = model_endpoint.endpoint.extra or []
-        model_name = turn.model or model_endpoint.primary_model_name
-
-        payload = self.build_payload(query_text, passage_texts, model_name)
-        if extra:
-            payload.update(extra)
-
-        self.trace(lambda: f"Formatted rankings payload: {payload}")
-        return payload
 
     def parse_response(
         self, response: InferenceServerResponse

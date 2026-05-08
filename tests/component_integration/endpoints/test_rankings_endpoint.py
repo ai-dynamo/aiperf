@@ -10,7 +10,10 @@ from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
 from tests.harness.utils import AIPerfCLI
-from tests.integration.utils import create_rankings_dataset
+from tests.integration.utils import (
+    create_multimodal_rankings_dataset,
+    create_rankings_dataset,
+)
 
 
 @pytest.mark.component_integration
@@ -79,6 +82,26 @@ class TestRankingsEndpoint:
 
         assert result.request_count == defaults.request_count
 
+    def test_cohere_rankings_multimodal(self, cli: AIPerfCLI, tmp_path: Path):
+        """Test multimodal Cohere Rankings endpoint payloads."""
+        dataset_path = create_multimodal_rankings_dataset(tmp_path, 5)
+
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model jinaai/jina-reranker-m0 \
+                --endpoint-type cohere_rankings \
+                --input-file {dataset_path} \
+                --custom-dataset-type single_turn \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == defaults.request_count
+
     def test_synthetic_nim_rankings(self, cli: AIPerfCLI):
         """Synthetic dataset test for NIM Rankings endpoint (/v1/ranking)."""
         result = cli.run_sync(
@@ -96,6 +119,34 @@ class TestRankingsEndpoint:
                 --rankings-passages-prompt-token-stddev 8 \
                 --rankings-query-prompt-token-mean 16 \
                 --rankings-query-prompt-token-stddev 4 \
+                --ui {defaults.ui}
+            """
+        )
+
+        assert result.request_count == defaults.request_count
+
+    def test_synthetic_cohere_rankings_multimodal(self, cli: AIPerfCLI):
+        """Synthetic multimodal dataset test for Cohere Rankings endpoint."""
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model jinaai/jina-reranker-m0 \
+                --tokenizer gpt2 \
+                --endpoint-type cohere_rankings \
+                --request-count {defaults.request_count} \
+                --concurrency {defaults.concurrency} \
+                --workers-max {defaults.workers_max} \
+                --rankings-passages-mean 2 \
+                --rankings-passages-stddev 0 \
+                --rankings-passages-prompt-token-mean 16 \
+                --rankings-passages-prompt-token-stddev 0 \
+                --rankings-query-prompt-token-mean 8 \
+                --rankings-query-prompt-token-stddev 0 \
+                --image-width-mean 8 \
+                --image-width-stddev 0 \
+                --image-height-mean 8 \
+                --image-height-stddev 0 \
+                --image-batch-size 1 \
                 --ui {defaults.ui}
             """
         )

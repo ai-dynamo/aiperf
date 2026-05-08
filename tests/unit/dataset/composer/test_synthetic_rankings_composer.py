@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
-
+from unittest.mock import patch
 
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.composer.synthetic_rankings import SyntheticRankingsDatasetComposer
@@ -94,3 +94,88 @@ def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
         # Query and passages should have content
         assert len(query.contents) == 1
         assert len(passages.contents) >= 1
+
+
+def test_synthetic_images_and_videos_match_passage_count(
+    synthetic_config, mock_tokenizer
+):
+    """Synthetic rankings media should be generated per passage for paired docs."""
+    synthetic_config.input.rankings.passages.mean = 3
+    synthetic_config.input.rankings.passages.stddev = 0
+    synthetic_config.input.image.width.mean = 8
+    synthetic_config.input.image.height.mean = 8
+    synthetic_config.input.image.batch_size = 1
+    synthetic_config.input.video.width = 8
+    synthetic_config.input.video.height = 8
+    synthetic_config.input.video.batch_size = 1
+
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+
+    with (
+        patch.object(
+            composer.image_generator,
+            "generate",
+            side_effect=lambda: "data:image/png;base64,test",
+        ) as generate_image,
+        patch.object(
+            composer.video_generator,
+            "generate",
+            side_effect=lambda: "data:video/webm;base64,test",
+        ) as generate_video,
+    ):
+        dataset = composer.create_dataset()
+
+    expected_media_count = synthetic_config.input.conversation.num_dataset_entries * 3
+    assert generate_image.call_count == expected_media_count
+    assert generate_video.call_count == expected_media_count
+
+    for conversation in dataset:
+        turn = conversation.turns[0]
+        passage_count = len(turn.texts[1].contents)
+
+        assert len(turn.images) == 1
+        assert turn.images[0].name == "image_url"
+        assert len(turn.images[0].contents) == passage_count
+
+        assert len(turn.videos) == 1
+        assert turn.videos[0].name == "video_url"
+        assert len(turn.videos[0].contents) == passage_count
+
+
+def test_generate_video_payloads_skips_empty_generated_video(
+    synthetic_config, mock_tokenizer
+):
+    """Empty generated videos are omitted from synthetic video payloads."""
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+
+    with patch.object(
+        composer.video_generator,
+        "generate",
+        side_effect=["data:video/webm;base64,test", ""],
+    ):
+        video = composer._generate_video_payloads(count=2)
+
+    assert video.name == "video_url"
+    assert video.contents == ["data:video/webm;base64,test"]
+
+
+def test_synthetic_rankings_media_batch_size_zero_disables_media(
+    synthetic_config, mock_tokenizer
+):
+    """Batch size zero disables synthetic rankings media even with dimensions set."""
+    synthetic_config.input.rankings.passages.mean = 2
+    synthetic_config.input.rankings.passages.stddev = 0
+    synthetic_config.input.image.width.mean = 8
+    synthetic_config.input.image.height.mean = 8
+    synthetic_config.input.image.batch_size = 0
+    synthetic_config.input.video.width = 8
+    synthetic_config.input.video.height = 8
+    synthetic_config.input.video.batch_size = 0
+
+    composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
+    dataset = composer.create_dataset()
+
+    for conversation in dataset:
+        turn = conversation.turns[0]
+        assert turn.images == []
+        assert turn.videos == []

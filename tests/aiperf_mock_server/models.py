@@ -126,7 +126,7 @@ class CohereRerankRequest(BaseModel):
     """Request model for Cohere /v2/rerank endpoint."""
 
     query: str
-    documents: list[str]
+    documents: list[str | dict[str, Any]]
     model: str = "cohere-reranker"
 
     @property
@@ -135,7 +135,37 @@ class CohereRerankRequest(BaseModel):
 
     @property
     def passage_texts(self) -> list[str]:
-        return self.documents
+        return [self._document_to_text(document) for document in self.documents]
+
+    def _document_to_text(self, document: str | dict[str, Any]) -> str:
+        """Convert text or multimodal Cohere documents into mock scoring text."""
+        if isinstance(document, str):
+            return document
+
+        content = document.get("content", [])
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+
+        parts = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            match item.get("type"):
+                case "text":
+                    parts.append(str(item.get("text", "")))
+                case "image_url":
+                    parts.append(self._media_url_text(item, "image_url"))
+                case "video_url":
+                    parts.append(self._media_url_text(item, "video_url"))
+        return "\n".join(part for part in parts if part)
+
+    def _media_url_text(self, item: dict[str, Any], key: str) -> str:
+        media = item.get(key, {})
+        if isinstance(media, dict):
+            return str(media.get("url", ""))
+        return str(media)
 
 
 class TGIParameters(BaseModel):

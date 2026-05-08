@@ -5,9 +5,11 @@ import logging
 
 import pytest
 
-from aiperf.common.models import Text, Turn
+from aiperf.common.models import Audio, Image, Text, Turn, Video
 from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.schema.schemas import EndpointMetadata
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_model_endpoint,
@@ -58,6 +60,30 @@ class TestCohereRankingsEndpoint:
         assert payload["query"] == "What is deep learning?"
         assert len(payload["documents"]) == 3
         assert "Deep learning uses neural networks." in payload["documents"][0]
+
+    def test_build_payload_legacy_signature(self, converter):
+        """Test that direct text-only build_payload calls remain compatible."""
+        payload = converter.build_payload("What is AI?", ["AI passage"], "test-model")
+
+        assert payload == {
+            "model": "test-model",
+            "query": "What is AI?",
+            "documents": ["AI passage"],
+        }
+
+    def test_build_payload_direct_audio_rejected(self, converter):
+        """Test direct Cohere payload construction rejects audio input."""
+        with pytest.raises(ValueError, match="does not support audio input"):
+            converter.build_payload(
+                "What is AI?",
+                ["AI passage"],
+                "test-model",
+                audios=["wav,b64audio"],
+            )
+
+    def test_document_count_empty_inputs_returns_zero(self, converter):
+        """Test empty multimodal inputs produce zero documents."""
+        assert converter._document_count(passages=[], images=[], videos=[]) == 0
 
     def test_format_payload_single_passage(self, converter, model_endpoint):
         """Test payload formatting with single passage."""
@@ -112,6 +138,143 @@ class TestCohereRankingsEndpoint:
         assert "no passages to rank" in caplog.text
         assert payload["query"] == "What is AI?"
         assert payload["documents"] == []
+
+    def test_format_payload_single_passage_with_image(self, converter, model_endpoint):
+        """Test multimodal document formatting with one passage and one image."""
+        image_url = "data:image/png;base64,img1"
+        turn = Turn(
+            texts=[
+                Text(name="query", contents=["Find the relevant image"]),
+                Text(name="passages", contents=["A beach at sunset"]),
+            ],
+            images=[Image(contents=[image_url])],
+            model="test-model",
+        )
+
+        payload = converter.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload["documents"] == [
+            {
+                "content": [
+                    {"type": "text", "text": "A beach at sunset"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]
+            }
+        ]
+
+    def test_format_payload_multiple_index_paired_modalities(
+        self, converter, model_endpoint
+    ):
+        """Test that passages, images, and videos are paired by index."""
+        images = ["data:image/png;base64,img1", "data:image/png;base64,img2"]
+        videos = ["data:video/mp4;base64,vid1", "data:video/mp4;base64,vid2"]
+        turn = Turn(
+            texts=[
+                Text(name="query", contents=["Find relevant media"]),
+                Text(name="passages", contents=["First document", "Second document"]),
+            ],
+            images=[Image(contents=images)],
+            videos=[Video(contents=videos)],
+            model="test-model",
+        )
+
+        payload = converter.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload["documents"] == [
+            {
+                "content": [
+                    {"type": "text", "text": "First document"},
+                    {"type": "image_url", "image_url": {"url": images[0]}},
+                    {"type": "video_url", "video_url": {"url": videos[0]}},
+                ]
+            },
+            {
+                "content": [
+                    {"type": "text", "text": "Second document"},
+                    {"type": "image_url", "image_url": {"url": images[1]}},
+                    {"type": "video_url", "video_url": {"url": videos[1]}},
+                ]
+            },
+        ]
+
+    def test_format_payload_image_only_documents(self, converter, model_endpoint):
+        """Test image-only documents."""
+        images = ["data:image/png;base64,img1", "data:image/png;base64,img2"]
+        turn = Turn(
+            texts=[Text(name="query", contents=["Find relevant images"])],
+            images=[Image(contents=images)],
+            model="test-model",
+        )
+
+        payload = converter.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload["documents"] == [
+            {"content": [{"type": "image_url", "image_url": {"url": images[0]}}]},
+            {"content": [{"type": "image_url", "image_url": {"url": images[1]}}]},
+        ]
+
+    def test_format_payload_video_only_documents(self, converter, model_endpoint):
+        """Test video-only documents."""
+        videos = ["data:video/mp4;base64,vid1", "data:video/mp4;base64,vid2"]
+        turn = Turn(
+            texts=[Text(name="query", contents=["Find relevant videos"])],
+            videos=[Video(contents=videos)],
+            model="test-model",
+        )
+
+        payload = converter.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload["documents"] == [
+            {"content": [{"type": "video_url", "video_url": {"url": videos[0]}}]},
+            {"content": [{"type": "video_url", "video_url": {"url": videos[1]}}]},
+        ]
+
+    def test_format_payload_multimodal_count_mismatch_raises(
+        self, converter, model_endpoint
+    ):
+        """Test that non-zero modality counts must match."""
+        turn = Turn(
+            texts=[
+                Text(name="query", contents=["Find relevant media"]),
+                Text(name="passages", contents=["First document", "Second document"]),
+            ],
+            images=[Image(contents=["data:image/png;base64,img1"])],
+            model="test-model",
+        )
+
+        with pytest.raises(ValueError, match="matching non-zero counts"):
+            converter.format_payload(
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            )
+
+    def test_format_payload_audio_rejected(self, converter, model_endpoint):
+        """Test that audio input is rejected for Cohere rankings."""
+        turn = Turn(
+            texts=[Text(name="query", contents=["Find relevant audio"])],
+            audios=[Audio(contents=["wav,b64audio"])],
+            model="test-model",
+        )
+
+        with pytest.raises(ValueError, match="does not support audio input"):
+            converter.format_payload(
+                create_request_info(model_endpoint=model_endpoint, turns=[turn])
+            )
+
+    def test_metadata_declares_multimodal_support(self):
+        """Test that Cohere rankings metadata declares image and video support."""
+        metadata = plugins.get_endpoint_metadata(EndpointType.COHERE_RANKINGS)
+        assert isinstance(metadata, EndpointMetadata)
+        assert metadata.supports_images is True
+        assert metadata.supports_videos is True
+        assert metadata.supports_audio is False
 
     def test_format_payload_no_query(self, converter, model_endpoint):
         """Test with no query text (should raise error)."""

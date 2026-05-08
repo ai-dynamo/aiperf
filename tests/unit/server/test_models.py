@@ -5,6 +5,7 @@
 import pytest
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
     Message,
@@ -87,3 +88,46 @@ class TestRankingRequest:
             ],
         )
         assert req.passage_texts == ["passage 1", "passage 2"]
+
+
+class TestCohereRerankRequest:
+    """Tests for Cohere rerank request model."""
+
+    def test_text_documents_as_passage_texts(self):
+        req = CohereRerankRequest(
+            model="test",
+            query="query",
+            documents=["passage 1", "passage 2"],
+        )
+
+        assert req.passage_texts == ["passage 1", "passage 2"]
+
+    def test_structured_documents_as_passage_texts(self):
+        req = CohereRerankRequest(
+            model="test",
+            query="query",
+            documents=[
+                {
+                    "content": [
+                        {"type": "text", "text": "city skyline"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,img1"},
+                        },
+                    ]
+                },
+                {
+                    "content": [
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": "data:video/mp4;base64,vid1"},
+                        }
+                    ]
+                },
+            ],
+        )
+
+        assert req.passage_texts == [
+            "city skyline\ndata:image/png;base64,img1",
+            "data:video/mp4;base64,vid1",
+        ]

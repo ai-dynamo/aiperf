@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import InputDefaults, UserConfig
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models import Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -88,9 +88,46 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             passages.contents.append(passage_text)
 
         turn.texts.extend([query, passages])
+        if self.include_image:
+            turn.images.append(self._generate_image_payloads(count=num_passages))
+        if self.include_video:
+            turn.videos.append(self._generate_video_payloads(count=num_passages))
+
         self._finalize_turn(turn)
 
         self.debug(
             lambda: f"[rankings] query_len={len(query_text)} chars, passages={num_passages}"
         )
         return turn
+
+    def _generate_image_payloads(self, count: int) -> Image:
+        """Generate one synthetic image per ranking passage."""
+        image = Image(name="image_url")
+        for _ in range(count):
+            image.contents.append(self.image_generator.generate())
+        return image
+
+    def _generate_video_payloads(self, count: int) -> Video:
+        """Generate one synthetic video per ranking passage."""
+        video = Video(name="video_url")
+        for _ in range(count):
+            data = self.video_generator.generate()
+            if data:
+                video.contents.append(data)
+        return video
+
+    @property
+    def include_image(self) -> bool:
+        return (
+            self.config.input.image.batch_size > 0
+            and self.config.input.image.width.mean > 0
+            and self.config.input.image.height.mean > 0
+        )
+
+    @property
+    def include_video(self) -> bool:
+        return bool(
+            self.config.input.video.batch_size > 0
+            and self.config.input.video.width
+            and self.config.input.video.height
+        )
