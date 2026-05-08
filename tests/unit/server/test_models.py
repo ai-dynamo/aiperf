@@ -11,6 +11,7 @@ from aiperf_mock_server.models import (
     Message,
     RankingRequest,
 )
+from pytest import param
 
 
 class TestBaseCompletionRequest:
@@ -79,40 +80,50 @@ class TestEmbeddingRequest:
 class TestCohereEmbedRequest:
     """Tests for CohereEmbedRequest model."""
 
-    def test_normalized_inputs_from_texts(self):
-        req = CohereEmbedRequest(model="test", texts=["text1", "text2"])
-        assert req.normalized_inputs == ["text1", "text2"]
-
-    def test_normalized_inputs_from_mixed_inputs(self):
-        req = CohereEmbedRequest(
-            model="test",
-            inputs=[
-                {
-                    "content": [
-                        {"type": "text", "text": "A photo of a cat"},
+    @pytest.mark.parametrize(
+        "cohere_request,expected",
+        [
+            param(
+                CohereEmbedRequest(model="test", texts=["text1", "text2"]),
+                ["text1", "text2"],
+                id="texts",
+            ),
+            param(
+                CohereEmbedRequest(
+                    model="test",
+                    inputs=[
                         {
-                            "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64,abc123"},
-                        },
-                    ]
-                }
-            ],
-        )
-        assert req.normalized_inputs == [
-            "A photo of a cat data:image/png;base64,abc123"
-        ]
+                            "content": [
+                                {"type": "text", "text": "A photo of a cat"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,abc123"
+                                    },
+                                },
+                            ]
+                        }
+                    ],
+                ),
+                ["A photo of a cat data:image/png;base64,abc123"],
+                id="mixed-inputs",
+            ),
+            param(
+                CohereEmbedRequest(
+                    model="test",
+                    images=["data:image/png;base64,abc123", "http://img2.png"],
+                ),
+                ["data:image/png;base64,abc123", "http://img2.png"],
+                id="images",
+            ),
+        ],
+    )  # fmt: skip
+    def test_normalized_inputs_supported_shapes_return_expected_values(
+        self, cohere_request: CohereEmbedRequest, expected: list[str]
+    ) -> None:
+        assert cohere_request.normalized_inputs == expected
 
-    def test_normalized_inputs_from_images(self):
-        req = CohereEmbedRequest(
-            model="test",
-            images=["data:image/png;base64,abc123", "http://img2.png"],
-        )
-        assert req.normalized_inputs == [
-            "data:image/png;base64,abc123",
-            "http://img2.png",
-        ]
-
-    def test_normalized_inputs_without_inputs_returns_empty_list(self):
+    def test_normalized_inputs_without_inputs_returns_empty_list(self) -> None:
         req = CohereEmbedRequest(model="test")
         assert req.normalized_inputs == []
 

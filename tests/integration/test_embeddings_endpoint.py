@@ -19,7 +19,7 @@ class TestEmbeddingsEndpoint:
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
         endpoint_type: str,
-    ):
+    ) -> None:
         """Basic embeddings request completes with expected request count."""
         result = await cli.run(
             f"""
