@@ -259,6 +259,20 @@ endpoint:
       supports_images: true
       metrics_title: Embeddings Metrics
 
+  cohere_embeddings:
+    class: aiperf.endpoints.cohere_embeddings:CohereEmbeddingsEndpoint
+    description: |
+      Cohere Embed v2 endpoint compatible with vLLM's /v2/embed API. Supports
+      text, image, and mixed multimodal embedding requests. Non-streaming only.
+    metadata:
+      endpoint_path: /v2/embed
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: true
+      supports_images: true
+      requires_inline_media: true
+      metrics_title: Embeddings Metrics
+
   embeddings:
     class: aiperf.endpoints.openai_embeddings:EmbeddingsEndpoint
     description: |

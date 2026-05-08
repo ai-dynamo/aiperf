@@ -35,6 +35,8 @@ navigation:
       path: tutorials/asr.md
     - page: Profile Embedding Models with AIPerf
       path: tutorials/embeddings.md
+    - page: Profile Cohere Embed Endpoints with AIPerf
+      path: tutorials/cohere-embeddings.md
     - page: Profile Ranking Models with AIPerf
       path: tutorials/rankings.md
     - page: Profile NIM Image Retrieval with AIPerf

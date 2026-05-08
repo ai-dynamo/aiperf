@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import orjson
 from aiperf_mock_server.app import (
     _build_chat_response_data,
+    _build_cohere_embedding_response_data,
     _build_cohere_ranking_response_data,
     _build_completion_response_data,
     _build_embedding_response_data,
@@ -34,6 +35,7 @@ from aiperf_mock_server.app import (
 from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
@@ -323,6 +325,14 @@ class FakeTransport(BaseTransport):
                     EmbeddingRequest,
                     self._do_embedding,
                 )
+            case EndpointType.COHERE_EMBEDDINGS:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    CohereEmbedRequest,
+                    self._do_embedding,
+                    build_response=_build_cohere_embedding_response_data,
+                )
             case EndpointType.NIM_RANKINGS:
                 return await self._dispatch(
                     payload,
@@ -412,15 +422,21 @@ class FakeTransport(BaseTransport):
 
     async def _do_embedding(self, inp: HandlerInput) -> RequestRecord:
         """Handle embedding requests."""
+        inputs = inp.req.normalized_inputs
         await _wait_for_processing(
             self.config.embedding_base_latency,
             self.config.embedding_per_input_latency,
-            len(inp.req.inputs),
+            len(inputs),
+        )
+        response_data = (
+            inp.build_response(inp.ctx, inp.req)
+            if inp.build_response
+            else _build_embedding_response_data(inp.ctx, inputs)
         )
         return self._make_json_record(
             inp.start_perf_ns,
             inp.start_timestamp_ns,
-            _build_embedding_response_data(inp.ctx, inp.req.inputs),
+            response_data,
         )
 
     async def _do_ranking(self, inp: HandlerInput) -> RequestRecord:

@@ -25,6 +25,7 @@ from aiperf_mock_server.metrics_utils import (
 )
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CohereRerankRequest,
     CompletionRequest,
     EmbeddingRequest,
@@ -209,7 +210,7 @@ def _create_request_id(request: RequestT) -> str:
             return f"chatcmpl-{uuid.uuid4()}"
         case CompletionRequest() | TGIGenerateRequest():
             return f"cmpl-{uuid.uuid4()}"
-        case EmbeddingRequest():
+        case EmbeddingRequest() | CohereEmbedRequest():
             return f"emb-{uuid.uuid4()}"
         case RankingRequest() | HFTEIRerankRequest() | CohereRerankRequest():
             return f"rank-{uuid.uuid4()}"

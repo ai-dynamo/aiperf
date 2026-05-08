@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for app module."""
 
+from fastapi.testclient import TestClient
+
 
 class TestAPIEndpoints:
     """Tests for FastAPI endpoints."""
@@ -55,6 +57,18 @@ class TestAPIEndpoints:
         data = response.json()
         assert data["object"] == "list"
         assert len(data["data"]) == 1
+
+    def test_cohere_embeddings_endpoint_basic_success(
+        self, test_client: TestClient
+    ) -> None:
+        response = test_client.post(
+            "/v2/embed",
+            json={"model": "test-model", "texts": ["test text"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "embeddings" in data
+        assert len(data["embeddings"]["float"]) == 1
 
     def test_rankings_endpoint(self, test_client):
         response = test_client.post(

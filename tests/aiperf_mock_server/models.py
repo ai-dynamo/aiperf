@@ -71,20 +71,78 @@ class CompletionRequest(BaseCompletionRequest):
         return "\n".join(str(p) for p in self.prompt if p)
 
 
-class EmbeddingRequest(BaseModel):
-    """Request model for embedding endpoints."""
+class BaseEmbeddingRequest(BaseModel):
+    """Mock-server helper: canonical text inputs for shared embedding handlers."""
 
     model: str
+
+    @property
+    def normalized_inputs(self) -> list[str]:
+        """Flatten request body to strings used for latency and token accounting."""
+        raise NotImplementedError
+
+
+class EmbeddingRequest(BaseEmbeddingRequest):
+    """Request model for embedding endpoints."""
+
     input: str | list[str]
 
     @property
+    def normalized_inputs(self) -> list[str]:
+        """Normalize OpenAI `input` to a list of strings."""
+        if isinstance(self.input, str):
+            return [self.input]
+        return [str(x) for x in self.input]
+
+    @property
     def inputs(self) -> list[str]:
-        """Get inputs as list (normalizes single string to list)."""
-        return (
-            [self.input]
-            if isinstance(self.input, str)
-            else [str(x) for x in self.input]
-        )
+        """Alias for OpenAI-style naming; same as ``normalized_inputs``."""
+        return self.normalized_inputs
+
+
+class CohereEmbedRequest(BaseEmbeddingRequest):
+    """Request model for Cohere /v2/embed endpoint."""
+
+    texts: list[str] | None = None
+    images: list[str] | None = None
+    inputs: list[dict[str, Any]] | None = None
+    input_type: str | None = None
+    embedding_types: list[str] | None = None
+    output_dimension: int | None = None
+    truncate: str | None = None
+
+    @property
+    def normalized_inputs(self) -> list[str]:
+        """Flatten Cohere texts, images, or multimodal `inputs` for mock processing."""
+        if self.texts is not None:
+            return [str(text) for text in self.texts]
+
+        if self.images is not None:
+            return [str(image) for image in self.images]
+
+        if self.inputs is None:
+            return []
+
+        flattened_inputs: list[str] = []
+        for item in self.inputs:
+            content = item.get("content", [])
+            parts: list[str] = []
+            if isinstance(content, list):
+                for entry in content:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("type") == "text" and isinstance(
+                        entry.get("text"), str
+                    ):
+                        parts.append(entry["text"])
+                    elif entry.get("type") == "image_url":
+                        image_url = entry.get("image_url")
+                        if isinstance(image_url, dict) and isinstance(
+                            image_url.get("url"), str
+                        ):
+                            parts.append(image_url["url"])
+            flattened_inputs.append(" ".join(parts))
+        return flattened_inputs
 
 
 class RankingRequest(BaseModel):
@@ -217,6 +275,7 @@ RequestT = (
     ChatCompletionRequest
     | CompletionRequest
     | EmbeddingRequest
+    | CohereEmbedRequest
     | RankingRequest
     | HFTEIRerankRequest
     | CohereRerankRequest

@@ -5,11 +5,13 @@
 import pytest
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
+    CohereEmbedRequest,
     CompletionRequest,
     EmbeddingRequest,
     Message,
     RankingRequest,
 )
+from pytest import param
 
 
 class TestBaseCompletionRequest:
@@ -71,7 +73,59 @@ class TestEmbeddingRequest:
     )
     def test_inputs_property(self, input_data, expected):
         req = EmbeddingRequest(model="test", input=input_data)
+        assert req.normalized_inputs == expected
         assert req.inputs == expected
+
+
+class TestCohereEmbedRequest:
+    """Tests for CohereEmbedRequest model."""
+
+    @pytest.mark.parametrize(
+        "cohere_request,expected",
+        [
+            param(
+                CohereEmbedRequest(model="test", texts=["text1", "text2"]),
+                ["text1", "text2"],
+                id="texts",
+            ),
+            param(
+                CohereEmbedRequest(
+                    model="test",
+                    inputs=[
+                        {
+                            "content": [
+                                {"type": "text", "text": "A photo of a cat"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,abc123"
+                                    },
+                                },
+                            ]
+                        }
+                    ],
+                ),
+                ["A photo of a cat data:image/png;base64,abc123"],
+                id="mixed-inputs",
+            ),
+            param(
+                CohereEmbedRequest(
+                    model="test",
+                    images=["data:image/png;base64,abc123", "http://img2.png"],
+                ),
+                ["data:image/png;base64,abc123", "http://img2.png"],
+                id="images",
+            ),
+        ],
+    )  # fmt: skip
+    def test_normalized_inputs_supported_shapes_return_expected_values(
+        self, cohere_request: CohereEmbedRequest, expected: list[str]
+    ) -> None:
+        assert cohere_request.normalized_inputs == expected
+
+    def test_normalized_inputs_without_inputs_returns_empty_list(self) -> None:
+        req = CohereEmbedRequest(model="test")
+        assert req.normalized_inputs == []
 
 
 class TestRankingRequest:

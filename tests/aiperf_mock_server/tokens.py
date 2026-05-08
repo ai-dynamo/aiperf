@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from aiperf_mock_server.models import (
+    BaseEmbeddingRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
-    EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
     RankingRequest,
@@ -180,7 +180,7 @@ def tokenize_request(request: RequestT) -> TokenizedText:
     # For embeddings, rankings, and images - simple token counting without generation options
     if isinstance(
         request,
-        EmbeddingRequest
+        BaseEmbeddingRequest
         | RankingRequest
         | HFTEIRerankRequest
         | CohereRerankRequest
@@ -291,9 +291,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, request.max_output_tokens
     elif isinstance(request, CompletionRequest | TGIGenerateRequest):
         return request.prompt_text, request.max_tokens
-    elif isinstance(request, EmbeddingRequest):
-        text = "\n".join(request.inputs)
-        return text, None
+    elif isinstance(request, BaseEmbeddingRequest):
+        return "\n".join(request.normalized_inputs), None
     elif isinstance(request, RankingRequest | HFTEIRerankRequest | CohereRerankRequest):
         text = request.query_text + "\n" + "\n".join(request.passage_texts)
         return text, None
