@@ -19,6 +19,7 @@ from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
 from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
     WekaStreamingRequest,
+    WekaSubagentEntry,
     WekaTrace,
 )
 
@@ -68,12 +69,45 @@ def _parent_session_turns(trace: WekaTrace) -> list[ParsedTurn]:
     return turns
 
 
-def load_weka_as_parsed(path: Path) -> dict[str, list[ParsedTurn]]:
+def _subagent_session_turns(
+    trace_id: str, entry: WekaSubagentEntry
+) -> tuple[str, list[ParsedTurn]]:
+    """Build (session_id, turns) for one subagent entry's nested normal requests.
+
+    delay_ms is computed within the subagent's own request list, so the
+    subagent's first turn always has delay_ms=0.0 (matches the convention
+    used for parent-session turn 0).
+    """
+    session_id = f"{trace_id}::sa:{entry.agent_id}"
+    turns: list[ParsedTurn] = []
+    prev_t: float | None = None
+    for req in entry.requests:
+        delay_ms = 0.0 if prev_t is None else (req.t - prev_t) * 1000.0
+        turns.append(
+            ParsedTurn(
+                session_id=session_id,
+                input_length=req.input_length,
+                output_length=req.output_length,
+                hash_ids=req.hash_ids,
+                delay_ms=delay_ms,
+                group_id=None,
+                is_restart=False,
+            )
+        )
+        prev_t = req.t
+    return session_id, turns
+
+
+def load_weka_as_parsed(
+    path: Path,
+    *,
+    include_subagents: bool = True,
+) -> dict[str, list[ParsedTurn]]:
     """Read a weka trace file or directory of *.json into ParsedTurn sessions.
 
-    Each parent trace becomes one session keyed by `trace.id`. Subagent
-    handling, max_context_length filtering, and other knobs are added in
-    later tasks.
+    Each parent trace becomes one session keyed by `trace.id`. When
+    include_subagents=True (default), each `WekaSubagentEntry` in the parent's
+    request list also becomes a session keyed by `f"{trace.id}::sa:{agent_id}"`.
     """
     traces = _load_weka_traces(path)
     parsed: dict[str, list[ParsedTurn]] = {}
@@ -81,4 +115,14 @@ def load_weka_as_parsed(path: Path) -> dict[str, list[ParsedTurn]]:
         if trace.id in parsed:
             raise ValueError(f"Duplicate trace id '{trace.id}' across input files")
         parsed[trace.id] = _parent_session_turns(trace)
+        if include_subagents:
+            for req in trace.requests:
+                if isinstance(req, WekaSubagentEntry):
+                    sid, turns = _subagent_session_turns(trace.id, req)
+                    if sid in parsed:
+                        raise ValueError(
+                            f"Duplicate subagent session id '{sid}' in trace "
+                            f"'{trace.id}'"
+                        )
+                    parsed[sid] = turns
     return parsed
