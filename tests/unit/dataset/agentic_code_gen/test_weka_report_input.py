@@ -39,10 +39,13 @@ def test_directory_yields_one_session_per_trace() -> None:
     parsed = load_weka_as_parsed(
         Path(__file__).resolve().parents[3] / "fixtures" / "weka_traces_small"
     )
-    # 10 trace files in this fixture dir
+    # 10 trace files in this fixture dir.
     assert len(parsed) == 10
-    # Insertion order must match sorted(glob("*.json"))
-    assert list(parsed.keys()) == sorted(parsed.keys())
+    # Insertion order must match sorted(glob("*.json")) — pin against the
+    # explicit fixture so a regression that drops the sort or returns the
+    # wrong subset is caught.
+    expected_ids = [f"trace_{i:02d}_n{i}" for i in range(1, 11)]
+    assert list(parsed.keys()) == expected_ids
 
 
 def test_duplicate_trace_id_raises(tmp_path: Path) -> None:
