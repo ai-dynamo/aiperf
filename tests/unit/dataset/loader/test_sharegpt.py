@@ -112,6 +112,27 @@ class TestShareGPTLoader:
         assert conv.turns[1].texts[0].contents[0] == "Follow up question here"
         assert conv.turns[1].max_tokens == len(["Second", "assistant", "reply", "text"])
 
+    async def test_skips_pair_with_missing_value_key(
+        self, sharegpt_loader: ShareGPTLoader
+    ):
+        """Pairs where a message lacks the 'value' key are silently skipped."""
+        dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": "Hello how are you"},
+                    {"from": "gpt"},
+                    {"from": "human", "value": "Follow up question here"},
+                    {"from": "gpt", "value": "Second assistant reply text"},
+                ]
+            }
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert (
+            conversations[0].turns[0].texts[0].contents[0] == "Follow up question here"
+        )
+
     async def test_get_preferred_sampling_strategy(
         self, sharegpt_loader: ShareGPTLoader
     ):

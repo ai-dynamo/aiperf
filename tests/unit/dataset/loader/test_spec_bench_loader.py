@@ -109,6 +109,16 @@ class TestSpecBenchLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 1
 
+    async def test_skips_non_list_turns(self, loader):
+        data = {
+            "dataset": [
+                {"turns": "not a list"},
+                {"turns": ["Valid prompt"]},
+            ]
+        }
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+
     async def test_empty_dataset_returns_empty_list(self, loader):
         data = {"dataset": []}
         conversations = await loader.convert_to_conversations(data)
@@ -159,3 +169,11 @@ class TestSpecBenchLoaderMultiTurn:
         data = {"dataset": [{"turns": [""]}]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 0
+
+    async def test_multi_turn_null_values_in_turns(self, user_config):
+        loader = SpecBenchLoader(user_config=user_config, multi_turn=True)
+        data = {"dataset": [{"turns": [None, "Valid turn", None]}]}
+        conversations = await loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+        assert conversations[0].turns[0].texts[0].contents[0] == "Valid turn"

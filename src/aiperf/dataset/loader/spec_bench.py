@@ -48,8 +48,8 @@ class SpecBenchLoader(BasePublicDatasetLoader):
         skipped = 0
 
         for row in dataset:
-            turns_raw = row.get("turns", [])
-            if not turns_raw:
+            turns_raw = row.get("turns")
+            if not isinstance(turns_raw, list) or not turns_raw:
                 skipped += 1
                 continue
 
@@ -69,7 +69,7 @@ class SpecBenchLoader(BasePublicDatasetLoader):
                     )
                 )
             else:
-                prompt = str(turns_raw[0]).strip()
+                prompt = str(turns_raw[0]).strip() if turns_raw[0] else ""
                 if not prompt:
                     skipped += 1
                     continue

@@ -115,7 +115,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                 skipped_entries += 1
                 continue
 
-            turns: list[Turn] = []
+            validated: list[tuple[str, int]] = []
             rejected = False
             for prompt, completion in pairs:
                 prompt_length = len(self.tokenizer.encode(prompt))
@@ -127,17 +127,19 @@ class ShareGPTLoader(BasePublicDatasetLoader):
                 ):
                     rejected = True
                     break
-                turns.append(
-                    Turn(
-                        model=self._select_model_name(),
-                        texts=[Text(contents=[prompt])],
-                        max_tokens=completion_length,
-                    )
-                )
-            if rejected or not turns:
+                validated.append((prompt, completion_length))
+            if rejected or not validated:
                 skipped_entries += 1
                 continue
 
+            turns = [
+                Turn(
+                    model=self._select_model_name(),
+                    texts=[Text(contents=[prompt])],
+                    max_tokens=completion_length,
+                )
+                for prompt, completion_length in validated
+            ]
             filtered_dataset.append(
                 Conversation(
                     session_id=self.session_id_generator.next(),

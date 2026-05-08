@@ -105,10 +105,7 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
                     )
                 )
             else:
-                if not turns_raw[0]:
-                    skipped += 1
-                    continue
-                prompt = str(turns_raw[0]).strip()
+                prompt = str(turns_raw[0]).strip() if turns_raw[0] else ""
                 if not prompt:
                     skipped += 1
                     continue

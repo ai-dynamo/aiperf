@@ -97,14 +97,12 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
 
     def _normalize_messages(self, messages: list[Any]) -> list[dict[str, Any]]:
         """Flatten list-of-lists (VisionArena) to a list of message dicts."""
-        out: list[dict[str, Any]] = []
-        for raw in messages:
-            m = raw
-            if isinstance(m, list):
-                m = m[0] if m else None
-            if m and isinstance(m, dict):
-                out.append(m)
-        return out
+        normalized: list[dict[str, Any]] = []
+        for item in messages:
+            msg = item[0] if isinstance(item, list) and item else item
+            if isinstance(msg, dict) and msg:
+                normalized.append(msg)
+        return normalized
 
     def _extract_first_message(self, messages: list[Any]) -> str | None:
         """Extract the text of the first message, handling dataset-specific quirks.
@@ -145,34 +143,23 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
         self, messages: list[dict[str, Any]]
     ) -> list[tuple[str, str]]:
         """Pair consecutive user→assistant messages (OpenAI-style roles)."""
+        chat_messages = [
+            msg for msg in messages if (msg.get("role") or "").lower() != "system"
+        ]
         pairs: list[tuple[str, str]] = []
-        i = 0
-        while i < len(messages):
-            role = (messages[i].get("role") or "").lower()
-            if role == "system":
-                i += 1
-                continue
-            if role != "user":
-                i += 1
-                continue
-            prompt = self._text_from_message_dict(messages[i])
-            if not prompt:
-                i += 1
-                continue
-            j = i + 1
-            while j < len(messages) and (messages[j].get("role") or "").lower() in (
-                "system",
-            ):
-                j += 1
-            if j < len(messages) and (messages[j].get("role") or "").lower() == (
-                "assistant"
-            ):
-                completion = self._text_from_message_dict(messages[j])
-                if completion:
+        idx = 0
+        while idx < len(chat_messages) - 1:
+            current, next_msg = chat_messages[idx], chat_messages[idx + 1]
+            current_role = (current.get("role") or "").lower()
+            next_role = (next_msg.get("role") or "").lower()
+            if current_role == "user" and next_role == "assistant":
+                prompt = self._text_from_message_dict(current)
+                completion = self._text_from_message_dict(next_msg)
+                if prompt and completion:
                     pairs.append((prompt, completion))
-                i = j + 1
+                idx += 2
             else:
-                i += 1
+                idx += 1
         return pairs
 
     def _prompt_completion_pairs(self, messages: list[Any]) -> list[tuple[str, str]]:
