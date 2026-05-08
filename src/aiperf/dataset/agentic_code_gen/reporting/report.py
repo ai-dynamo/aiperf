@@ -113,6 +113,8 @@ def _print_report_to_console(data: ReportData) -> None:
 
 
 def _print_target_table(console: Console, data: ReportData) -> None:
+    if not data.comparisons:
+        return
     table = Table(title="Target vs Observed")
     table.add_column("Metric", justify="right", style="cyan", no_wrap=True)
     for col in [

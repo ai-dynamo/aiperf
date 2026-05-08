@@ -570,3 +570,37 @@ class TestGenerateReportCacheExplorer:
         """write_dataset always produces cache explorer files."""
         assert (run_dir / "cache_structure.json").exists()
         assert (run_dir / "cache_explorer.html").exists()
+
+
+def test_print_target_table_skips_when_no_comparisons() -> None:
+    """When ReportData.comparisons is empty (no manifest), the target table
+    should be omitted entirely rather than rendered as a header with no rows."""
+    from rich.console import Console
+
+    from aiperf.dataset.agentic_code_gen.models import PercentileStats
+    from aiperf.dataset.agentic_code_gen.reporting.metrics import ReportData
+    from aiperf.dataset.agentic_code_gen.reporting.report import _print_target_table
+
+    empty_stats = PercentileStats(
+        count=0,
+        mean=0.0,
+        std=0.0,
+        median=0.0,
+        p05=0.0,
+        p25=0.0,
+        p75=0.0,
+        p95=0.0,
+        p99=0.0,
+    )
+    data = ReportData(
+        session_count=0,
+        total_turns=0,
+        comparisons=[],
+        hash_id_block_stats=empty_stats,
+        request_latency_stats=empty_stats,
+        session_duration_min_stats=empty_stats,
+    )
+
+    console = Console(record=True, width=140)
+    _print_target_table(console, data)
+    assert "Target vs Observed" not in console.export_text()
