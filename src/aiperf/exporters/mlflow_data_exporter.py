@@ -21,7 +21,9 @@ from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 class MLflowDataExporter(AIPerfLoggerMixin):
     """Uploads benchmark summary metrics and artifacts to MLflow Tracking."""
 
-    _PLOT_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".html"}
+    _PLOT_SUFFIXES: frozenset[str] = frozenset(
+        {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".html"}
+    )
     is_deferred = True  # runs after all local exporters write their files
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
@@ -181,12 +183,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 mlflow_dependency_message("MLflow export is enabled")
             ) from exc
 
-        if self._tracking_uri is None:
-            # __init__ raises DataExporterDisabled when mlflow_enabled is False,
-            # which is true iff mlflow_tracking_uri is None. Narrow the type for mypy.
-            assert self._tracking_uri is not None, (
-                "_export_sync invariant: __init__ guarantees mlflow_tracking_uri is set"
-            )
+        assert self._tracking_uri is not None, (
+            "_export_sync invariant: __init__ guarantees mlflow_tracking_uri is set"
+        )
 
         mlflow.set_tracking_uri(self._tracking_uri)
         mlflow.set_experiment(self._experiment_name)
@@ -217,38 +216,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             run_context = mlflow.start_run(run_id=existing_live_run_id)
         else:
             resolved_parent_run_id = self._user_config.mlflow_parent_run_id
-            start_kwargs: dict[str, Any] = {"run_name": run_name}
-            if resolved_parent_run_id:
-                start_kwargs["parent_run_id"] = resolved_parent_run_id
-            try:
-                run_context = mlflow.start_run(**start_kwargs)
-            except Exception as exc:
-                # Only fall back to a root run when the parent genuinely doesn't
-                # exist. Auth failures, network errors, and transient 5xx should
-                # propagate so the user knows something is wrong.
-                is_resource_missing = False
-                if resolved_parent_run_id:
-                    try:
-                        from mlflow.exceptions import MlflowException
-
-                        if (
-                            isinstance(exc, MlflowException)
-                            and getattr(exc, "error_code", None)
-                            == "RESOURCE_DOES_NOT_EXIST"
-                        ):
-                            is_resource_missing = True
-                    except ImportError:
-                        # Fallback for older mlflow versions without error_code.
-                        is_resource_missing = "RESOURCE_DOES_NOT_EXIST" in repr(exc)
-                if is_resource_missing:
-                    self.warning(
-                        f"parent_run_id {resolved_parent_run_id} not found; "
-                        f"creating root MLflow run instead. Original error: {exc!r}"
-                    )
-                    resolved_parent_run_id = None
-                    run_context = mlflow.start_run(run_name=run_name)
-                else:
-                    raise
+            run_context, resolved_parent_run_id = self._start_new_run(
+                mlflow, run_name, resolved_parent_run_id
+            )
 
         with run_context as run:
             run_id = run.info.run_id
@@ -311,17 +281,52 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             f"{len(metric_payload)} metrics and {len(uploaded_artifacts)} artifacts."
         )
 
+    def _start_new_run(
+        self, mlflow: Any, run_name: str, parent_run_id: str | None
+    ) -> tuple[Any, str | None]:
+        """Start a new MLflow run, falling back to a root run if parent is missing."""
+        start_kwargs: dict[str, Any] = {"run_name": run_name}
+        if parent_run_id:
+            start_kwargs["parent_run_id"] = parent_run_id
+        try:
+            return mlflow.start_run(**start_kwargs), parent_run_id
+        except Exception as exc:
+            if not parent_run_id or not self._is_parent_missing(exc):
+                raise
+            self.warning(
+                f"parent_run_id {parent_run_id} not found; "
+                f"creating root MLflow run instead. Original error: {exc!r}"
+            )
+            return mlflow.start_run(run_name=run_name), None
+
+    @staticmethod
+    def _is_parent_missing(exc: BaseException) -> bool:
+        """Check whether the exception indicates the parent run doesn't exist."""
+        try:
+            from mlflow.exceptions import MlflowException
+
+            if (
+                isinstance(exc, MlflowException)
+                and getattr(exc, "error_code", None) == "RESOURCE_DOES_NOT_EXIST"
+            ):
+                return True
+        except ImportError:
+            pass
+        # Fallback for older mlflow versions without error_code.
+        return "RESOURCE_DOES_NOT_EXIST" in repr(exc)
+
     def _derive_default_run_name(self) -> str:
         benchmark_id = self._user_config.benchmark_id
         if benchmark_id:
             return f"aiperf-{benchmark_id[:8]}"
         return f"aiperf-{int(time.time())}"
 
+    _STAT_FIELDS = ("avg", "p50", "p90", "p99", "min", "max")
+
     def _build_metric_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}
-        _STAT_FIELDS = ("avg", "p50", "p90", "p99", "min", "max")
         for metric in self._results.records or []:
-            for field in _STAT_FIELDS:
+            for field in self._STAT_FIELDS:
                 value = getattr(metric, field, None)
                 if value is None:
                     continue

@@ -276,9 +276,10 @@ def _classify_error_type(error: Any | None) -> str | None:
 
     # Check cause chain for timeout indicators
     for cause in cause_chain:
-        if "timeout" in cause.lower():
+        cause_str = str(cause).lower()
+        if "timeout" in cause_str:
             return "timeout"
-        if "cancel" in cause.lower():
+        if "cancel" in cause_str:
             return "cancelled"
 
     # Check message for parse errors

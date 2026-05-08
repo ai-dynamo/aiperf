@@ -993,7 +993,7 @@ class UserConfig(BaseConfig):
 
     @functools.cached_property
     def gen_ai_provider_name(self) -> str:
-        """Resolved gen_ai.provider.name per Requirement 14.5 precedence.
+        """Resolved gen_ai.provider.name attribute value.
 
         (a) explicit --gen-ai-provider override,
         (b) auto-infer from endpoint URL host,
