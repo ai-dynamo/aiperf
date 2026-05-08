@@ -33,3 +33,23 @@ def test_single_file_parent_normals_become_one_session() -> None:
     assert turns[1].hash_ids == [1, 2, 3, 4]
     # delay = (5.0 - 0.0) * 1000.0
     assert turns[1].delay_ms == pytest.approx(5000.0)
+
+
+def test_directory_yields_one_session_per_trace() -> None:
+    parsed = load_weka_as_parsed(
+        Path(__file__).resolve().parents[3] / "fixtures" / "weka_traces_small"
+    )
+    # 10 trace files in this fixture dir
+    assert len(parsed) == 10
+    # Insertion order must match sorted(glob("*.json"))
+    assert list(parsed.keys()) == sorted(parsed.keys())
+
+
+def test_duplicate_trace_id_raises(tmp_path: Path) -> None:
+    """Two files with the same trace.id in one dir is an error."""
+    blob = (FIXTURES / "simple.json").read_bytes()
+    (tmp_path / "a.json").write_bytes(blob)
+    (tmp_path / "b.json").write_bytes(blob)
+
+    with pytest.raises(ValueError, match="Duplicate trace id 'trace_simple'"):
+        load_weka_as_parsed(tmp_path)
