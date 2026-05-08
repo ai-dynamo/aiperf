@@ -339,12 +339,15 @@ class TestCohereEmbeddingsEndpoint:
         assert isinstance(parsed.data, EmbeddingResponseData)
         assert parsed.data.embeddings == [[1.0, 2.0]]
 
-    def test_parse_response_invalid_embedding_types_falls_back_to_float(self) -> None:
+    @pytest.mark.parametrize("embedding_types", [123, [123], []])
+    def test_parse_response_invalid_embedding_types_falls_back_to_float(
+        self, embedding_types: object
+    ) -> None:
         """Invalid embedding_types extra should fall back to float embeddings."""
         model_endpoint = create_model_endpoint(
             EndpointType.COHERE_EMBEDDINGS,
             model_name="cohere-embeddings-model",
-            extra=[("embedding_types", 123)],
+            extra=[("embedding_types", embedding_types)],
         )
         endpoint = create_endpoint_with_mock_transport(
             CohereEmbeddingsEndpoint, model_endpoint

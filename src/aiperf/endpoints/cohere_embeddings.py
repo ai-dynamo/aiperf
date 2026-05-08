@@ -121,11 +121,12 @@ class CohereEmbeddingsEndpoint(BaseEmbeddingsEndpoint):
             embedding_types = [embedding_types]
 
         if isinstance(embedding_types, list):
-            return tuple(
+            parsed_types = tuple(
                 embedding_type
                 for embedding_type in embedding_types
                 if isinstance(embedding_type, str)
             )
+            return parsed_types or ("float",)
 
         return ("float",)
 
