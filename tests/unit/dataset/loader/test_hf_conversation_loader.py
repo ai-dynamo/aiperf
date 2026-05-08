@@ -330,7 +330,7 @@ class TestHFConversationDatasetLoader:
             "dataset": [
                 {
                     "conversation": [{"role": "user", "content": "Path only"}],
-                    "images": [{"bytes": None, "path": "/tmp/some_image.jpg"}],
+                    "images": [{"bytes": None, "path": "some_image.jpg"}],
                 }
             ]
         }

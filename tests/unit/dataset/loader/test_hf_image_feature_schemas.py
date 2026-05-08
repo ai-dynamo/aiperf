@@ -9,6 +9,7 @@ unit tests didn't match what HF actually emitted (``[{"bytes": ...}, ...]``).
 """
 
 import io
+from typing import Any
 
 import pytest
 from datasets import Dataset, Sequence
@@ -33,7 +34,7 @@ def user_config() -> UserConfig:
     return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
 
 
-def _vision_arena_dataset(image_feature) -> Dataset:
+def _vision_arena_dataset(image_feature: Any) -> Dataset:
     """Build a VisionArena-shaped Dataset with the given Image feature.
 
     Schema matches lmarena-ai/VisionArena-Chat:
@@ -54,7 +55,7 @@ class TestHFConversationLoaderRealSchemas:
     """Run HFConversationDatasetLoader against real HF Datasets so the row
     shapes are produced by the actual ``datasets`` library, not by us."""
 
-    async def _loader(self, user_config: UserConfig) -> HFConversationDatasetLoader:
+    def _loader(self, user_config: UserConfig) -> HFConversationDatasetLoader:
         return HFConversationDatasetLoader(
             user_config=user_config,
             hf_dataset_name="lmarena-ai/VisionArena-Chat",
@@ -73,7 +74,7 @@ class TestHFConversationLoaderRealSchemas:
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=False)))
         assert str(dataset.features["images"]) == "List(Image(mode=None, decode=False))"
 
-        loader = await self._loader(user_config)
+        loader = self._loader(user_config)
         conversations = await loader.convert_to_conversations({"dataset": dataset})
 
         assert len(conversations) == 1
@@ -89,7 +90,7 @@ class TestHFConversationLoaderRealSchemas:
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=False)))
         streaming = dataset.to_iterable_dataset()
 
-        loader = await self._loader(user_config)
+        loader = self._loader(user_config)
         conversations = await loader.convert_to_conversations({"dataset": streaming})
 
         assert len(conversations[0].turns[0].images) == 1
@@ -99,7 +100,7 @@ class TestHFConversationLoaderRealSchemas:
         PIL Images; the unified loop must handle both shapes."""
         dataset = _vision_arena_dataset(Sequence(HFImage(decode=True)))
 
-        loader = await self._loader(user_config)
+        loader = self._loader(user_config)
         conversations = await loader.convert_to_conversations({"dataset": dataset})
 
         turn = conversations[0].turns[0]
