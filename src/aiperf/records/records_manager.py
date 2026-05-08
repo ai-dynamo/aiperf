@@ -342,25 +342,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, record_data: MetricRecordsData
     ) -> None:
-        """Send the results to each of the metric results processors."""
+        """Send the results to each of the metric results processors.
+
+        Telemetry-only processors (FlushableResultsProcessorProtocol, e.g. OTel
+        streaming) are best-effort: their exceptions are logged but do not fail
+        the run. All other processors propagate exceptions so data-pipeline
+        failures surface immediately.
+        """
         if not self._metric_results_processors:
             return
 
-        results = await asyncio.gather(
-            *[
-                results_processor.process_result(record_data)
-                for results_processor in self._metric_results_processors
-            ],
-            return_exceptions=True,
-        )
-        for results_processor, result in zip(
-            self._metric_results_processors, results, strict=True
-        ):
-            if isinstance(result, BaseException):
+        for results_processor in self._metric_results_processors:
+            try:
+                await results_processor.process_result(record_data)
+            except Exception as exc:  # noqa: BLE001 - telemetry processor failure must not crash the run
                 self.exception(
                     "Failed to process metric record in "
-                    f"{results_processor.__class__.__name__}: {result!r}"
+                    f"{results_processor.__class__.__name__}: {exc!r}"
                 )
+                # Processors with is_best_effort=True (streaming telemetry like
+                # OTel) swallow exceptions; all others re-raise to surface bugs.
+                if not getattr(results_processor, "is_best_effort", False):
+                    raise
 
     async def _flush_metric_results_processors(self, force: bool = False) -> None:
         """Flush any results processors that provide explicit flush support."""
@@ -379,14 +382,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             *[processor.flush(force=force) for processor in flushable_processors],
             return_exceptions=True,
         )
-        for result in results:
+        for processor, result in zip(flushable_processors, results, strict=True):
             if isinstance(result, BaseException):
-                self.exception(f"Failed to flush metric results processor: {result!r}")
+                self.exception(
+                    f"Failed to flush metric results processor "
+                    f"{processor.__class__.__name__}: {result!r}"
+                )
 
     async def _send_timing_to_results_processors(
         self, phase_stats: CreditPhaseStats
     ) -> None:
-        """Send timing snapshots to timing-capable results processors."""
+        """Send timing snapshots to timing-capable results processors.
+
+        All timing processors are best-effort telemetry (OTel streamer only);
+        failures are logged but never re-raised.
+        """
         if not self._timing_results_processors:
             return
 

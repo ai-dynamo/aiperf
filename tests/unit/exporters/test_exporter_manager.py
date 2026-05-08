@@ -91,12 +91,14 @@ class TestExporterManager:
 
         csv_instance = MagicMock()
         csv_instance.export = AsyncMock(side_effect=_export_csv)
+        csv_instance.is_deferred = False
         csv_class = MagicMock(return_value=csv_instance)
         csv_entry = MagicMock()
         csv_entry.name = "csv"
 
         mlflow_instance = MagicMock()
         mlflow_instance.export = AsyncMock(side_effect=_export_mlflow)
+        mlflow_instance.is_deferred = True
         mlflow_class = MagicMock(return_value=mlflow_instance)
         mlflow_entry = MagicMock()
         mlflow_entry.name = "mlflow"

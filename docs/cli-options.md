@@ -119,7 +119,6 @@ aiperf profile --model your_model --url localhost:8000 --goodput "request_latenc
 #### `-m`, `--model-names`, `--model` `<list>` _(Required)_
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
-<br/>_Constraints: min: 1_
 
 #### `--model-selection-strategy` `<str>`
 

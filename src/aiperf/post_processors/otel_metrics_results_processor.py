@@ -25,6 +25,7 @@ from aiperf.common.optional_dependencies import (
 )
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.post_processors.otel_streaming_fanout import (
+    FanoutEvent,
     OTelStreamingFanoutConfig,
     run_otel_streaming_fanout,
 )
@@ -85,7 +86,25 @@ class _FanoutAddInstrument:
 
 
 class OTelMetricsResultsProcessor(BaseMetricsProcessor):
-    """Streams record and timing telemetry to configured live sinks."""
+    """Producer side of the OTel/MLflow streaming pipeline.
+
+    Receives ``MetricRecordsData`` and ``CreditPhaseStats`` from ``RecordsManager``,
+    dispatches each to a registered ``OTelResultsStrategyProtocol`` (selected by
+    ``--stream``), and emits the resulting events to a bounded
+    ``multiprocessing.Queue``. The actual export to an OTel collector and/or MLflow
+    tracking server happens in a dedicated child process — see
+    ``run_otel_streaming_fanout``.
+
+    Registered as the ``otel_metrics_streamer`` results processor in ``plugins.yaml``.
+    Raises ``PostProcessorDisabled`` from ``__init__`` when neither ``--otel-url``
+    nor ``--mlflow-tracking-uri`` is set, or when the optional ``aiperf[otel]`` extra
+    is missing.
+
+    See ``docs/dev/patterns.md#drop-oldest-fanout-queue`` for the queue back-pressure
+    protocol.
+    """
+
+    is_best_effort = True  # telemetry failures must not crash the benchmark
 
     def __init__(
         self,
@@ -118,9 +137,9 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 )
                 raise PostProcessorDisabled(message) from exc
 
-        self._histogram_instruments: dict[str, Any] = {}
-        self._counter_instruments: dict[str, Any] = {}
-        self._up_down_counter_instruments: dict[str, Any] = {}
+        self._histogram_instruments: dict[str, _FanoutHistogramInstrument] = {}
+        self._counter_instruments: dict[str, _FanoutAddInstrument] = {}
+        self._up_down_counter_instruments: dict[str, _FanoutAddInstrument] = {}
         self._timing_counter_state: dict[tuple[CreditPhase, str], int] = {}
         self._timing_gauge_state: dict[tuple[CreditPhase, str], float] = {}
         self._instrument_lock = asyncio.Lock()
@@ -131,14 +150,16 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._result_strategies.append(TimingResultsStrategy(self))
         if not self._result_strategies:
             raise PostProcessorDisabled(
-                "OTel telemetry selection disabled all stream domains."
+                f"--stream selection {user_config.stream!r} disabled all OTel "
+                "stream domains. Set --stream metrics, --stream timing, or "
+                "--stream default to enable streaming."
             )
         self._export_timeout_millis = self._to_millis(
             Environment.OTEL.REQUEST_TIMEOUT_SECONDS,
             minimum=1000,
         )
         self._streaming_ready = False
-        self._fanout_queue: Any | None = None
+        self._fanout_queue: mp.Queue[FanoutEvent] | None = None
         self._fanout_process: mp.Process | None = None
         self._fanout_dropped_events = 0
         self._fanout_sent_events = 0
@@ -188,7 +209,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 daemon=True,
             )
             await asyncio.to_thread(process.start)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - multiprocessing startup can raise OS/resource errors
             self.warning(f"Failed to start telemetry fanout process. Error={exc!r}")
             with suppress(Exception):
                 if "queue" in locals():
@@ -239,8 +260,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         """Final flush before shutdown and close SDK resources."""
         try:
             await self.flush(force=True)
-        except Exception as exc:
-            self.warning(f"Failed to flush metrics: {exc}")
+        except Exception as exc:  # noqa: BLE001 - flush must not crash shutdown sequence
+            self.warning(f"Failed to flush metrics: {exc!r}")
         finally:
             await self._stop_fanout_process()
             self._streaming_ready = False
@@ -252,7 +273,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         unit: str | None = None,
         description: str | None = None,
         explicit_bucket_boundaries: tuple[float, ...] | None = None,
-    ) -> Any:
+    ) -> _FanoutHistogramInstrument:
         """Create or reuse a histogram instrument for a metric name."""
         if metric_name in self._histogram_instruments:
             return self._histogram_instruments[metric_name]
@@ -279,7 +300,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
 
     async def get_or_create_counter(
         self, metric_name: str, unit: str, description: str
-    ) -> Any:
+    ) -> _FanoutAddInstrument:
         """Create or reuse a counter instrument."""
         if metric_name in self._counter_instruments:
             return self._counter_instruments[metric_name]
@@ -299,7 +320,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
 
     async def get_or_create_up_down_counter(
         self, metric_name: str, unit: str, description: str
-    ) -> Any:
+    ) -> _FanoutAddInstrument:
         """Create or reuse an up-down counter instrument."""
         if metric_name in self._up_down_counter_instruments:
             return self._up_down_counter_instruments[metric_name]
@@ -332,6 +353,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
 
         if self._fanout_queue is not None:
             with suppress(Exception):
+                self._fanout_queue.cancel_join_thread()
+            with suppress(Exception):
                 self._fanout_queue.close()
             self._fanout_queue = None
 
@@ -355,7 +378,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._fanout_queue.get_nowait()
         except Empty:
             return False
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - queue ops may raise OS errors; telemetry must not crash hot path
             self.warning(f"Failed to drop oldest OTel fanout event: {exc!r}")
             return False
 
@@ -383,7 +406,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._record_fanout_drop(
                 "OTel fanout queue remained full; dropping newest event"
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - queue/OS errors must not block the benchmarking event loop
             self.warning(f"Failed to enqueue OTel fanout event: {exc!r}")
 
     @staticmethod
@@ -441,9 +464,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         if current_value < previous_value:
             self.warning(
                 f"Timing counter reset detected for {metric_name} ({phase}). "
-                f"current={current_value}, previous={previous_value}"
+                f"current={current_value}, previous={previous_value}. "
+                "Skipping emission to avoid double-counting."
             )
-            return current_value
+            return 0
         return current_value - previous_value
 
     def calculate_timing_gauge_delta(
@@ -481,7 +505,19 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         return []
 
     def _metric_unit(self, metric_name: str) -> str:
-        """Return a unit string for a metric name."""
+        """Return a unit string for an aiperf metric name on the fallback path.
+
+        Consults the metric registry for the authoritative unit when available,
+        falling back to tag-based heuristics.
+        """
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        metric_cls = MetricRegistry.get_class_or_none(metric_name)
+        if metric_cls is not None:
+            unit = getattr(metric_cls, "unit", None)
+            if unit is not None:
+                return str(unit)
+
         if metric_name.endswith("_ns"):
             return "ns"
         return "1"

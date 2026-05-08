@@ -45,7 +45,6 @@ def user_config_otel_mlflow(tmp_artifact_dir) -> UserConfig:
             artifact_directory=tmp_artifact_dir,
         ),
         otel_url="collector:4318",
-        mlflow=True,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_experiment="aiperf-tests",
     )
@@ -61,7 +60,6 @@ def user_config_mlflow_only(tmp_artifact_dir) -> UserConfig:
         output=OutputConfig(
             artifact_directory=tmp_artifact_dir,
         ),
-        mlflow=True,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_experiment="aiperf-tests",
     )

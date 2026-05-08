@@ -168,7 +168,6 @@ class TestMLflowMetadataRoundtripParentRunId:
                 urls=["http://localhost:8000"],
             ),
             output=OutputConfig(artifact_directory=tmp_path),
-            mlflow=True,
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="roundtrip-test",
             mlflow_parent_run_id=parent_run_id,
@@ -232,7 +231,6 @@ class TestMLflowMetadataRoundtripParentRunId:
                 urls=["http://localhost:8000"],
             ),
             output=OutputConfig(artifact_directory=tmp_path),
-            mlflow=True,
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="roundtrip-test",
             mlflow_parent_run_id=parent_run_id,
@@ -260,7 +258,6 @@ class TestMLflowMetadataRoundtripParentRunId:
         assert final_metadata["reused_live_run"] is True
 
 
-@pytest.mark.component_integration
 class TestMLflowMetadataByteEqualityRoundtrip:
     """Verify byte-equality of uploaded vs local mlflow_export.json with multiple artifacts."""
 
@@ -282,7 +279,6 @@ class TestMLflowMetadataByteEqualityRoundtrip:
                 urls=["http://localhost:8000"],
             ),
             output=OutputConfig(artifact_directory=tmp_path),
-            mlflow=True,
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="byte-equality-test",
         )
@@ -328,7 +324,6 @@ class TestMLflowMetadataByteEqualityRoundtrip:
                 urls=["http://localhost:8000"],
             ),
             output=OutputConfig(artifact_directory=tmp_path),
-            mlflow=True,
             mlflow_tracking_uri="http://mlflow:5000",
             mlflow_experiment="empty-artifacts-test",
             mlflow_artifact_globs=["nonexistent_pattern_*.xyz"],

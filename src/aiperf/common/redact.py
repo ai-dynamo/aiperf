@@ -128,3 +128,17 @@ def redact_cli_command(cmd: str) -> str:
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
     return cmd
+
+
+def redact_url(url: str) -> str:
+    """Strip userinfo (user:password@) from a URL to prevent credential leakage.
+
+    Handles both scheme-prefixed (http://user:pass@host) and bare (user:pass@host) URLs.
+    Returns the URL unchanged if no credentials are embedded.
+    """
+    # Scheme-prefixed: http://user:pass@host or https://user:pass@host
+    result = re.sub(r"(https?://)([^@]+)@", r"\1" + REDACTED_VALUE + "@", url)
+    if result != url:
+        return result
+    # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
+    return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)

@@ -126,12 +126,13 @@ class UserConfig(BaseConfig):
     def validate_cli_args(self) -> Self:
         """Set the CLI command based on the command line arguments, if it has not already been set."""
         if not self.cli_command:
-            from aiperf.common.redact import redact_cli_command
+            from aiperf.common.redact import redact_cli_command, redact_url
 
             args = [coerce_value(x) for x in sys.argv[1:]]
             # Note: Use single quotes to avoid conflicts with double quotes in arguments.
             args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
             cmd = " ".join(["aiperf", *args])
+            cmd = redact_url(cmd)
             self.cli_command = redact_cli_command(cmd)
         return self
 
@@ -897,6 +898,15 @@ class UserConfig(BaseConfig):
                 self._otel_stream_timing_enabled = "timing" in selected_values
 
         if self.otel_url is None:
+            # Warn/reject if OTel secondary options set without --otel-url.
+            has_otel_secondary = bool(
+                self.stream or self.otel_resource_attributes
+            )
+            if has_otel_secondary:
+                raise ValueError(
+                    "--stream and --otel-resource-attributes "
+                    "require --otel-url to be set."
+                )
             self._otel_metrics_url = None
             return self
 
@@ -916,6 +926,20 @@ class UserConfig(BaseConfig):
             self.mlflow_artifact_globs = normalized_globs
 
         if self.mlflow_tracking_uri is None:
+            # Warn if secondary mlflow flags are set without the primary URI.
+            has_secondary = (
+                self.mlflow_experiment != MLflowDefaults.EXPERIMENT
+                or self.mlflow_run_name is not None
+                or self.mlflow_tags is not None
+                or self.mlflow_artifact_globs is not None
+                or self.mlflow_parent_run_id is not None
+            )
+            if has_secondary:
+                raise ValueError(
+                    "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
+                    "--mlflow-artifact-glob, and --mlflow-parent-run-id "
+                    "require --mlflow-tracking-uri to be set."
+                )
             return self
 
         tracking_uri = self.mlflow_tracking_uri.strip()

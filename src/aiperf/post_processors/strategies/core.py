@@ -16,6 +16,20 @@ OTelResultData = MetricRecordsData | CreditPhaseStats
 
 
 @runtime_checkable
+class HistogramInstrument(Protocol):
+    """Protocol for histogram-like instruments returned by the context."""
+
+    def record(self, value: float, attributes: dict[str, Any]) -> None: ...
+
+
+@runtime_checkable
+class CounterInstrument(Protocol):
+    """Protocol for counter-like instruments returned by the context."""
+
+    def add(self, value: float, attributes: dict[str, Any]) -> None: ...
+
+
+@runtime_checkable
 class OTelResultsStrategyProtocol(Protocol):
     """Protocol for OTel result processing strategies."""
 
@@ -38,15 +52,15 @@ class OTelStrategyContextProtocol(Protocol):
         unit: str | None = None,
         description: str | None = None,
         explicit_bucket_boundaries: tuple[float, ...] | None = None,
-    ) -> Any: ...
+    ) -> HistogramInstrument: ...
 
     async def get_or_create_counter(
         self, metric_name: str, unit: str, description: str
-    ) -> Any: ...
+    ) -> CounterInstrument: ...
 
     async def get_or_create_up_down_counter(
         self, metric_name: str, unit: str, description: str
-    ) -> Any: ...
+    ) -> CounterInstrument: ...
 
     def build_record_attributes(self, record: MetricRecordsData) -> dict[str, Any]: ...
 

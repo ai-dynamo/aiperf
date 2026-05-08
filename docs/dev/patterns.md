@@ -406,7 +406,11 @@ event_queue = mp.Queue(maxsize=Environment.OTEL.MAX_BUFFERED_RECORDS)  # default
 ```python
 from queue import Empty, Full
 
-def _emit_fanout_event(self, event_type: str, payload: dict) -> None:
+def _queue_fanout_event(self, event_type: str, payload: dict[str, Any]) -> None:
+    """Enqueue streaming event for the fanout process without blocking the event loop."""
+    if self._fanout_queue is None:
+        return
+
     event = {"type": event_type, "payload": payload}
     try:
         self._fanout_queue.put_nowait(event)
@@ -419,7 +423,11 @@ def _emit_fanout_event(self, event_type: str, payload: dict) -> None:
                 return
             except Full:
                 pass
-        self._record_fanout_drop("Fanout queue full after drop-oldest retry")
+        self._record_fanout_drop(
+            "OTel fanout queue remained full; dropping newest event"
+        )
+    except Exception as exc:
+        self.warning(f"Failed to enqueue OTel fanout event: {exc!r}")
 ```
 
 **Design rationale:**

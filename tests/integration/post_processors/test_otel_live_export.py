@@ -13,7 +13,9 @@ server, and asserts that the sink receives at least one POST /v1/metrics
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -29,28 +31,27 @@ class _OTLPSinkHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/metrics":
             content_length = int(self.headers.get("Content-Length", 0))
             self.rfile.read(content_length)
-            self.server.received_exports.append(True)  # type: ignore[attr-defined]
+            self.server.export_timestamps_ns.append(time.monotonic_ns())  # type: ignore[attr-defined]
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"{}")
 
     def log_message(self, fmt: str, *args: object) -> None:
-        # Silence request logs during tests.
         pass
 
 
 class _OTLPSinkServer(HTTPServer):
-    """HTTPServer subclass that tracks received exports."""
+    """HTTPServer subclass that tracks received export timestamps."""
 
     def __init__(self, port: int) -> None:
-        self.received_exports: list[bool] = []
+        self.export_timestamps_ns: list[int] = []
         super().__init__(("127.0.0.1", port), _OTLPSinkHandler)
 
 
 @pytest.fixture
 def otlp_sink() -> tuple[_OTLPSinkServer, int]:
     """Start a fake OTLP HTTP sink on a random port and return (server, port)."""
-    server = _OTLPSinkServer(0)  # Port 0 lets the OS pick a free port
+    server = _OTLPSinkServer(0)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -70,39 +71,67 @@ class TestOTelLiveExport:
         aiperf_mock_server: AIPerfMockServer,
         otlp_sink: tuple[_OTLPSinkServer, int],
     ) -> None:
-        """Run aiperf profile with --otel-url and assert the OTLP sink receives
-        at least one export while records are still flowing (not only at shutdown).
+        """Assert OTLP sink receives exports mid-run, not only at shutdown.
 
-        The test uses --concurrency 4 --request-count 20 which generates
-        enough traffic for the monotonic-clock flush driver to fire at least
-        once before the run finishes.
+        Strategy: run the CLI in a background task and poll the sink for
+        exports while the run is still in progress. The first export must
+        arrive before the CLI process exits.
         """
         server, port = otlp_sink
         otel_url = f"http://127.0.0.1:{port}"
 
-        result = await cli.run(
-            f"""
+        # Use enough requests and a small flush interval to guarantee
+        # at least one mid-run flush fires before the run completes.
+        cli_cmd = f"""
             aiperf profile \
                 --model {defaults.model} \
                 --url {aiperf_mock_server.url} \
                 --concurrency 4 \
-                --request-count 20 \
+                --request-count 40 \
                 --streaming \
                 --otel-url {otel_url} \
                 --stream default
-            """,
-            timeout=120.0,
-        )
+        """
+
+        # Launch the CLI in a background task so we can poll mid-run.
+        cli_task = asyncio.create_task(cli.run(cli_cmd, timeout=120.0))
+
+        # Poll for at least one export arriving while the CLI is still running.
+        mid_run_export_received = False
+        for _ in range(600):  # Up to 60s (100ms intervals)
+            await asyncio.sleep(0.1)
+            if server.export_timestamps_ns:
+                # CLI task still running means this is genuinely mid-run.
+                if not cli_task.done():
+                    mid_run_export_received = True
+                break
+            if cli_task.done():
+                break
+
+        result = await cli_task
 
         assert result.exit_code == 0, (
             f"aiperf profile failed with exit code {result.exit_code}"
         )
 
-        # The sink should have received at least one OTLP export.
-        # Under the fixed flush driver (Req 7.1), exports fire on a
-        # monotonic clock schedule (default 2s) even under sustained load.
-        assert len(server.received_exports) >= 1, (
-            "OTLP sink received zero exports during the run. "
+        run_end_ns = time.monotonic_ns()
+
+        # Primary assertion: at least one export arrived mid-run.
+        assert mid_run_export_received, (
+            "No OTLP export arrived while the CLI was still running. "
+            f"Exports received: {len(server.export_timestamps_ns)}. "
             "This indicates the flush driver may be starved under load "
-            "(regression of Requirement 7.1)."
+            "(regression of Requirement 7.1 — mid-run flush)."
+        )
+
+        # Secondary: the first export timestamp is well before run completion.
+        first_export_ns = server.export_timestamps_ns[0]
+        assert first_export_ns < run_end_ns, (
+            "First export timestamp is not before run end. "
+            f"first_export={first_export_ns}, run_end={run_end_ns}"
+        )
+
+        # Sanity: multiple exports should have arrived during a 40-request run.
+        assert len(server.export_timestamps_ns) >= 1, (
+            "OTLP sink received zero exports during the run."
         )

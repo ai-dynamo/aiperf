@@ -7,7 +7,8 @@ and attributes onto the OTel GenAI semantic conventions
 (https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/).
 
 This module produces pure data (strings, floats, tuples). It does NOT import
-opentelemetry.* or mlflow.* — the guard rule from Requirement 1.7 applies.
+opentelemetry.* or mlflow.* — it must remain import-safe in environments
+without the optional aiperf[otel] or aiperf[mlflow] extras.
 """
 
 from __future__ import annotations
@@ -378,8 +379,9 @@ def _extract_host(url: str) -> str | None:
 
 
 def infer_provider_name(user_config: UserConfig) -> str:
-    """Determine gen_ai.provider.name per Requirement 14.5 precedence.
+    """Determine gen_ai.provider.name attribute value.
 
+    Precedence:
     (a) explicit --gen-ai-provider override wins,
     (b) else auto-infer from URL host,
     (c) else '_OTHER'.

@@ -80,8 +80,9 @@ class ExporterManager(AIPerfLoggerMixin):
                 self.error(f"Error creating data exporter: {e!r}")
                 continue
 
-            # Upload to MLflow after all local exporters finish so all artifact files exist.
-            if str(exporter_entry.name) == DataExporterType.MLFLOW:
+            # Deferred exporters run after all local exporters finish
+            # so their artifacts (JSON, CSV, etc.) are available for upload.
+            if getattr(exporter, "is_deferred", False):
                 deferred_exporters.append(exporter)
                 continue
 

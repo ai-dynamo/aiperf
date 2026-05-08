@@ -275,9 +275,9 @@ def test_run_fanout_logs_timing_gauge_snapshots_to_mlflow(
     assert len(mlflow_state["log_batch_calls"]) == 1
     logged_metrics = mlflow_state["log_batch_calls"][0]["metrics"]
     assert [metric.key for metric in logged_metrics] == [
-        "live.aiperf.timing.requests.in_flight",
-        "live.aiperf.timing.requests.in_flight",
-        "live.aiperf.timing.requests.in_flight",
+        "live.aiperf.timing.requests.in_flight.profiling",
+        "live.aiperf.timing.requests.in_flight.profiling",
+        "live.aiperf.timing.requests.in_flight.profiling",
     ]
     assert [metric.value for metric in logged_metrics] == [2.0, 1.0, 0.0]
 

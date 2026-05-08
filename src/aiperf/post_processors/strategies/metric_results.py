@@ -47,18 +47,17 @@ class MetricResultsStrategy(OTelResultsStrategyProtocol):
             )
 
             if emission is not None:
-                # Spec-named metric: use translated name, unit, boundaries, attributes
                 instrument = await self._context.get_or_create_histogram(
                     emission.spec_metric_name,
                     unit=emission.unit,
                     description=f"GenAI semconv metric: {emission.spec_metric_name}",
                     explicit_bucket_boundaries=emission.explicit_bucket_boundaries,
                 )
+                merged_attrs = {**aiperf_attributes, **dict(emission.attributes)}
                 for value in numeric_values:
                     converted = convert_metric_value(metric_name, value)
-                    instrument.record(converted, dict(emission.attributes))
+                    instrument.record(converted, merged_attrs)
             else:
-                # No spec equivalent: preserve original aiperf.* emission
                 instrument = await self._context.get_or_create_histogram(metric_name)
                 for value in numeric_values:
                     instrument.record(value, aiperf_attributes)

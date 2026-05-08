@@ -183,6 +183,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/post_processors/otel_metrics_results_processor.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/post_processors/otel_streaming_fanout.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],

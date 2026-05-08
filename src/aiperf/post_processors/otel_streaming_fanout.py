@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from multiprocessing.queues import Queue
 from pathlib import Path
 from queue import Empty
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 import orjson
 
@@ -21,6 +21,17 @@ from aiperf.common.optional_dependencies import (
 # Hashable canonical form for attribute dicts used as dict keys in gauge snapshots.
 AttributeKey = tuple[tuple[str, str], ...]
 
+FanoutEventType = Literal[
+    "histogram_record", "counter_add", "up_down_counter_add", "flush", "shutdown"
+]
+
+
+class FanoutEvent(TypedDict):
+    """Wire format for events passed through the fanout queue."""
+
+    type: FanoutEventType
+    payload: dict[str, Any]
+
 
 def _attribute_key(attrs: dict[str, object] | None) -> AttributeKey:
     """Convert an attribute dict to a hashable canonical key.
@@ -29,6 +40,35 @@ def _attribute_key(attrs: dict[str, object] | None) -> AttributeKey:
     construction in OTelMetricsResultsProcessor.
     """
     return tuple(sorted((str(k), str(v)) for k, v in (attrs or {}).items()))
+
+
+@dataclass(slots=True)
+class _MLflowFanoutState:
+    """Typed state for the MLflow live-streaming fanout subprocess."""
+
+    module: Any
+    """The mlflow module handle."""
+
+    client: Any
+    """mlflow.tracking.MlflowClient instance."""
+
+    metric_cls: type
+    """mlflow.entities.Metric class reference."""
+
+    run_id: str
+    """Active MLflow run ID."""
+
+    step: int
+    """Monotonically increasing step counter for log_batch."""
+
+    buffer: list[tuple[str, float]]
+    """Pending (metric_name, value) pairs awaiting flush."""
+
+    timing_gauge_snapshots: dict[str, dict[AttributeKey, float]]
+    """Cumulative gauge snapshots keyed by metric name then attribute key."""
+
+    counter_snapshots: dict[str, dict[AttributeKey, float]]
+    """Cumulative counter snapshots keyed by metric name then attribute key."""
 
 
 @dataclass(frozen=True)
@@ -60,8 +100,10 @@ def _write_live_mlflow_metadata(
     benchmark_id: str | None,
     parent_run_id: str | None,
 ) -> None:
+    from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
+
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: MLflowExportMetadata = {
         "tracking_uri": tracking_uri,
         "experiment": experiment,
         "run_id": run_id,
@@ -71,14 +113,45 @@ def _write_live_mlflow_metadata(
         "live_streaming": True,
         "stream_started_at_ns": time.time_ns(),
     }
-    metadata_file.write_bytes(orjson.dumps(payload, option=orjson.OPT_INDENT_2))
+    data = orjson.dumps(payload, option=orjson.OPT_INDENT_2)
+    # Atomic write to avoid corrupt metadata on crash.
+    tmp_file = metadata_file.with_suffix(".json.tmp")
+    tmp_file.write_bytes(data)
+    tmp_file.replace(metadata_file)
 
 
 def run_otel_streaming_fanout(
-    event_queue: Queue[Any],
+    event_queue: Queue[FanoutEvent],
     config: OTelStreamingFanoutConfig,
 ) -> None:
-    """Run OTel + MLflow live streaming fanout in a dedicated process."""
+    """Consumer process for the OTel/MLflow streaming pipeline.
+
+    Drains ``event_queue`` in a tight loop, exporting each event to up to two
+    optional sinks:
+
+    - **OTel Collector** (OTLP/HTTP) — when ``config.endpoint_url`` is set.
+    - **MLflow Tracking** — when ``config.mlflow_tracking_uri`` is set.
+
+    Event types consumed:
+
+    - ``histogram_record``: records a value on a named OTel histogram; logs the
+      value as a live MLflow scalar.
+    - ``counter_add``: adds a delta to an OTel counter; logs the cumulative sum
+      to MLflow.
+    - ``up_down_counter_add``: adds a delta to an OTel UpDownCounter; logs the
+      cumulative gauge snapshot to MLflow.
+    - ``flush``: forces an immediate OTel SDK flush and MLflow batch write.
+    - ``shutdown``: flushes both sinks and exits the loop.
+
+    Lifetime: exits on a ``shutdown`` event or SIGTERM. On exit, the OTel
+    MeterProvider is shut down and the active MLflow run is ended.
+
+    Side effects: writes ``config.metadata_file`` (``mlflow_export.json``) after
+    the MLflow run is successfully started. The file is written atomically.
+
+    Failure contract: missing optional dependencies (``opentelemetry``, ``mlflow``)
+    are logged as warnings and the corresponding sink is disabled — never raised.
+    """
     import signal
 
     shutdown_requested = False
@@ -121,14 +194,14 @@ def run_otel_streaming_fanout(
                 otel_dependency_message("OTel sink is enabled in the fanout process"),
                 exc,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - OTel SDK init failure must not crash fanout process
             logger.warning(f"OTel sink disabled in fanout process: {exc!r}")
 
     histograms: dict[str, Any] = {}
     counters: dict[str, Any] = {}
     up_down_counters: dict[str, Any] = {}
 
-    mlflow_state: dict[str, Any] | None = None
+    mlflow_state: _MLflowFanoutState | None = None
     if config.mlflow_tracking_uri:
         try:
             import mlflow
@@ -148,18 +221,16 @@ def run_otel_streaming_fanout(
             if config.benchmark_id:
                 mlflow.set_tag("benchmark_id", config.benchmark_id)
             run_id = run.info.run_id
-            mlflow_gauge_snapshots: dict[str, dict[AttributeKey, float]] = {}
-            mlflow_counter_snapshots: dict[str, dict[AttributeKey, float]] = {}
-            mlflow_state = {
-                "module": mlflow,
-                "client": MlflowClient(),
-                "metric_cls": Metric,
-                "run_id": run_id,
-                "step": 0,
-                "buffer": [],
-                "timing_gauge_snapshots": mlflow_gauge_snapshots,
-                "counter_snapshots": mlflow_counter_snapshots,
-            }
+            mlflow_state = _MLflowFanoutState(
+                module=mlflow,
+                client=MlflowClient(),
+                metric_cls=Metric,
+                run_id=run_id,
+                step=0,
+                buffer=[],
+                timing_gauge_snapshots={},
+                counter_snapshots={},
+            )
             # Write metadata only after all setup succeeds to avoid
             # stale metadata pointing to a partially-initialized run.
             _write_live_mlflow_metadata(
@@ -180,16 +251,15 @@ def run_otel_streaming_fanout(
                 exc,
             )
             mlflow_state = None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - MLflow client init failure must not crash fanout process
             logger.warning(f"MLflow live streaming disabled in fanout process: {exc!r}")
             mlflow_state = None
 
     def _append_mlflow_metric(metric_name: str, metric_value: float) -> None:
         if mlflow_state is None:
             return
-        buffered: list[tuple[str, float]] = mlflow_state["buffer"]
-        buffered.append((f"live.{metric_name}", float(metric_value)))
-        if len(buffered) >= max_batch_records:
+        mlflow_state.buffer.append((f"live.{metric_name}", float(metric_value)))
+        if len(mlflow_state.buffer) >= max_batch_records:
             _flush_mlflow_metrics()
 
     def _append_mlflow_timing_gauge_snapshot(
@@ -200,37 +270,44 @@ def run_otel_streaming_fanout(
         if mlflow_state is None:
             return
 
-        timing_gauge_snapshots: dict[str, dict[AttributeKey, float]] = mlflow_state[
-            "timing_gauge_snapshots"
-        ]
         attr_key = _attribute_key(attributes)
-        metric_snapshots = timing_gauge_snapshots.setdefault(metric_name, {})
+        metric_snapshots = mlflow_state.timing_gauge_snapshots.setdefault(
+            metric_name, {}
+        )
         next_snapshot = metric_snapshots.get(attr_key, 0.0) + float(delta_value)
         if abs(next_snapshot) < 1e-9:
             metric_snapshots.pop(attr_key, None)
             if not metric_snapshots:
-                timing_gauge_snapshots.pop(metric_name, None)
+                mlflow_state.timing_gauge_snapshots.pop(metric_name, None)
+            next_snapshot = 0.0
         else:
             metric_snapshots[attr_key] = next_snapshot
 
-        aggregate_snapshot = sum(metric_snapshots.values())
-        if abs(aggregate_snapshot) < 1e-9:
-            aggregate_snapshot = 0.0
-        _append_mlflow_metric(metric_name, aggregate_snapshot)
+        # Emit per-attribute gauge snapshot with phase dimension in the name.
+        phase = dict(attributes).get("aiperf.benchmark_phase")
+        mlflow_name = f"{metric_name}.{phase}" if phase else metric_name
+        _append_mlflow_metric(mlflow_name, next_snapshot)
 
-    def _flush_mlflow_metrics() -> None:
+    # Exponential backoff state for persistent MLflow flush failures.
+    _flush_backoff_until: float = 0.0
+    _flush_backoff_seconds: float = 1.0
+    _MAX_FLUSH_BACKOFF: float = 60.0
+
+    def _flush_mlflow_metrics(*, force: bool = False) -> None:
+        nonlocal _flush_backoff_until, _flush_backoff_seconds
         if mlflow_state is None:
             return
-        buffered: list[tuple[str, float]] = mlflow_state["buffer"]
-        if not buffered:
+        if not mlflow_state.buffer:
+            return
+        # Skip flush attempts during backoff unless forced (shutdown).
+        if not force and time.monotonic() < _flush_backoff_until:
             return
         now_ms = int(time.time() * 1000)
         metrics = []
-        metric_cls = mlflow_state["metric_cls"]
-        step_start = mlflow_state["step"]
-        for metric_name, metric_value in buffered:
+        step_start = mlflow_state.step
+        for metric_name, metric_value in mlflow_state.buffer:
             metrics.append(
-                metric_cls(
+                mlflow_state.metric_cls(
                     metric_name,
                     metric_value,
                     now_ms,
@@ -238,22 +315,27 @@ def run_otel_streaming_fanout(
                 )
             )
         try:
-            mlflow_state["client"].log_batch(
-                run_id=mlflow_state["run_id"],
+            mlflow_state.client.log_batch(
+                run_id=mlflow_state.run_id,
                 metrics=metrics,
                 params=[],
                 tags=[],
             )
-            # Clear buffer and advance step counter only on success.
-            mlflow_state["step"] = step_start + len(metrics)
-            mlflow_state["buffer"] = []
-        except Exception as exc:
+            # Success: clear buffer, advance step, reset backoff.
+            mlflow_state.step = step_start + len(metrics)
+            mlflow_state.buffer = []
+            _flush_backoff_seconds = 1.0
+            _flush_backoff_until = 0.0
+        except Exception as exc:  # noqa: BLE001 - MLflow log_batch failure must not lose the entire buffer
+            # Apply exponential backoff to avoid log-spam on persistent failures.
+            _flush_backoff_until = time.monotonic() + _flush_backoff_seconds
+            _flush_backoff_seconds = min(_flush_backoff_seconds * 2, _MAX_FLUSH_BACKOFF)
             # Cap buffer to prevent unbounded growth on persistent failures.
             max_buffer = max_batch_records * 5
-            if len(mlflow_state["buffer"]) > max_buffer:
-                dropped = len(mlflow_state["buffer"]) - max_batch_records
-                mlflow_state["buffer"] = mlflow_state["buffer"][-max_batch_records:]
-                mlflow_state["step"] = step_start + dropped
+            if len(mlflow_state.buffer) > max_buffer:
+                dropped = len(mlflow_state.buffer) - max_batch_records
+                mlflow_state.buffer = mlflow_state.buffer[-max_batch_records:]
+                mlflow_state.step = step_start + dropped
                 logger.warning(
                     f"MLflow flush failed and buffer exceeded {max_buffer} entries; "
                     f"dropped {dropped} oldest metrics. Error: {exc!r}"
@@ -276,11 +358,11 @@ def run_otel_streaming_fanout(
             return last_flush_monotonic
         should_flush = (
             force
-            or len(mlflow_state["buffer"]) >= config.max_batch_records
+            or len(mlflow_state.buffer) >= config.max_batch_records
             or (now - last_flush_monotonic) >= config.export_interval_millis / 1000.0
         )
         if should_flush:
-            _flush_mlflow_metrics()
+            _flush_mlflow_metrics(force=force)
             return now
         return last_flush_monotonic
 
@@ -319,7 +401,7 @@ def run_otel_streaming_fanout(
                             payload["value"], payload["attributes"]
                         )
                     _append_mlflow_metric(metric_name, payload["value"])
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
                     logger.warning(
                         f"Invalid histogram fanout payload received: {exc!r}"
                     )
@@ -343,19 +425,21 @@ def run_otel_streaming_fanout(
                         counters[metric_name].add(
                             payload["value"], payload["attributes"]
                         )
-                    # MLflow: accumulate delta into cumulative snapshot
+                    # MLflow: accumulate delta into cumulative snapshot per phase.
                     if mlflow_state is not None:
-                        counter_snapshots: dict[str, dict[AttributeKey, float]] = (
-                            mlflow_state["counter_snapshots"]
+                        attrs = payload.get("attributes") or {}
+                        attr_key = _attribute_key(attrs)
+                        metric_snaps = mlflow_state.counter_snapshots.setdefault(
+                            metric_name, {}
                         )
-                        attr_key = _attribute_key(payload.get("attributes"))
-                        metric_snaps = counter_snapshots.setdefault(metric_name, {})
                         metric_snaps[attr_key] = metric_snaps.get(
                             attr_key, 0.0
                         ) + float(payload["value"])
-                        cumulative = sum(metric_snaps.values())
-                        _append_mlflow_metric(metric_name, cumulative)
-                except Exception as exc:
+                        # Emit per-phase metric to preserve dimension separation.
+                        phase = attrs.get("aiperf.benchmark_phase")
+                        mlflow_name = f"{metric_name}.{phase}" if phase else metric_name
+                        _append_mlflow_metric(mlflow_name, metric_snaps[attr_key])
+                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
                     logger.warning(f"Invalid counter fanout payload received: {exc!r}")
                 last_flush_monotonic = _maybe_flush(
                     now=time.monotonic(),
@@ -382,7 +466,7 @@ def run_otel_streaming_fanout(
                         payload["value"],
                         payload["attributes"],
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
                     logger.warning(
                         f"Invalid up-down-counter fanout payload received: {exc!r}"
                     )
@@ -421,7 +505,7 @@ def run_otel_streaming_fanout(
             meter_provider.shutdown()
         if mlflow_state is not None:
             try:
-                _flush_mlflow_metrics()
-                mlflow_state["module"].end_run()
-            except Exception as exc:
+                _flush_mlflow_metrics(force=True)
+                mlflow_state.module.end_run()
+            except Exception as exc:  # noqa: BLE001 - MLflow shutdown failure must not crash fanout exit
                 logger.warning(f"Failed to close live MLflow run cleanly: {exc!r}")

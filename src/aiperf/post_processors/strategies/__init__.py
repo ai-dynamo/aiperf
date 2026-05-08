@@ -4,6 +4,8 @@
 
 from aiperf.post_processors.strategies import genai_semconv
 from aiperf.post_processors.strategies.core import (
+    CounterInstrument,
+    HistogramInstrument,
     OTelResultData,
     OTelResultsStrategyProtocol,
     OTelStrategyContextProtocol,
@@ -12,6 +14,8 @@ from aiperf.post_processors.strategies.metric_results import MetricResultsStrate
 from aiperf.post_processors.strategies.timing_results import TimingResultsStrategy
 
 __all__ = [
+    "CounterInstrument",
+    "HistogramInstrument",
     "MetricResultsStrategy",
     "OTelResultData",
     "OTelResultsStrategyProtocol",

@@ -22,6 +22,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     """Uploads benchmark summary metrics and artifacts to MLflow Tracking."""
 
     _PLOT_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".html"}
+    is_deferred = True  # runs after all local exporters write their files
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -181,7 +182,11 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             ) from exc
 
         if self._tracking_uri is None:
-            raise RuntimeError("MLflow tracking URI is unexpectedly None")
+            # __init__ raises DataExporterDisabled when mlflow_enabled is False,
+            # which is true iff mlflow_tracking_uri is None. Narrow the type for mypy.
+            assert self._tracking_uri is not None, (
+                "_export_sync invariant: __init__ guarantees mlflow_tracking_uri is set"
+            )
 
         mlflow.set_tracking_uri(self._tracking_uri)
         mlflow.set_experiment(self._experiment_name)
@@ -218,7 +223,24 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             try:
                 run_context = mlflow.start_run(**start_kwargs)
             except Exception as exc:
+                # Only fall back to a root run when the parent genuinely doesn't
+                # exist. Auth failures, network errors, and transient 5xx should
+                # propagate so the user knows something is wrong.
+                is_resource_missing = False
                 if resolved_parent_run_id:
+                    try:
+                        from mlflow.exceptions import MlflowException
+
+                        if isinstance(exc, MlflowException) and getattr(
+                            exc, "error_code", None
+                        ) == "RESOURCE_DOES_NOT_EXIST":
+                            is_resource_missing = True
+                    except ImportError:
+                        # Fallback for older mlflow versions without error_code.
+                        is_resource_missing = (
+                            "RESOURCE_DOES_NOT_EXIST" in repr(exc)
+                        )
+                if is_resource_missing:
                     self.warning(
                         f"parent_run_id {resolved_parent_run_id} not found; "
                         f"creating root MLflow run instead. Original error: {exc!r}"
@@ -231,7 +253,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         with run_context as run:
             run_id = run.info.run_id
 
-            # Step 5: log_batch metrics / params / tags
+            # Log batched metrics/params/tags atomically (single round-trip).
             metrics = [
                 Metric(key, value, timestamp_ms, 0)
                 for key, value in metric_payload.items()
@@ -247,16 +269,17 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                     tags=tags,
                 )
 
-            # Step 6: enumerate artifact files, excluding mlflow_export.json
+            # Enumerate artifact files, excluding mlflow_export.json (written below).
             artifact_files = self._iter_artifact_files()
 
-            # Step 7: compute uploaded_artifact_names including mlflow_export.json
+            # Compute uploaded_artifact_names including mlflow_export.json itself.
             uploaded_artifacts = self.uploaded_artifact_names(
                 artifact_directory=self._artifact_directory,
                 artifact_files=artifact_files,
             ) + [MLflowDefaults.EXPORT_METADATA_FILE.name]
 
-            # Step 8: write final mlflow_export.json to disk
+            # Write final mlflow_export.json to disk before upload to guarantee
+            # byte-equality between what we hash locally and what MLflow stores.
             self._write_export_metadata(
                 run_id=run_id,
                 run_name=run_name,
@@ -269,7 +292,8 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 parent_run_id=resolved_parent_run_id,
             )
 
-            # Step 9: upload all artifacts + mlflow_export.json in one pass
+            # Upload all artifacts plus mlflow_export.json in one pass so a partial
+            # upload doesn't leave the run in an inconsistent state.
             self.log_artifacts(
                 artifact_directory=self._artifact_directory,
                 artifact_files=artifact_files,
@@ -295,15 +319,20 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     def _build_metric_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}
+        _STAT_FIELDS = ("avg", "p50", "p90", "p99", "min", "max")
         for metric in self._results.records or []:
-            if metric.avg is None:
-                continue
-            try:
-                payload[metric.tag] = float(metric.avg)
-            except (TypeError, ValueError):
-                self.debug(
-                    f"Skipping non-numeric metric for MLflow export: {metric.tag}"
-                )
+            for field in _STAT_FIELDS:
+                value = getattr(metric, field, None)
+                if value is None:
+                    continue
+                try:
+                    key = metric.tag if field == "avg" else f"{metric.tag}.{field}"
+                    payload[key] = float(value)
+                except (TypeError, ValueError):
+                    self.debug(
+                        f"Skipping non-numeric metric for MLflow export: "
+                        f"{metric.tag}.{field}"
+                    )
         payload["aiperf.completed_requests"] = float(self._results.completed)
         if self._results.total_expected is not None:
             payload["aiperf.total_expected_requests"] = float(
@@ -312,10 +341,14 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         return payload
 
     def _build_param_payload(self) -> dict[str, str]:
+        from aiperf.common.redact import redact_cli_command, redact_url
+
         params: dict[str, str] = {
             "endpoint.type": str(self._user_config.endpoint.type),
             "endpoint.models": ",".join(self._user_config.endpoint.model_names),
-            "endpoint.urls": ",".join(self._user_config.endpoint.urls),
+            "endpoint.urls": ",".join(
+                redact_url(url) for url in self._user_config.endpoint.urls
+            ),
             "timing.mode": str(self._user_config.timing_mode),
             "output.artifact_directory": str(
                 self._user_config.output.artifact_directory
@@ -335,7 +368,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                 self._user_config.loadgen.benchmark_duration
             )
         if self._user_config.cli_command:
-            params["aiperf.cli_command"] = self._user_config.cli_command
+            params["aiperf.cli_command"] = redact_cli_command(
+                self._user_config.cli_command
+            )
 
         return params
 
@@ -432,8 +467,10 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         live_streaming: bool,
         parent_run_id: str | None = None,
     ) -> None:
+        from aiperf.exporters.mlflow_metadata import MLflowExportMetadata
+
         self._artifact_directory.mkdir(parents=True, exist_ok=True)
-        metadata: dict[str, Any] = {
+        metadata: MLflowExportMetadata = {
             "tracking_uri": self._tracking_uri,
             "experiment": self._experiment_name,
             "run_id": run_id,
@@ -448,6 +485,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "uploaded_artifacts": uploaded_artifacts,
             "exported_at_ns": time.time_ns(),
         }
-        self._metadata_file.write_bytes(
-            orjson.dumps(metadata, option=orjson.OPT_INDENT_2)
-        )
+        payload = orjson.dumps(metadata, option=orjson.OPT_INDENT_2)
+        # Atomic write: write to temp file then rename to avoid corruption
+        # on crash or power loss mid-write.
+        tmp_file = self._metadata_file.with_suffix(".json.tmp")
+        tmp_file.write_bytes(payload)
+        tmp_file.replace(self._metadata_file)

@@ -21,7 +21,7 @@ By the end you will have a single `aiperf profile` command that streams metrics 
 Install AIPerf with the optional telemetry extras:
 
 ```bash
-pip install aiperf[otel,mlflow]
+pip install "aiperf[otel,mlflow]"
 ```
 
 You also need:
@@ -34,11 +34,11 @@ You also need:
 Verify both are reachable before continuing:
 
 ```bash
-# OTel Collector health
-curl -s http://localhost:4318/v1/metrics
+# OTel Collector health (returns 200 on the base path when running)
+curl -sf http://localhost:4318/ && echo "OTel Collector reachable"
 
-# MLflow tracking server
-curl -s http://localhost:5000/api/2.0/mlflow/experiments/search
+# MLflow tracking server health
+curl -sf http://localhost:5000/health && echo "MLflow reachable"
 ```
 
 ## Run a Profile with Telemetry Enabled
@@ -100,8 +100,8 @@ During profiling you will see live scalars logged under the `live.*` namespace:
 
 - `live.gen_ai.client.operation.duration`
 - `live.gen_ai.client.token.usage`
-- `live.gen_ai.client.time_per_output_token`
-- `live.gen_ai.client.time_to_first_token`
+- `live.gen_ai.client.operation.time_per_output_chunk`
+- `live.gen_ai.client.operation.time_to_first_chunk`
 
 These update in near real time as each request completes. Refresh the MLflow metrics tab to see the curves build up.
 
@@ -219,18 +219,18 @@ Verify the tracking server is running. For remote servers, check network connect
 ### Missing optional dependencies
 
 ```
-ImportError: MLflow integration requires the 'mlflow' package. Install with: pip install aiperf[mlflow]
+ImportError: MLflow integration requires the 'mlflow' package. Install with: pip install "aiperf[mlflow]"
 ```
 
 Install the required extras:
 
 ```bash
 # OTel only
-pip install aiperf[otel]
+pip install "aiperf[otel]"
 
 # MLflow only
-pip install aiperf[mlflow]
+pip install "aiperf[mlflow]"
 
 # Both
-pip install aiperf[otel,mlflow]
+pip install "aiperf[otel,mlflow]"
 ```

@@ -434,23 +434,54 @@ class TestRecordsManagerProcessorDispatch:
         manager.exception.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_results_to_results_processors_logs_failures(self) -> None:
+    async def test_send_results_to_results_processors_reraises_non_streaming_failures(
+        self,
+    ) -> None:
         manager = RecordsManager.__new__(RecordsManager)
         ok_processor = MagicMock()
         ok_processor.process_result = AsyncMock(return_value=None)
+        ok_processor.is_best_effort = False
         failing_processor = MagicMock()
         failing_processor.process_result = AsyncMock(
             side_effect=RuntimeError("metric processing failed")
         )
+        failing_processor.is_best_effort = False
         manager._metric_results_processors = [ok_processor, failing_processor]
         manager.exception = MagicMock()
 
+        with pytest.raises(RuntimeError, match="metric processing failed"):
+            await manager._send_results_to_results_processors(
+                create_metric_record_data(1_000, 2_000)
+            )
+
+        ok_processor.process_result.assert_awaited_once()
+        failing_processor.process_result.assert_awaited_once()
+        manager.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_results_to_results_processors_swallows_streaming_failures(
+        self,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        ok_processor = MagicMock()
+        ok_processor.process_result = AsyncMock(return_value=None)
+        ok_processor.is_best_effort = False
+        # Streaming processor with is_best_effort=True should be swallowed.
+        streaming_processor = MagicMock()
+        streaming_processor.process_result = AsyncMock(
+            side_effect=RuntimeError("otel fanout failure")
+        )
+        streaming_processor.is_best_effort = True
+        manager._metric_results_processors = [ok_processor, streaming_processor]
+        manager.exception = MagicMock()
+
+        # Should NOT raise — streaming processors are best-effort.
         await manager._send_results_to_results_processors(
             create_metric_record_data(1_000, 2_000)
         )
 
         ok_processor.process_result.assert_awaited_once()
-        failing_processor.process_result.assert_awaited_once()
+        streaming_processor.process_result.assert_awaited_once()
         manager.exception.assert_called_once()
 
     @pytest.mark.asyncio

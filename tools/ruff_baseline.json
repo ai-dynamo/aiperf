@@ -589,36 +589,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/post_processors/otel_metrics_results_processor.py",
-      "OTelMetricsResultsProcessor._drop_oldest_fanout_event"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/otel_metrics_results_processor.py",
-      "OTelMetricsResultsProcessor._flush_and_shutdown"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/otel_metrics_results_processor.py",
-      "OTelMetricsResultsProcessor._queue_fanout_event"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/otel_metrics_results_processor.py",
-      "OTelMetricsResultsProcessor._start_fanout_process"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/otel_streaming_fanout.py",
-      "run_otel_streaming_fanout"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/otel_streaming_fanout.py",
-      "run_otel_streaming_fanout._flush_mlflow_metrics"
-    ],
-    [
-      "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
     ],

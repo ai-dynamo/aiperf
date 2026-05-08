@@ -86,7 +86,6 @@ class EndpointConfig(BaseConfig):
         list[str],
         Field(
             ...,  # This must be set by the user
-            min_length=1,
             description="Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.",
         ),
         BeforeValidator(parse_str_or_list),
