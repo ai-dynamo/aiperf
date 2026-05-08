@@ -30,6 +30,10 @@ Generate visualizations from AIPerf profiling data.
 
 Explore AIPerf plugins: aiperf plugins [category] [type]
 
+### [`report`](#aiperf-report)
+
+Render HTML reports (report.html, cache_explorer.html, simulation.html)
+
 ### [`service`](#aiperf-service)
 
 Run an AIPerf service in a single process.
@@ -1195,6 +1199,57 @@ Show all categories and plugins.
 #### `-v`, `--validate`, `--no-validate`
 
 Validate plugins.yaml.
+
+<hr/>
+
+## `aiperf report`
+
+Render HTML reports (report.html, cache_explorer.html, simulation.html) for a real trace file or directory.
+
+**Examples:**
+
+```bash
+aiperf report weka-trace ./traces/
+aiperf report weka-trace ./traces/ --block-size 64
+aiperf report weka-trace ./traces/ --max-context-length 200000
+aiperf report weka-trace ./traces/ --no-subagents
+```
+
+#### `--target` `<str>` _(Required)_
+
+Trace flavor to report on.
+
+#### `--path` `<str>` _(Required)_
+
+Path to a trace file or a directory of *.json trace files.
+
+#### `--output` `<str>`
+
+Parent directory for the auto-named run directory.
+<br/>_Default: `.`_
+
+#### `--block-size` `<int>`
+
+KV cache block size for cache statistics.
+<br/>_Default: `512`_
+
+#### `--max-context-length` `<int>`
+
+Drop traces whose peak input_length exceeds this.
+
+#### `--no-subagents`, `--no-no-subagents`
+
+Skip subagent sessions; report only parent traces.
+
+#### `--prefill-tps` `<float>`
+
+Synthetic prefill throughput for latency estimates.
+<br/>_Default: `20000`_
+
+#### `--decode-tps` `<float>`
+
+Synthetic decode throughput for latency estimates.
+<br/>_Default: `60`_
 
 <hr/>
 
