@@ -7,6 +7,8 @@ import pytest
 
 from aiperf.common.config.config_validators import (
     coerce_value,
+    normalize_http_url,
+    normalize_http_urls,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list_of_positive_values,
@@ -372,3 +374,81 @@ class TestParseStrOrListOfPositiveValues:
     def test_parse_str_as_numeric_dict_invalid_dict_raises(self):
         with pytest.raises(ValueError, match="goodput dict values must be numeric"):
             parse_str_as_numeric_dict({"time_to_first_token": "fast"})
+
+
+class TestNormalizeHttpUrl:
+    """Tests for normalize_http_url and normalize_http_urls."""
+
+    @pytest.mark.parametrize(
+        "given,expected",
+        [
+            pytest.param(
+                "http://localhost:8000",
+                "http://localhost:8000",
+                id="http_scheme_passes_through",
+            ),
+            pytest.param(
+                "https://example.com",
+                "https://example.com",
+                id="https_scheme_passes_through",
+            ),
+            pytest.param(
+                "https://example.com:8443/path",
+                "https://example.com:8443/path",
+                id="https_with_port_and_path",
+            ),
+            pytest.param(
+                "localhost:8000",
+                "http://localhost:8000",
+                id="bare_host_port_gets_http",
+            ),
+            pytest.param(
+                "127.0.0.1:8000",
+                "http://127.0.0.1:8000",
+                id="ipv4_host_port_gets_http",
+            ),
+            pytest.param(
+                "example.com",
+                "http://example.com",
+                id="bare_hostname_gets_http",
+            ),
+            pytest.param(
+                "httpbin.org",
+                "http://httpbin.org",
+                id="hostname_starting_with_http_letters_still_normalized",
+            ),
+            pytest.param(
+                "HTTP://host:8000",
+                "HTTP://host:8000",
+                id="uppercase_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "Https://example.com",
+                "Https://example.com",
+                id="mixed_case_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "ftp://host",
+                "ftp://host",
+                id="non_http_scheme_preserved_not_corrupted",
+            ),
+            pytest.param(
+                "ws://host:8080/socket",
+                "ws://host:8080/socket",
+                id="websocket_scheme_preserved_not_corrupted",
+            ),
+        ],
+    )
+    def test_normalize_http_url(self, given: str, expected: str) -> None:
+        assert normalize_http_url(given) == expected
+
+    def test_normalize_http_urls_applies_to_each_element(self) -> None:
+        urls = ["http://server1:8000", "server2:8000", "https://server3"]
+        assert normalize_http_urls(urls) == [
+            "http://server1:8000",
+            "http://server2:8000",
+            "https://server3",
+        ]
+
+    def test_normalize_http_urls_empty_list_returns_empty(self) -> None:
+        assert normalize_http_urls([]) == []

@@ -495,6 +495,51 @@ class TestGPUTelemetryConfig:
         with pytest.raises(ValueError, match="Invalid GPU telemetry item"):
             make_config(gpu_telemetry=[invalid_item])
 
+
+class TestIsLocalhostUrl:
+    """Direct tests for the `_is_localhost_url` private helper.
+
+    `EndpointConfig` now prepends `http://` to scheme-less URLs (fix for the
+    readiness-probe bug). This helper has to recognize both the pre- and
+    post-normalization forms — including the IPv6-without-brackets edge case
+    that pre-existed the fix and would otherwise have regressed.
+    """
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # localhost / 127.0.0.1 — common forms
+            pytest.param("localhost", True, id="bare_localhost"),
+            pytest.param("localhost:8000", True, id="localhost_port"),
+            pytest.param("http://localhost", True, id="localhost_http"),
+            pytest.param("http://localhost:8000", True, id="localhost_http_port"),
+            pytest.param("https://localhost:8443", True, id="localhost_https_port"),
+            pytest.param("127.0.0.1", True, id="bare_127"),
+            pytest.param("127.0.0.1:8000", True, id="127_port"),
+            pytest.param("http://127.0.0.1:8000", True, id="127_http_port"),
+            # IPv6 ::1 with brackets — well-formed
+            pytest.param("[::1]:8000", True, id="ipv6_bracketed_port"),
+            pytest.param("http://[::1]:8000", True, id="ipv6_bracketed_http"),
+            pytest.param("https://[::1]:8443", True, id="ipv6_bracketed_https"),
+            # IPv6 ::1 without brackets — pre- and post-normalization forms
+            pytest.param("::1:8000", True, id="ipv6_bare_pre_normalization"),
+            pytest.param("http://::1:8000", True, id="ipv6_bare_post_normalization"),
+            pytest.param(
+                "https://::1:8443", True, id="ipv6_bare_https_post_normalization"
+            ),
+            # External hosts — must NOT match localhost
+            pytest.param("remote-server:8000", False, id="remote_host"),
+            pytest.param("http://remote-server:8000", False, id="remote_host_http"),
+            pytest.param("192.168.1.100:8000", False, id="lan_ipv4"),
+            pytest.param("http://192.168.1.100:8000", False, id="lan_ipv4_http"),
+            pytest.param("http://example.com", False, id="public_dns"),
+        ],
+    )
+    def test_is_localhost_url(self, url: str, expected: bool) -> None:
+        from aiperf.common.config.user_config import _is_localhost_url
+
+        assert _is_localhost_url(url) is expected
+
     def test_unknown_item_with_valid_items_raises_error(self):
         """Test that unknown items mixed with valid items still raise an error."""
         with pytest.raises(ValueError, match="Invalid GPU telemetry item"):

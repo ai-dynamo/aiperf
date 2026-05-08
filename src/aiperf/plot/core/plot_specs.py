@@ -186,6 +186,10 @@ class PlotSpec(AIPerfBaseModel):
         default="none",
         description="Which axes to autoscale ('none', 'x', 'y', 'both')",
     )
+    ci_level: float = Field(
+        default=0.95,
+        description="Confidence level for uncertainty ellipses (0.90, 0.95, or 0.99)",
+    )
 
 
 class TimeSlicePlotSpec(PlotSpec):

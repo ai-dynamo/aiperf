@@ -44,8 +44,11 @@ def _is_localhost_url(url: str) -> bool:
     """Check if a URL points to localhost."""
     from urllib.parse import urlparse
 
-    # Handle IPv6 localhost without brackets (e.g., "::1:8000")
-    if url.startswith("::1:") or url.startswith("[::1]"):
+    # Handle IPv6 localhost without brackets (e.g. "::1:8000" or "http://::1:8000").
+    # `EndpointConfig` now prepends `http://` to scheme-less URLs, so we accept
+    # both the pre-normalization and post-normalization forms here.
+    url_without_scheme = url.removeprefix("http://").removeprefix("https://")
+    if url_without_scheme.startswith("::1:") or url_without_scheme.startswith("[::1]"):
         return True
 
     # Add scheme if missing for proper parsing
