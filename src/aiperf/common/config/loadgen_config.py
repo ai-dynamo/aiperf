@@ -186,61 +186,6 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = LoadGeneratorDefaults.BENCHMARK_GRACE_PERIOD
 
-    failed_request_threshold: Annotated[
-        float | None,
-        Field(
-            ge=0.0,
-            le=1.0,
-            description="Abort the run early when (failed_records / total_records) exceeds this "
-            "ratio. Default None disables the check. Only PROFILING-phase records "
-            "count toward the ratio. A grace floor of max(concurrency, 10) records "
-            "must accumulate before the check is armed, so a single early failure "
-            "cannot kill the run. When the threshold is exceeded a "
-            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
-            "normal cancel path, partial results are still aggregated, and the run "
-            "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
-            "in record_processor_service so the rate measures real failures only.",
-        ),
-        CLIParameter(
-            name=("--failed-request-threshold",),
-            group=Groups.LOAD_GENERATOR,
-        ),
-    ] = None
-
-    trajectory_start_min_ratio: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=1.0,
-            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
-            "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. Sampled per trajectory at trajectory-build "
-            "time; deterministic given --random-seed. Default 0.0 keeps the prior "
-            "behavior where every trajectory could start at turn 0.",
-        ),
-        CLIParameter(
-            name=("--trajectory-start-min-ratio",),
-            group=Groups.LOAD_GENERATOR,
-        ),
-    ] = 0.0
-
-    trajectory_start_max_ratio: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=1.0,
-            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
-            "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. The effective per-trace ceiling is "
-            "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
-            "after warmup. Default 0.7 preserves the previously hardcoded value.",
-        ),
-        CLIParameter(
-            name=("--trajectory-start-max-ratio",),
-            group=Groups.LOAD_GENERATOR,
-        ),
-    ] = 0.7
-
     concurrency: Annotated[
         Any,  # CLI accepts string, validator converts to Union[int, list[int], None]
         Field(
@@ -1019,15 +964,4 @@ class LoadGeneratorConfig(BaseConfig):
                     "Either remove --parameter-sweep-same-seed or provide a comma-separated list: --concurrency 10,20,30"
                 )
 
-        return self
-
-    @model_validator(mode="after")
-    def validate_trajectory_start_range(self) -> "LoadGeneratorConfig":
-        """Ensure trajectory_start_min_ratio <= trajectory_start_max_ratio."""
-        if self.trajectory_start_min_ratio > self.trajectory_start_max_ratio:
-            raise ValueError(
-                f"--trajectory-start-min-ratio ({self.trajectory_start_min_ratio}) "
-                f"must be <= --trajectory-start-max-ratio "
-                f"({self.trajectory_start_max_ratio})."
-            )
         return self

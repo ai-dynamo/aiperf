@@ -248,7 +248,7 @@ def _trace_metadata(
 ) -> PublicDatasetLoaderMetadata:
     """Build a PublicDatasetLoaderMetadata flagged as is_trace=True."""
     return PublicDatasetLoaderMetadata(
-        hf_dataset_name="semianalysisai/cc-traces-weka-no-subagents-051226",
+        hf_dataset_name="semianalysisai/cc-traces-weka-042026",
         hf_split="train",
         is_trace=True,
         default_block_size=default_block_size,

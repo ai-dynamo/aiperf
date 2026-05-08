@@ -98,13 +98,9 @@ _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
     ("itl", "inter_token_latency"),
     ("e2e", "request_latency"),
 )
-_INTERACTIVITY_LABEL: tuple[str, str] = (
-    "intvty",
-    "output_token_throughput_per_user",
-)
-_SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
-    ("isl", "input_sequence_length"),
-    ("osl", "output_sequence_length"),
+_PER_USER_TPUT_LABELS: tuple[tuple[str, str], ...] = (
+    ("tin", "prefill_throughput_per_user"),
+    ("tout", "output_token_throughput_per_user"),
 )
 _LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
 
@@ -199,34 +195,31 @@ def _render_realtime_block(
             f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
         )
 
-    # Interactivity = 1 / inter-token-latency per request, percentiled across
-    # requests. Characterizes the user-perceived decode speed; tail (low
-    # percentile) is the slowest-decoding user, head (high percentile) is the
-    # snappiest. Aggregate tput_in/tput_out on line 1 are bandwidth.
-    intvty_label, intvty_tag = _INTERACTIVITY_LABEL
-    mr = by_tag.get(intvty_tag)
-    p50 = _format_int(getattr(mr, "p50", None))
-    p75 = _format_int(getattr(mr, "p75", None))
-    p95 = _format_int(getattr(mr, "p95", None))
-    p99 = _format_int(getattr(mr, "p99", None))
-    rows.append(
-        f"{indent}{intvty_label:<6} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (1/tpot tok/s)"
-    )
-
-    # Sequence-length distribution rows — useful for spotting long-tail
-    # agentic prompts mid-run.  Reads the same MetricResults aggregator
-    # already publishes; no extra plumbing.
-    for label, tag in _SEQ_LENGTH_LABELS:
+    # Per-user throughput percentiles — distribution of how fast each
+    # request's tokens flowed (tokens/sec/user). Aggregate tput_in/tput_out
+    # on line 1 are bandwidth; these rows show the spread per request, which
+    # is what users tail for tail-latency-equivalent throughput.
+    for label, tag in _PER_USER_TPUT_LABELS:
         mr = by_tag.get(tag)
         p50 = _format_int(getattr(mr, "p50", None))
         p75 = _format_int(getattr(mr, "p75", None))
-        p90 = _format_int(getattr(mr, "p90", None))
+        p95 = _format_int(getattr(mr, "p95", None))
         p99 = _format_int(getattr(mr, "p99", None))
-        if p50 == "-" and p75 == "-" and p90 == "-" and p99 == "-":
-            continue
         rows.append(
-            f"{indent}{label:<4} p50={p50:<9} p75={p75:<9} p90={p90:<9} p99={p99} (tokens)"
+            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (tok/s/user)"
         )
+
+    # Sequence-length distribution row — useful for spotting long-tail
+    # agentic prompts mid-run.  Reads the same MetricResults aggregator
+    # already publishes; no extra plumbing.
+    isl_mr = by_tag.get("input_sequence_length")
+    osl_mr = by_tag.get("output_sequence_length")
+    isl_avg = getattr(isl_mr, "avg", None)
+    osl_avg = getattr(osl_mr, "avg", None)
+    if isl_avg is not None or osl_avg is not None:
+        isl_str = f"{int(round(isl_avg)):,}" if isl_avg is not None else "-"
+        osl_str = f"{int(round(osl_avg)):,}" if osl_avg is not None else "-"
+        rows.append(f"{indent}seq  isl_avg={isl_str:<10} osl_avg={osl_str}")
 
     # Cumulative token totals — running counters, useful for spotting
     # whether the ratio of output:input tokens is matching the workload's
@@ -269,14 +262,6 @@ def _render_realtime_block(
             srv_parts.append(f"queue={running}r/{waiting}w")
         if "num_preemptions" in server_snapshot:
             srv_parts.append(f"preemptions={int(server_snapshot['num_preemptions'])}")
-        if "input_token_throughput_srv" in server_snapshot:
-            srv_parts.append(
-                f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
-            )
-        if "output_token_throughput_srv" in server_snapshot:
-            srv_parts.append(
-                f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
-            )
         if srv_parts:
             rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 
@@ -362,20 +347,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # profiling phase can include the orchestrator's final counters.
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
 
-        # Failed-request threshold (in-flight abort). When the rolling
-        # ``error_records / total_records`` ratio exceeds the user-supplied
-        # threshold after the grace floor is passed, broadcast a
-        # ProfileCancelCommand to terminate the run early. The grace floor
-        # is max(concurrency, 10) records so a single early failure (e.g.,
-        # the very first request) cannot trip a tiny-N threshold.
-        self._failed_request_threshold: float | None = (
-            user_config.loadgen.failed_request_threshold
-        )
-        conc_val = user_config.loadgen.concurrency
-        conc_int = int(conc_val) if isinstance(conc_val, int | float) else 1
-        self._failed_request_grace_floor: int = max(conc_int, 10)
-        self._failed_request_abort_triggered: bool = False
-
         # New accumulator + analyzer pipeline. Three sibling categories:
         #   accumulator:    process_record + summarize (MetricsAccumulator,
         #                   GPUTelemetryAccumulator, ServerMetricsAccumulator)
@@ -433,28 +404,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         record_data = message.to_data()
 
-        # Context-overflow records in AGENTIC_REPLAY scenarios bypass the
-        # error tracker, accumulators, and stream exporters, but STILL bump
-        # the records-side counter so the completion barrier converges.
-        # The records-side counter ``total_records`` is compared against the
-        # credit-side ``final_requests_completed`` at end-of-phase; if we
-        # dropped the record entirely the LHS would lag the RHS forever and
-        # the run would hang. Classify as success so error counters stay at
-        # zero (the original "don't count as failure" intent) while keeping
-        # the invariant intact.
-        if getattr(record_data.metadata, "context_overflow_skip", False):
-            phase = record_data.metadata.benchmark_phase
-            phase_tracker = self._records_tracker._get_phase_tracker(phase)
-            phase_tracker.increment_success_records()
-            phase_tracker.increment_worker_success_records(
-                record_data.metadata.worker_id
-            )
-            if self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
-            ):
-                await self._handle_all_records_received(phase)
-            return
-
         await self._send_record_to_accumulators(record_data)
 
         self._records_tracker.update_from_record_data(record_data)
@@ -463,66 +412,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 record_data.metadata.benchmark_phase, record_data.error
             )
 
-        await self._maybe_trigger_failed_request_abort(
-            record_data.metadata.benchmark_phase
-        )
-
         if self._records_tracker.check_and_set_all_records_received_for_phase(
             record_data.metadata.benchmark_phase
         ):
             await self._handle_all_records_received(
                 record_data.metadata.benchmark_phase
             )
-
-    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
-        """Abort the run when the PROFILING failure rate exceeds the threshold.
-
-        No-op when ``--failed-request-threshold`` is unset, when this method
-        already fired once for this run, or when the total record count has
-        not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
-        broadcasts ProfileCancelCommand on the message bus -- the existing
-        cancel-path handlers in timing_manager, server_metrics manager, and
-        gpu_telemetry manager stop their work; this manager's own
-        _on_profile_cancel_command marks the phase cancelled and finalizes
-        results with cancelled=True, which surfaces in the run's exit code
-        via the standard cancel flow.
-        """
-        if self._failed_request_threshold is None:
-            return
-        if self._failed_request_abort_triggered:
-            return
-        if phase != CreditPhase.PROFILING:
-            return
-
-        stats = self._records_tracker.create_stats_for_phase(phase)
-        total = stats.total_records
-        if total < self._failed_request_grace_floor:
-            return
-
-        error_records = stats.error_records
-        rate = error_records / total if total > 0 else 0.0
-        if rate <= self._failed_request_threshold:
-            return
-
-        self._failed_request_abort_triggered = True
-        self.warning(
-            f"--failed-request-threshold exceeded: "
-            f"{error_records}/{total} = {rate:.3f} > "
-            f"{self._failed_request_threshold:.3f} "
-            f"(grace floor {self._failed_request_grace_floor}). "
-            "Broadcasting ProfileCancelCommand to terminate the run."
-        )
-        try:
-            await self.publish(ProfileCancelCommand(service_id=self.service_id))
-        except Exception as exc:  # noqa: BLE001
-            # Publish failure must not abort the per-record path; if the
-            # broadcast doesn't land, the run will continue and the
-            # threshold violation will be re-evaluated and re-published on
-            # the next record.
-            self.warning(
-                f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
-            )
-            self._failed_request_abort_triggered = False
 
     async def _send_record_to_accumulators(
         self, record_data: MetricRecordsData

@@ -44,7 +44,7 @@ from aiperf.plugin.enums import (
 # ============================================================================
 
 
-_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-no-subagents-051226"
+_HF_DATASET_NAME = "semianalysisai/cc-traces-weka-042026"
 
 
 @pytest.fixture

@@ -26,7 +26,6 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
-from aiperf.common.scenario import get_scenario
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -69,23 +68,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             service_config=service_config,
             user_config=user_config,
         )
-        # Cache: drop context-overflow records entirely (don't push as errors)
-        # when the active scenario uses AGENTIC_REPLAY timing. The trajectory
-        # is already terminated by the timing strategy via the separate
-        # CreditReturn path, so emitting an error record would just double-
-        # count an event we intentionally tolerate.
-        self._drop_agentic_overflow_records: bool = False
-        scenario_name = getattr(user_config, "scenario", None)
-        if scenario_name is not None:
-            try:
-                spec = get_scenario(scenario_name)
-                self._drop_agentic_overflow_records = (
-                    str(spec.timing_mode) == "agentic_replay"
-                )
-            except Exception:  # noqa: BLE001
-                # Unknown scenario names are validated elsewhere; record
-                # processing degrades to default error-emission behavior here.
-                self._drop_agentic_overflow_records = False
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -234,28 +216,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
-
-        # Flag context-overflow records for the records-side "skip" path when
-        # the active scenario uses AGENTIC_REPLAY. RecordsManager will count
-        # the record toward ``total_records`` (so the records-side counter
-        # stays in lockstep with credit-side ``final_requests_completed``
-        # and the completion barrier converges -- a previous version of this
-        # code returned early here, which broke that invariant in one
-        # direction only and hung the run at end-of-phase) but skip the
-        # error tracker, accumulators, and stream exporters so the overflow
-        # event doesn't show up in any user-facing metric.
-        if self._drop_agentic_overflow_records and getattr(
-            record, "context_overflow", False
-        ):
-            metadata = metadata.model_copy(update={"context_overflow_skip": True})
-            self.debug(
-                lambda r=record: (
-                    f"AGENTIC_REPLAY: flagging context-overflow record as "
-                    f"metrics-skip (credit={r.request_info.credit_num} "
-                    f"conv={r.request_info.conversation_id} "
-                    f"turn={r.request_info.turn_index})"
-                )
-            )
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
