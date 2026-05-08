@@ -184,7 +184,10 @@ class TestBuildReportData:
         turns = load_jsonl(run_dir / "dataset.jsonl")
         sessions = group_sessions(turns)
         metrics = extract_metrics(sessions)
-        data = build_report_data(metrics)
+        manifest = DatasetManifest(
+            **orjson.loads((run_dir / "manifest.json").read_bytes())
+        )
+        data = build_report_data(metrics, manifest)
         names = [c.metric_name for c in data.comparisons]
         assert "Initial Context (tokens)" in names
         assert "Generation Length (tokens)" in names
@@ -200,7 +203,10 @@ class TestBuildReportData:
         turns = load_jsonl(run_dir / "dataset.jsonl")
         sessions = group_sessions(turns)
         metrics = extract_metrics(sessions)
-        data = build_report_data(metrics)
+        manifest = DatasetManifest(
+            **orjson.loads((run_dir / "manifest.json").read_bytes())
+        )
+        data = build_report_data(metrics, manifest)
         for c in data.comparisons:
             if c.pct_error_mean is not None:
                 assert c.pct_error_mean >= 0
@@ -211,7 +217,10 @@ class TestRenderTextReport:
         turns = load_jsonl(run_dir / "dataset.jsonl")
         sessions = group_sessions(turns)
         metrics = extract_metrics(sessions)
-        data = build_report_data(metrics)
+        manifest = DatasetManifest(
+            **orjson.loads((run_dir / "manifest.json").read_bytes())
+        )
+        data = build_report_data(metrics, manifest)
         text = render_text_report(data)
         assert len(text) > 100
         assert "Target vs Observed" in text
@@ -632,3 +641,28 @@ def test_write_cache_structure_block_size_override(tmp_path) -> None:
     )
     payload = orjson.loads((tmp_path / "cache_structure.json").read_bytes())
     assert payload["block_size"] == 64
+
+
+def test_build_report_data_no_manifest_yields_empty_comparisons() -> None:
+    """Real-trace mode passes manifest=None; comparisons must stay empty so the
+    Target vs Observed table is suppressed by Task 6's guard."""
+    import numpy as np
+
+    from aiperf.dataset.agentic_code_gen.reporting.metrics import build_report_data
+
+    metrics = {
+        "initial_context": np.array([100.0, 200.0]),
+        "new_tokens_per_turn": np.array([50.0]),
+        "generation_length": np.array([10.0, 20.0]),
+        "inter_turn_delay_s": np.array([1.0]),
+        "turns_per_session": np.array([2.0]),
+        "total_isl": np.array([100.0, 200.0]),
+        "total_osl": np.array([10.0, 20.0]),
+        "hash_id_block_count": np.array([3.0, 4.0]),
+        "request_latency_ms": np.array([5.0, 6.0]),
+        "request_latency_s": np.array([0.005, 0.006]),
+        "session_duration_min": np.array([0.001, 0.002]),
+    }
+
+    data = build_report_data(metrics, manifest=None)
+    assert data.comparisons == []
