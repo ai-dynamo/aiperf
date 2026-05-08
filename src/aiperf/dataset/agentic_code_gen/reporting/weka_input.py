@@ -150,3 +150,43 @@ def load_weka_as_parsed(
                         )
                     parsed[sid] = turns
     return parsed
+
+
+def parsed_to_sim_sessions(
+    parsed: dict[str, list[ParsedTurn]],
+) -> list[dict]:
+    """Convert ParsedTurn sessions to the dict shape `render_simulation` expects.
+
+    Mirrors `trace.load_simulation_sessions` but operates in-memory rather
+    than reading a JSONL file. cumulative_input_length is the running sum
+    of input + output tokens up to and including the current turn's input.
+    """
+    result: list[dict] = []
+    for session_id, turns in parsed.items():
+        cumulative = 0
+        sim_turns: list[dict] = []
+        for turn in turns:
+            cumulative += turn.input_length
+            sim_turns.append(
+                {
+                    "input_length": turn.input_length,
+                    "output_length": turn.output_length,
+                    "delay_ms": turn.delay_ms,
+                    "hash_ids": turn.hash_ids,
+                    "cumulative_input_length": cumulative,
+                }
+            )
+            cumulative += turn.output_length
+
+        first = turns[0] if turns else None
+        result.append(
+            {
+                "session_id": session_id,
+                "group_id": first.group_id
+                if first and first.group_id is not None
+                else 0,
+                "is_restart": first.is_restart if first else False,
+                "turns": sim_turns,
+            }
+        )
+    return result
