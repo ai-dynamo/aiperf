@@ -604,3 +604,31 @@ def test_print_target_table_skips_when_no_comparisons() -> None:
     console = Console(record=True, width=140)
     _print_target_table(console, data)
     assert "Target vs Observed" not in console.export_text()
+
+
+def test_write_cache_structure_block_size_override(tmp_path) -> None:
+    """When manifest is None and a block_size override is provided, the
+    written cache_structure.json must use the override (not the 512 default)."""
+    import orjson
+
+    from aiperf.dataset.agentic_code_gen.reporting.cache_explorer import (
+        write_cache_structure,
+    )
+    from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
+
+    sessions = {
+        "s1": [
+            ParsedTurn(
+                session_id="s1",
+                input_length=100,
+                output_length=10,
+                hash_ids=[1, 2, 3],
+                delay_ms=0.0,
+            )
+        ]
+    }
+    write_cache_structure(
+        sessions, manifest=None, output_dir=tmp_path, block_size_override=64
+    )
+    payload = orjson.loads((tmp_path / "cache_structure.json").read_bytes())
+    assert payload["block_size"] == 64

@@ -53,8 +53,15 @@ def write_cache_structure(
     sessions: dict[str, list[ParsedTurn]],
     manifest: DatasetManifest | None,
     output_dir: Path,
+    *,
+    block_size_override: int | None = None,
 ) -> dict:
-    """Generate cache_structure.json with per-session block classification."""
+    """Generate cache_structure.json with per-session block classification.
+
+    block_size_override takes precedence over manifest's block_size and the
+    built-in default (512). Used by the weka real-trace report path where
+    no manifest is written but the CLI's --block-size should still flow.
+    """
     default_cache = CacheLayerConfig()
     l1_tokens = default_cache.layer1_tokens
     l15_tokens = default_cache.layer1_5_tokens
@@ -63,6 +70,8 @@ def write_cache_structure(
         block_size = manifest.generation_params.block_size
         l1_tokens = manifest.generation_params.cache.layer1_tokens
         l15_tokens = manifest.generation_params.cache.layer1_5_tokens
+    if block_size_override is not None:
+        block_size = block_size_override
     l1_blocks = math.ceil(l1_tokens / block_size) if block_size > 0 else 0
     l15_blocks_count = math.ceil(l15_tokens / block_size) if block_size > 0 else 0
 
