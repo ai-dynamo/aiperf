@@ -51,9 +51,9 @@ def _init_worker(
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-        from aiperf.common.tokenizer import Tokenizer
+        from aiperf.common.tokenizer import load_tokenizer_guarded
 
-        _worker_tokenizer = Tokenizer.from_pretrained(
+        _worker_tokenizer = load_tokenizer_guarded(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,
@@ -111,9 +111,9 @@ def parallel_decode(
 
     # For small batches, sequential is faster (avoid process overhead)
     if len(token_sequences) < 10:
-        from aiperf.common.tokenizer import Tokenizer
+        from aiperf.common.tokenizer import load_tokenizer_guarded
 
-        tokenizer = Tokenizer.from_pretrained(
+        tokenizer = load_tokenizer_guarded(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,

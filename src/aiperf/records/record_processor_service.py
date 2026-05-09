@@ -25,7 +25,7 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
-from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.tokenizer import Tokenizer, load_tokenizer_guarded
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
@@ -112,9 +112,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
                 tokenizer_config = self.user_config.tokenizer
+                tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model)
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
+                    load_tokenizer_guarded,
+                    tokenizer_name,
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,

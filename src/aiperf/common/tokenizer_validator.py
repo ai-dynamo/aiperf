@@ -159,10 +159,16 @@ async def preload_tokenizers(
     revision: str = "main",
     logger: AIPerfLogger | None = None,
 ) -> None:
-    """Preload tokenizer files into HF disk cache before spawning child processes.
+    """Preload tokenizer files into disk cache before spawning child processes.
 
-    Child processes call _is_hf_cached() inside Tokenizer.from_pretrained().
-    When True, they use local_files_only=True and make zero HF network calls.
+    For HuggingFace tokenizers: child processes call _is_hf_cached() inside
+    Tokenizer.from_pretrained(). When True, they use local_files_only=True and
+    make zero HF network calls.
+
+    For tiktoken/builtin tokenizers: tiktoken downloads its encoding file from
+    OpenAI CDN on first use and caches it to disk. Pre-warming here ensures child
+    processes spawned via 'spawn' (macOS default) find the encoding file cached
+    on disk rather than hanging on a network call.
 
     Args:
         resolved_names: Mapping of model names to resolved tokenizer names.
@@ -176,8 +182,8 @@ async def preload_tokenizers(
     from aiperf.common.tokenizer import (
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
-        Tokenizer,
         _is_hf_cached,
+        load_tokenizer_guarded,
     )
 
     if not resolved_names:
@@ -187,12 +193,23 @@ async def preload_tokenizers(
 
     names_to_load: list[str] = []
     for name in set(resolved_names.values()):
-        # tiktoken/builtin: no HF download needed
+        # tiktoken/builtin: pre-warm the tiktoken disk cache so spawned child
+        # processes (which start fresh on macOS via 'spawn') find the encoding
+        # file locally and make zero network calls. Without this, children hang
+        # when tiktoken tries to download from OpenAI CDN on first use.
         if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
             if logger:
-                logger.debug(
-                    f"Tokenizer preload skipped for '{name}': tiktoken backend"
+                logger.debug(f"Pre-warming tiktoken cache for '{name}'")
+            try:
+                await asyncio.to_thread(
+                    load_tokenizer_guarded, name, resolve_alias=False
                 )
+            except Exception:  # noqa: BLE001
+                if logger:
+                    logger.warning(
+                        f"Failed to pre-warm tiktoken cache for '{name}'. "
+                        "Child processes may hang if the tiktoken CDN is unreachable."
+                    )
             continue
         # Local path: files already on disk
         p = Path(name)
@@ -228,7 +245,7 @@ async def preload_tokenizers(
             # Discard result — side effect is populating the HF disk cache so
             # child processes find it cached and skip all network calls.
             await asyncio.to_thread(
-                Tokenizer.from_pretrained,
+                load_tokenizer_guarded,
                 name,
                 trust_remote_code=trust_remote_code,
                 revision=revision,

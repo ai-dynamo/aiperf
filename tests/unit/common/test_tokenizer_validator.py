@@ -77,17 +77,65 @@ class TestPreloadTokenizers:
         mock_load.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_skips_builtin_name(self) -> None:
+    async def test_prewarms_builtin_tiktoken(self) -> None:
+        # Pre-warming ensures macOS child processes (spawned fresh) find the
+        # tiktoken encoding file on disk and make zero network calls.
         with patch.object(Tokenizer, "from_pretrained") as mock_load:
             await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
-        mock_load.assert_not_called()
+        mock_load.assert_called_once_with(BUILTIN_TOKENIZER_NAME, resolve_alias=False)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("encoding_name", sorted(TIKTOKEN_ENCODING_NAMES))
-    async def test_skips_tiktoken_encoding_names(self, encoding_name: str) -> None:
+    async def test_prewarms_tiktoken_encoding_names(self, encoding_name: str) -> None:
         with patch.object(Tokenizer, "from_pretrained") as mock_load:
             await preload_tokenizers({"model": encoding_name})
-        mock_load.assert_not_called()
+        mock_load.assert_called_once_with(encoding_name, resolve_alias=False)
+
+    @pytest.mark.asyncio
+    async def test_tiktoken_prewarm_failure_logs_warning_continues(
+        self, mock_logger: MagicMock
+    ) -> None:
+        with patch.object(
+            Tokenizer, "from_pretrained", side_effect=RuntimeError("CDN blocked")
+        ):
+            await preload_tokenizers(
+                {"model": BUILTIN_TOKENIZER_NAME}, logger=mock_logger
+            )
+        mock_logger.warning.assert_called_once()
+        assert BUILTIN_TOKENIZER_NAME in mock_logger.warning.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_tiktoken_prewarm_socket_timeout_logs_warning_continues(
+        self, mock_logger: MagicMock
+    ) -> None:
+        with patch(
+            "aiperf.common.tokenizer.load_tokenizer_guarded",
+            side_effect=TimeoutError("timed out"),
+        ):
+            await preload_tokenizers(
+                {"model": BUILTIN_TOKENIZER_NAME}, logger=mock_logger
+            )
+        mock_logger.warning.assert_called_once()
+        assert BUILTIN_TOKENIZER_NAME in mock_logger.warning.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_enables_offline_mode_after_tiktoken_prewarm(self) -> None:
+        with patch.object(Tokenizer, "from_pretrained"):
+            await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+
+    @pytest.mark.asyncio
+    async def test_enables_offline_mode_even_when_tiktoken_prewarm_fails(
+        self,
+    ) -> None:
+        # tiktoken failure should not block HF offline mode — they are independent.
+        with patch.object(
+            Tokenizer, "from_pretrained", side_effect=RuntimeError("CDN blocked")
+        ):
+            await preload_tokenizers({"model": BUILTIN_TOKENIZER_NAME})
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+        assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
 
     @pytest.mark.asyncio
     async def test_skips_already_cached(self) -> None:

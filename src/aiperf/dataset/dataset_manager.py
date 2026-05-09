@@ -43,7 +43,7 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
-from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.tokenizer import Tokenizer, load_tokenizer_guarded
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -184,9 +184,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         tokenizer_config = self.user_config.tokenizer
         tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
 
-        # Let exceptions propagate - controller_utils will display the error panel
+        # Let exceptions propagate - controller_utils will display the error panel.
         self.tokenizer = await asyncio.to_thread(
-            Tokenizer.from_pretrained,
+            load_tokenizer_guarded,
             tokenizer_name,
             trust_remote_code=tokenizer_config.trust_remote_code,
             revision=tokenizer_config.revision,

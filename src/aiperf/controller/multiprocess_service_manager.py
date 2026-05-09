@@ -148,13 +148,15 @@ class MultiProcessServiceManager(BaseServiceManager):
         """
         self.debug("Waiting for all required services to register...")
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
-
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
             while not stop_event.is_set():
+                # Re-read required_services each iteration so dynamically spawned services
+                # (Workers, RecordProcessors added by _handle_spawn_workers_command) are
+                # included in the check before PROFILE_CONFIGURE is broadcast.
+                required_types = set(self.required_services.keys())
+
                 # Get all registered service types from the id map
                 registered_types = {
                     service_info.service_type
@@ -180,6 +182,7 @@ class MultiProcessServiceManager(BaseServiceManager):
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
         except asyncio.TimeoutError as e:
             # Log which services didn't register in time
+            final_required_types = set(self.required_services.keys())
             registered_types_set = set(
                 service_info.service_type
                 for service_info in self.service_id_map.values()
@@ -187,7 +190,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 == ServiceRegistrationStatus.REGISTERED
             )
 
-            for service_type in required_types:
+            for service_type in final_required_types:
                 if service_type not in registered_types_set:
                     self.error(
                         f"Service {service_type} failed to register within timeout"

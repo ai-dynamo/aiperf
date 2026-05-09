@@ -524,6 +524,16 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _handle_spawn_workers_command(self, message: SpawnWorkersCommand) -> None:
         """Handle a spawn workers command."""
         self.debug(lambda: f"Received spawn workers command: {message}")
+        # Register expected counts before spawning so wait_for_all_services_registration
+        # includes them in its check and blocks configure until they are all online.
+        self.service_manager.required_services[ServiceType.WORKER] = message.num_workers
+        if self.scale_record_processors_with_workers:
+            rp_count = max(
+                1, message.num_workers // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+            )
+            self.service_manager.required_services[ServiceType.RECORD_PROCESSOR] = (
+                rp_count
+            )
         # Spawn the workers
         await self.service_manager.run_service(ServiceType.WORKER, message.num_workers)
         # If we are scaling the record processor service count with the number of workers, spawn the record processors

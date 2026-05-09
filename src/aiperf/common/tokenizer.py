@@ -555,3 +555,54 @@ class Tokenizer:
             The string representation of the tokenizer.
         """
         return self._tokenizer.__str__()
+
+
+# Timeout (seconds) applied to tiktoken CDN downloads.
+_TIKTOKEN_CDN_TIMEOUT_S: float = 30.0
+
+
+def _patch_tiktoken_cdn_timeout() -> None:
+    """Patch tiktoken.load.read_file to pass an explicit timeout to requests.get.
+
+    tiktoken calls ``requests.get(url)`` with no timeout argument. urllib3
+    converts this to ``Timeout(connect=None, read=None)`` and then calls
+    ``sock.settimeout(None)``, which puts the socket into blocking mode and
+    overrides any ``socket.setdefaulttimeout()`` value. The only reliable fix
+    is to intercept tiktoken's download function and inject a timeout.
+
+    The patch is idempotent and applied once per process on first use.
+    """
+    try:
+        import tiktoken.load as _tl
+    except ImportError:
+        return
+
+    if getattr(_tl, "_aiperf_timeout_patched", False):
+        return
+
+    import requests as _requests
+
+    _original_read_file = _tl.read_file
+
+    def _read_file_with_timeout(blobpath: str) -> bytes:
+        if blobpath.startswith(("http://", "https://")):
+            resp = _requests.get(blobpath, timeout=_TIKTOKEN_CDN_TIMEOUT_S)
+            resp.raise_for_status()
+            return resp.content
+        return _original_read_file(blobpath)
+
+    _tl.read_file = _read_file_with_timeout
+    _tl._aiperf_timeout_patched = True
+
+
+def load_tokenizer_guarded(name: str, **kwargs: object) -> "Tokenizer":
+    """Call ``Tokenizer.from_pretrained`` with a tiktoken CDN timeout applied.
+
+    tiktoken's ``read_file()`` uses ``requests.get()`` with no timeout.
+    urllib3 then calls ``sock.settimeout(None)``, overriding any
+    ``socket.setdefaulttimeout()`` and causing the thread to block forever
+    when the CDN is reachable but unresponsive. This function patches
+    ``tiktoken.load.read_file`` to pass an explicit ``timeout=`` before loading.
+    """
+    _patch_tiktoken_cdn_timeout()
+    return Tokenizer.from_pretrained(name, **kwargs)

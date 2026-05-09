@@ -21,7 +21,7 @@ from aiperf.common.models.record_models import (
     ToolCallResponseData,
     find_last_non_empty_usage,
 )
-from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.tokenizer import Tokenizer, load_tokenizer_guarded
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -82,9 +82,12 @@ class InferenceResultParser(CommunicationMixin):
         async with self.tokenizer_lock:
             self.tokenizers = {}
             for model in self.model_endpoint.models.models:
+                tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(
+                    model.name
+                )
                 self.tokenizers[model.name] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
+                    load_tokenizer_guarded,
+                    tokenizer_name,
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
@@ -105,9 +108,10 @@ class InferenceResultParser(CommunicationMixin):
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
                 tokenizer_config = self.user_config.tokenizer
+                tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model)
                 self.tokenizers[model] = await asyncio.to_thread(
-                    Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
+                    load_tokenizer_guarded,
+                    tokenizer_name,
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
