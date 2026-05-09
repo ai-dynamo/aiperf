@@ -33,12 +33,14 @@ class TestImageEditEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
+        """ModelEndpointInfo configured for IMAGE_EDIT against FLUX.2-Klein-4B."""
         return create_model_endpoint(
             EndpointType.IMAGE_EDIT, model_name="black-forest-labs/FLUX.2-klein-4B"
         )
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
+        """ImageEditEndpoint instance backed by a mock transport."""
         return create_endpoint_with_mock_transport(ImageEditEndpoint, model_endpoint)
 
     # ===== format_payload =====
@@ -214,17 +216,20 @@ class TestImageEditEndpoint:
         assert payload["image"]["filename"].endswith(".png")
 
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
+        """Missing turns raises a clear ValueError instead of indexing into an empty list."""
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_no_text_raises(self, endpoint, model_endpoint):
+        """Turn without a text prompt is rejected up front."""
         turn = Turn(texts=[], images=[Image(contents=[_PNG_DATA_URL])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_no_image_raises(self, endpoint, model_endpoint):
+        """Turn without a reference image is rejected up front."""
         turn = Turn(texts=[Text(contents=["edit"])], images=[])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         with pytest.raises(ValueError, match="requires a reference image"):
@@ -241,6 +246,7 @@ class TestImageEditEndpoint:
             endpoint.format_payload(request_info)
 
     def test_format_payload_invalid_base64_raises(self, endpoint, model_endpoint):
+        """Non-base64 image content surfaces a clear decode error."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
             images=[Image(contents=["not!base64!data"])],
@@ -250,6 +256,7 @@ class TestImageEditEndpoint:
             endpoint.format_payload(request_info)
 
     def test_format_payload_malformed_data_url_raises(self, endpoint, model_endpoint):
+        """Data URL without a comma separator is rejected before b64 decode."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
             images=[Image(contents=["data:image/png;base64"])],
@@ -286,6 +293,7 @@ class TestImageEditEndpoint:
     def test_parse_response_image_formats(
         self, endpoint, json_data, expected_b64, expected_url
     ):
+        """parse_response handles b64_json, url, and revised_prompt entries."""
         mock_response = create_mock_response(json_data=json_data)
         parsed = endpoint.parse_response(mock_response)
 
@@ -295,6 +303,7 @@ class TestImageEditEndpoint:
         assert parsed.data.images[0].url == expected_url
 
     def test_parse_response_metadata_fields(self, endpoint):
+        """Top-level size/quality/output_format/background flow through to ImageResponseData."""
         json_data = {
             "data": [{"b64_json": "img"}],
             "size": "1024x1024",
@@ -312,17 +321,20 @@ class TestImageEditEndpoint:
         assert parsed.data.background == "transparent"
 
     def test_parse_response_no_json_returns_none(self, endpoint):
+        """Non-JSON response bodies return None instead of raising."""
         mock_response = create_mock_response(json_data=None)
         mock_response.get_raw.return_value = ""
         assert endpoint.parse_response(mock_response) is None
 
     def test_parse_response_empty_data_returns_no_images(self, endpoint):
+        """An empty `data` array produces a parsed response with zero images."""
         mock_response = create_mock_response(json_data={"data": []})
         parsed = endpoint.parse_response(mock_response)
         assert parsed is not None
         assert parsed.data.images == []
 
     def test_parse_response_perf_ns_preserved(self, endpoint):
+        """perf_ns from the raw response is preserved on the ParsedResponse."""
         mock_response = create_mock_response(
             perf_ns=999_888_777, json_data={"data": [{"b64_json": "x"}]}
         )
@@ -347,6 +359,7 @@ class TestSniffMimeFromMagicBytes:
         ],
     )  # fmt: skip
     def test_magic_bytes_dispatch(self, magic, expected):
+        """Each supported image format dispatches to the matching MIME, unknown returns None."""
         from aiperf.endpoints.openai_image_edit import _sniff_mime_from_magic_bytes
 
         assert _sniff_mime_from_magic_bytes(magic) == expected

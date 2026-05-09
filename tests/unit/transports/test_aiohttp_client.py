@@ -590,6 +590,7 @@ class TestExpectedRequestBodySize:
     """Tests for _expected_request_body_size."""
 
     def test_bytes_returns_len(self) -> None:
+        """Bytes payloads use len() directly as the body size."""
         from aiperf.transports.aiohttp_client import _expected_request_body_size
 
         assert _expected_request_body_size(b"hello") == 5
@@ -616,6 +617,7 @@ class TestExpectedRequestBodySize:
         assert size > 0
 
     def test_unsupported_payload_returns_none(self) -> None:
+        """Strings, None, and dicts return None — only bytes/FormData are sized."""
         from aiperf.transports.aiohttp_client import _expected_request_body_size
 
         assert _expected_request_body_size("a json string") is None
