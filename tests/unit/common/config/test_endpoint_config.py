@@ -323,3 +323,27 @@ class TestRequestContentTypeAutoDefault:
                 type=EndpointType.CHAT,
                 request_content_type=RequestContentType.MULTIPART_FORM_DATA,
             )
+
+    def test_explicit_json_on_chat_passes_through(self):
+        """Explicit application/json on a JSON-native endpoint is preserved as-is."""
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["gpt2"],
+            type=EndpointType.CHAT,
+            request_content_type=RequestContentType.APPLICATION_JSON,
+        )
+        assert config.request_content_type == RequestContentType.APPLICATION_JSON
+
+    def test_explicit_multipart_on_image_edit_passes_through(self):
+        """Explicit multipart on a requires_form_data endpoint is accepted as-is
+        (the auto-default branch is bypassed when the user already set the value).
+        """
+        from aiperf.common.enums import RequestContentType
+
+        config = EndpointConfig(
+            model_names=["any"],
+            type=EndpointType.IMAGE_EDIT,
+            request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+        )
+        assert config.request_content_type == RequestContentType.MULTIPART_FORM_DATA

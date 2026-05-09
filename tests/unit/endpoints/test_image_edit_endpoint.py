@@ -215,6 +215,22 @@ class TestImageEditEndpoint:
         assert payload["image"]["content_type"] == "image/png"
         assert payload["image"]["filename"].endswith(".png")
 
+    def test_format_payload_data_url_without_mime_metadata_sniffs(
+        self, endpoint, model_endpoint
+    ):
+        """A bare ``data:,<b64>`` URL (no MIME / no semicolon) falls back to magic-byte sniff."""
+        b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[f"data:,{b64}"])],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["image"]["content_type"] == "image/png"
+        assert payload["image"]["b64_data"] == b64
+
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
         """Missing turns raises a clear ValueError instead of indexing into an empty list."""
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
