@@ -9,7 +9,11 @@ import pytest
 from pydantic import TypeAdapter
 
 from aiperf.common.models import Image, Text, Turn
-from aiperf.endpoints.openai_image_edit import ImageEditEndpoint
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.endpoints.openai_image_edit import (
+    ImageEditEndpoint,
+    _sniff_mime_from_magic_bytes,
+)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
@@ -32,20 +36,20 @@ class TestImageEditEndpoint:
     """Tests for ImageEditEndpoint format_payload + parse_response."""
 
     @pytest.fixture
-    def model_endpoint(self):
+    def model_endpoint(self) -> ModelEndpointInfo:
         """ModelEndpointInfo configured for IMAGE_EDIT against FLUX.2-Klein-4B."""
         return create_model_endpoint(
             EndpointType.IMAGE_EDIT, model_name="black-forest-labs/FLUX.2-klein-4B"
         )
 
     @pytest.fixture
-    def endpoint(self, model_endpoint):
+    def endpoint(self, model_endpoint: ModelEndpointInfo) -> ImageEditEndpoint:
         """ImageEditEndpoint instance backed by a mock transport."""
         return create_endpoint_with_mock_transport(ImageEditEndpoint, model_endpoint)
 
     # ===== format_payload =====
 
-    def test_format_payload_with_data_url_image(self, endpoint, model_endpoint):
+    def test_format_payload_with_data_url_image(self, endpoint, model_endpoint) -> None:
         """Data URL image content keeps the base64 string in the payload."""
         turn = Turn(
             texts=[Text(contents=["Make the cat blue"])],
@@ -68,7 +72,7 @@ class TestImageEditEndpoint:
 
     def test_format_payload_payload_is_json_serialisable(
         self, endpoint, model_endpoint
-    ):
+    ) -> None:
         """Regression: payload must remain JSON-serialisable.
 
         Raw bytes here break DatasetManager._generate_inputs_json_file
@@ -84,7 +88,9 @@ class TestImageEditEndpoint:
         TypeAdapter(dict).dump_python(payload, mode="json")
         orjson.dumps(payload)
 
-    def test_format_payload_with_raw_base64_image(self, endpoint, model_endpoint):
+    def test_format_payload_with_raw_base64_image(
+        self, endpoint, model_endpoint
+    ) -> None:
         """A raw base64 string (no data URL prefix) sniffs MIME from magic bytes."""
         turn = Turn(
             texts=[Text(contents=["Edit prompt"])],
@@ -99,7 +105,7 @@ class TestImageEditEndpoint:
 
     def test_format_payload_raw_base64_jpeg_sniffed_from_magic_bytes(
         self, endpoint, model_endpoint
-    ):
+    ) -> None:
         """JPEG content without data URL prefix is detected via FFD8FF magic bytes."""
         jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
         b64 = base64.b64encode(jpeg_bytes).decode("ascii")
@@ -114,7 +120,7 @@ class TestImageEditEndpoint:
         assert payload["image"]["content_type"] == "image/jpeg"
         assert payload["image"]["filename"].endswith(".jpg")
 
-    def test_format_payload_with_http_url_image(self, endpoint, model_endpoint):
+    def test_format_payload_with_http_url_image(self, endpoint, model_endpoint) -> None:
         """An http(s) URL is passed through as the multipart `url` field, no decode."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
@@ -129,7 +135,7 @@ class TestImageEditEndpoint:
 
     def test_format_payload_jpeg_data_url_uses_jpg_filename(
         self, endpoint, model_endpoint
-    ):
+    ) -> None:
         """JPEG data URLs round-trip with a `.jpg` filename and image/jpeg type."""
         b64 = base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii")
         turn = Turn(
@@ -144,7 +150,7 @@ class TestImageEditEndpoint:
         assert payload["image"]["content_type"] == "image/jpeg"
         assert payload["image"]["b64_data"] == b64
 
-    def test_format_payload_extra_inputs_merged_after_image(self, endpoint):
+    def test_format_payload_extra_inputs_merged_after_image(self, endpoint) -> None:
         """Extra inputs (size, num_inference_steps, guidance_scale, ...) are merged in."""
         model_endpoint = create_model_endpoint(
             EndpointType.IMAGE_EDIT,
@@ -170,7 +176,7 @@ class TestImageEditEndpoint:
         assert payload["guidance_scale"] == 4.0
         assert payload["seed"] == 42
 
-    def test_format_payload_extra_inputs_cannot_overwrite_reserved(self):
+    def test_format_payload_extra_inputs_cannot_overwrite_reserved(self) -> None:
         """Reserved keys (prompt, image, url, mask) are protected from --extra-inputs."""
         model_endpoint = create_model_endpoint(
             EndpointType.IMAGE_EDIT,
@@ -200,7 +206,7 @@ class TestImageEditEndpoint:
 
     def test_format_payload_non_image_data_url_mime_ignored(
         self, endpoint, model_endpoint
-    ):
+    ) -> None:
         """Data URLs that claim a non-image MIME type fall back to magic-byte sniff."""
         b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
         turn = Turn(
@@ -217,7 +223,7 @@ class TestImageEditEndpoint:
 
     def test_format_payload_data_url_without_mime_metadata_sniffs(
         self, endpoint, model_endpoint
-    ):
+    ) -> None:
         """A bare ``data:,<b64>`` URL (no MIME / no semicolon) falls back to magic-byte sniff."""
         b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
         turn = Turn(
@@ -231,27 +237,29 @@ class TestImageEditEndpoint:
         assert payload["image"]["content_type"] == "image/png"
         assert payload["image"]["b64_data"] == b64
 
-    def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
+    def test_format_payload_no_turns_raises(self, endpoint, model_endpoint) -> None:
         """Missing turns raises a clear ValueError instead of indexing into an empty list."""
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
         with pytest.raises(ValueError, match="requires at least one turn"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_no_text_raises(self, endpoint, model_endpoint):
+    def test_format_payload_no_text_raises(self, endpoint, model_endpoint) -> None:
         """Turn without a text prompt is rejected up front."""
         turn = Turn(texts=[], images=[Image(contents=[_PNG_DATA_URL])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         with pytest.raises(ValueError, match="requires text prompt"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_no_image_raises(self, endpoint, model_endpoint):
+    def test_format_payload_no_image_raises(self, endpoint, model_endpoint) -> None:
         """Turn without a reference image is rejected up front."""
         turn = Turn(texts=[Text(contents=["edit"])], images=[])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         with pytest.raises(ValueError, match="requires a reference image"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_empty_image_content_raises(self, endpoint, model_endpoint):
+    def test_format_payload_empty_image_content_raises(
+        self, endpoint, model_endpoint
+    ) -> None:
         """Empty string in turn.images[0].contents[0] raises a clear error."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
@@ -261,7 +269,9 @@ class TestImageEditEndpoint:
         with pytest.raises(ValueError, match="content is empty"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_invalid_base64_raises(self, endpoint, model_endpoint):
+    def test_format_payload_invalid_base64_raises(
+        self, endpoint, model_endpoint
+    ) -> None:
         """Non-base64 image content surfaces a clear decode error."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
@@ -271,7 +281,9 @@ class TestImageEditEndpoint:
         with pytest.raises(ValueError, match="not valid base64"):
             endpoint.format_payload(request_info)
 
-    def test_format_payload_malformed_data_url_raises(self, endpoint, model_endpoint):
+    def test_format_payload_malformed_data_url_raises(
+        self, endpoint, model_endpoint
+    ) -> None:
         """Data URL without a comma separator is rejected before b64 decode."""
         turn = Turn(
             texts=[Text(contents=["edit"])],
@@ -308,7 +320,7 @@ class TestImageEditEndpoint:
     )  # fmt: skip
     def test_parse_response_image_formats(
         self, endpoint, json_data, expected_b64, expected_url
-    ):
+    ) -> None:
         """parse_response handles b64_json, url, and revised_prompt entries."""
         mock_response = create_mock_response(json_data=json_data)
         parsed = endpoint.parse_response(mock_response)
@@ -318,7 +330,7 @@ class TestImageEditEndpoint:
         assert parsed.data.images[0].b64_json == expected_b64
         assert parsed.data.images[0].url == expected_url
 
-    def test_parse_response_metadata_fields(self, endpoint):
+    def test_parse_response_metadata_fields(self, endpoint) -> None:
         """Top-level size/quality/output_format/background flow through to ImageResponseData."""
         json_data = {
             "data": [{"b64_json": "img"}],
@@ -336,20 +348,20 @@ class TestImageEditEndpoint:
         assert parsed.data.output_format == "png"
         assert parsed.data.background == "transparent"
 
-    def test_parse_response_no_json_returns_none(self, endpoint):
+    def test_parse_response_no_json_returns_none(self, endpoint) -> None:
         """Non-JSON response bodies return None instead of raising."""
         mock_response = create_mock_response(json_data=None)
         mock_response.get_raw.return_value = ""
         assert endpoint.parse_response(mock_response) is None
 
-    def test_parse_response_empty_data_returns_no_images(self, endpoint):
+    def test_parse_response_empty_data_returns_no_images(self, endpoint) -> None:
         """An empty `data` array produces a parsed response with zero images."""
         mock_response = create_mock_response(json_data={"data": []})
         parsed = endpoint.parse_response(mock_response)
         assert parsed is not None
         assert parsed.data.images == []
 
-    def test_parse_response_perf_ns_preserved(self, endpoint):
+    def test_parse_response_perf_ns_preserved(self, endpoint) -> None:
         """perf_ns from the raw response is preserved on the ParsedResponse."""
         mock_response = create_mock_response(
             perf_ns=999_888_777, json_data={"data": [{"b64_json": "x"}]}
@@ -374,8 +386,6 @@ class TestSniffMimeFromMagicBytes:
             pytest.param(b"\x00\x00\x00\x00", None, id="unknown"),
         ],
     )  # fmt: skip
-    def test_magic_bytes_dispatch(self, magic, expected):
+    def test_magic_bytes_dispatch(self, magic: bytes, expected: str | None) -> None:
         """Each supported image format dispatches to the matching MIME, unknown returns None."""
-        from aiperf.endpoints.openai_image_edit import _sniff_mime_from_magic_bytes
-
         assert _sniff_mime_from_magic_bytes(magic) == expected
