@@ -5,6 +5,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.config import (
     ConversationConfig,
@@ -656,6 +657,28 @@ class TestOTelStreamingConfig:
         config = make_config(otel_url="collector:4318")
         assert config.otel_stream_metrics_enabled is True
         assert config.otel_stream_timing_enabled is True
+
+    @pytest.mark.parametrize(
+        "secondary_kwargs",
+        [
+            param({"stream": "metrics"}, id="stream"),
+            param({"otel_resource_attributes": ["env=prod"]}, id="resource-attrs"),
+            param({"gen_ai_provider": "my-provider"}, id="gen-ai-provider"),
+        ],
+    )  # fmt: skip
+    def test_otel_secondary_flags_require_otel_url(
+        self, secondary_kwargs: dict[str, object]
+    ):
+        """--stream, --otel-resource-attributes, and --gen-ai-provider are
+        consumed only by the OTel pipeline. Setting any of them without
+        --otel-url is a silent no-op, so the validator rejects it.
+        Regression for --gen-ai-provider being silently ignored.
+        """
+        with pytest.raises(
+            ValueError,
+            match=r"--stream, --otel-resource-attributes, and --gen-ai-provider",
+        ):
+            make_config(**secondary_kwargs)
 
 
 class TestMLflowConfig:

@@ -31,10 +31,15 @@ def _make_user_config(
     if urls is not None:
         endpoint_kwargs["urls"] = urls
 
-    config = UserConfig(
-        endpoint=EndpointConfig(**endpoint_kwargs),
-        gen_ai_provider=gen_ai_provider,
-    )
+    user_config_kwargs: dict = {
+        "endpoint": EndpointConfig(**endpoint_kwargs),
+        "gen_ai_provider": gen_ai_provider,
+    }
+    # gen_ai_provider is an OTel-only flag: the validator requires --otel-url
+    # whenever any OTel-only flag is set, so pair them in test configs.
+    if gen_ai_provider is not None:
+        user_config_kwargs["otel_url"] = "http://localhost:4318"
+    config = UserConfig(**user_config_kwargs)
     return config
 
 

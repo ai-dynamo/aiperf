@@ -128,13 +128,14 @@ class UserConfig(BaseConfig):
     def validate_cli_args(self) -> Self:
         """Set the CLI command based on the command line arguments, if it has not already been set."""
         if not self.cli_command:
-            from aiperf.common.redact import redact_cli_command, redact_url
+            from aiperf.common.redact import redact_cli_command
 
             args = [coerce_value(x) for x in sys.argv[1:]]
             # Note: Use single quotes to avoid conflicts with double quotes in arguments.
             args = [f"'{x}'" if _should_quote_arg(x) else str(x) for x in args]
             cmd = " ".join(["aiperf", *args])
-            cmd = redact_url(cmd)
+            # redact_cli_command handles --api-key, sensitive headers, and URL-typed
+            # flags (--url, --otel-url, --mlflow-tracking-uri) in one pass.
             self.cli_command = redact_cli_command(cmd)
         return self
 
@@ -901,10 +902,15 @@ class UserConfig(BaseConfig):
 
         if self.otel_url is None:
             # Warn/reject if OTel secondary options set without --otel-url.
-            has_otel_secondary = bool(self.stream or self.otel_resource_attributes)
+            # gen_ai_provider is included because it is consumed only by the OTel
+            # GenAI-semconv strategy (see infer_provider_name in genai_semconv.py),
+            # so passing it without --otel-url is a silent no-op for the user.
+            has_otel_secondary = bool(
+                self.stream or self.otel_resource_attributes or self.gen_ai_provider
+            )
             if has_otel_secondary:
                 raise ValueError(
-                    "--stream and --otel-resource-attributes "
+                    "--stream, --otel-resource-attributes, and --gen-ai-provider "
                     "require --otel-url to be set."
                 )
             self._otel_metrics_url = None

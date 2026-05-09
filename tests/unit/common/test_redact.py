@@ -1011,6 +1011,75 @@ class TestRedactCliCommandInterleaved:
             assert value in result, f"Value {value!r} over-redacted in: {result}"
 
 
+class TestRedactCliCommandUrlFlags:
+    """URL-typed flags (--url, -u, --otel-url, --mlflow-tracking-uri) must
+    have userinfo stripped from their values. The rest of the URL and the
+    surrounding quotes/flag must be preserved.
+    """
+
+    @pytest.mark.parametrize(
+        "cmd, secret, must_keep",
+        [
+            param(
+                "aiperf profile --url 'http://user:pass@host:8000/v1'",
+                "user:pass",
+                ["--url", "@host:8000/v1"],
+                id="single-quoted-url",
+            ),
+            param(
+                'aiperf profile --url "http://user:pass@host:8000/v1"',
+                "user:pass",
+                ["--url", "@host:8000/v1"],
+                id="double-quoted-url",
+            ),
+            param(
+                "aiperf profile -u http://tok@collector:4317/path",
+                "tok",
+                ["-u", "@collector:4317/path"],
+                id="short-flag-unquoted",
+            ),
+            param(
+                "aiperf profile --otel-url 'https://secret:key@otel:4318'",
+                "secret:key",
+                ["--otel-url", "@otel:4318"],
+                id="otel-url",
+            ),
+            param(
+                "aiperf profile --mlflow-tracking-uri 'http://mlflow:pw@tracker:5000'",
+                "mlflow:pw",
+                ["--mlflow-tracking-uri", "@tracker:5000"],
+                id="mlflow-tracking-uri",
+            ),
+        ],
+    )  # fmt: skip
+    def test_userinfo_redacted_in_url_flag_value(
+        self, cmd: str, secret: str, must_keep: list[str]
+    ):
+        result = redact_cli_command(cmd)
+        assert secret not in result, f"Secret {secret!r} leaked in: {result}"
+        assert REDACTED_VALUE in result
+        for keep in must_keep:
+            assert keep in result, f"Value {keep!r} over-redacted in: {result}"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            param("aiperf profile --url 'http://localhost:8000'", id="plain-url"),
+            param(
+                "aiperf profile --url 'http://host/users@example.com'",
+                id="at-in-path-no-userinfo",
+            ),
+            param(
+                "aiperf plot --paths /tmp/run@latest --output /out",
+                id="at-in-unrelated-arg",
+            ),
+        ],
+    )  # fmt: skip
+    def test_urls_without_userinfo_unchanged(self, cmd: str):
+        """Non-userinfo URLs and unrelated args with `@` must pass through."""
+        assert redact_cli_command(cmd) == cmd
+
+
 # =============================================================================
 # EndpointConfig api_key protection
 # =============================================================================

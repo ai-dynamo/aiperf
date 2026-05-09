@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -96,6 +97,33 @@ class TestClassifyErrorType:
 
     def test_error_with_no_attributes(self) -> None:
         error = object()
+        assert _classify_error_type(error) == "_OTHER"
+
+    @pytest.mark.parametrize(
+        "non_int_code",
+        [
+            param("500", id="string-digit"),
+            param("timeout", id="string-word"),
+            param(5.5, id="float"),
+            param([500], id="list"),
+            param({"status": 500}, id="dict"),
+        ],
+    )  # fmt: skip
+    def test_non_integer_code_falls_through(self, non_int_code: Any) -> None:
+        """A non-int `.code` must not raise TypeError; the classifier should
+        fall through to the other branches (here: returns '_OTHER' because
+        no other field matches).
+        """
+        error = SimpleNamespace(
+            code=non_int_code, type=None, cause_chain=[], message=""
+        )
+        # Must not raise; classifier should ignore the non-int code and
+        # return the fallback.
+        assert _classify_error_type(error) == "_OTHER"
+
+    def test_bool_code_is_not_treated_as_int(self) -> None:
+        """bool is a subclass of int but is never a meaningful HTTP status."""
+        error = SimpleNamespace(code=True, type=None, cause_chain=[], message="")
         assert _classify_error_type(error) == "_OTHER"
 
 

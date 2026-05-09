@@ -122,11 +122,42 @@ _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
     re.compile(rf"((?:--header|-H)\s+)(?i:{_SENSITIVE_HEADER_ALT})\S+"),
 )
 
+# URL-typed CLI flags whose values may carry `user:password@` userinfo. Redaction
+# rewrites the *value only* — preserves the flag, surrounding quotes, and any
+# non-credential URL parts. Kept separate from _CLI_SECRET_PATTERNS because the
+# replacement is structural (strip userinfo) rather than wholesale (<redacted>).
+_URL_FLAG_ALT = "|".join(
+    re.escape(f) for f in ("--url", "-u", "--otel-url", "--mlflow-tracking-uri")
+)
+# Match: (flag)(sep)(open quote?)(value)(close quote?)
+# Group 1: flag + separator, group 2: optional open quote, group 3: raw value,
+# group 4: optional close quote. The value is captured as non-greedy so the
+# close quote and value stay aligned.
+_URL_FLAG_PATTERN = re.compile(
+    rf"((?:{_URL_FLAG_ALT})[\s=])(['\"])?([^'\"\s]+)(['\"])?"
+)
+
+
+def _redact_url_flag_match(match: re.Match[str]) -> str:
+    prefix = match.group(1)
+    open_quote = match.group(2) or ""
+    value = match.group(3)
+    close_quote = match.group(4) or ""
+    return f"{prefix}{open_quote}{redact_url(value)}{close_quote}"
+
 
 def redact_cli_command(cmd: str) -> str:
-    """Redact secrets from a CLI command string (--api-key, sensitive --header values)."""
+    """Redact secrets from a CLI command string.
+
+    Redacts:
+    - ``--api-key`` values.
+    - Credentialed header values (``--header Authorization: Bearer …`` etc.).
+    - Userinfo embedded in URL-typed flag values (``--url``, ``-u``,
+      ``--otel-url``, ``--mlflow-tracking-uri``).
+    """
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
+    cmd = _URL_FLAG_PATTERN.sub(_redact_url_flag_match, cmd)
     return cmd
 
 

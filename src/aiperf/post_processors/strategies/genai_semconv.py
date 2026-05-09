@@ -263,8 +263,11 @@ def _classify_error_type(error: Any | None) -> str | None:
     error_type = getattr(error, "type", None)
     cause_chain = getattr(error, "cause_chain", None) or []
 
-    # HTTP status code classification
-    if code is not None:
+    # HTTP status code classification. Guard on isinstance(code, int) because
+    # the input type is Any — a non-integer `.code` (e.g. a string "timeout")
+    # would raise TypeError on the range comparison, crashing the fanout.
+    # bool is a subclass of int but is meaningless as a status code.
+    if isinstance(code, int) and not isinstance(code, bool):
         if 500 <= code <= 599:
             return "http_5xx"
         if 400 <= code <= 499:
