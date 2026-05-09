@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +27,9 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # Keep the whole config so we can ship it to the export subprocess
+        # without re-plumbing through kwargs.
+        self._exporter_config = exporter_config
         self._results = exporter_config.results
         self._user_config = exporter_config.user_config
 
@@ -56,20 +58,15 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
-        """Run blocking MLflow client operations in a worker thread with timeout."""
+        """Run blocking MLflow client operations in a terminable subprocess."""
         from aiperf.common.environment import Environment
+        from aiperf.exporters.mlflow_export_subprocess import export_with_timeout
 
-        export_timeout = Environment.MLFLOW.EXPORT_TIMEOUT_SECONDS
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._export_sync),
-                timeout=export_timeout,
-            )
-        except TimeoutError:
-            self.warning(
-                f"MLflow export timed out after {export_timeout}s. "
-                "The tracking server may be unreachable. Skipping export."
-            )
+        await export_with_timeout(
+            exporter_config=self._exporter_config,
+            export_timeout=Environment.MLFLOW.EXPORT_TIMEOUT_SECONDS,
+            warn=self.warning,
+        )
 
     @classmethod
     def _import_mlflow_module(cls) -> Any:
@@ -455,10 +452,10 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     @staticmethod
     def _normalize_uri(uri: str | None) -> str:
-        """Normalize a URI for comparison (strip trailing slashes, lowercase)."""
-        if not uri:
-            return ""
-        return uri.strip().rstrip("/").lower()
+        """Normalize a URI for metadata comparison (see mlflow_metadata)."""
+        from aiperf.exporters.mlflow_metadata import normalize_mlflow_uri
+
+        return normalize_mlflow_uri(uri)
 
     def _write_export_metadata(
         self,

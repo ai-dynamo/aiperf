@@ -79,7 +79,10 @@ def _normalize_otel_metrics_url(url: str) -> str:
         normalized_url = f"http://{normalized_url}"
 
     parsed = urlparse(normalized_url)
-    if not parsed.scheme or not parsed.netloc:
+    # `urlparse("http://:4318")` yields netloc=":4318" but hostname=None —
+    # netloc truthiness alone is not enough. Require a non-empty hostname so
+    # bare-port values don't slip through and produce a malformed OTLP endpoint.
+    if not parsed.scheme or not parsed.netloc or not parsed.hostname:
         raise ValueError(
             f"Invalid --otel-url value: {url!r}. Expected host[:port] or a full URL."
         )

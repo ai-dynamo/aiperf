@@ -1410,6 +1410,42 @@ class TestRedactUrl:
         """@ appearing in path, query, or fragment must not trigger redaction."""
         assert redact_url(url) == url
 
+    @pytest.mark.parametrize(
+        "uri,expected",
+        [
+            param(
+                "postgresql://user:secret@db:5432/mlflow",
+                f"postgresql://{REDACTED_VALUE}@db:5432/mlflow",
+                id="postgresql-with-userinfo",
+            ),
+            param(
+                "mysql+pymysql://u:p@host/mlflow",
+                f"mysql+pymysql://{REDACTED_VALUE}@host/mlflow",
+                id="mysql-with-dialect-plus-userinfo",
+            ),
+            param(
+                "mssql://u:p@sql.internal:1433/mlflow",
+                f"mssql://{REDACTED_VALUE}@sql.internal:1433/mlflow",
+                id="mssql-with-userinfo",
+            ),
+            param(
+                "file:///tmp/mlruns",
+                "file:///tmp/mlruns",
+                id="file-no-userinfo",
+            ),
+            param(
+                "sqlite:///tmp/mlflow.db",
+                "sqlite:///tmp/mlflow.db",
+                id="sqlite-no-userinfo",
+            ),
+        ],
+    )  # fmt: skip
+    def test_redacts_userinfo_for_non_http_schemes(self, uri: str, expected: str):
+        """MLflow tracking-uri commonly uses DB URIs — userinfo must be stripped
+        regardless of scheme.
+        """
+        assert redact_url(uri) == expected
+
 
 # =============================================================================
 # Log filter redaction

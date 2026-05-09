@@ -14,6 +14,41 @@ consumed by:
 from __future__ import annotations
 
 from typing import TypedDict
+from urllib.parse import urlparse, urlunparse
+
+
+def normalize_mlflow_uri(uri: str | None) -> str:
+    """Normalize an MLflow tracking URI for equality comparison.
+
+    Lowercases only the scheme and host (per RFC 3986 §3.1 and §3.2.2) and
+    strips a trailing slash from the path. Path / query / fragment keep their
+    original case — on case-sensitive filesystems, ``file:///tmp/MLRuns`` and
+    ``file:///tmp/mlruns`` point at different directories and must not
+    compare equal.
+
+    Non-URI inputs and bare paths fall back to ``strip().rstrip("/")``.
+    """
+    if not uri:
+        return ""
+    stripped = uri.strip()
+    parsed = urlparse(stripped)
+    if not parsed.scheme or not parsed.netloc:
+        return stripped.rstrip("/")
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    userinfo = ""
+    if parsed.username is not None:
+        userinfo = parsed.username
+        if parsed.password is not None:
+            userinfo = f"{userinfo}:{parsed.password}"
+        userinfo = f"{userinfo}@"
+    netloc = f"{userinfo}{host}"
+    path = parsed.path.rstrip("/")
+    return urlunparse(
+        (scheme, netloc, path, parsed.params, parsed.query, parsed.fragment)
+    )
 
 
 class MLflowExportMetadata(TypedDict, total=False):

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import sys
 import types
@@ -236,7 +237,7 @@ class TestMLflowDataExporter:
         )
 
         exporter = MLflowDataExporter(config)
-        await exporter.export()
+        await asyncio.to_thread(exporter._export_sync)
 
         assert state["tracking_uris"] == ["http://mlflow:5000"]
         assert state["experiments"] == ["aiperf-tests"]
@@ -335,7 +336,7 @@ class TestMLflowDataExporter:
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
-        await exporter.export()
+        await asyncio.to_thread(exporter._export_sync)
 
         uploaded = [
             Path(local_path).relative_to(tmp_path).as_posix()
@@ -381,7 +382,7 @@ class TestMLflowDataExporter:
             telemetry_results=None,
         )
         exporter = MLflowDataExporter(config)
-        await exporter.export()
+        await asyncio.to_thread(exporter._export_sync)
 
         assert state["run_ids"] == [live_run_id]
         assert state["run_names"] == [None]
@@ -463,4 +464,54 @@ class TestMLflowDataExporter:
             )
         )
         with pytest.raises(RuntimeError, match="optional MLflow dependency"):
-            await exporter.export()
+            await asyncio.to_thread(exporter._export_sync)
+
+    @pytest.mark.asyncio
+    async def test_export_subprocess_terminates_on_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        mlflow_user_config: UserConfig,
+    ) -> None:
+        """Regression: ``export()`` must terminate a hung subprocess on timeout.
+
+        Simulates a wedged MLflow call by stubbing the subprocess entrypoint
+        with a sleeper at module scope (spawn can't pickle local closures).
+        With a 1s timeout the outer ``export()`` returns quickly (not 30s
+        default) and the worker subprocess is no longer alive.
+        """
+        import time as time_module
+
+        from aiperf.common import environment as env_module
+
+        monkeypatch.setattr(
+            "aiperf.exporters.mlflow_export_subprocess.run_export_in_subprocess",
+            _hang_forever_subprocess_entry,
+        )
+        monkeypatch.setattr(
+            env_module.Environment.MLFLOW, "EXPORT_TIMEOUT_SECONDS", 1.0
+        )
+
+        config = ExporterConfig(
+            results=sample_results,
+            user_config=mlflow_user_config,
+            service_config=ServiceConfig(),
+            telemetry_results=None,
+        )
+        exporter = MLflowDataExporter(config)
+
+        start = time_module.monotonic()
+        await exporter.export()
+        elapsed = time_module.monotonic() - start
+
+        # Must return within a small multiple of the 1s timeout, not 30s.
+        assert elapsed < 10.0, f"export() did not honor timeout: elapsed={elapsed:.1f}s"
+
+
+def _hang_forever_subprocess_entry(exporter_config: Any, result_queue: Any) -> None:
+    """Module-level subprocess stub (must be picklable for spawn context)."""
+    import time as _time
+
+    _time.sleep(30)
+    result_queue.put(None)

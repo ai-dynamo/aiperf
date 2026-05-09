@@ -151,6 +151,33 @@ class TestResolveLiveStreamingRunId:
         assert result == "abc123"
 
 
+class TestNormalizeUri:
+    """Regression: _normalize_uri must not collapse case-distinct paths."""
+
+    def test_different_path_case_compare_unequal(self) -> None:
+        """On case-sensitive filesystems (Linux), /tmp/MLRuns != /tmp/mlruns."""
+        n = MLflowDataExporter._normalize_uri
+        assert n("file:///tmp/MLRuns") != n("file:///tmp/mlruns")
+
+    def test_scheme_and_host_are_case_insensitive(self) -> None:
+        n = MLflowDataExporter._normalize_uri
+        assert n("HTTP://Host.Com:5000/path") == n("http://host.com:5000/path")
+
+    def test_trailing_slash_stripped(self) -> None:
+        n = MLflowDataExporter._normalize_uri
+        assert n("http://host:5000/path/") == n("http://host:5000/path")
+
+    def test_query_case_preserved(self) -> None:
+        n = MLflowDataExporter._normalize_uri
+        assert n("http://host:5000/?MixedCase=Value") != n(
+            "http://host:5000/?mixedcase=value"
+        )
+
+    @pytest.mark.parametrize("uri", [None, "", "   "])
+    def test_empty_inputs(self, uri: str | None) -> None:
+        assert MLflowDataExporter._normalize_uri(uri) == ""
+
+
 class TestDisabledExporter:
     """Cover DataExporterDisabled paths."""
 

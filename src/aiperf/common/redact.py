@@ -164,17 +164,25 @@ def redact_cli_command(cmd: str) -> str:
 def redact_url(url: str) -> str:
     """Strip userinfo (user:password@) from a URL to prevent credential leakage.
 
-    Handles both scheme-prefixed (http://user:pass@host) and bare (user:pass@host) URLs.
-    Returns the URL unchanged if no credentials are embedded.
+    Handles URIs of any scheme (http, https, postgresql, mysql, sqlite, file,
+    etc.) plus bare ``user:pass@host`` URLs. Returns the URL unchanged if no
+    credentials are embedded.
+
+    Matters for MLflow: ``--mlflow-tracking-uri`` commonly carries backends
+    like ``postgresql://user:secret@db:5432/mlflow`` — limiting redaction to
+    ``http(s)://`` would leak those credentials.
     """
-    # Scheme-prefixed: http://user:pass@host. Restrict the userinfo segment to the
-    # authority component by forbidding /, ?, # — otherwise '@' in a path (e.g.
-    # `/users@example.com`) or a query string (e.g. `?email=a@b.com`) would be
-    # matched as if it were userinfo and the URL would be silently mangled.
-    result = re.sub(r"(https?://)([^@/?#]+)@", r"\1" + REDACTED_VALUE + "@", url)
+    # Any scheme followed by ``://`` then userinfo up to ``@``. The userinfo
+    # segment is bounded by /, ?, # so ``@`` inside a path or query string
+    # (e.g. ``/users@example.com``, ``?email=a@b.com``) is never matched.
+    result = re.sub(
+        r"([A-Za-z][A-Za-z0-9+.\-]*://)([^@/?#]+)@",
+        r"\1" + REDACTED_VALUE + "@",
+        url,
+    )
     # Once a scheme is present, do not fall through to the bare-userinfo regex:
-    # that regex matches on ^[^@:]+:[^@]+@ which would eat `https://host/?a@b`
-    # starting from the `https:` prefix.
+    # that regex matches on ``^[^@:]+:[^@]+@`` which would eat ``https://host/?a@b``
+    # starting from the ``https:`` prefix.
     if result != url or "://" in url:
         return result
     # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)

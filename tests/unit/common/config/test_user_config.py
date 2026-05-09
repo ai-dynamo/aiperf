@@ -610,6 +610,21 @@ class TestOTelStreamingConfig:
             make_config(otel_url="grpc://collector:4317")
 
     @pytest.mark.parametrize(
+        "bare_port_url",
+        [
+            param("http://:4318", id="scheme-colon-port"),
+            param("https://:4318", id="https-scheme-colon-port"),
+        ],
+    )  # fmt: skip
+    def test_empty_hostname_is_rejected(self, bare_port_url: str):
+        """urlparse('http://:4318') has truthy netloc=':4318' but hostname=None.
+        The validator must require a non-empty hostname so bare-port URLs don't
+        slip through and create a malformed OTLP endpoint.
+        """
+        with pytest.raises(ValueError, match="Invalid --otel-url value"):
+            make_config(otel_url=bare_port_url)
+
+    @pytest.mark.parametrize(
         "stream_value,metrics_enabled,timing_enabled",
         [
             ("metrics", True, False),
