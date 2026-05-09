@@ -418,8 +418,13 @@ class AioHttpTransport(BaseTransport):
         File fields are encoded as ``{"b64_data": <str>, "filename": <str>,
         "content_type": <str>}``. Keeping bytes base64-encoded in the payload
         lets it stay JSON-serialisable upstream; decoding happens here.
+
+        ``default_to_multipart=True`` forces multipart/form-data even when the
+        payload happens to be text-only (e.g., image_edit with a `url` field
+        instead of an inline image), so the wire format always matches the
+        endpoint's declared `requires_form_data` contract.
         """
-        form_data = aiohttp.FormData()
+        form_data = aiohttp.FormData(default_to_multipart=True)
         for key, value in payload.items():
             if value is None:
                 continue

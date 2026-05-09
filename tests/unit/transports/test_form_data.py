@@ -86,3 +86,20 @@ class TestBuildFormData:
         assert opts["name"] == "meta"
         assert "filename" not in opts
         assert isinstance(value, str)
+
+    def test_text_only_payload_still_encodes_as_multipart(self):
+        """Text-only FormData must encode as multipart/form-data, not urlencoded.
+
+        Without ``default_to_multipart=True``, aiohttp treats text-only forms as
+        ``application/x-www-form-urlencoded``, which breaks the contract for
+        endpoints that declare ``requires_form_data: true`` (e.g., image_edit
+        with a ``url`` field instead of an inline image).
+        """
+        form = AioHttpTransport._build_form_data(
+            {"prompt": "edit", "url": "https://example.com/source.png"}
+        )
+        payload = form()
+        content_type = payload.headers.get("Content-Type", "")
+        assert content_type.startswith("multipart/form-data"), (
+            f"text-only FormData must be multipart, got {content_type!r}"
+        )

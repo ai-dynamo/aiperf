@@ -777,29 +777,25 @@ async def image_generation(
         return ORJSONResponse(_build_image_response_data(ctx, req))
 
 
-_FORM_REQUIRED = Form(...)
-_FORM_NONE = Form(None)
-_FORM_DEFAULT_MODEL = Form("black-forest-labs/FLUX.2-klein-4B")
-_FORM_N_DEFAULT = Form(1)
-_FORM_B64_JSON = Form("b64_json")
-_FILE_NONE = File(None)
-
-
+# Each parameter calls Form/File fresh so FastAPI builds an independent
+# FieldInfo per parameter (alias resolution, validators, etc.) — sharing a
+# single instance across multiple parameters lets state leak between them.
+# B008 is the FastAPI-idiomatic exception to "no function calls in defaults".
 @app.post("/v1/images/edits", response_model=None)
 @with_error_injection
 async def image_edits(
     request: Request,
-    prompt: str = _FORM_REQUIRED,
-    image: UploadFile | None = _FILE_NONE,
-    url: str | None = _FORM_NONE,
-    model: str = _FORM_DEFAULT_MODEL,
-    n: int = _FORM_N_DEFAULT,
-    response_format: str = _FORM_B64_JSON,
-    size: str | None = _FORM_NONE,
-    num_inference_steps: int | None = _FORM_NONE,
-    guidance_scale: float | None = _FORM_NONE,
-    true_cfg_scale: float | None = _FORM_NONE,
-    seed: int | None = _FORM_NONE,
+    prompt: str = Form(...),  # noqa: B008
+    image: UploadFile | None = File(None),  # noqa: B008
+    url: str | None = Form(None),  # noqa: B008
+    model: str = Form("black-forest-labs/FLUX.2-klein-4B"),  # noqa: B008
+    n: int = Form(1),  # noqa: B008
+    response_format: str = Form("b64_json"),  # noqa: B008
+    size: str | None = Form(None),  # noqa: B008
+    num_inference_steps: int | None = Form(None),  # noqa: B008
+    guidance_scale: float | None = Form(None),  # noqa: B008
+    true_cfg_scale: float | None = Form(None),  # noqa: B008
+    seed: int | None = Form(None),  # noqa: B008
 ) -> ORJSONResponse:
     """Mock OpenAI Image Edit endpoint.
 
