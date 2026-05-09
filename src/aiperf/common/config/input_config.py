@@ -278,7 +278,7 @@ class InputConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--trace-session-sample-ratio",),
-            group=_CLI_GROUP,
+            group=Groups.INPUT,
         ),
     ] = InputDefaults.TRACE_SESSION_SAMPLE_RATIO
 
