@@ -22,8 +22,9 @@ _MIME_BY_EXT: dict[str, str] = {
     "bmp": "image/bmp",
 }
 
-# Keys derived from turn data that --extra-inputs must not overwrite.
-_RESERVED_PAYLOAD_KEYS: frozenset[str] = frozenset({"prompt", "image", "url"})
+# Keys derived from turn data or expected as binary uploads that
+# --extra-inputs must not overwrite.
+_RESERVED_PAYLOAD_KEYS: frozenset[str] = frozenset({"prompt", "image", "url", "mask"})
 
 
 def _sniff_mime_from_magic_bytes(image_bytes: bytes) -> str | None:
@@ -115,7 +116,12 @@ class ImageEditEndpoint(BaseEndpoint):
                     "Malformed data URL for image content (missing comma)."
                 ) from exc
             if header.startswith("data:") and ";" in header:
-                explicit_mime = header.removeprefix("data:").split(";", 1)[0] or None
+                candidate = header.removeprefix("data:").split(";", 1)[0]
+                # Only honor the data URL MIME when it actually claims an image,
+                # so a malformed `data:text/html;base64,...` cannot poison the
+                # outgoing multipart Content-Type.
+                if candidate.startswith("image/"):
+                    explicit_mime = candidate
 
         try:
             image_bytes = base64.b64decode(b64, validate=True)

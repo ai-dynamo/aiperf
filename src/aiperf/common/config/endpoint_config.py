@@ -371,7 +371,9 @@ class EndpointConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_request_content_type(self) -> Self:
         """Auto-default to multipart for requires_form_data endpoints, and
-        reject explicit non-JSON content types on endpoints that don't support it.
+        reject content-type/endpoint combinations that the transport cannot
+        serialize (JSON on multipart-only endpoints, or multipart on JSON-only
+        endpoints).
         """
         from aiperf.plugin import plugins
 
@@ -381,6 +383,15 @@ class EndpointConfig(BaseConfig):
             if metadata.requires_form_data:
                 self.request_content_type = RequestContentType.MULTIPART_FORM_DATA
             return self
+
+        if (
+            self.request_content_type == RequestContentType.APPLICATION_JSON
+            and metadata.requires_form_data
+        ):
+            raise ValueError(
+                f"--endpoint-type {self.type} requires multipart/form-data; "
+                f"application/json is not supported on this endpoint."
+            )
 
         if self.request_content_type == RequestContentType.APPLICATION_JSON:
             return self

@@ -302,16 +302,16 @@ class TestRequestContentTypeAutoDefault:
         )
         assert config.request_content_type is None
 
-    def test_explicit_json_override_preserved(self):
-        """Explicit application/json on a multipart-required endpoint is left as-is."""
+    def test_explicit_json_on_multipart_endpoint_rejected(self):
+        """application/json must not silently bypass multipart on requires_form_data endpoints."""
         from aiperf.common.enums import RequestContentType
 
-        config = EndpointConfig(
-            model_names=["any"],
-            type=EndpointType.IMAGE_EDIT,
-            request_content_type=RequestContentType.APPLICATION_JSON,
-        )
-        assert config.request_content_type == RequestContentType.APPLICATION_JSON
+        with pytest.raises(ValueError, match="requires multipart/form-data"):
+            EndpointConfig(
+                model_names=["any"],
+                type=EndpointType.IMAGE_EDIT,
+                request_content_type=RequestContentType.APPLICATION_JSON,
+            )
 
     def test_explicit_multipart_on_chat_rejected(self):
         """Explicit multipart on a JSON-only endpoint still raises."""

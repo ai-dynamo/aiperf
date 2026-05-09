@@ -4,7 +4,9 @@
 
 import base64
 
+import orjson
 import pytest
+from pydantic import TypeAdapter
 
 from aiperf.common.models import Image, Text, Turn
 from aiperf.endpoints.openai_image_edit import ImageEditEndpoint
@@ -70,9 +72,6 @@ class TestImageEditEndpoint:
         Raw bytes here break DatasetManager._generate_inputs_json_file
         (pydantic model_dump(mode='json') + orjson.dumps).
         """
-        import orjson
-        from pydantic import TypeAdapter
-
         turn = Turn(
             texts=[Text(contents=["edit"])],
             images=[Image(contents=[_PNG_DATA_URL])],
@@ -170,7 +169,7 @@ class TestImageEditEndpoint:
         assert payload["seed"] == 42
 
     def test_format_payload_extra_inputs_cannot_overwrite_reserved(self):
-        """Reserved keys (prompt, image, url) are protected from --extra-inputs."""
+        """Reserved keys (prompt, image, url, mask) are protected from --extra-inputs."""
         model_endpoint = create_model_endpoint(
             EndpointType.IMAGE_EDIT,
             model_name="black-forest-labs/FLUX.2-klein-4B",
@@ -178,6 +177,7 @@ class TestImageEditEndpoint:
                 ("prompt", "HIJACKED"),
                 ("image", "not-a-file"),
                 ("url", "https://malicious.example"),
+                ("mask", "/tmp/mask.png"),
                 ("size", "512x512"),
             ],
         )
@@ -193,7 +193,25 @@ class TestImageEditEndpoint:
         assert payload["prompt"] == "legitimate prompt"
         assert payload["image"]["b64_data"] == _PNG_B64
         assert "url" not in payload
+        assert "mask" not in payload
         assert payload["size"] == "512x512"
+
+    def test_format_payload_non_image_data_url_mime_ignored(
+        self, endpoint, model_endpoint
+    ):
+        """Data URLs that claim a non-image MIME type fall back to magic-byte sniff."""
+        b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[f"data:text/html;base64,{b64}"])],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        # Magic bytes (PNG signature) should win over the bogus header.
+        assert payload["image"]["content_type"] == "image/png"
+        assert payload["image"]["filename"].endswith(".png")
 
     def test_format_payload_no_turns_raises(self, endpoint, model_endpoint):
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
@@ -210,6 +228,16 @@ class TestImageEditEndpoint:
         turn = Turn(texts=[Text(contents=["edit"])], images=[])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         with pytest.raises(ValueError, match="requires a reference image"):
+            endpoint.format_payload(request_info)
+
+    def test_format_payload_empty_image_content_raises(self, endpoint, model_endpoint):
+        """Empty string in turn.images[0].contents[0] raises a clear error."""
+        turn = Turn(
+            texts=[Text(contents=["edit"])],
+            images=[Image(contents=[""])],
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        with pytest.raises(ValueError, match="content is empty"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_invalid_base64_raises(self, endpoint, model_endpoint):
@@ -301,3 +329,24 @@ class TestImageEditEndpoint:
         parsed = endpoint.parse_response(mock_response)
         assert parsed is not None
         assert parsed.perf_ns == 999_888_777
+
+
+class TestSniffMimeFromMagicBytes:
+    """Covers each branch of _sniff_mime_from_magic_bytes."""
+
+    @pytest.mark.parametrize(
+        "magic,expected",
+        [
+            pytest.param(b"\x89PNG\r\n\x1a\n", "image/png", id="png"),
+            pytest.param(b"\xff\xd8\xff\xe0", "image/jpeg", id="jpeg"),
+            pytest.param(b"RIFF\x00\x00\x00\x00WEBP", "image/webp", id="webp"),
+            pytest.param(b"GIF87a", "image/gif", id="gif87a"),
+            pytest.param(b"GIF89a", "image/gif", id="gif89a"),
+            pytest.param(b"BM\x00\x00", "image/bmp", id="bmp"),
+            pytest.param(b"\x00\x00\x00\x00", None, id="unknown"),
+        ],
+    )  # fmt: skip
+    def test_magic_bytes_dispatch(self, magic, expected):
+        from aiperf.endpoints.openai_image_edit import _sniff_mime_from_magic_bytes
+
+        assert _sniff_mime_from_magic_bytes(magic) == expected
