@@ -68,6 +68,7 @@ from aiperf.gpu_telemetry.protocols import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
 from aiperf.post_processors.protocols import (
+    IS_BEST_EFFORT_ATTR,
     FlushableResultsProcessorProtocol,
     ResultsProcessorProtocol,
 )
@@ -362,7 +363,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 # Processors with is_best_effort=True (streaming telemetry like
                 # OTel) swallow exceptions; all others re-raise to surface bugs.
-                if not getattr(results_processor, "is_best_effort", False):
+                # See ``post_processors.protocols.BestEffortMarker``.
+                if not getattr(results_processor, IS_BEST_EFFORT_ATTR, False):
                     raise
 
     async def _flush_metric_results_processors(self, force: bool = False) -> None:

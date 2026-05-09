@@ -70,6 +70,7 @@ class TestOTelLiveExport:
         cli: AIPerfCLI,
         aiperf_mock_server: AIPerfMockServer,
         otlp_sink: tuple[_OTLPSinkServer, int],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Assert OTLP sink receives exports mid-run, not only at shutdown.
 
@@ -79,6 +80,12 @@ class TestOTelLiveExport:
         """
         server, port = otlp_sink
         otel_url = f"http://127.0.0.1:{port}"
+
+        # Force a sub-second flush interval so the mid-run export assertion is
+        # robust on fast hosts that complete a 40-request mock-server run in
+        # under the 2s default interval. The env var propagates into the
+        # aiperf subprocess (create_subprocess_exec inherits os.environ).
+        monkeypatch.setenv("AIPERF_OTEL_FLUSH_INTERVAL_SECONDS", "0.5")
 
         # Use enough requests and a small flush interval to guarantee
         # at least one mid-run flush fires before the run completes.

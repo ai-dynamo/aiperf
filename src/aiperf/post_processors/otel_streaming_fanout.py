@@ -335,6 +335,11 @@ def run_otel_streaming_fanout(
             if len(mlflow_state.buffer) > max_buffer:
                 dropped = len(mlflow_state.buffer) - max_batch_records
                 mlflow_state.buffer = mlflow_state.buffer[-max_batch_records:]
+                # Advance the step counter past the dropped entries so later
+                # successful writes keep a monotonically increasing step (MLflow
+                # renders step as the chart x-axis). This produces a visible gap
+                # in MLflow charts, which is the intended signal that data was
+                # lost to backpressure.
                 mlflow_state.step = step_start + dropped
                 logger.warning(
                     f"MLflow flush failed and buffer exceeded {max_buffer} entries; "

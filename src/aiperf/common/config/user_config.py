@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import functools
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
@@ -1004,13 +1003,19 @@ class UserConfig(BaseConfig):
         """Check if phase-level timing telemetry is enabled for OTel streaming."""
         return self._otel_stream_timing_enabled
 
-    @functools.cached_property
+    @property
     def gen_ai_provider_name(self) -> str:
         """Resolved gen_ai.provider.name attribute value.
 
         (a) explicit --gen-ai-provider override,
         (b) auto-infer from endpoint URL host,
         (c) literal '_OTHER'.
+
+        Plain ``@property`` (not cached) because ``UserConfig`` is a Pydantic
+        model without ``frozen=True``; caching the first access would go stale
+        if a test or caller later mutates ``gen_ai_provider`` or
+        ``endpoint.urls``. The inference runs a handful of small regexes and is
+        called once per OTel record attribute build — not worth the caching risk.
         """
         from aiperf.post_processors.strategies.genai_semconv import infer_provider_name
 

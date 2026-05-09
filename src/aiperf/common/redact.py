@@ -137,6 +137,14 @@ _URL_FLAG_PATTERN = re.compile(
     rf"((?:{_URL_FLAG_ALT})[\s=])(['\"])?([^'\"\s]+)(['\"])?"
 )
 
+# Safety net for stray scheme-prefixed URLs carrying userinfo — required because
+# URL-typed flags like ``--url`` use ``consume_multiple=True`` (see
+# ``endpoint_config.py``), so 2nd+ values are not captured by the per-flag
+# matcher. The userinfo segment is bounded by /, ?, #, whitespace, quote, @ so
+# a path ``@`` like ``http://host/users@example.com`` never matches, and
+# non-URL args with ``@`` (e.g. ``--model foo@bar``) are untouched.
+_STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@/?#]+@")
+
 
 def _redact_url_flag_match(match: re.Match[str]) -> str:
     prefix = match.group(1)
@@ -164,15 +172,6 @@ def redact_cli_command(cmd: str) -> str:
     cmd = _URL_FLAG_PATTERN.sub(_redact_url_flag_match, cmd)
     cmd = _STRAY_URL_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
     return cmd
-
-
-# Safety net for stray scheme-prefixed URLs carrying userinfo — required because
-# URL-typed flags like ``--url`` use ``consume_multiple=True`` (see
-# ``endpoint_config.py``), so 2nd+ values are not captured by the per-flag
-# matcher. The userinfo segment is bounded by /, ?, #, whitespace, quote, @ so
-# a path ``@`` like ``http://host/users@example.com`` never matches, and
-# non-URL args with ``@`` (e.g. ``--model foo@bar``) are untouched.
-_STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@/?#]+@")
 
 
 def redact_url(url: str) -> str:

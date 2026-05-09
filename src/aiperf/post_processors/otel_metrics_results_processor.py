@@ -10,7 +10,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from queue import Empty, Full
-from typing import Any
+from typing import Any, ClassVar
 
 from aiperf.common.config import MLflowDefaults, UserConfig
 from aiperf.common.enums import CreditPhase
@@ -104,7 +104,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     protocol.
     """
 
-    is_best_effort = True  # telemetry failures must not crash the benchmark
+    # Telemetry failures must not crash the benchmark. The records manager
+    # checks this attribute (see ``post_processors.protocols.BestEffortMarker``
+    # and ``IS_BEST_EFFORT_ATTR``) and swallows the exception when True.
+    is_best_effort: ClassVar[bool] = True
 
     def __init__(
         self,
