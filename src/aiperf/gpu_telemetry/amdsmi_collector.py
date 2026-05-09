@@ -14,9 +14,19 @@ import contextlib
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import amdsmi
+if TYPE_CHECKING:
+    import amdsmi
+else:
+    # ``amdsmi`` ships with ROCm and is not pip-installable, so it may be
+    # absent on developer machines or CI runners without GPUs. Defer the
+    # import error to collector instantiation so module discovery (e.g.
+    # plugin enumeration, tests/unit/test_imports.py) does not fail.
+    try:
+        import amdsmi
+    except ImportError:
+        amdsmi = None  # type: ignore[assignment]
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_init, on_stop
@@ -143,6 +153,8 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         Returns:
             True if amdsmi can initialize and enumerates >=1 processor handle.
         """
+        if amdsmi is None:
+            return False
         if self._initialized:
             return len(self._gpus) > 0
         try:
@@ -164,8 +176,15 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         """Initialize amdsmi and enumerate available GPUs.
 
         Raises:
-            RuntimeError: If amdsmi cannot initialize or no GPUs are present.
+            RuntimeError: If the amdsmi Python bindings are not installed,
+                amdsmi cannot initialize, or no GPUs are present.
         """
+        if amdsmi is None:
+            raise RuntimeError(
+                "amdsmi Python bindings not installed. The amdsmi package ships "
+                "with ROCm; install from /opt/rocm/share/amd_smi/amdsmi-*.whl "
+                "or your distro's amd-smi-lib package."
+            )
         try:
             amdsmi.amdsmi_init()
         except amdsmi.AmdSmiException as e:
