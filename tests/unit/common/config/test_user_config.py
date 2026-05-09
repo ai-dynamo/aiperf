@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import sys
 from pathlib import Path
 from unittest.mock import mock_open, patch
 
@@ -324,6 +325,56 @@ class TestGPUTelemetryConfig:
         assert config.gpu_telemetry_urls == ["http://custom:9401/metrics"]
         assert config.endpoint.streaming is True
         assert config.endpoint.model_names == ["test-model"]
+
+    def test_amdsmi_collector_selected_when_amdsmi_keyword_provided(self):
+        """`--gpu-telemetry amdsmi` selects the AMDSMI collector type."""
+        from aiperf.plugin.enums import GPUTelemetryCollectorType
+
+        # Inject a fake amdsmi module so the import_module probe succeeds
+        # without requiring ROCm installed on the test host.
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        try:
+            config = make_config(gpu_telemetry=["amdsmi"])
+            assert (
+                config._gpu_telemetry_collector_type == GPUTelemetryCollectorType.AMDSMI
+            )
+        finally:
+            sys.modules.pop("amdsmi", None)
+
+    def test_amdsmi_with_dcgm_url_raises(self):
+        """Combining --gpu-telemetry amdsmi with a DCGM URL raises a clear error."""
+        sys.modules["amdsmi"] = type(sys)("amdsmi")
+        try:
+            with pytest.raises(Exception, match="Cannot use amdsmi with DCGM URLs"):
+                make_config(gpu_telemetry=["amdsmi", "http://localhost:9400"])
+        finally:
+            sys.modules.pop("amdsmi", None)
+
+    def test_amdsmi_missing_module_yields_install_hint(self):
+        """ImportError when probing amdsmi surfaces the install hint."""
+        from importlib import import_module as _orig
+
+        def _raise(name):
+            if name == "amdsmi":
+                raise ImportError("simulated missing")
+            return _orig(name)
+
+        with patch("aiperf.common.config.user_config.import_module", _raise):
+            with pytest.raises(Exception, match="amdsmi package not installed"):
+                make_config(gpu_telemetry=["amdsmi"])
+
+    def test_amdsmi_native_lib_oserror_yields_install_hint(self):
+        """OSError (native lib failed to load) is caught and surfaces install hint."""
+        from importlib import import_module as _orig
+
+        def _raise(name):
+            if name == "amdsmi":
+                raise OSError("libamd_smi.so: cannot open shared object file")
+            return _orig(name)
+
+        with patch("aiperf.common.config.user_config.import_module", _raise):
+            with pytest.raises(Exception, match="amdsmi package not installed"):
+                make_config(gpu_telemetry=["amdsmi"])
 
     def test_urls_extraction(self):
         """Test that only http URLs are extracted from gpu_telemetry list."""

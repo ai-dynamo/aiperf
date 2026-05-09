@@ -303,6 +303,36 @@ class TestCollection:
         assert records2[1].telemetry_data.power_violation == 0.0
 
     @pytest.mark.asyncio
+    async def test_temperature_normalized_when_returned_in_millidegrees(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # Older AMDSMI bindings return temperature in millidegrees C. The
+        # collector applies a sanity normalization (>200 -> divide by 1000).
+        def temp_mdeg(handle, kind, _metric):
+            if kind == mock_amdsmi.AmdSmiTemperatureType.EDGE:
+                raise mock_amdsmi.AmdSmiException("EDGE not supported")
+            return 67000  # 67°C reported as millidegrees
+
+        mock_amdsmi.amdsmi_get_temp_metric.side_effect = temp_mdeg
+        records = await initialized_collector._loop_to_thread_collect()
+        assert records[0].telemetry_data.gpu_temperature == 67.0
+
+    @pytest.mark.asyncio
+    async def test_energy_falls_back_to_power_field_for_rocm6(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # ROCm 6.x AMDSMI exposes the energy accumulator as `power` before
+        # being renamed to `energy_accumulator` in 6.2.
+        mock_amdsmi.amdsmi_get_energy_count.side_effect = lambda h, *_: {
+            "power": 1_000_000_000_000,  # 1e12 ticks
+            "counter_resolution": 15.3,
+            "timestamp": 0,
+        }
+        records = await initialized_collector._loop_to_thread_collect()
+        # 1e12 * 15.3 * 1e-12 = 15.3 MJ
+        assert records[0].telemetry_data.energy_consumption == pytest.approx(15.3)
+
+    @pytest.mark.asyncio
     async def test_throttle_handles_bool_int_and_na(
         self, initialized_collector, mock_amdsmi
     ):
