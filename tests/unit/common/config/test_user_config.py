@@ -359,9 +359,11 @@ class TestGPUTelemetryConfig:
                 raise ImportError("simulated missing")
             return _orig(name)
 
-        with patch("aiperf.common.config.user_config.import_module", _raise):
-            with pytest.raises(Exception, match="amdsmi package not installed"):
-                make_config(gpu_telemetry=["amdsmi"])
+        with (
+            patch("aiperf.common.config.user_config.import_module", _raise),
+            pytest.raises(Exception, match="amdsmi package not installed"),
+        ):
+            make_config(gpu_telemetry=["amdsmi"])
 
     def test_amdsmi_native_lib_oserror_yields_install_hint(self):
         """OSError (native lib failed to load) is caught and surfaces install hint."""
@@ -372,9 +374,11 @@ class TestGPUTelemetryConfig:
                 raise OSError("libamd_smi.so: cannot open shared object file")
             return _orig(name)
 
-        with patch("aiperf.common.config.user_config.import_module", _raise):
-            with pytest.raises(Exception, match="amdsmi package not installed"):
-                make_config(gpu_telemetry=["amdsmi"])
+        with (
+            patch("aiperf.common.config.user_config.import_module", _raise),
+            pytest.raises(Exception, match="amdsmi package not installed"),
+        ):
+            make_config(gpu_telemetry=["amdsmi"])
 
     def test_urls_extraction(self):
         """Test that only http URLs are extracted from gpu_telemetry list."""
