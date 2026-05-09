@@ -36,6 +36,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not create markdown files to document code changes or decisions.
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
+- Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
 
 ## Build and Test Commands
 

@@ -10,7 +10,7 @@ ignore_eos is not set or unsupported by the server.
 
 from typing import ClassVar
 
-from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.logging import AIPerfLogger
@@ -37,9 +37,8 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
     header = "Requested OSL"
     short_header = "Req OSL"
     unit = GenericMetricUnit.TOKENS
-    flags = (
-        MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE | MetricFlags.INTERNAL
-    )
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.INTERNAL
+    console_group = MetricConsoleGroup.NONE
     required_metrics = None
 
     def _parse_record(
@@ -90,7 +89,8 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     short_header = "OSL Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY
+    console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         RequestedOSLMetric.tag,
         OutputSequenceLengthMetric.tag,
@@ -153,11 +153,8 @@ class OSLMismatchCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "OSL Mismatches"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = (
-        MetricFlags.PRODUCES_TOKENS_ONLY
-        | MetricFlags.NO_CONSOLE
-        | MetricFlags.NO_INDIVIDUAL_RECORDS
-    )
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
+    console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {
         OSLMismatchDiffMetric.tag,
         RequestedOSLMetric.tag,

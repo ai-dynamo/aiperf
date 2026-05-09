@@ -3,7 +3,7 @@
 
 import pytest
 
-from aiperf.common.enums import MetricFlags
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.output_token_count import (
@@ -57,7 +57,7 @@ class TestOutputTokenCountMetric:
     def test_output_token_count_metadata(self):
         """Test that OutputTokenCountMetric has correct metadata"""
         assert OutputTokenCountMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert OutputTokenCountMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert OutputTokenCountMetric.console_group == MetricConsoleGroup.NONE
         assert OutputTokenCountMetric.missing_flags(MetricFlags.INTERNAL)
 
 
@@ -86,5 +86,5 @@ class TestTotalOutputTokensMetric:
         assert TotalOutputTokensMetric.tag == "total_output_tokens"
         assert TotalOutputTokensMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
         assert TotalOutputTokensMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
-        assert TotalOutputTokensMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert TotalOutputTokensMetric.console_group == MetricConsoleGroup.NONE
         assert TotalOutputTokensMetric.missing_flags(MetricFlags.INTERNAL)

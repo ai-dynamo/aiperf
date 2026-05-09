@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricFlags, MetricTimeUnit
+from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
@@ -34,7 +34,8 @@ class AudioDurationMetric(BaseRecordMetric[float]):
     short_header = "Audio Dur"
     unit = MetricTimeUnit.SECONDS
     display_order = 870
-    flags = MetricFlags.SUPPORTS_AUDIO_ONLY | MetricFlags.NO_CONSOLE
+    flags = MetricFlags.SUPPORTS_AUDIO_ONLY
+    console_group = MetricConsoleGroup.NONE
     required_metrics = None
 
     def _parse_record(

@@ -56,19 +56,58 @@ class TokenizedText:
         )
 
     def create_usage(self) -> dict[str, Any]:
-        """Create usage dict from tokenized text."""
+        """Create usage dict from tokenized text in OpenAI-compatible shape.
+
+        Populates:
+        - `prompt_tokens_details.cached_tokens` — simulated cache hits
+          (30-60% of prompt, deterministic from prompt hash).
+        - `completion_tokens_details.reasoning_tokens` — the actual
+          reasoning budget allocated by `_generate_reasoning_tokens` (zero
+          for non-reasoning models, which IS the correct OpenAI shape for
+          those — non-zero only when the request hit a reasoning-capable
+          model like gpt-oss / qwen).
+        - `completion_tokens_details.{accepted,rejected}_prediction_tokens`
+          — simulated predicted-output usage (5-20% accepted, 2-10%
+          rejected of completion).
+
+        `audio_tokens` is intentionally omitted: the mock has no audio
+        generation pipeline, so emitting a zero would suggest the field
+        is meaningful when it isn't.
+
+        All sub-field values are derived deterministically from the prompt
+        text so a given input yields the same usage on every run.
+        """
         # completion_tokens includes both content and reasoning tokens per OpenAI API
         completion_tokens = self.count + self.reasoning_tokens
-        usage: dict[str, Any] = {
+
+        # Deterministic seed from prompt text — same input → same usage shape.
+        seed = (hash(self.text) & 0x7FFFFFFF) if self.text else 0
+
+        # Simulate cache hits: 30-60% of prompt tokens.
+        cached_pct = 30 + (seed % 31)
+        cached_tokens = (self.prompt_token_count * cached_pct) // 100
+
+        # Simulate predicted-output tokens (only for non-trivial completions).
+        if self.count > 0:
+            accepted_prediction_tokens = (self.count * (5 + (seed >> 8) % 16)) // 100
+            rejected_prediction_tokens = (self.count * (2 + (seed >> 16) % 9)) // 100
+        else:
+            accepted_prediction_tokens = 0
+            rejected_prediction_tokens = 0
+
+        return {
             "prompt_tokens": self.prompt_token_count,
             "completion_tokens": completion_tokens,
             "total_tokens": self.prompt_token_count + completion_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": cached_tokens,
+            },
+            "completion_tokens_details": {
+                "reasoning_tokens": self.reasoning_tokens,
+                "accepted_prediction_tokens": accepted_prediction_tokens,
+                "rejected_prediction_tokens": rejected_prediction_tokens,
+            },
         }
-        if self.reasoning_tokens > 0:
-            usage["completion_tokens_details"] = {
-                "reasoning_tokens": self.reasoning_tokens
-            }
-        return usage
 
 
 @dataclass(slots=True)

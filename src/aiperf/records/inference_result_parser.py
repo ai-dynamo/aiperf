@@ -19,6 +19,7 @@ from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TokenCounts,
     ToolCallResponseData,
+    find_last_non_empty_usage,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
@@ -280,17 +281,29 @@ class InferenceResultParser(CommunicationMixin):
     ) -> TokenCounts:
         """Compute token counts using server-provided usage fields.
 
+        Walks `responses` ONCE to find the last chunk with usage and reads
+        all token counts from that single Usage. This guarantees the input,
+        reasoning, and output counts are mutually consistent (all from the
+        same chunk), and it avoids three redundant walks of the same list.
+
         Args:
             responses: List of parsed responses from the server
 
         Returns:
-            TokenCounts populated with server-reported values
+            TokenCounts populated with server-reported values. All fields
+            are None if no chunk had usage at all.
         """
-        input_token_count = self._extract_server_input_token_count(responses)
-        reasoning_token_count = self._extract_server_reasoning_token_count(responses)
-        output_token_count = self._extract_server_output_token_count(
-            responses, reasoning_token_count
-        )
+        usage = find_last_non_empty_usage(responses)
+        if usage is None:
+            input_token_count = None
+            reasoning_token_count = None
+            output_token_count = None
+        else:
+            input_token_count = usage.prompt_tokens
+            reasoning_token_count = usage.reasoning_tokens
+            output_token_count = self._server_output_minus_reasoning(
+                usage.completion_tokens, reasoning_token_count
+            )
 
         token_counts = TokenCounts(
             input=input_token_count,
@@ -310,6 +323,30 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         return token_counts
+
+    def _server_output_minus_reasoning(
+        self,
+        completion_tokens: int | None,
+        reasoning_token_count: int | None,
+    ) -> int | None:
+        """Return server-reported output tokens with reasoning subtracted out.
+
+        The server's `completion_tokens` includes both reasoning and output;
+        we subtract reasoning_tokens to match the client-side semantic of
+        "output tokens" (text the user sees). Clamps to 0 if the subtraction
+        would go negative (server reported inconsistent counts).
+        """
+        if completion_tokens is None:
+            return None
+        reasoning = reasoning_token_count or 0
+        result = completion_tokens - reasoning
+        if result < 0:
+            self.warning(
+                f"Server reported inconsistent token counts: completion_tokens={completion_tokens}, "
+                f"reasoning_tokens={reasoning}. Clamping output tokens to 0."
+            )
+            return 0
+        return result
 
     def _parse_output_and_reasoning_texts(
         self, responses: list[ParsedResponse]
@@ -386,72 +423,3 @@ class InferenceResultParser(CommunicationMixin):
             reasoning=reasoning_token_count,
             output=output_token_count,
         )
-
-    def _extract_server_input_token_count(
-        self, responses: list[ParsedResponse]
-    ) -> int | None:
-        """Extract input token count from server usage field.
-
-        Searches backwards through responses for the last non-None value.
-        This handles streaming where usage appears in the final chunk.
-
-        Args:
-            responses: List of parsed responses from the server
-
-        Returns:
-            Server-reported prompt token count, or None if unavailable
-        """
-        for response in reversed(responses):
-            if response.usage and response.usage.prompt_tokens is not None:
-                return response.usage.prompt_tokens
-        return None
-
-    def _extract_server_reasoning_token_count(
-        self, responses: list[ParsedResponse]
-    ) -> int | None:
-        """Extract reasoning token count from server usage field.
-
-        Reasoning tokens are nested in completion_tokens_details.reasoning_tokens
-        per the OpenAI API specification.
-
-        Args:
-            responses: List of parsed responses from the server
-
-        Returns:
-            Server-reported reasoning tokens, or None if unavailable
-        """
-        for response in reversed(responses):
-            if response.usage and response.usage.reasoning_tokens is not None:
-                return response.usage.reasoning_tokens
-        return None
-
-    def _extract_server_output_token_count(
-        self, responses: list[ParsedResponse], reasoning_token_count: int | None
-    ) -> int | None:
-        """Extract output token count from server usage field.
-
-        Returns ONLY non-reasoning completion tokens. The server's completion_tokens
-        includes both reasoning and output, so we subtract reasoning_tokens to get
-        the pure output count (matching our client-side semantics).
-
-        Args:
-            responses: List of parsed responses from the server
-            reasoning_token_count: The reasoning token count to subtract from completion tokens
-
-        Returns:
-            Server-reported output tokens (excluding reasoning), or None if unavailable
-        """
-        for response in reversed(responses):
-            if response.usage:
-                completion_tokens = response.usage.completion_tokens
-                if completion_tokens is not None:
-                    reasoning_tokens = reasoning_token_count or 0
-                    result = completion_tokens - reasoning_tokens
-                    if result < 0:
-                        self.warning(
-                            f"Server reported inconsistent token counts: completion_tokens={completion_tokens}, "
-                            f"reasoning_tokens={reasoning_tokens}. Clamping output tokens to 0."
-                        )
-                        return 0
-                    return result
-        return None

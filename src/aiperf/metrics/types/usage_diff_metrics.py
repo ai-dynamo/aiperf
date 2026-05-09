@@ -7,7 +7,7 @@ token counts and client-side computed token counts. They can help identify
 discrepancies between API billing metrics and actual tokenization.
 """
 
-from aiperf.common.enums import GenericMetricUnit, MetricFlags
+from aiperf.common.enums import GenericMetricUnit, MetricConsoleGroup, MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -48,15 +48,12 @@ class UsagePromptTokensDiffMetric(BaseRecordMetric[float]):
     """
 
     tag = "usage_prompt_tokens_diff_pct"
-    header = "Usage Prompt Diff"
+    header = "Usage Prompt Diff %"
     short_header = "Prompt Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = (
-        MetricFlags.TOKENIZES_INPUT_ONLY
-        | MetricFlags.USAGE_DIFF_ONLY
-        | MetricFlags.NO_CONSOLE
-    )
+    flags = MetricFlags.TOKENIZES_INPUT_ONLY | MetricFlags.USAGE_DIFF_ONLY
+    console_group = MetricConsoleGroup.NONE
     required_metrics = {
         UsagePromptTokensMetric.tag,
         InputSequenceLengthMetric.tag,
@@ -117,11 +114,8 @@ class UsageCompletionTokensDiffMetric(BaseRecordMetric[float]):
     short_header = "Completion Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
-    flags = (
-        MetricFlags.PRODUCES_TOKENS_ONLY
-        | MetricFlags.USAGE_DIFF_ONLY
-        | MetricFlags.NO_CONSOLE
-    )
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.USAGE_DIFF_ONLY
+    console_group = MetricConsoleGroup.NONE
     required_metrics = {
         UsageCompletionTokensMetric.tag,
         OutputSequenceLengthMetric.tag,
@@ -189,8 +183,8 @@ class UsageReasoningTokensDiffMetric(BaseRecordMetric[float]):
         MetricFlags.PRODUCES_TOKENS_ONLY
         | MetricFlags.SUPPORTS_REASONING
         | MetricFlags.USAGE_DIFF_ONLY
-        | MetricFlags.NO_CONSOLE
     )
+    console_group = MetricConsoleGroup.NONE
     required_metrics = {
         UsageReasoningTokensMetric.tag,
         ReasoningTokenCountMetric.tag,
@@ -262,11 +256,8 @@ class UsageDiscrepancyCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "Discrepancies"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = (
-        MetricFlags.USAGE_DIFF_ONLY
-        | MetricFlags.NO_CONSOLE
-        | MetricFlags.NO_INDIVIDUAL_RECORDS
-    )
+    flags = MetricFlags.USAGE_DIFF_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
+    console_group = MetricConsoleGroup.NONE
     # Required metrics ensures dependency ordering. We require prompt and completion
     # which are always available, and opportunistically check reasoning in _parse_record
     required_metrics = {
