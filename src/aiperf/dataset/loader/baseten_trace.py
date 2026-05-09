@@ -146,7 +146,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             return _METADATA_COLUMNS_POOR_MAN_SESSION
         return None
 
-    def _sample_session_ids(self) -> tuple[int | None, str | None, set[str] | None]:
+    def _sample_session_ids(
+        self,
+    ) -> tuple[int | None, str | None, set[str | int] | None]:
         metadata_table = self._read_metadata_table()
 
         if metadata_table.num_rows == 0:
@@ -156,7 +158,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         session_key = self._choose_session_key_from_metadata_rows(metadata_rows)
 
         min_timestamp: int | None = None
-        session_first_ts: dict[str, int] = {}
+        session_first_ts: dict[str | int, int] = {}
 
         for row in metadata_rows:
             timestamp = int(row[_METADATA_COLUMNS_TIME])
@@ -171,7 +173,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             if session_id is None:
                 continue
 
-            session_id = str(session_id)
             session_first_ts[session_id] = min(
                 timestamp,
                 session_first_ts.get(session_id, timestamp),
@@ -192,7 +193,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 (first_ts, session_id)
                 for session_id, first_ts in session_first_ts.items()
             ),
-            key=lambda item: (item[0], item[1]),
+            key=lambda item: (item[0], str(item[1])),
         )
         original_count = len(session_entries)
         sampled_entries = [
