@@ -656,11 +656,12 @@ class UserConfig(BaseConfig):
             description=(
                 "Enable GPU telemetry console display and optionally specify: "
                 "(1) 'pynvml' to use local pynvml library instead of DCGM HTTP endpoints, "
-                "(2) 'dashboard' for realtime dashboard mode, "
-                "(3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
-                "(4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
+                "(2) 'amdsmi' to use local amdsmi library for AMD ROCm GPUs, "
+                "(3) 'dashboard' for realtime dashboard mode, "
+                "(4) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), "
+                "(5) custom metrics CSV file (e.g., custom_gpu_metrics.csv). "
                 "Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. "
-                "Examples: --gpu-telemetry pynvml | --gpu-telemetry dashboard node1:9400"
+                "Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry dashboard node1:9400"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -803,6 +804,17 @@ class UserConfig(BaseConfig):
                     raise ValueError(
                         "pynvml package not installed. Install with: pip install nvidia-ml-py"
                     ) from e
+            # Check for amdsmi collector type (AMD ROCm GPUs)
+            elif item.lower() == "amdsmi":
+                collector_type = GPUTelemetryCollectorType.AMDSMI
+                try:
+                    import amdsmi  # noqa: F401
+                except ImportError as e:
+                    raise ValueError(
+                        "amdsmi package not installed. The amdsmi Python bindings "
+                        "ship with ROCm; install from /opt/rocm/share/amd_smi/amdsmi-*.whl "
+                        "or your distro's amd-smi-lib package."
+                    ) from e
             # Check for dashboard mode
             elif item in ["dashboard"]:
                 mode = GPUTelemetryMode.REALTIME_DASHBOARD
@@ -812,7 +824,7 @@ class UserConfig(BaseConfig):
                 urls.append(normalized_url)
             else:
                 raise ValueError(
-                    f"Invalid GPU telemetry item: {item}. Valid options are: 'pynvml', 'dashboard', '.csv' file, and URLs."
+                    f"Invalid GPU telemetry item: {item}. Valid options are: 'pynvml', 'amdsmi', 'dashboard', '.csv' file, and URLs."
                 )
 
         if collector_type == GPUTelemetryCollectorType.PYNVML and urls:
@@ -820,21 +832,31 @@ class UserConfig(BaseConfig):
                 "Cannot use pynvml with DCGM URLs. Use either 'pynvml' for local "
                 "GPU monitoring or URLs for DCGM endpoints, not both."
             )
+        if collector_type == GPUTelemetryCollectorType.AMDSMI and urls:
+            raise ValueError(
+                "Cannot use amdsmi with DCGM URLs. Use either 'amdsmi' for local "
+                "AMD GPU monitoring or URLs for DCGM endpoints, not both."
+            )
 
         self._gpu_telemetry_mode = mode
         self._gpu_telemetry_collector_type = collector_type
         self._gpu_telemetry_urls = urls
         self._gpu_telemetry_metrics_file = metrics_file
 
-        # Warn if pynvml is used with non-localhost server URLs
-        if collector_type == GPUTelemetryCollectorType.PYNVML:
+        # Warn if local-only collectors are used with non-localhost server URLs
+        local_only = {
+            GPUTelemetryCollectorType.PYNVML: "pynvml",
+            GPUTelemetryCollectorType.AMDSMI: "amdsmi",
+        }
+        if collector_type in local_only:
+            collector_name = local_only[collector_type]
             non_local_urls = [
                 url for url in self.endpoint.urls if not _is_localhost_url(url)
             ]
             if non_local_urls:
                 _logger.warning(
-                    f"Using pynvml for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
-                    "pynvml collects GPU metrics from the local machine only. "
+                    f"Using {collector_name} for GPU telemetry with non-localhost server URL(s): {non_local_urls}. "
+                    f"{collector_name} collects GPU metrics from the local machine only. "
                     "If the inference server is running remotely, the GPU telemetry will not reflect "
                     "the server's GPU usage. Consider using DCGM mode with the server's metrics endpoint instead."
                 )

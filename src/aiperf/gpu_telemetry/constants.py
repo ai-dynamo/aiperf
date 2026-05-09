@@ -16,6 +16,9 @@ from aiperf.common.enums import (
 # Source identifier for pynvml collector (used in TelemetryRecord.dcgm_url field)
 PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 
+# Source identifier for amdsmi collector (used in TelemetryRecord.dcgm_url field)
+AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
+
 # DCGM field mapping to telemetry record fields
 DCGM_TO_FIELD_MAPPING = {
     "DCGM_FI_DEV_POWER_USAGE": "gpu_power_usage",

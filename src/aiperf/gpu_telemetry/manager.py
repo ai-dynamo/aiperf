@@ -17,7 +17,10 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
-from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
+from aiperf.gpu_telemetry.constants import (
+    AMDSMI_SOURCE_IDENTIFIER,
+    PYNVML_SOURCE_IDENTIFIER,
+)
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
 from aiperf.plugin import plugins
@@ -177,6 +180,8 @@ class GPUTelemetryManager(BaseComponentService):
         # Phase 1: Test reachability for all endpoints
         if self._collector_type == GPUTelemetryCollectorType.PYNVML:
             await self._configure_pynvml_collector()
+        elif self._collector_type == GPUTelemetryCollectorType.AMDSMI:
+            await self._configure_amdsmi_collector()
         else:
             await self._configure_dcgm_collectors()
 
@@ -231,6 +236,61 @@ class GPUTelemetryManager(BaseComponentService):
             await self._send_telemetry_status(
                 enabled=False,
                 reason=f"pynvml configuration failed: {e}",
+                endpoints_configured=[],
+                endpoints_reachable=[],
+            )
+
+    async def _configure_amdsmi_collector(self) -> None:
+        """Configure a single AMDSMI collector for local AMD ROCm GPU monitoring."""
+        self.debug("GPU Telemetry: Configuring amdsmi collector")
+
+        try:
+            CollectorClass = plugins.get_class(
+                PluginType.GPU_TELEMETRY_COLLECTOR,
+                GPUTelemetryCollectorType.AMDSMI,
+            )
+
+            collector_id = "amdsmi_collector"
+            collector = CollectorClass(
+                collection_interval=self._collection_interval,
+                record_callback=self._on_telemetry_records,
+                error_callback=self._on_telemetry_error,
+                collector_id=collector_id,
+            )
+
+            is_available = await collector.is_url_reachable()
+            if is_available:
+                self._collectors[AMDSMI_SOURCE_IDENTIFIER] = collector
+                self._collector_id_to_url[collector_id] = AMDSMI_SOURCE_IDENTIFIER
+                self.debug("GPU Telemetry: amdsmi collector configured successfully")
+                await self._send_telemetry_status(
+                    enabled=True,
+                    reason=None,
+                    endpoints_configured=[AMDSMI_SOURCE_IDENTIFIER],
+                    endpoints_reachable=[AMDSMI_SOURCE_IDENTIFIER],
+                )
+            else:
+                self.warning("GPU Telemetry: amdsmi not available or no AMD GPUs found")
+                await self._send_telemetry_status(
+                    enabled=False,
+                    reason="amdsmi not available or no AMD GPUs found",
+                    endpoints_configured=[AMDSMI_SOURCE_IDENTIFIER],
+                    endpoints_reachable=[],
+                )
+        except RuntimeError as e:
+            # amdsmi package not installed (or ROCm driver missing)
+            self.error(f"GPU Telemetry: {e}")
+            await self._send_telemetry_status(
+                enabled=False,
+                reason=str(e),
+                endpoints_configured=[],
+                endpoints_reachable=[],
+            )
+        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            self.error(f"GPU Telemetry: Failed to configure amdsmi collector: {e}")
+            await self._send_telemetry_status(
+                enabled=False,
+                reason=f"amdsmi configuration failed: {e}",
                 endpoints_configured=[],
                 endpoints_reachable=[],
             )
