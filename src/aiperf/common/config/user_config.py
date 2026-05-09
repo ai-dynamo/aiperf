@@ -137,11 +137,18 @@ _LOCAL_COLLECTOR_INSTALL_HINTS: dict[GPUTelemetryCollectorType, str] = {
 def _ensure_local_collector_importable(
     collector_type: GPUTelemetryCollectorType,
 ) -> None:
-    """Verify that the Python bindings for a local collector are importable."""
+    """Verify that the Python bindings for a local collector are importable.
+
+    Catches broader than just ``ImportError``: amdsmi (and to a lesser extent
+    pynvml) can also raise ``OSError`` when the wheel is installed but the
+    underlying native library (libamd_smi, libnvidia-ml) is missing or fails
+    to load. Surface those failures with the same friendly install hint
+    instead of leaking an internal traceback.
+    """
     module_name = _LOCAL_ONLY_COLLECTORS[collector_type]
     try:
         import_module(module_name)
-    except ImportError as e:
+    except (ImportError, OSError) as e:
         raise ValueError(_LOCAL_COLLECTOR_INSTALL_HINTS[collector_type]) from e
 
 

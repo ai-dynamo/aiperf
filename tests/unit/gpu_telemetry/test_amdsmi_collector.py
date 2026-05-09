@@ -303,6 +303,23 @@ class TestCollection:
         assert records2[1].telemetry_data.power_violation == 0.0
 
     @pytest.mark.asyncio
+    async def test_throttle_handles_bool_int_and_na(
+        self, initialized_collector, mock_amdsmi
+    ):
+        # AMDSMI returns throttle_status as bool on some platforms, int on
+        # others, and 'N/A' string on unsupported sensors. All three must
+        # be classified correctly by _is_throttled.
+        from aiperf.gpu_telemetry.amdsmi_collector import _is_throttled
+
+        assert _is_throttled(True) is True
+        assert _is_throttled(False) is False
+        assert _is_throttled(1) is True
+        assert _is_throttled(0) is False
+        assert _is_throttled(0x10) is True  # bitfield
+        assert _is_throttled("N/A") is False
+        assert _is_throttled(None) is False
+
+    @pytest.mark.asyncio
     async def test_xid_errors_uses_uncorrectable_count(self, initialized_collector):
         records = await initialized_collector._loop_to_thread_collect()
         assert records[0].telemetry_data.xid_errors == 0.0

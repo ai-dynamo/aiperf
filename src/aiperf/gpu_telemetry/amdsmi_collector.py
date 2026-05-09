@@ -91,6 +91,22 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
+def _is_throttled(value: Any) -> bool:
+    """Decide whether an AMDSMI throttle_status value indicates active throttling.
+
+    AMDSMI returns this field as ``bool`` on some platforms, ``int`` (bitfield)
+    on others, and the literal string ``'N/A'`` when the sensor is unsupported.
+    Treat any truthy bool or any non-zero int as throttled; treat strings and
+    None as not throttled. ``_numeric`` cannot be reused here because it
+    intentionally maps ``bool`` to ``None``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
+
+
 class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
     """Collects GPU telemetry from AMD ROCm GPUs via the amdsmi library.
 
@@ -344,10 +360,17 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
     def _collect_energy(
         handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
     ) -> None:
-        """Energy: ``accumulator(ticks) * counter_resolution(µJ)`` -> MJ."""
+        """Energy: ``accumulator(ticks) * counter_resolution(µJ)`` -> MJ.
+
+        AMDSMI renamed the field from ``power`` to ``energy_accumulator``
+        somewhere around the 6.2 timeframe. Fall back to the older name so
+        we keep working on ROCm 6.x.
+        """
         with contextlib.suppress(ExcType):
             energy = amdsmi.amdsmi_get_energy_count(handle)
             acc = _numeric(energy.get("energy_accumulator"))
+            if acc is None:
+                acc = _numeric(energy.get("power"))  # ROCm 6.x naming
             res = _numeric(energy.get("counter_resolution"))
             if acc is not None and res is not None:
                 td.energy_consumption = acc * res * _AMDScalingFactors.energy_uj_to_mj
@@ -390,6 +413,12 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         """Temperature: prefer JUNCTION (Instinct GPUs), fall back to HOTSPOT.
 
         EDGE is unsupported on Instinct GPUs.
+
+        The AMDSMI C API documents the temperature as millidegrees Celsius,
+        but recent Python bindings (>= ROCm 6.3 / amdsmi 26.x) return the
+        value already in Celsius. Older bindings return millidegrees. Detect
+        and normalize via a sanity check: any value > 200 is implausibly hot
+        for a GPU and is therefore in millidegrees.
         """
         for kind in ("JUNCTION", "HOTSPOT"):
             try:
@@ -401,9 +430,12 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             except ExcType:
                 continue
             value = _numeric(temp)
-            if value is not None:
-                td.gpu_temperature = value
-                return
+            if value is None:
+                continue
+            if value > 200:  # millidegrees -> degrees
+                value = value / 1000.0
+            td.gpu_temperature = value
+            return
 
     @staticmethod
     def _collect_ecc(
@@ -425,17 +457,18 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
     ) -> None:
         """Throttle duration accumulated client-side from ``throttle_status``.
 
-        AMDSMI exposes only a boolean throttle_status (no duration), so we
-        accumulate microseconds spent throttled between scrapes. Both
-        throttle_status and indep_throttle_status often return the literal
-        ``'N/A'`` string when unsupported; ``_numeric`` coerces those to
-        ``None`` so they do not register as "throttled".
+        AMDSMI exposes only a boolean (or bitfield) throttle_status, no
+        duration counter, so we accumulate microseconds spent throttled
+        between scrapes. ``throttle_status`` may be returned as ``bool``,
+        ``int``, or the literal ``'N/A'`` string depending on AMDSMI
+        version and platform support; treat any truthy numeric / boolean
+        value as throttled and ignore string sentinels.
         """
         with contextlib.suppress(ExcType):
             m = amdsmi.amdsmi_get_gpu_metrics_info(gpu.handle)
-            ts = _numeric(m.get("throttle_status"))
-            its = _numeric(m.get("indep_throttle_status"))
-            throttled = bool((ts or 0) or (its or 0))
+            throttled = _is_throttled(m.get("throttle_status")) or _is_throttled(
+                m.get("indep_throttle_status")
+            )
             if throttled and gpu.last_collect_ns:
                 gpu.throttle_accum_us += (now_ns - gpu.last_collect_ns) / 1_000.0
             td.power_violation = gpu.throttle_accum_us
