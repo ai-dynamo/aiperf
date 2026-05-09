@@ -34,7 +34,7 @@ __all__ = ["AMDSMITelemetryCollector"]
 
 
 @dataclass(frozen=True)
-class ScalingFactors:
+class _AMDScalingFactors:
     """Unit conversion scaling factors for AMDSMI metrics.
 
     AMDSMI returns power in W (no scaling) and energy in counter ticks where
@@ -46,7 +46,7 @@ class ScalingFactors:
 
 
 @dataclass(slots=True)
-class GpuDeviceState:
+class _AMDGpuDeviceState:
     """Per-GPU state for AMDSMI telemetry collection.
 
     Args:
@@ -123,7 +123,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         self._record_callback = record_callback
         self._error_callback = error_callback
 
-        self._gpus: list[GpuDeviceState] = []
+        self._gpus: list[_AMDGpuDeviceState] = []
         self._initialized = False
         self._lock = threading.Lock()
 
@@ -147,7 +147,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             return len(self._gpus) > 0
         try:
             return await asyncio.to_thread(self._probe_devices)
-        except Exception:
+        except Exception:  # noqa: BLE001 - reachability probe must never raise
             return False
 
     def _probe_devices(self) -> bool:
@@ -187,7 +187,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
 
         self.info(f"AMDSMI initialized with {len(self._gpus)} GPU(s)")
 
-    def _build_gpu_state(self, index: int, handle: Any) -> GpuDeviceState | None:
+    def _build_gpu_state(self, index: int, handle: Any) -> _AMDGpuDeviceState | None:
         """Build per-GPU state with static metadata."""
         try:
             uuid = amdsmi.amdsmi_get_gpu_device_uuid(handle)
@@ -206,7 +206,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
         except amdsmi.AmdSmiException:
             pci_bus_id = None
 
-        return GpuDeviceState(
+        return _AMDGpuDeviceState(
             handle=handle,
             metadata=GpuMetadata(
                 gpu_index=index,
@@ -225,7 +225,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 return
             try:
                 amdsmi.amdsmi_shut_down()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - shutdown is best-effort
                 self.warning(f"Error during amdsmi shutdown: {e!r}")
             finally:
                 self._initialized = False
@@ -256,11 +256,11 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             records = await asyncio.to_thread(self._collect_gpu_metrics)
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
             if self._error_callback:
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as cb_err:
+                except Exception as cb_err:  # noqa: BLE001 - callback failure must not propagate
                     self.error(f"Failed to send error via callback: {cb_err}")
             else:
                 self.error(f"Metrics collection error: {e}")
@@ -293,13 +293,26 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             return records
 
     def _snapshot_gpu(
-        self, gpu: GpuDeviceState, now_ns: int, ExcType: type[Exception]
+        self, gpu: _AMDGpuDeviceState, now_ns: int, ExcType: type[Exception]
     ) -> TelemetryMetrics:
         """Capture all supported metrics for one GPU into a TelemetryMetrics."""
-        handle = gpu.handle
         td = TelemetryMetrics()
+        handle = gpu.handle
+        self._collect_power(handle, td, ExcType)
+        self._collect_energy(handle, td, ExcType)
+        self._collect_activity(handle, td, ExcType)
+        self._collect_memory(handle, td, ExcType)
+        self._collect_temperature(handle, td, ExcType)
+        self._collect_ecc(handle, td, ExcType)
+        self._collect_throttle(gpu, td, now_ns, ExcType)
+        gpu.last_collect_ns = now_ns
+        return td
 
-        # Power (W). current_socket_power is already in W; no scaling.
+    @staticmethod
+    def _collect_power(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """Power in W. ``current_socket_power`` is already in W; no scaling."""
         with contextlib.suppress(ExcType):
             power = amdsmi.amdsmi_get_power_info(handle)
             value = _numeric(power.get("current_socket_power"))
@@ -308,15 +321,23 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             if value is not None:
                 td.gpu_power_usage = value
 
-        # Energy: accumulator(ticks) * counter_resolution(µJ) -> MJ
+    @staticmethod
+    def _collect_energy(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """Energy: ``accumulator(ticks) * counter_resolution(µJ)`` -> MJ."""
         with contextlib.suppress(ExcType):
             energy = amdsmi.amdsmi_get_energy_count(handle)
             acc = _numeric(energy.get("energy_accumulator"))
             res = _numeric(energy.get("counter_resolution"))
             if acc is not None and res is not None:
-                td.energy_consumption = acc * res * ScalingFactors.energy_uj_to_mj
+                td.energy_consumption = acc * res * _AMDScalingFactors.energy_uj_to_mj
 
-        # Activity (gfx/umc/mm). mm_activity is N/A on Instinct GPUs.
+    @staticmethod
+    def _collect_activity(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """gfx/umc/mm activity. ``mm_activity`` is N/A on Instinct GPUs."""
         with contextlib.suppress(ExcType):
             activity = amdsmi.amdsmi_get_gpu_activity(handle)
             gfx = _numeric(activity.get("gfx_activity"))
@@ -331,16 +352,26 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 td.encoder_utilization = mm
                 td.decoder_utilization = mm
 
-        # VRAM used (bytes -> GB)
+    @staticmethod
+    def _collect_memory(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """VRAM used (bytes -> GB)."""
         with contextlib.suppress(ExcType):
             vram_used = _numeric(
                 amdsmi.amdsmi_get_gpu_memory_usage(handle, amdsmi.AmdSmiMemoryType.VRAM)
             )
             if vram_used is not None:
-                td.gpu_memory_used = vram_used * ScalingFactors.bytes_to_gb
+                td.gpu_memory_used = vram_used * _AMDScalingFactors.bytes_to_gb
 
-        # Temperature: prefer JUNCTION (works on MI300X/MI355X), fall back to
-        # HOTSPOT. EDGE is unsupported on Instinct GPUs.
+    @staticmethod
+    def _collect_temperature(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """Temperature: prefer JUNCTION (Instinct GPUs), fall back to HOTSPOT.
+
+        EDGE is unsupported on Instinct GPUs.
+        """
         for kind in ("JUNCTION", "HOTSPOT"):
             try:
                 temp = amdsmi.amdsmi_get_temp_metric(
@@ -353,28 +384,39 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             value = _numeric(temp)
             if value is not None:
                 td.gpu_temperature = value
-                break
+                return
 
-        # ECC: uncorrectable error count maps closest to xid_errors semantics.
+    @staticmethod
+    def _collect_ecc(
+        handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
+    ) -> None:
+        """ECC: ``uncorrectable_count`` maps closest to ``xid_errors`` semantics."""
         with contextlib.suppress(ExcType):
             ecc = amdsmi.amdsmi_get_gpu_total_ecc_count(handle)
             uc = _numeric(ecc.get("uncorrectable_count"))
             if uc is not None:
                 td.xid_errors = uc
 
-        # Throttle duration: AMDSMI exposes only a boolean throttle_status, so
-        # accumulate microseconds spent throttled between scrapes client-side.
-        # Both throttle_status and indep_throttle_status often return the literal
-        # 'N/A' string when unsupported; coerce to int before truthiness check
-        # so 'N/A' does not register as "throttled".
+    @staticmethod
+    def _collect_throttle(
+        gpu: _AMDGpuDeviceState,
+        td: TelemetryMetrics,
+        now_ns: int,
+        ExcType: type[Exception],
+    ) -> None:
+        """Throttle duration accumulated client-side from ``throttle_status``.
+
+        AMDSMI exposes only a boolean throttle_status (no duration), so we
+        accumulate microseconds spent throttled between scrapes. Both
+        throttle_status and indep_throttle_status often return the literal
+        ``'N/A'`` string when unsupported; ``_numeric`` coerces those to
+        ``None`` so they do not register as "throttled".
+        """
         with contextlib.suppress(ExcType):
-            m = amdsmi.amdsmi_get_gpu_metrics_info(handle)
+            m = amdsmi.amdsmi_get_gpu_metrics_info(gpu.handle)
             ts = _numeric(m.get("throttle_status"))
             its = _numeric(m.get("indep_throttle_status"))
             throttled = bool((ts or 0) or (its or 0))
             if throttled and gpu.last_collect_ns:
                 gpu.throttle_accum_us += (now_ns - gpu.last_collect_ns) / 1_000.0
             td.power_violation = gpu.throttle_accum_us
-
-        gpu.last_collect_ns = now_ns
-        return td

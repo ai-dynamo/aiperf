@@ -131,4 +131,4 @@ PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
 
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)
-"""Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.DCGM, GPUTelemetryCollectorType.PYNVML"""
+"""Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.AMDSMI, GPUTelemetryCollectorType.DCGM, GPUTelemetryCollectorType.PYNVML"""
